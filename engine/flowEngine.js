@@ -6,7 +6,7 @@
  */
 
 import { HANDLERS } from '../handlers/index.js';
-import { getSession, createSession, updateSession } from '../db/index.js';
+import { getSession, createSession, updateSession, getActiveSessions } from '../db/index.js';
 import { LRUCache } from './utils.js';
 import { resolveKeyword } from './resolvers/keywordResolver.js';
 import { resolveList } from './resolvers/listResolver.js';
@@ -115,11 +115,11 @@ function isSessionTimedOut(session, flow, nowTs) {
   const { sessionTimeoutMinutes } = getSessionLimits(flow);
   if (sessionTimeoutMinutes <= 0) return false;
 
-  const startedAt = getNumericInternalVar(session, INTERNAL_VAR.SESSION_STARTED_AT, 0);
-  if (!startedAt) return false;
+  const lastActivityAt = getNumericInternalVar(session, INTERNAL_VAR.SESSION_LAST_ACTIVITY_AT, 0);
+  if (!lastActivityAt) return false;
 
   const timeoutMs = sessionTimeoutMinutes * 60 * 1000;
-  return (nowTs - startedAt) >= timeoutMs;
+  return (nowTs - lastActivityAt) >= timeoutMs;
 }
 
 async function enforceSessionLimits(sock, jid, session, flow, nowTs) {
@@ -330,4 +330,35 @@ async function resolveListWait(sock, jid, message, listId, session, flow) {
 
   updateSession(jid, patch);
   return getSession(jid);
+}
+
+let cleanupInterval = null;
+
+export function startSessionCleanup(sock, flow) {
+  if (cleanupInterval) clearInterval(cleanupInterval);
+  
+  // Check periodically (e.g., every 15 seconds)
+  cleanupInterval = setInterval(async () => {
+    const limits = getSessionLimits(flow);
+    if (limits.sessionTimeoutMinutes <= 0) return;
+    
+    const activeSessions = getActiveSessions();
+    const nowTs = Date.now();
+    
+    for (const session of activeSessions) {
+      if (isSessionTimedOut(session, flow, nowTs)) {
+        await executeWithLock(session.jid, async () => {
+          // Re-fetch inside lock to make sure it wasn't updated just now
+          const syncSession = getSession(session.jid);
+          if (syncSession && syncSession.status === SESSION_STATUS.ACTIVE && isSessionTimedOut(syncSession, flow, nowTs)) {
+            console.log(`[SessionCleanup] Sessao para ${session.jid} atingiu o timeout (${limits.sessionTimeoutMinutes} min). Encerrando e enviando mensagem...`);
+            if (limits.timeoutMessage) {
+              await sock.sendMessage(session.jid, { text: limits.timeoutMessage }).catch(console.error);
+            }
+            endSession(session.jid, syncSession, nowTs, 'timeout');
+          }
+        });
+      }
+    }
+  }, 15000); // 15 seconds intervals
 }

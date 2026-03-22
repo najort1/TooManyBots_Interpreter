@@ -75,6 +75,9 @@ export async function initDb() {
        WHERE jid=?`
     ),
     deleteSession: db.prepare('DELETE FROM sessions WHERE jid = ?'),
+    getActiveSessions: db.prepare(
+      'SELECT jid, block_index, variables, status, waiting_for FROM sessions WHERE status = ?'
+    ),
     getAuthState: db.prepare('SELECT value FROM auth_state WHERE key = ?'),
     setAuthState: db.prepare(
       `INSERT INTO auth_state (key, value) VALUES (?, ?)
@@ -146,3 +149,15 @@ export function updateSession(jid, patch) {
 export function deleteSession(jid) {
   stmts.deleteSession.run(jid);
 }
+
+export function getActiveSessions() {
+  const rows = stmts.getActiveSessions.all(SESSION_STATUS.ACTIVE);
+  return rows.map(row => ({
+    jid: row.jid,
+    blockIndex: row.block_index,
+    variables: JSON.parse(row.variables),
+    status: row.status,
+    waitingFor: row.waiting_for,
+  }));
+}
+

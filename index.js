@@ -17,7 +17,7 @@ import { initDb } from './db/index.js';
 import { useSqliteAuthState } from './db/authState.js';
 import { loadFlow } from './engine/flowLoader.js';
 import { parseMessage } from './engine/messageParser.js';
-import { handleIncoming } from './engine/flowEngine.js';
+import { handleIncoming, startSessionCleanup } from './engine/flowEngine.js';
 import { getConfig } from './config/index.js';
 
 // ─── Logger ───────────────────────────────────────────────────────────────────
@@ -179,6 +179,7 @@ async function connectToWhatsApp({ state, saveCreds, flow, version }) {
 
     if (connection === 'open') {
       console.log('✅ Conectado ao WhatsApp!\n');
+      startSessionCleanup(sock, flow);
       if (config.debugMode) {
         console.log('🐞 Debug mode ativo', {
           testMode: config.testMode,
