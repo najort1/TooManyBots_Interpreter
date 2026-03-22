@@ -1,0 +1,319 @@
+{
+  "version": "1.0",
+  "blocks": [
+    {
+      "id": "yayc5acuz",
+      "type": "initial-message",
+      "name": "Mensagem Inicial",
+      "active": true,
+      "config": {
+        "text": "Olá! 👋 Como posso ajudar?",
+        "initialDelay": 0,
+        "showTyping": false
+      }
+    },
+    {
+      "id": "0pyg6m0wt",
+      "type": "send-list",
+      "name": "Enviar Lista",
+      "active": true,
+      "config": {
+        "text": "Escolha um alimento",
+        "items": [
+          {
+            "id": "qbeab778z",
+            "title": "maçã",
+            "description": "maçã bem vermelhinha",
+            "saveVariable": true,
+            "variableName": "prod",
+            "variableValue": "maca",
+            "redirectBlockId": ""
+          },
+          {
+            "id": "fwotn3uyq",
+            "title": "pizza",
+            "description": "varias opções",
+            "saveVariable": true,
+            "variableName": "prod",
+            "variableValue": "pizza",
+            "redirectBlockId": ""
+          },
+          {
+            "id": "qx6vkftd1",
+            "title": "torta",
+            "description": "torta de maçã",
+            "saveVariable": true,
+            "variableName": "prod",
+            "variableValue": "torta_maca",
+            "redirectBlockId": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "cgn51mt7i",
+      "type": "if-condition",
+      "name": "IF (Se)",
+      "active": true,
+      "config": {
+        "variable": "prod",
+        "operator": "==",
+        "value": "pizza",
+        "valueMax": "",
+        "hasMultipleConditions": false,
+        "logicalOperator": "AND",
+        "additionalConditions": []
+      }
+    },
+    {
+      "id": "ub9hgdnu6",
+      "type": "send-text",
+      "name": "Enviar Texto",
+      "active": true,
+      "config": {
+        "text": "que legal que você escolheu {{$prod}} agora escolha o sabor que deseja",
+        "waitForResponse": false,
+        "keywords": [
+          {
+            "id": "gp64cirjn",
+            "keyword": "",
+            "response": ""
+          }
+        ],
+        "captureResponse": false,
+        "captureVariable": "",
+        "responseValidation": "text",
+        "maxAttempts": 3,
+        "responseTimeout": 0,
+        "timeoutMessage": "⏱️ Tempo esgotado para responder."
+      }
+    },
+    {
+      "id": "5hu2tgdzs",
+      "type": "send-list",
+      "name": "Enviar Lista",
+      "active": true,
+      "config": {
+        "text": "Escolha um sabor de pizza",
+        "items": [
+          {
+            "id": "9b89ib3ds",
+            "title": "mussarela",
+            "description": "",
+            "saveVariable": true,
+            "variableName": "sabor_pizza",
+            "variableValue": "mussarela",
+            "redirectBlockId": ""
+          },
+          {
+            "id": "93l3mna7j",
+            "title": "calabresa",
+            "description": "elas são grandes :)",
+            "saveVariable": true,
+            "variableName": "sabor_pizza",
+            "variableValue": "calabresa",
+            "redirectBlockId": ""
+          }
+        ]
+      }
+    },
+    {
+      "id": "jrewea9hi",
+      "type": "send-text",
+      "name": "Enviar Texto",
+      "active": true,
+      "config": {
+        "text": "Uma pizza no sabor {{$sabor_pizza}} é realmente uma otima pedida pra hoje ! otima escolha, já iremos começar a preparar, por enquanto responda mais alguns dados de entrega e informações pessoais basica para nosso querido entregador :)",
+        "waitForResponse": false,
+        "keywords": [],
+        "captureResponse": false,
+        "captureVariable": "",
+        "responseValidation": "text",
+        "maxAttempts": 3,
+        "responseTimeout": 0,
+        "timeoutMessage": "⏱️ Tempo esgotado para responder."
+      }
+    },
+    {
+      "id": "u6gddxwr4",
+      "type": "end-if",
+      "name": "END IF (Fim Se)",
+      "active": true,
+      "config": {}
+    },
+    {
+      "id": "sejbla3lu",
+      "type": "send-text",
+      "name": "CAPTURA NOME",
+      "active": true,
+      "config": {
+        "text": "Qual seu lindo nome para avisarmos ao entregador a quem deve ser entregue seu {{$prod}}\n\nOBS: Caso você erre alguma informação apenas continue seguindo o fluxo que no final você poderá voltar para corrigir :)",
+        "waitForResponse": false,
+        "keywords": [],
+        "captureResponse": true,
+        "captureVariable": "nome",
+        "responseValidation": "text",
+        "maxAttempts": 3,
+        "responseTimeout": 0,
+        "timeoutMessage": "⏱️ Tempo esgotado para responder."
+      }
+    },
+    {
+      "id": "b2lxpspla",
+      "type": "send-text",
+      "name": "Enviar Texto",
+      "active": true,
+      "config": {
+        "text": "{{$nome}} Um belo nome, agora me passa seu endereço completo, uma dica para facilitar a entrega do nosso entregador, coloque o mesmo endereço que você coloca na uber, ou um endereço que você sabe que da certinho na porta da sua casa.\n\nAh,\nOBS: Caso você more em beco ou em local de difícil acesso, nos avise que iremos avisar ao entregador para fazer o melhor para deixar o produto o mais proximo de você seguindo todas as medidas de segurança para ele e para você ",
+        "waitForResponse": false,
+        "keywords": [],
+        "captureResponse": true,
+        "captureVariable": "endereco",
+        "responseValidation": "text",
+        "maxAttempts": 3,
+        "responseTimeout": 0,
+        "timeoutMessage": "⏱️ Tempo esgotado para responder.",
+        "tagColor": "emerald"
+      }
+    },
+    {
+      "id": "u3tyhszbf",
+      "type": "send-text",
+      "name": "Enviar Texto",
+      "active": true,
+      "config": {
+        "text": "",
+        "waitForResponse": false,
+        "keywords": [],
+        "captureResponse": false,
+        "captureVariable": "",
+        "responseValidation": "text",
+        "maxAttempts": 3,
+        "responseTimeout": 0,
+        "timeoutMessage": "⏱️ Tempo esgotado para responder."
+      }
+    },
+    {
+      "id": "zz2s3e7d8",
+      "type": "set-variable",
+      "name": "Setar Variável",
+      "active": true,
+      "config": {
+        "variableName": "confirma",
+        "variableValue": "n",
+        "useExpression": false
+      }
+    },
+    {
+      "id": "etzzne7nw",
+      "type": "send-text",
+      "name": "Enviar Texto",
+      "active": true,
+      "config": {
+        "text": "você confirma que seus dados são o seguinte:\n\nNome: {{$nome}}\nEndereço: {{$endereco}}\n\nResponda com \"s\" ou \"n\"\n\ns = sim\nn = não",
+        "waitForResponse": false,
+        "keywords": [],
+        "captureResponse": true,
+        "captureVariable": "confirma",
+        "responseValidation": "text",
+        "maxAttempts": 3,
+        "responseTimeout": 0,
+        "timeoutMessage": "⏱️ Tempo esgotado para responder."
+      }
+    },
+    {
+      "id": "jfnwkzmdi",
+      "type": "if-condition",
+      "name": "IF (Se)",
+      "active": true,
+      "config": {
+        "variable": "confirma",
+        "operator": "==",
+        "value": "n",
+        "valueMax": "",
+        "hasMultipleConditions": true,
+        "logicalOperator": "OR",
+        "additionalConditions": [
+          {
+            "id": "onzmj1tmr",
+            "variable": "confirma",
+            "operator": "==",
+            "value": "não"
+          },
+          {
+            "id": "2ab3d65oq",
+            "variable": "confirma",
+            "operator": "==",
+            "value": "nao"
+          }
+        ]
+      }
+    },
+    {
+      "id": "szyfs7dq7",
+      "type": "redirect",
+      "name": "Redirecionar Fluxo",
+      "active": true,
+      "config": {
+        "targetBlockId": "sejbla3lu",
+        "randomRedirect": false,
+        "useProbability": false,
+        "redirectOptions": []
+      }
+    },
+    {
+      "id": "8gkeify22",
+      "type": "end-if",
+      "name": "END IF (Fim Se)",
+      "active": true,
+      "config": {}
+    },
+    {
+      "id": "tl1bbwrnr",
+      "type": "send-text",
+      "name": "Enviar Texto",
+      "active": true,
+      "config": {
+        "text": "Tudo confirmado então, iremos preparar o seu pedido e em breve ele chegara ao seu endereço, nós iremos avisar quando o entregador estiver saindo e se tiver algum problema na entrega ou o entregador nao achar o endereço fique atento ao seu telefone e não pense que é golpe é somente o nosso entregador ligando para confirmar o endereço :) aproveite seu pedido",
+        "waitForResponse": false,
+        "keywords": [],
+        "captureResponse": false,
+        "captureVariable": "",
+        "responseValidation": "text",
+        "maxAttempts": 3,
+        "responseTimeout": 0,
+        "timeoutMessage": "⏱️ Tempo esgotado para responder."
+      }
+    },
+    {
+      "id": "iv5rrdjy4",
+      "type": "end-conversation",
+      "name": "Encerrar Conversa",
+      "active": true,
+      "config": {
+        "message": "Obrigado pelo contato! Até logo! 👋",
+        "resetVariables": true,
+        "restartAfterTime": false,
+        "restartDelay": 60000
+      }
+    }
+  ],
+  "flowRuntimeConfig": {
+    "startPolicy": "allow-always",
+    "endBehavior": {
+      "sendClosingMessage": true
+    },
+    "postEnd": {
+      "reentryPolicy": "cooldown",
+      "cooldownMinutes": 1,
+      "blockedMessage": "Este fluxo nao permite novas conversas para este usuario.",
+      "cooldownMessage": "Aguarde alguns minutos para iniciar uma nova conversa."
+    },
+    "sessionLimits": {
+      "maxMessagesPerSession": 0,
+      "sessionTimeoutMinutes": 2,
+      "timeoutMessage": "Sessao encerrada por tempo limite."
+    }
+  },
+  "createdAt": "2026-03-22T19:12:04.864Z"
+}

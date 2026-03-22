@@ -1,0 +1,21 @@
+{
+  "name": "whatsapp-bot-interpreter",
+  "version": "1.0.0",
+  "description": "No-code WhatsApp bot interpreter using Baileys",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.16",
+    "baileys": "^7.0.0-rc.9",
+    "better-sqlite3": "^12.8.0",
+    "blessed": "^0.1.81",
+    "inquirer": "^9.2.20",
+    "pino": "^8.19.0",
+    "pino-pretty": "^11.0.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

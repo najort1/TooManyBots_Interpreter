@@ -1,0 +1,12 @@
+node_modules/
+dist/
+build/
+.env
+*.log
+.context/
+.claude/
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+plano.md
+config.user.json
