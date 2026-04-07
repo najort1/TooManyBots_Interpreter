@@ -38,7 +38,7 @@ function validateNumber(name, { min = 0 } = {}) {
   return value => {
     const raw = String(value ?? '').trim();
     const n = Number(raw);
-    if (!Number.isFinite(n)) return `${name} deve ser um número.`;
+    if (!Number.isFinite(n)) return `${name} deve ser um numero.`;
     if (n < min) return `${name} deve ser >= ${min}.`;
     return true;
   };
@@ -47,6 +47,11 @@ function validateNumber(name, { min = 0 } = {}) {
 function parseNumber(value, fallback) {
   const n = Number(String(value ?? '').trim());
   return Number.isFinite(n) ? n : fallback;
+}
+
+function toStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(item => String(item ?? '').trim()).filter(Boolean);
 }
 
 export async function runConfigWizard({
@@ -60,7 +65,7 @@ export async function runConfigWizard({
   const flowFiles = listBotFlows(botsDir);
 
   if (flowFiles.length === 0) {
-    console.error(`\n❌ Nenhum arquivo .tmb encontrado em "${path.relative(projectRoot, botsDir) || 'bots'}".`);
+    console.error(`\nNenhum arquivo .tmb encontrado em "${path.relative(projectRoot, botsDir) || 'bots'}".`);
     console.error('Coloque seu fluxo dentro da pasta bots/ e rode novamente.\n');
     return null;
   }
@@ -70,17 +75,18 @@ export async function runConfigWizard({
       {
         type: 'list',
         name: 'bootstrap',
-        message: 'Configuração encontrada. O que você quer fazer?',
+        message: 'Como deseja iniciar o bot?',
         choices: [
-          { name: 'Usar a última configuração', value: 'use_last' },
-          { name: 'Configurar novamente (passo a passo)', value: 'configure' },
-          { name: 'Sair', value: 'exit' },
+          { name: '1 - iniciar bot ( configurar novamente )', value: 'configure' },
+          { name: '2 - iniciar bot ( usar configuracao anterior )', value: 'use_last' },
+          { name: '0 - sair', value: 'exit' },
         ],
       },
     ]);
 
     if (bootstrap === 'use_last') {
-      return typeof onUseSavedConfig === 'function' ? onUseSavedConfig() : null;
+      const previous = typeof onUseSavedConfig === 'function' ? onUseSavedConfig() : null;
+      return previous ? { ...previous, __startupChoice: 'use_previous' } : null;
     }
     if (bootstrap === 'exit') {
       return null;
@@ -101,14 +107,14 @@ export async function runConfigWizard({
     {
       type: 'list',
       name: 'logLevel',
-      message: 'Nível de log:',
+      message: 'Nivel de log:',
       choices: LOG_LEVELS,
       default: defaults.logLevel ?? 'silent',
     },
     {
       type: 'confirm',
       name: 'prettyLogs',
-      message: 'Pretty logs (mais legível no terminal)?',
+      message: 'Pretty logs (mais legivel no terminal)?',
       default: Boolean(defaults.prettyLogs),
     },
     {
@@ -126,18 +132,29 @@ export async function runConfigWizard({
     {
       type: 'confirm',
       name: 'testMode',
-      message: 'Ativar test mode (aceitar mensagens somente do testJid)?',
+      message: 'Ativar test mode (somente contatos escolhidos)?',
       default: Boolean(defaults.testMode),
+    },
+    {
+      type: 'list',
+      name: 'testTargetMode',
+      message: 'Como deseja definir contatos permitidos no test mode?',
+      choices: [
+        { name: 'Selecionar apos conectar o WhatsApp (select/multi-select)', value: 'contacts' },
+        { name: 'Informar testJid manualmente', value: 'manual' },
+      ],
+      default: String(defaults.testTargetMode ?? 'contacts'),
+      when: a => Boolean(a.testMode),
     },
     {
       type: 'input',
       name: 'testJid',
       message: 'Qual o testJid? (ex: 5582...@s.whatsapp.net)',
       default: String(defaults.testJid ?? ''),
-      when: a => Boolean(a.testMode),
+      when: a => Boolean(a.testMode) && a.testTargetMode === 'manual',
       validate: value => {
         const v = String(value ?? '').trim();
-        if (!v) return 'testJid não pode ser vazio quando testMode estiver ativo.';
+        if (!v) return 'testJid nao pode ser vazio quando testMode estiver ativo.';
         if (!v.endsWith('@s.whatsapp.net')) return 'testJid deve terminar com @s.whatsapp.net';
         return true;
       },
@@ -145,7 +162,7 @@ export async function runConfigWizard({
     {
       type: 'input',
       name: 'typingDuration',
-      message: 'Duração do “digitando...” (ms):',
+      message: 'Duracao do "digitando..." (ms):',
       default: String(defaults.typingDuration ?? 800),
       validate: validateNumber('typingDuration', { min: 0 }),
       filter: value => parseNumber(value, defaults.typingDuration ?? 800),
@@ -153,7 +170,7 @@ export async function runConfigWizard({
     {
       type: 'input',
       name: 'maxSteps',
-      message: 'Máximo de passos do motor (evitar loop infinito):',
+      message: 'Maximo de passos do motor (evitar loop infinito):',
       default: String(defaults.maxSteps ?? 100),
       validate: validateNumber('maxSteps', { min: 1 }),
       filter: value => parseNumber(value, defaults.maxSteps ?? 100),
@@ -161,22 +178,31 @@ export async function runConfigWizard({
     {
       type: 'input',
       name: 'sessionTimeoutSeconds',
-      message: 'Tempo limite da sessão (segundos) (0 desativa):',
+      message: 'Tempo limite da sessao (segundos) (0 desativa):',
       default: String(defaults.sessionTimeoutSeconds ?? 86400),
       validate: validateNumber('sessionTimeoutSeconds', { min: 0 }),
       filter: value => parseNumber(value, defaults.sessionTimeoutSeconds ?? 86400),
     },
   ]);
 
+  const chosenManualJid =
+    answers.testMode && answers.testTargetMode === 'manual'
+      ? String(answers.testJid ?? '').trim()
+      : '';
+
   return {
     ...defaults,
+    __startupChoice: 'reconfigure',
     flowPath: `./bots/${answers.flowFile}`,
     logLevel: answers.logLevel,
     prettyLogs: Boolean(answers.prettyLogs),
     ignoreGroups: Boolean(answers.ignoreGroups),
     debugMode: Boolean(answers.debugMode),
     testMode: Boolean(answers.testMode),
-    testJid: answers.testMode ? String(answers.testJid ?? '').trim() : String(defaults.testJid ?? '').trim(),
+    testTargetMode: answers.testMode ? String(answers.testTargetMode ?? 'contacts') : String(defaults.testTargetMode ?? 'contacts'),
+    testJid: chosenManualJid,
+    testJids: chosenManualJid ? [chosenManualJid] : [],
+    groupWhitelistJids: toStringArray(defaults.groupWhitelistJids),
     typingDuration: answers.typingDuration,
     maxSteps: answers.maxSteps,
     sessionTimeoutSeconds: answers.sessionTimeoutSeconds,

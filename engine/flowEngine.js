@@ -8,13 +8,16 @@
 import { HANDLERS } from '../handlers/index.js';
 import { getSession, createSession, updateSession, getActiveSessions } from '../db/index.js';
 import { LRUCache } from './utils.js';
+import { parseCommandInput } from './commandParser.js';
 import { resolveKeyword } from './resolvers/keywordResolver.js';
 import { resolveList } from './resolvers/listResolver.js';
+import { resolveMultipleChoice } from './resolvers/multipleChoiceResolver.js';
 import {
   SESSION_STATUS,
   WAIT_TYPE,
   ENGINE_LIMITS,
   INTERNAL_VAR,
+  BLOCK_TYPE,
 } from '../config/constants.js';
 
 const userLocks = new Map();
@@ -44,6 +47,32 @@ const PROCESSED_IDS = new LRUCache(ENGINE_LIMITS.PROCESSED_IDS_MAX, ENGINE_LIMIT
 
 function getRuntimeConfig(flow) {
   return flow?.runtimeConfig ?? {};
+}
+
+function isCommandMode(flow) {
+  const mode = String(getRuntimeConfig(flow).conversationMode ?? 'conversation').toLowerCase();
+  return mode === 'command';
+}
+
+function findCommandCandidate(flow, message) {
+  const blocks = Array.isArray(flow?.blocks) ? flow.blocks : [];
+  let partial = null;
+
+  for (let i = 0; i < blocks.length; i++) {
+    const block = blocks[i];
+    if (block.type !== BLOCK_TYPE.COMMAND_INPUT) continue;
+
+    const parsed = parseCommandInput(message, block.config ?? {});
+    if (parsed.matched) {
+      return { index: i, parsed, blockId: block.id, strict: true };
+    }
+
+    if (!partial && parsed.partial) {
+      partial = { index: i, parsed, blockId: block.id, strict: false };
+    }
+  }
+
+  return partial;
 }
 
 function getSessionLimits(flow) {
@@ -201,7 +230,7 @@ async function resolveSessionStartPolicy(sock, jid, session, flow, nowTs) {
 /**
  * Main entry point called on every incoming WhatsApp message.
  */
-export async function handleIncoming(sock, jid, message, listId, flow, msgId) {
+export async function handleIncoming(sock, jid, message, listId, flow, msgId, messageKey = null) {
   if (msgId) {
     if (PROCESSED_IDS.has(msgId)) {
       console.log(`[handleIncoming] DUPLICATE message detected, skipping. ID: ${msgId}`);
@@ -212,11 +241,36 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId) {
 
   return executeWithLock(jid, async () => {
     const nowTs = Date.now();
+    const commandMode = isCommandMode(flow);
     let session = getSession(jid);
+    let commandCandidate = null;
+
+    if (commandMode && (!session || session.status === SESSION_STATUS.ENDED)) {
+      commandCandidate = findCommandCandidate(flow, message);
+      if (!commandCandidate) {
+        return;
+      }
+    }
 
     const startResolution = await resolveSessionStartPolicy(sock, jid, session, flow, nowTs);
     if (startResolution.blocked) return;
     session = startResolution.session;
+
+    if (commandCandidate && session.blockIndex !== commandCandidate.index) {
+      updateSession(jid, { blockIndex: commandCandidate.index });
+      session = getSession(jid);
+    }
+
+    updateSession(jid, {
+      variables: {
+        ...session.variables,
+        [INTERNAL_VAR.LAST_MESSAGE]: message,
+        [INTERNAL_VAR.LAST_INCOMING_MESSAGE_ID]: msgId ?? '',
+        [INTERNAL_VAR.LAST_INCOMING_LIST_ID]: listId ?? '',
+        [INTERNAL_VAR.LAST_INCOMING_MESSAGE_KEY]: messageKey ?? null,
+      },
+    });
+    session = getSession(jid);
 
     const limitsResolution = await enforceSessionLimits(sock, jid, session, flow, nowTs);
     if (limitsResolution.blocked) return;
@@ -238,13 +292,31 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId) {
         console.error(`[handleIncoming] Erro em resolveListWait para ${jid}:`, err);
         return;
       }
+    } else if (session.waitingFor === WAIT_TYPE.MULTIPLE_CHOICE) {
+      try {
+        session = await resolveMultipleChoiceWait(sock, jid, message, session, flow);
+        if (!session) return;
+      } catch (err) {
+        console.error(`[handleIncoming] Erro em resolveMultipleChoiceWait para ${jid}:`, err);
+        return;
+      }
     }
 
-    await runEngine(sock, jid, session, flow);
+    const runtime = {
+      incoming: {
+        text: message,
+        listId: listId ?? null,
+        msgId: msgId ?? null,
+        messageKey: messageKey ?? null,
+        receivedAt: nowTs,
+      },
+    };
+
+    await runEngine(sock, jid, session, flow, runtime);
   });
 }
 
-async function runEngine(sock, jid, session, flow) {
+async function runEngine(sock, jid, session, flow, runtime = {}) {
   const MAX_STEPS = ENGINE_LIMITS.MAX_STEPS;
   let steps = 0;
 
@@ -279,7 +351,7 @@ async function runEngine(sock, jid, session, flow) {
 
     let result;
     try {
-      result = await handler({ block, session, sock, jid, flow });
+      result = await handler({ block, session, sock, jid, flow, runtime });
     } catch (err) {
       console.error(`[Engine] Error in handler "${block.type}":`, err);
       return;
@@ -325,6 +397,22 @@ async function resolveListWait(sock, jid, message, listId, session, flow) {
     await sock.sendMessage(jid, {
       text: 'Opcao invalida. Por favor, responda digitando o numero ou nome da opcao desejada de forma valida.',
     });
+    return null;
+  }
+
+  updateSession(jid, patch);
+  return getSession(jid);
+}
+
+async function resolveMultipleChoiceWait(sock, jid, message, session, flow) {
+  const { patch, selected } = resolveMultipleChoice(message, session, flow);
+
+  if (!selected) {
+    const invalidMessage =
+      session.variables[INTERNAL_VAR.MULTIPLE_CHOICE_INVALID_MESSAGE] ||
+      'Opcao invalida. Responda com o numero ou nome da opcao conforme exibido.';
+
+    await sock.sendMessage(jid, { text: invalidMessage });
     return null;
   }
 

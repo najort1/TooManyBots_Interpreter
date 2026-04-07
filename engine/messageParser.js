@@ -7,7 +7,7 @@
 
 /**
  * @param {object} msg - mensagem bruta do Baileys messages.upsert
- * @returns {{ id: string, text: string, listId: string|null, jid: string } | null}
+ * @returns {{ id: string, text: string, listId: string|null, jid: string, isGroup: boolean, messageKey: object } | null}
  */
 export function parseMessage(msg) {
   // Ignorar mensagens de si mesmo (mensagens do próprio bot)
@@ -18,6 +18,8 @@ export function parseMessage(msg) {
   if (remoteJid === 'status@broadcast') return null;
   if (!remoteJid) return null;
   const jid = remoteJid.endsWith('@lid') && msg.key?.senderPn ? msg.key.senderPn : remoteJid;
+  const isGroup = remoteJid.endsWith('@g.us');
+  const messageKey = msg.key ?? {};
 
   const content = msg.message;
   if (!content) return null;
@@ -28,6 +30,8 @@ export function parseMessage(msg) {
     return {
       id: msg.key.id,
       jid,
+      isGroup,
+      messageKey,
       text: br.selectedDisplayText ?? br.selectedButtonId ?? '',
       listId: br.selectedButtonId ?? null,
     };
@@ -39,6 +43,8 @@ export function parseMessage(msg) {
     return {
       id: msg.key.id,
       jid,
+      isGroup,
+      messageKey,
       text: tb.selectedDisplayText ?? tb.selectedId ?? '',
       listId: null,
     };
@@ -49,6 +55,8 @@ export function parseMessage(msg) {
     return {
       id: msg.key.id,
       jid,
+      isGroup,
+      messageKey,
       text: content.extendedTextMessage.text ?? '',
       listId: null,
     };
@@ -59,11 +67,13 @@ export function parseMessage(msg) {
     return {
       id: msg.key.id,
       jid,
+      isGroup,
+      messageKey,
       text: content.conversation,
       listId: null,
     };
   }
 
   // ── Imagem / áudio / etc. — tratar como vazio por enquanto ────────────────────────
-  return { id: msg.key.id, jid, text: '', listId: null };
+  return { id: msg.key.id, jid, isGroup, messageKey, text: '', listId: null };
 }

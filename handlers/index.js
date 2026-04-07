@@ -14,6 +14,7 @@
 
 import { sendTextMessage, sendListMessage } from '../engine/sender.js';
 import { interpolate, safeParseJSON } from '../engine/utils.js';
+import { parseCommandInput } from '../engine/commandParser.js';
 import {
   BLOCK_TYPE,
   SESSION_STATUS,
@@ -90,6 +91,273 @@ function getIfStack(session) {
   return safeParseJSON(session.variables[INTERNAL_VAR.IF_STACK], []);
 }
 
+function toText(value) {
+  return String(value ?? '').trim();
+}
+
+function toNumber(value, fallback = 0) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function toBool(value) {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  return String(value).toLowerCase() === 'true';
+}
+
+function parseMaybeJson(value) {
+  if (typeof value !== 'string') return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    return safeParseJSON(trimmed, value);
+  }
+  return value;
+}
+
+function escapePathSegment(segment) {
+  return segment.replace(/\[(\d+)\]/g, '.$1');
+}
+
+function extractJsonPath(source, jsonPath) {
+  const path = toText(jsonPath);
+  if (!path) return source;
+
+  const obj = typeof source === 'string' ? parseMaybeJson(source) : source;
+  if (obj == null) return undefined;
+
+  const tokens = path
+    .split('.')
+    .map(part => escapePathSegment(part))
+    .join('.')
+    .split('.')
+    .map(token => token.trim())
+    .filter(Boolean);
+
+  let current = obj;
+  for (const token of tokens) {
+    if (current == null) return undefined;
+    current = current[token];
+  }
+  return current;
+}
+
+function evaluateExpression(expression, scope, fallback = null) {
+  const expr = toText(expression);
+  if (!expr) return fallback;
+  try {
+    const names = Object.keys(scope);
+    const values = Object.values(scope);
+    const fn = new Function(...names, `"use strict"; return (${expr});`);
+    return fn(...values);
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeHttpHeaders(headers, variables) {
+  if (!Array.isArray(headers)) return {};
+
+  const output = {};
+  for (const header of headers) {
+    const key = toText(interpolate(header?.key, variables));
+    if (!key) continue;
+    const value = interpolate(header?.value, variables);
+    output[key] = value;
+  }
+  return output;
+}
+
+function serializeRequestBody(body, bodyType, variables) {
+  const interpolated = interpolate(String(body ?? ''), variables);
+  const normalizedType = toText(bodyType).toLowerCase();
+
+  if (!interpolated) return null;
+  if (normalizedType === 'none') return null;
+  if (normalizedType === 'text' || normalizedType === 'raw') return interpolated;
+
+  if (normalizedType === 'json') {
+    const parsed = safeParseJSON(interpolated, null);
+    if (parsed !== null) return JSON.stringify(parsed);
+    return JSON.stringify(interpolated);
+  }
+
+  if (normalizedType === 'form-urlencoded') {
+    const parsed = safeParseJSON(interpolated, null);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return new URLSearchParams(parsed).toString();
+    }
+    return interpolated;
+  }
+
+  return interpolated;
+}
+
+function parseHttpResponseBody(responseText, contentType) {
+  const normalizedType = String(contentType ?? '').toLowerCase();
+  if (normalizedType.includes('application/json')) {
+    return safeParseJSON(responseText, responseText);
+  }
+
+  return parseMaybeJson(responseText);
+}
+
+function normalizeMultipleChoiceOptions(cfg) {
+  const rawOptions = Array.isArray(cfg.options) ? cfg.options : (Array.isArray(cfg.items) ? cfg.items : []);
+
+  return rawOptions.map((option, index) => {
+    const id = toText(option?.id || `option_${index + 1}`);
+    const title = toText(option?.title || option?.label || option?.text || option?.value || id);
+    const value = option?.value ?? title;
+    const description = toText(option?.description);
+    return { id, title, value, description };
+  });
+}
+
+function getMultipleChoiceMode(cfg, optionsLength) {
+  const selectionMode = toText(cfg.selectionMode || cfg.selectionType || cfg.responseType).toLowerCase();
+  const allowMultiple =
+    cfg.allowMultiple === true ||
+    cfg.multiple === true ||
+    selectionMode === 'multiple' ||
+    toNumber(cfg.maxSelections, 0) > 1;
+
+  const minSelections = Math.max(1, toNumber(cfg.minSelections, 1));
+  const defaultMax = allowMultiple ? optionsLength : 1;
+  const maxSelections = Math.max(1, toNumber(cfg.maxSelections, defaultMax));
+
+  return { allowMultiple, minSelections, maxSelections };
+}
+
+function getIncomingMessageText(session, runtime) {
+  if (runtime?.incoming?.text !== undefined) return String(runtime.incoming.text ?? '');
+  return String(session.variables[INTERNAL_VAR.LAST_MESSAGE] ?? '');
+}
+
+function shouldSendCommandInvalidMessage(message, cfg, parseResult) {
+  if (parseResult?.partial) return true;
+
+  const normalizedMessage = toText(message);
+  if (!normalizedMessage) return false;
+
+  const normalizedCommand = toText(cfg.command).replace(/^\//, '').toLowerCase();
+  if (normalizedCommand) {
+    const extracted = normalizedMessage.replace(/^\//, '').toLowerCase();
+    if (extracted.startsWith(normalizedCommand)) return true;
+  }
+
+  return normalizedMessage.startsWith('/');
+}
+
+async function executeWithRetry(executor, maxRetries, retryDelay) {
+  let attempts = 0;
+  let lastError = null;
+
+  while (attempts <= maxRetries) {
+    try {
+      return await executor();
+    } catch (error) {
+      lastError = error;
+      if (attempts >= maxRetries) break;
+      if (retryDelay > 0) {
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
+      }
+    }
+    attempts++;
+  }
+
+  throw lastError;
+}
+
+function applyDataTransform(sourceValue, cfg, sessionVariables) {
+  const transformType = toText(cfg.transformType || cfg.operation).toLowerCase();
+  const inputValue = parseMaybeJson(sourceValue);
+
+  switch (transformType) {
+    case 'json_parse': {
+      if (typeof sourceValue === 'string') return safeParseJSON(sourceValue, sourceValue);
+      return inputValue;
+    }
+    case 'json_stringify':
+      return JSON.stringify(inputValue);
+    case 'extract_field':
+      return extractJsonPath(inputValue, cfg.jsonPath);
+    case 'array_map': {
+      if (!Array.isArray(inputValue)) throw new Error('Fonte nao e um array para array_map.');
+      const expression = toText(cfg.mapExpression) || 'item';
+      return inputValue.map((item, index, array) =>
+        evaluateExpression(expression, { item, index, array, vars: sessionVariables }, item)
+      );
+    }
+    case 'array_filter': {
+      if (!Array.isArray(inputValue)) throw new Error('Fonte nao e um array para array_filter.');
+      const expression = toText(cfg.filterCondition) || 'Boolean(item)';
+      return inputValue.filter((item, index, array) =>
+        Boolean(evaluateExpression(expression, { item, index, array, vars: sessionVariables }, false))
+      );
+    }
+    case 'array_reduce': {
+      if (!Array.isArray(inputValue)) throw new Error('Fonte nao e um array para array_reduce.');
+      const expression = toText(cfg.mapExpression) || 'acc';
+      const hasInitial = cfg.initialValue !== undefined && cfg.initialValue !== null && cfg.initialValue !== '';
+      const initialValue = hasInitial ? parseMaybeJson(cfg.initialValue) : undefined;
+
+      if (hasInitial) {
+        return inputValue.reduce(
+          (acc, item, index, array) =>
+            evaluateExpression(expression, { acc, item, index, array, vars: sessionVariables }, acc),
+          initialValue
+        );
+      }
+
+      if (inputValue.length === 0) return inputValue;
+      return inputValue.slice(1).reduce(
+        (acc, item, index) =>
+          evaluateExpression(expression, { acc, item, index: index + 1, array: inputValue, vars: sessionVariables }, acc),
+        inputValue[0]
+      );
+    }
+    case 'array_sort': {
+      if (!Array.isArray(inputValue)) throw new Error('Fonte nao e um array para array_sort.');
+      const sorted = [...inputValue];
+      const expression = toText(cfg.mapExpression);
+      if (!expression) {
+        return sorted.sort((a, b) => String(a).localeCompare(String(b)));
+      }
+      return sorted.sort((a, b) => {
+        const av = evaluateExpression(expression, { item: a, a, b, vars: sessionVariables }, a);
+        const bv = evaluateExpression(expression, { item: b, a: b, b: a, vars: sessionVariables }, b);
+        if (av === bv) return 0;
+        return String(av).localeCompare(String(bv));
+      });
+    }
+    case 'text_uppercase':
+      return String(inputValue ?? '').toUpperCase();
+    case 'text_lowercase':
+      return String(inputValue ?? '').toLowerCase();
+    case 'text_trim':
+      return String(inputValue ?? '').trim();
+    case 'text_split': {
+      const delimiter = toText(cfg.delimiter || cfg.separator || cfg.jsonPath || ',');
+      return String(inputValue ?? '').split(delimiter);
+    }
+    case 'custom_code':
+    case 'custom':
+    case 'custom_transform': {
+      const customCode = toText(cfg.customCode);
+      if (!customCode) return inputValue;
+      const names = ['input', 'vars'];
+      const values = [inputValue, sessionVariables];
+      const body = customCode.includes('return') ? customCode : `return (${customCode});`;
+      const fn = new Function(...names, `"use strict"; ${body}`);
+      return fn(...values);
+    }
+    default:
+      return inputValue;
+  }
+}
+
 
 // ─── Manipuladores ────────────────────────────────────────────────────────────────
 
@@ -126,10 +394,11 @@ async function handleSendText({ block, session, sock, jid }) {
 async function handleSendList({ block, session, sock, jid }) {
   const cfg = block.config;
   const text = interpolate(cfg.text, session.variables);
+  const items = Array.isArray(cfg.items) ? cfg.items : [];
 
   await sendListMessage(sock, jid, {
     text,
-    items: cfg.items.map(item => ({
+    items: items.map(item => ({
       id: item.id,
       title: interpolate(item.title, session.variables),
       description: interpolate(item.description, session.variables),
@@ -143,12 +412,273 @@ async function handleSendList({ block, session, sock, jid }) {
       waitingFor: WAIT_TYPE.LIST,
       variables: {
         ...session.variables,
-        [INTERNAL_VAR.LIST_ITEMS]: JSON.stringify(cfg.items),
+        [INTERNAL_VAR.LIST_ITEMS]: JSON.stringify(items),
         [INTERNAL_VAR.NEXT_BLOCK_ON_LIST]: String(session.blockIndex + 1),
       },
     },
     done: false,
   };
+}
+
+async function handleCommandInput({ block, session, sock, jid, runtime }) {
+  const cfg = block.config ?? {};
+  const incomingMessage = getIncomingMessageText(session, runtime);
+  const parseResult = parseCommandInput(incomingMessage, cfg);
+
+  if (!parseResult.matched) {
+    const invalidMessage = interpolate(toText(cfg.invalidMessage), session.variables);
+    if (invalidMessage && shouldSendCommandInvalidMessage(incomingMessage, cfg, parseResult)) {
+      await sendTextMessage(sock, jid, invalidMessage);
+    }
+    return {
+      nextBlockIndex: null,
+      sessionPatch: { waitingFor: null },
+      done: false,
+    };
+  }
+
+  const commandName = toText(cfg.command || cfg.pattern);
+  return {
+    nextBlockIndex: session.blockIndex + 1,
+    sessionPatch: {
+      variables: {
+        ...session.variables,
+        ...parseResult.variableValues,
+        [INTERNAL_VAR.LAST_COMMAND]: commandName,
+        [INTERNAL_VAR.LAST_COMMAND_ARGS]: parseResult.commandArgs,
+      },
+    },
+    done: false,
+  };
+}
+
+async function handleMultipleChoice({ block, session, sock, jid }) {
+  const cfg = block.config ?? {};
+  const options = normalizeMultipleChoiceOptions(cfg);
+  if (options.length === 0) {
+    return { nextBlockIndex: session.blockIndex + 1, sessionPatch: {}, done: false };
+  }
+
+  const { allowMultiple, minSelections, maxSelections } = getMultipleChoiceMode(cfg, options.length);
+  const promptText = interpolate(
+    toText(cfg.text || cfg.question || cfg.prompt || 'Escolha uma opcao:'),
+    session.variables
+  );
+
+  const renderedOptions = options
+    .map((option, index) => {
+      if (!option.description) return `${index + 1}. ${option.title}`;
+      return `${index + 1}. ${option.title}\n   _${option.description}_`;
+    })
+    .join('\n');
+
+  const hint = allowMultiple
+    ? `Responda com ${minSelections === maxSelections ? `${minSelections}` : `${minSelections} a ${maxSelections}`} opcao(oes), separadas por virgula.`
+    : 'Responda com o numero ou nome da opcao.';
+
+  const messageText = [promptText, '', renderedOptions, '', hint].filter(Boolean).join('\n');
+  await sendTextMessage(sock, jid, messageText);
+
+  const captureVariable = toText(cfg.captureVariable || cfg.outputVariable || cfg.variableName || 'multiple_choice_selection');
+  const invalidMessage = toText(cfg.invalidMessage || cfg.validationMessage || 'Opcao invalida. Tente novamente.');
+
+  return {
+    nextBlockIndex: null,
+    sessionPatch: {
+      waitingFor: WAIT_TYPE.MULTIPLE_CHOICE,
+      variables: {
+        ...session.variables,
+        [INTERNAL_VAR.MULTIPLE_CHOICE_OPTIONS]: JSON.stringify(options),
+        [INTERNAL_VAR.MULTIPLE_CHOICE_ALLOW_MULTIPLE]: String(allowMultiple),
+        [INTERNAL_VAR.MULTIPLE_CHOICE_MIN]: String(minSelections),
+        [INTERNAL_VAR.MULTIPLE_CHOICE_MAX]: String(maxSelections),
+        [INTERNAL_VAR.MULTIPLE_CHOICE_CAPTURE_VAR]: captureVariable,
+        [INTERNAL_VAR.MULTIPLE_CHOICE_INVALID_MESSAGE]: invalidMessage,
+        [INTERNAL_VAR.NEXT_BLOCK_ON_MULTIPLE_CHOICE]: String(session.blockIndex + 1),
+      },
+    },
+    done: false,
+  };
+}
+
+async function handleHttpRequest({ block, session, sock, jid }) {
+  const cfg = block.config ?? {};
+  const method = toText(cfg.method || 'GET').toUpperCase();
+  const url = interpolate(toText(cfg.url), session.variables);
+
+  if (!url) {
+    return { nextBlockIndex: session.blockIndex + 1, sessionPatch: {}, done: false };
+  }
+
+  const timeout = Math.max(1000, toNumber(cfg.timeout, 30000));
+  const retryEnabled = cfg.retryOnFailure === true;
+  const maxRetries = retryEnabled ? Math.max(0, toNumber(cfg.maxRetries, 0)) : 0;
+  const retryDelay = Math.max(0, toNumber(cfg.retryDelay, 1000));
+  const onError = toText(cfg.onError || 'continue').toLowerCase();
+
+  const headers = normalizeHttpHeaders(cfg.headers, session.variables);
+  const serializedBody = serializeRequestBody(cfg.body, cfg.bodyType, session.variables);
+
+  if (serializedBody && !headers['Content-Type']) {
+    const bodyType = toText(cfg.bodyType).toLowerCase();
+    if (bodyType === 'json') headers['Content-Type'] = 'application/json';
+    if (bodyType === 'form-urlencoded') headers['Content-Type'] = 'application/x-www-form-urlencoded';
+  }
+
+  const requestFn = async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort('timeout'), timeout);
+    try {
+      const response = await fetch(url, {
+        method,
+        headers,
+        body: method === 'GET' || method === 'HEAD' ? undefined : serializedBody,
+        signal: controller.signal,
+      });
+
+      const responseText = await response.text();
+      const contentType = response.headers.get('content-type');
+      const responseData = parseHttpResponseBody(responseText, contentType);
+
+      if (!response.ok) {
+        const error = new Error(`HTTP ${response.status}`);
+        error.status = response.status;
+        error.data = responseData;
+        throw error;
+      }
+
+      return { response, responseData };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  try {
+    const { response, responseData } = await executeWithRetry(requestFn, maxRetries, retryDelay);
+
+    const variables = { ...session.variables };
+    if (cfg.saveResponse !== false) {
+      const responseVariable = toText(cfg.responseVariable || 'http_response');
+      variables[responseVariable] = responseData;
+    }
+    if (cfg.saveStatusCode) {
+      const statusVar = toText(cfg.statusCodeVariable || 'http_status');
+      variables[statusVar] = response.status;
+    }
+
+    return {
+      nextBlockIndex: session.blockIndex + 1,
+      sessionPatch: { variables },
+      done: false,
+    };
+  } catch (error) {
+    const errorMessage = interpolate(toText(cfg.errorMessage || 'Erro ao fazer requisicao HTTP.'), session.variables);
+    if (errorMessage) {
+      await sendTextMessage(sock, jid, errorMessage);
+    }
+
+    const variables = { ...session.variables };
+    if (cfg.saveStatusCode && error?.status !== undefined) {
+      const statusVar = toText(cfg.statusCodeVariable || 'http_status');
+      variables[statusVar] = error.status;
+    }
+
+    if (onError === 'stop' || onError === 'end' || onError === 'halt') {
+      return {
+        nextBlockIndex: null,
+        sessionPatch: { status: SESSION_STATUS.ENDED, variables },
+        done: true,
+      };
+    }
+
+    return {
+      nextBlockIndex: session.blockIndex + 1,
+      sessionPatch: { variables },
+      done: false,
+    };
+  }
+}
+
+async function handleDataProcessor({ block, session, sock, jid }) {
+  const cfg = block.config ?? {};
+  const sourceVariable = toText(cfg.sourceVariable);
+  const targetVariable = toText(cfg.outputVariable || sourceVariable || 'data_processor_output');
+  const onError = toText(cfg.onError || 'continue').toLowerCase();
+
+  const sourceValue = sourceVariable ? session.variables[sourceVariable] : undefined;
+
+  try {
+    const transformedValue = applyDataTransform(sourceValue, cfg, session.variables);
+    return {
+      nextBlockIndex: session.blockIndex + 1,
+      sessionPatch: {
+        variables: {
+          ...session.variables,
+          [targetVariable]: transformedValue,
+        },
+      },
+      done: false,
+    };
+  } catch (error) {
+    const errorMessage = interpolate(toText(cfg.errorMessage || 'Erro ao processar dados.'), session.variables);
+    if (errorMessage) {
+      await sendTextMessage(sock, jid, errorMessage);
+    }
+
+    if (onError === 'stop' || onError === 'end' || onError === 'halt') {
+      return {
+        nextBlockIndex: null,
+        sessionPatch: { status: SESSION_STATUS.ENDED },
+        done: true,
+      };
+    }
+
+    return {
+      nextBlockIndex: session.blockIndex + 1,
+      sessionPatch: {},
+      done: false,
+    };
+  }
+}
+
+async function handleSendReaction({ block, session, sock, jid, runtime }) {
+  const cfg = block.config ?? {};
+  const emoji = interpolate(toText(cfg.emoji || cfg.reaction || cfg.text), session.variables);
+  if (!emoji) {
+    return { nextBlockIndex: session.blockIndex + 1, sessionPatch: {}, done: false };
+  }
+
+  const targetKey = runtime?.incoming?.messageKey || session.variables[INTERNAL_VAR.LAST_INCOMING_MESSAGE_KEY];
+  if (!targetKey || !targetKey.id) {
+    console.warn('[send-reaction] Nenhuma message key disponivel para enviar reacao.');
+    return { nextBlockIndex: session.blockIndex + 1, sessionPatch: {}, done: false };
+  }
+
+  await sock.sendMessage(jid, {
+    react: {
+      text: emoji,
+      key: targetKey,
+    },
+  });
+
+  const removeDelay = Math.max(
+    0,
+    toNumber(cfg.removeAfterDelay ?? cfg.removeDelay ?? cfg.removeAfterMs ?? cfg.delayMs, 0)
+  );
+  const shouldRemove = cfg.removeAfter === true || cfg.removeReaction === true || removeDelay > 0;
+
+  if (shouldRemove && removeDelay > 0) {
+    setTimeout(() => {
+      sock.sendMessage(jid, {
+        react: {
+          text: '',
+          key: targetKey,
+        },
+      }).catch(() => {});
+    }, removeDelay);
+  }
+
+  return { nextBlockIndex: session.blockIndex + 1, sessionPatch: {}, done: false };
 }
 
 async function handleCondition({ block, session, flow, sock, jid }) {
@@ -387,6 +917,11 @@ export const HANDLERS = {
   [BLOCK_TYPE.INITIAL_MESSAGE]: handleInitialMessage,
   [BLOCK_TYPE.SEND_TEXT]: handleSendText,
   [BLOCK_TYPE.SEND_LIST]: handleSendList,
+  [BLOCK_TYPE.COMMAND_INPUT]: handleCommandInput,
+  [BLOCK_TYPE.MULTIPLE_CHOICE]: handleMultipleChoice,
+  [BLOCK_TYPE.HTTP_REQUEST]: handleHttpRequest,
+  [BLOCK_TYPE.DATA_PROCESSOR]: handleDataProcessor,
+  [BLOCK_TYPE.SEND_REACTION]: handleSendReaction,
   [BLOCK_TYPE.CONDITION]: handleCondition,
   [BLOCK_TYPE.IF_CONDITION]: handleIfCondition,
   [BLOCK_TYPE.ELSE_IF]: handleElseIf,

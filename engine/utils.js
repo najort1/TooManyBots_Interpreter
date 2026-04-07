@@ -4,7 +4,7 @@
  * Utilitários compartilhados pelo engine e handlers.
  * - safeParseJSON: parse seguro com fallback
  * - LRUCache: cache de tamanho fixo com evicção por TTL e LRU
- * - interpolate: substituição de variáveis em strings
+ * - interpolate: substituição de variáveis em strings (sessão + sistema)
  */
 
 /**
@@ -80,7 +80,53 @@ export class LRUCache {
 /**
  * Substitui placeholders {{variableName}} em uma string com variáveis da sessão.
  */
-export function interpolate(text, variables) {
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function getSystemInterpolationVariables(now = new Date()) {
+  const year = String(now.getFullYear());
+  const month = pad2(now.getMonth() + 1);
+  const day = pad2(now.getDate());
+  const hour = pad2(now.getHours());
+  const minute = pad2(now.getMinutes());
+  const second = pad2(now.getSeconds());
+  const timestampMs = String(now.getTime());
+  const unix = String(Math.floor(now.getTime() / 1000));
+  const date = `${year}-${month}-${day}`;
+  const time = `${hour}:${minute}:${second}`;
+  const datetime = `${date} ${time}`;
+
+  return {
+    year,
+    month,
+    day,
+    hour,
+    minute,
+    second,
+    timestamp: timestampMs,
+    unix,
+    date,
+    time,
+    datetime,
+    today: date,
+    now: datetime,
+    current_year: year,
+    current_month: month,
+    current_day: day,
+    ano: year,
+    mes: month,
+    dia: day,
+  };
+}
+
+export function interpolate(text, variables = {}) {
   if (typeof text !== 'string') return text;
-  return text.replace(/\{\{\s*\$?\s*([\w_]+)\s*\}\}/g, (_, key) => variables[key] ?? '');
+  const systemVars = getSystemInterpolationVariables(new Date());
+
+  return text.replace(/\{\{\s*\$?\s*([\w_]+)\s*\}\}/g, (_, key) => {
+    const value = variables[key] ?? systemVars[key] ?? '';
+    if (value == null) return '';
+    return String(value);
+  });
 }

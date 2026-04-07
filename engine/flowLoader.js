@@ -28,6 +28,8 @@ function normalizeRuntimeConfig(runtimeConfig = {}) {
   const sessionLimits = runtimeConfig.sessionLimits ?? {};
 
   return {
+    conversationMode: runtimeConfig.conversationMode ?? 'conversation',
+    interactionScope: runtimeConfig.interactionScope ?? 'all',
     startPolicy: runtimeConfig.startPolicy ?? 'allow-always',
     endBehavior: {
       sendClosingMessage: endBehavior.sendClosingMessage !== false,

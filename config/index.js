@@ -28,7 +28,13 @@ export const config = {
 
   testMode: true,
 
+  testTargetMode: 'contacts',
+
   testJid: '551111111111@s.whatsapp.net',
+
+  testJids: [],
+
+  groupWhitelistJids: [],
 
   debugMode: true,
 
@@ -38,30 +44,61 @@ export const config = {
 
 const USER_CONFIG_FILE = path.resolve('./config.user.json');
 
+function toStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map(item => String(item ?? '').trim()).filter(Boolean);
+}
+
+function normalizeConfigShape(input) {
+  const normalized = { ...input };
+
+  normalized.testMode = Boolean(normalized.testMode);
+  normalized.testTargetMode = String(normalized.testTargetMode ?? 'contacts');
+  normalized.testJid = String(normalized.testJid ?? '').trim();
+  normalized.testJids = toStringArray(normalized.testJids);
+  normalized.groupWhitelistJids = toStringArray(normalized.groupWhitelistJids);
+
+  if (normalized.testMode && normalized.testJid && !normalized.testJids.includes(normalized.testJid)) {
+    normalized.testJids = [normalized.testJid, ...normalized.testJids];
+  }
+
+  if (!normalized.testMode) {
+    normalized.testJids = [];
+  }
+
+  return normalized;
+}
+
+function sanitizeConfigForSave(input) {
+  const { __startupChoice, ...rest } = input;
+  return normalizeConfigShape(rest);
+}
+
 export function loadSavedUserConfig() {
   if (!fs.existsSync(USER_CONFIG_FILE)) return null;
   try {
     const raw = fs.readFileSync(USER_CONFIG_FILE, 'utf-8');
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== 'object') return null;
-    return parsed;
+    return normalizeConfigShape(parsed);
   } catch {
     return null;
   }
 }
 
 export function saveUserConfig(userConfig) {
-  fs.writeFileSync(USER_CONFIG_FILE, JSON.stringify(userConfig, null, 2), 'utf-8');
+  const payload = sanitizeConfigForSave(userConfig);
+  fs.writeFileSync(USER_CONFIG_FILE, JSON.stringify(payload, null, 2), 'utf-8');
 }
 
 export async function getConfig({ interactive = true } = {}) {
   const saved = loadSavedUserConfig();
   if (saved && !interactive) {
-    return { ...config, ...saved };
+    return normalizeConfigShape({ ...config, ...saved });
   }
 
   if (!interactive) {
-    return { ...config };
+    return normalizeConfigShape({ ...config });
   }
 
   try {
@@ -70,9 +107,9 @@ export async function getConfig({ interactive = true } = {}) {
 
     const chosen = await runConfigWizard({
       projectRoot,
-      defaults: { ...config, ...(saved ?? {}) },
+      defaults: normalizeConfigShape({ ...config, ...(saved ?? {}) }),
       hasSavedConfig: Boolean(saved),
-      onUseSavedConfig: () => ({ ...config, ...saved }),
+      onUseSavedConfig: () => normalizeConfigShape({ ...config, ...saved, __startupChoice: 'use_previous' }),
     });
 
     if (!chosen) {
@@ -80,7 +117,7 @@ export async function getConfig({ interactive = true } = {}) {
     }
 
     saveUserConfig(chosen);
-    return chosen;
+    return normalizeConfigShape(chosen);
   } catch (err) {
     console.error('❌ Falha ao obter configuração interativa:', err);
     throw err;
