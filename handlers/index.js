@@ -284,7 +284,7 @@ function shouldSendCommandInvalidMessage(message, cfg, parseResult) {
     if (extracted.startsWith(normalizedCommand)) return true;
   }
 
-  return normalizedMessage.startsWith('/');
+  return false;
 }
 
 async function executeWithRetry(executor, maxRetries, retryDelay) {
@@ -550,7 +550,7 @@ async function handleMultipleChoice({ block, session, sock, jid }) {
   };
 }
 
-async function handleHttpRequest({ block, session, sock, jid }) {
+async function handleHttpRequest({ block, session, sock, jid, flow }) {
   const cfg = block.config ?? {};
   const method = toText(cfg.method || 'GET').toUpperCase();
   const url = interpolate(toText(cfg.url), session.variables);
@@ -621,7 +621,9 @@ async function handleHttpRequest({ block, session, sock, jid }) {
       done: false,
     };
   } catch (error) {
-    const errorMessage = interpolate(toText(cfg.errorMessage || 'Erro ao fazer requisicao HTTP.'), session.variables);
+    const hasCustomErrorMessage = Object.prototype.hasOwnProperty.call(cfg, 'errorMessage');
+    const errorTemplate = hasCustomErrorMessage ? cfg.errorMessage : 'Erro ao fazer requisicao HTTP.';
+    const errorMessage = interpolate(toText(errorTemplate), session.variables);
     logHandlerErrorEvent({
       block,
       session,
@@ -662,7 +664,7 @@ async function handleHttpRequest({ block, session, sock, jid }) {
   }
 }
 
-async function handleDataProcessor({ block, session, sock, jid }) {
+async function handleDataProcessor({ block, session, sock, jid, flow }) {
   const cfg = block.config ?? {};
   const sourceVariable = toText(cfg.sourceVariable);
   const targetVariable = toText(cfg.outputVariable || sourceVariable || 'data_processor_output');
@@ -683,7 +685,9 @@ async function handleDataProcessor({ block, session, sock, jid }) {
       done: false,
     };
   } catch (error) {
-    const errorMessage = interpolate(toText(cfg.errorMessage || 'Erro ao processar dados.'), session.variables);
+    const hasCustomErrorMessage = Object.prototype.hasOwnProperty.call(cfg, 'errorMessage');
+    const errorTemplate = hasCustomErrorMessage ? cfg.errorMessage : 'Erro ao processar dados.';
+    const errorMessage = interpolate(toText(errorTemplate), session.variables);
     logHandlerErrorEvent({
       block,
       session,
