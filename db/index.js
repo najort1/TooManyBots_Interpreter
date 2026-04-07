@@ -119,10 +119,24 @@ export async function initDb() {
        ORDER BY occurred_at DESC, id DESC
        LIMIT ?`
     ),
+    listConversationEventsByFlowPath: db.prepare(
+      `SELECT id, occurred_at, event_type, direction, jid, flow_path, message_text, metadata
+       FROM conversation_events
+       WHERE flow_path = ?
+       ORDER BY occurred_at DESC, id DESC
+       LIMIT ?`
+    ),
     listConversationEventsSince: db.prepare(
       `SELECT id, occurred_at, event_type, direction, jid, flow_path, message_text, metadata
        FROM conversation_events
        WHERE occurred_at > ?
+       ORDER BY occurred_at ASC, id ASC
+       LIMIT ?`
+    ),
+    listConversationEventsSinceByFlowPath: db.prepare(
+      `SELECT id, occurred_at, event_type, direction, jid, flow_path, message_text, metadata
+       FROM conversation_events
+       WHERE flow_path = ? AND occurred_at > ?
        ORDER BY occurred_at ASC, id ASC
        LIMIT ?`
     ),
@@ -141,16 +155,62 @@ export async function initDb() {
        FROM conversation_sessions
        WHERE started_at >= ? AND started_at < ?`
     ),
+    countStartedSessionsInRangeByFlowPath: db.prepare(
+      `SELECT COUNT(*) AS total
+       FROM conversation_sessions
+       WHERE started_at >= ? AND started_at < ? AND flow_path = ?`
+    ),
     countEndedByReasonInRange: db.prepare(
       `SELECT COUNT(*) AS total
        FROM conversation_sessions
        WHERE ended_at >= ? AND ended_at < ? AND end_reason = ?`
+    ),
+    countEndedByReasonInRangeByFlowPath: db.prepare(
+      `SELECT COUNT(*) AS total
+       FROM conversation_sessions
+       WHERE ended_at >= ? AND ended_at < ? AND end_reason = ? AND flow_path = ?`
     ),
     avgEndedDurationInRange: db.prepare(
       `SELECT AVG(ended_at - started_at) AS avgDurationMs
        FROM conversation_sessions
        WHERE ended_at IS NOT NULL
          AND ended_at >= ? AND ended_at < ?`
+    ),
+    avgEndedDurationInRangeByFlowPath: db.prepare(
+      `SELECT AVG(ended_at - started_at) AS avgDurationMs
+       FROM conversation_sessions
+       WHERE ended_at IS NOT NULL
+         AND ended_at >= ? AND ended_at < ? AND flow_path = ?`
+    ),
+    countOpenSessions: db.prepare(
+      `SELECT COUNT(*) AS total
+       FROM conversation_sessions
+       WHERE ended_at IS NULL`
+    ),
+    countOpenSessionsByFlowPath: db.prepare(
+      `SELECT COUNT(*) AS total
+       FROM conversation_sessions
+       WHERE ended_at IS NULL AND flow_path = ?`
+    ),
+    listStartedSessionsInRange: db.prepare(
+      `SELECT started_at
+       FROM conversation_sessions
+       WHERE started_at >= ? AND started_at < ?`
+    ),
+    listStartedSessionsInRangeByFlowPath: db.prepare(
+      `SELECT started_at
+       FROM conversation_sessions
+       WHERE started_at >= ? AND started_at < ? AND flow_path = ?`
+    ),
+    listEndedByReasonInRange: db.prepare(
+      `SELECT ended_at
+       FROM conversation_sessions
+       WHERE ended_at >= ? AND ended_at < ? AND end_reason = ?`
+    ),
+    listEndedByReasonInRangeByFlowPath: db.prepare(
+      `SELECT ended_at
+       FROM conversation_sessions
+       WHERE ended_at >= ? AND ended_at < ? AND end_reason = ? AND flow_path = ?`
     ),
   };
 
@@ -302,10 +362,27 @@ export function listConversationEvents(limit = 200) {
   return rows.map(mapConversationEventRow);
 }
 
+export function listConversationEventsByFlowPath(flowPath, limit = 200) {
+  const normalizedFlowPath = String(flowPath ?? '').trim();
+  if (!normalizedFlowPath) return [];
+  const normalizedLimit = Math.max(1, Math.min(1000, Number(limit) || 200));
+  const rows = stmts.listConversationEventsByFlowPath.all(normalizedFlowPath, normalizedLimit);
+  return rows.map(mapConversationEventRow);
+}
+
 export function listConversationEventsSince(sinceTimestamp, limit = 500) {
   const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 500));
   const since = Number(sinceTimestamp) || 0;
   const rows = stmts.listConversationEventsSince.all(since, normalizedLimit);
+  return rows.map(mapConversationEventRow);
+}
+
+export function listConversationEventsSinceByFlowPath(flowPath, sinceTimestamp, limit = 500) {
+  const normalizedFlowPath = String(flowPath ?? '').trim();
+  if (!normalizedFlowPath) return [];
+  const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 500));
+  const since = Number(sinceTimestamp) || 0;
+  const rows = stmts.listConversationEventsSinceByFlowPath.all(normalizedFlowPath, since, normalizedLimit);
   return rows.map(mapConversationEventRow);
 }
 
@@ -343,13 +420,23 @@ export function clearActiveSessions() {
   return active;
 }
 
-export function getConversationDashboardStats({ from, to }) {
+export function getConversationDashboardStats({ from, to, flowPath = '' }) {
   const fromTs = Number(from) || 0;
   const toTs = Number(to) || Date.now();
+  const normalizedFlowPath = String(flowPath ?? '').trim();
 
-  const started = stmts.countStartedSessionsInRange.get(fromTs, toTs)?.total ?? 0;
-  const abandoned = stmts.countEndedByReasonInRange.get(fromTs, toTs, 'timeout')?.total ?? 0;
-  const avgDurationMs = stmts.avgEndedDurationInRange.get(fromTs, toTs)?.avgDurationMs ?? 0;
+  const started = normalizedFlowPath
+    ? (stmts.countStartedSessionsInRangeByFlowPath.get(fromTs, toTs, normalizedFlowPath)?.total ?? 0)
+    : (stmts.countStartedSessionsInRange.get(fromTs, toTs)?.total ?? 0);
+  const abandoned = normalizedFlowPath
+    ? (stmts.countEndedByReasonInRangeByFlowPath.get(fromTs, toTs, 'timeout', normalizedFlowPath)?.total ?? 0)
+    : (stmts.countEndedByReasonInRange.get(fromTs, toTs, 'timeout')?.total ?? 0);
+  const avgDurationMs = normalizedFlowPath
+    ? (stmts.avgEndedDurationInRangeByFlowPath.get(fromTs, toTs, normalizedFlowPath)?.avgDurationMs ?? 0)
+    : (stmts.avgEndedDurationInRange.get(fromTs, toTs)?.avgDurationMs ?? 0);
+  const activeSessions = normalizedFlowPath
+    ? (stmts.countOpenSessionsByFlowPath.get(normalizedFlowPath)?.total ?? 0)
+    : (stmts.countOpenSessions.get()?.total ?? 0);
 
   return {
     conversationsStarted: Number(started) || 0,
@@ -358,8 +445,50 @@ export function getConversationDashboardStats({ from, to }) {
       ? Number(((Number(abandoned) || 0) / Number(started)).toFixed(4))
       : 0,
     averageDurationMs: Number(avgDurationMs) || 0,
-    activeSessions: getActiveSessions().length,
+    activeSessions: Number(activeSessions) || 0,
   };
+}
+
+export function getConversationEndedByReasonCount({ from, to, endReason, flowPath = '' }) {
+  const fromTs = Number(from) || 0;
+  const toTs = Number(to) || Date.now();
+  const reason = String(endReason ?? '').trim();
+  if (!reason) return 0;
+
+  const normalizedFlowPath = String(flowPath ?? '').trim();
+  if (normalizedFlowPath) {
+    return Number(
+      stmts.countEndedByReasonInRangeByFlowPath.get(fromTs, toTs, reason, normalizedFlowPath)?.total ?? 0
+    ) || 0;
+  }
+
+  return Number(stmts.countEndedByReasonInRange.get(fromTs, toTs, reason)?.total ?? 0) || 0;
+}
+
+export function listConversationSessionStarts({ from, to, flowPath = '' }) {
+  const fromTs = Number(from) || 0;
+  const toTs = Number(to) || Date.now();
+  const normalizedFlowPath = String(flowPath ?? '').trim();
+
+  const rows = normalizedFlowPath
+    ? stmts.listStartedSessionsInRangeByFlowPath.all(fromTs, toTs, normalizedFlowPath)
+    : stmts.listStartedSessionsInRange.all(fromTs, toTs);
+
+  return rows.map(row => Number(row.started_at) || 0).filter(Boolean);
+}
+
+export function listConversationSessionEndsByReason({ from, to, endReason, flowPath = '' }) {
+  const fromTs = Number(from) || 0;
+  const toTs = Number(to) || Date.now();
+  const reason = String(endReason ?? '').trim();
+  if (!reason) return [];
+
+  const normalizedFlowPath = String(flowPath ?? '').trim();
+  const rows = normalizedFlowPath
+    ? stmts.listEndedByReasonInRangeByFlowPath.all(fromTs, toTs, reason, normalizedFlowPath)
+    : stmts.listEndedByReasonInRange.all(fromTs, toTs, reason);
+
+  return rows.map(row => Number(row.ended_at) || 0).filter(Boolean);
 }
 
 export function onConversationEvent(listener) {

@@ -7,7 +7,7 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 
-import { initDb, addConversationEvent, onConversationEvent } from './db/index.js';
+import { initDb, addConversationEvent, onConversationEvent, listConversationEvents } from './db/index.js';
 import { useSqliteAuthState } from './db/authState.js';
 import { loadFlow } from './engine/flowLoader.js';
 import { parseMessage } from './engine/messageParser.js';
@@ -182,6 +182,30 @@ function toJidSet(values = []) {
   return set;
 }
 
+function isUserJid(jid) {
+  return String(jid ?? '').endsWith('@s.whatsapp.net');
+}
+
+function isGroupJid(jid) {
+  return String(jid ?? '').endsWith('@g.us');
+}
+
+function isSelectableTestTargetJid(jid) {
+  return isUserJid(jid) || isGroupJid(jid);
+}
+
+function normalizeManualTargetJid(raw) {
+  const value = String(raw ?? '').trim();
+  if (!value) return '';
+  const atIndex = value.lastIndexOf('@');
+  if (atIndex <= 0 || atIndex === value.length - 1) return '';
+  const local = value.slice(0, atIndex).trim();
+  const domain = value.slice(atIndex + 1).trim().toLowerCase();
+  if (!local) return '';
+  if (domain !== 's.whatsapp.net' && domain !== 'g.us') return '';
+  return `${local}@${domain}`;
+}
+
 function getAllowedTestJids(currentConfig) {
   const testJids = Array.isArray(currentConfig.testJids) ? currentConfig.testJids : [];
   const set = toJidSet(testJids);
@@ -205,7 +229,7 @@ function mergeContactCacheEntry(contactCache, input) {
   if (!input || typeof input !== 'object') return;
 
   const jid = toJidString(input.jid) || toJidString(input.id);
-  if (!jid || !jid.endsWith('@s.whatsapp.net')) return;
+  if (!jid || !isUserJid(jid)) return;
 
   const existing = contactCache.get(jid) ?? { jid, name: jid };
   const nextName = formatNameOrFallback(
@@ -248,7 +272,7 @@ async function waitForContactCacheWarmup(contactCache, timeoutMs = 7000) {
 
 async function fetchSelectableContacts(contactCache) {
   const contacts = Array.from(contactCache.values())
-    .filter(item => item.jid.endsWith('@s.whatsapp.net'))
+    .filter(item => isUserJid(item.jid))
     .sort((a, b) => a.name.localeCompare(b.name));
   return contacts;
 }
@@ -261,10 +285,149 @@ async function fetchSelectableGroups(sock) {
       name: formatNameOrFallback(group?.subject, jid),
       participants: Array.isArray(group?.participants) ? group.participants.length : 0,
     }))
-    .filter(group => group.jid.endsWith('@g.us'))
+    .filter(group => isGroupJid(group.jid))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   return groups;
+}
+
+function extractKnownJidsFromConversationEvent(event) {
+  const result = new Set();
+  const candidates = [
+    toJidString(event?.jid),
+    toJidString(event?.metadata?.actorJid),
+    toJidString(event?.metadata?.chatJid),
+  ];
+  for (const candidate of candidates) {
+    if (isSelectableTestTargetJid(candidate)) {
+      result.add(candidate);
+    }
+  }
+  return Array.from(result);
+}
+
+function fetchSavedTestTargetJidsFromDb(contactCache, limit = 2000) {
+  const events = listConversationEvents(limit);
+  const map = new Map();
+  for (const event of events) {
+    const knownJids = extractKnownJidsFromConversationEvent(event);
+    for (const jid of knownJids) {
+      const knownName = contactCache.get(jid)?.name || jid;
+      map.set(jid, knownName);
+    }
+  }
+  return Array.from(map.entries())
+    .map(([jid, name]) => ({ jid, name }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function extractSelectableJidsFromMessage(msg) {
+  const candidates = [
+    toJidString(msg?.key?.remoteJid),
+    toJidString(msg?.key?.senderPn),
+    toJidString(msg?.key?.participant),
+    toJidString(msg?.key?.participantPn),
+  ];
+  const result = new Set();
+  for (const candidate of candidates) {
+    if (isSelectableTestTargetJid(candidate)) {
+      result.add(candidate);
+    }
+  }
+  return Array.from(result);
+}
+
+function subscribeToRealtimeJidDiscovery({ sock, contactCache, onDiscoveredJid }) {
+  if (!sock?.ev || typeof onDiscoveredJid !== 'function') return () => {};
+  const unsubscribeFns = [];
+
+  const listen = (eventName, handler) => {
+    if (typeof sock.ev.on !== 'function') return;
+    sock.ev.on(eventName, handler);
+    unsubscribeFns.push(() => {
+      if (typeof sock.ev.off === 'function') {
+        sock.ev.off(eventName, handler);
+        return;
+      }
+      if (typeof sock.ev.removeListener === 'function') {
+        sock.ev.removeListener(eventName, handler);
+      }
+    });
+  };
+
+  const pushJid = jid => {
+    const normalized = toJidString(jid);
+    if (!isSelectableTestTargetJid(normalized)) return;
+    onDiscoveredJid(normalized);
+  };
+
+  listen('messages.upsert', ({ messages }) => {
+    if (!Array.isArray(messages)) return;
+    for (const msg of messages) {
+      const discovered = extractSelectableJidsFromMessage(msg);
+      for (const jid of discovered) {
+        if (isUserJid(jid)) {
+          mergeContactCacheEntry(contactCache, {
+            id: jid,
+            notify: msg?.pushName,
+            verifiedName: msg?.verifiedBizName,
+          });
+        }
+        pushJid(jid);
+      }
+    }
+  });
+
+  listen('contacts.upsert', contacts => {
+    if (!Array.isArray(contacts)) return;
+    mergeContactList(contactCache, contacts);
+    for (const contact of contacts) {
+      pushJid(toJidString(contact?.id) || toJidString(contact?.jid));
+    }
+  });
+
+  listen('contacts.update', contacts => {
+    if (!Array.isArray(contacts)) return;
+    mergeContactList(contactCache, contacts);
+    for (const contact of contacts) {
+      pushJid(toJidString(contact?.id) || toJidString(contact?.jid));
+    }
+  });
+
+  listen('chats.upsert', chats => {
+    if (!Array.isArray(chats)) return;
+    mergeChatsIntoContactCache(contactCache, chats);
+    for (const chat of chats) {
+      pushJid(toJidString(chat?.id) || toJidString(chat?.jid));
+    }
+  });
+
+  listen('chats.update', chats => {
+    if (!Array.isArray(chats)) return;
+    mergeChatsIntoContactCache(contactCache, chats);
+    for (const chat of chats) {
+      pushJid(toJidString(chat?.id) || toJidString(chat?.jid));
+    }
+  });
+
+  const removeConversationListener = onConversationEvent(event => {
+    const discovered = extractKnownJidsFromConversationEvent(event);
+    for (const jid of discovered) {
+      pushJid(jid);
+    }
+  });
+  unsubscribeFns.push(removeConversationListener);
+
+  return () => {
+    while (unsubscribeFns.length > 0) {
+      const fn = unsubscribeFns.pop();
+      try {
+        fn?.();
+      } catch {
+        // ignore cleanup errors
+      }
+    }
+  };
 }
 
 function isDevelopmentMode(currentConfig) {
@@ -376,7 +539,8 @@ function normalizeRuntimeInfo() {
   const flowFile = path.basename(String(config?.flowPath ?? ''));
   const runtimeMode = String(config?.runtimeMode ?? RUNTIME_MODE.PRODUCTION);
   const mode = currentFlow?.runtimeConfig?.conversationMode === 'command' ? 'command' : 'conversation';
-  return { flowFile, mode, runtimeMode };
+  const flowPath = currentFlow?.flowPath ?? path.resolve(String(config?.flowPath ?? ''));
+  return { flowFile, mode, runtimeMode, flowPath };
 }
 
 async function startDashboardServer() {
@@ -587,56 +751,215 @@ async function configureRuntimeAccessSelectors(sock, flow, currentConfig, contac
     const shouldAskTestTargets = shouldReconfigureNow || !hasSavedTestTargets;
 
     if (shouldAskTestTargets) {
-      await waitForContactCacheWarmup(contactCache, 7000);
-      const contacts = await fetchSelectableContacts(contactCache);
-      const groups = await fetchSelectableGroups(sock);
+      const ACTION_REFRESH = '__refresh_realtime__';
+      const ACTION_MANUAL = '__manual_jid_entry__';
+      const selectedSet = getAllowedTestJids(currentConfig);
+      const discoveredDuringSelection = new Set();
 
-      console.log(`[Setup] Alvos de test mode: ${contacts.length} contato(s), ${groups.length} grupo(s)`);
-
-      if (contacts.length === 0 && groups.length === 0) {
-        console.warn('Nenhum contato/grupo encontrado para configurar test mode restrito.');
-        nextConfig.testMode = false;
-        nextConfig.testJid = '';
-        nextConfig.testJids = [];
-      } else {
-        const defaults = Array.from(getAllowedTestJids(currentConfig));
-        const choices = [];
-
-        if (contacts.length > 0) {
-          choices.push(new inquirer.Separator('--- Contatos ---'));
-          for (const contact of contacts) {
-            choices.push({
-              name: `${contact.name} - ${contact.jid}`,
-              value: contact.jid,
-              checked: defaults.includes(contact.jid),
-            });
+      const stopRealtimeDiscovery = subscribeToRealtimeJidDiscovery({
+        sock,
+        contactCache,
+        onDiscoveredJid: jid => {
+          if (isSelectableTestTargetJid(jid)) {
+            discoveredDuringSelection.add(jid);
           }
-        }
+        },
+      });
 
-        if (groups.length > 0) {
-          choices.push(new inquirer.Separator('--- Grupos ---'));
-          for (const group of groups) {
-            choices.push({
-              name: `${group.name} (${group.participants} participantes) - ${group.jid}`,
-              value: group.jid,
-              checked: defaults.includes(group.jid),
-            });
+      try {
+        await waitForContactCacheWarmup(contactCache, 7000);
+
+        while (true) {
+          const contacts = await fetchSelectableContacts(contactCache);
+          let groups = [];
+          try {
+            groups = await fetchSelectableGroups(sock);
+          } catch {
+            groups = [];
           }
+
+          const savedFromDb = fetchSavedTestTargetJidsFromDb(contactCache);
+          for (const item of savedFromDb) {
+            discoveredDuringSelection.add(item.jid);
+          }
+
+          const knownContactJids = new Set(contacts.map(item => item.jid));
+          const knownGroupJids = new Set(groups.map(item => item.jid));
+          const additionalFromDbUsers = [];
+          const additionalFromDbGroups = [];
+
+          for (const entry of savedFromDb) {
+            if (isUserJid(entry.jid) && !knownContactJids.has(entry.jid)) {
+              additionalFromDbUsers.push({
+                jid: entry.jid,
+                name: entry.name || entry.jid,
+              });
+            } else if (isGroupJid(entry.jid) && !knownGroupJids.has(entry.jid)) {
+              additionalFromDbGroups.push({
+                jid: entry.jid,
+                name: entry.name || entry.jid,
+                participants: 0,
+              });
+            }
+          }
+
+          const additionalRealtimeUsers = [];
+          const additionalRealtimeGroups = [];
+          for (const jid of discoveredDuringSelection) {
+            if (isUserJid(jid) && !knownContactJids.has(jid) && !additionalFromDbUsers.some(item => item.jid === jid)) {
+              additionalRealtimeUsers.push({
+                jid,
+                name: contactCache.get(jid)?.name || jid,
+              });
+            } else if (isGroupJid(jid) && !knownGroupJids.has(jid) && !additionalFromDbGroups.some(item => item.jid === jid)) {
+              additionalRealtimeGroups.push({
+                jid,
+                name: jid,
+                participants: 0,
+              });
+            }
+          }
+
+          const allUsers = [...contacts, ...additionalFromDbUsers, ...additionalRealtimeUsers]
+            .sort((a, b) => a.name.localeCompare(b.name));
+          const allGroups = [...groups, ...additionalFromDbGroups, ...additionalRealtimeGroups]
+            .sort((a, b) => a.name.localeCompare(b.name));
+
+          console.log(
+            `[Setup] Alvos de test mode: ${allUsers.length} contato(s), ${allGroups.length} grupo(s), ${savedFromDb.length} JID(s) recuperado(s) do banco`
+          );
+
+          const choices = [];
+          if (allUsers.length > 0) {
+            choices.push(new inquirer.Separator('--- Contatos ---'));
+            for (const contact of allUsers) {
+              choices.push({
+                name: `${contact.name} - ${contact.jid}`,
+                value: contact.jid,
+                checked: selectedSet.has(contact.jid),
+              });
+            }
+          }
+
+          if (allGroups.length > 0) {
+            choices.push(new inquirer.Separator('--- Grupos ---'));
+            for (const group of allGroups) {
+              const participantsLabel = Number(group.participants) > 0
+                ? `${group.participants} participantes`
+                : 'participantes desconhecidos';
+              choices.push({
+                name: `${group.name} (${participantsLabel}) - ${group.jid}`,
+                value: group.jid,
+                checked: selectedSet.has(group.jid),
+              });
+            }
+          }
+
+          choices.push(new inquirer.Separator('--- Acoes ---'));
+          choices.push({
+            name: 'Atualizar lista com JIDs detectados em tempo real',
+            value: ACTION_REFRESH,
+          });
+          choices.push({
+            name: 'Adicionar JID manualmente (fallback)',
+            value: ACTION_MANUAL,
+          });
+
+          const { selectedTestTargets } = await inquirer.prompt([
+            {
+              type: 'checkbox',
+              name: 'selectedTestTargets',
+              message: 'Selecione contatos/grupos permitidos no modo Teste restrito:',
+              choices,
+              pageSize: 24,
+              validate: selected => {
+                const filtered = selected.filter(item => item !== ACTION_REFRESH && item !== ACTION_MANUAL);
+                if (
+                  filtered.length > 0 ||
+                  selected.includes(ACTION_MANUAL) ||
+                  selected.includes(ACTION_REFRESH)
+                ) {
+                  return true;
+                }
+                return 'Selecione pelo menos 1 alvo para teste, adicione manualmente, ou use Atualizar.';
+              },
+            },
+          ]);
+
+          const hasRefreshAction = selectedTestTargets.includes(ACTION_REFRESH);
+          const hasManualAction = selectedTestTargets.includes(ACTION_MANUAL);
+          const filteredSelection = selectedTestTargets.filter(item => item !== ACTION_REFRESH && item !== ACTION_MANUAL);
+
+          // Em refresh puro, preserva selecao anterior e apenas remonta a lista.
+          if (hasRefreshAction && !hasManualAction && filteredSelection.length === 0) {
+            console.log(
+              `[Setup] Atualizacao solicitada. JIDs observados em tempo real nesta tela: ${discoveredDuringSelection.size}`
+            );
+            continue;
+          }
+
+          selectedSet.clear();
+          for (const jid of filteredSelection) {
+            selectedSet.add(jid);
+          }
+
+          if (hasManualAction) {
+            const { manualJidsRaw } = await inquirer.prompt([
+              {
+                type: 'input',
+                name: 'manualJidsRaw',
+                message:
+                  'Digite 1+ JIDs (separados por virgula). Ex: 5511999999999@s.whatsapp.net, 120363025746111111@g.us',
+                validate: raw => {
+                  const parts = String(raw ?? '')
+                    .split(/[,\s;]+/)
+                    .map(item => item.trim())
+                    .filter(Boolean);
+                  if (parts.length === 0) return 'Informe pelo menos 1 JID.';
+                  const invalid = parts.filter(item => !normalizeManualTargetJid(item));
+                  if (invalid.length > 0) {
+                    return `JID invalido: ${invalid[0]}. Use @s.whatsapp.net (contato) ou @g.us (grupo).`;
+                  }
+                  return true;
+                },
+              },
+            ]);
+
+            const manualJids = String(manualJidsRaw ?? '')
+              .split(/[,\s;]+/)
+              .map(item => normalizeManualTargetJid(item))
+              .filter(Boolean);
+
+            for (const jid of manualJids) {
+              selectedSet.add(jid);
+              discoveredDuringSelection.add(jid);
+              if (isUserJid(jid)) {
+                mergeContactCacheEntry(contactCache, { id: jid });
+              }
+            }
+          }
+
+          if (hasRefreshAction) {
+            console.log(
+              `[Setup] Atualizacao solicitada. JIDs observados em tempo real nesta tela: ${discoveredDuringSelection.size}`
+            );
+            continue;
+          }
+
+          if (selectedSet.size === 0) {
+            console.warn('Nenhum alvo selecionado. Desativando test mode restrito.');
+            nextConfig.testMode = false;
+            nextConfig.testJid = '';
+            nextConfig.testJids = [];
+          } else {
+            const finalTargets = Array.from(selectedSet);
+            nextConfig.testJids = finalTargets;
+            nextConfig.testJid = finalTargets[0] ?? '';
+          }
+          break;
         }
-
-        const { selectedTestTargets } = await inquirer.prompt([
-          {
-            type: 'checkbox',
-            name: 'selectedTestTargets',
-            message: 'Selecione contatos/grupos permitidos no modo Teste restrito:',
-            choices,
-            pageSize: 22,
-            validate: selected => (selected.length > 0 ? true : 'Selecione pelo menos 1 alvo para teste.'),
-          },
-        ]);
-
-        nextConfig.testJids = selectedTestTargets;
-        nextConfig.testJid = selectedTestTargets[0] ?? '';
+      } finally {
+        stopRealtimeDiscovery();
       }
     }
   }

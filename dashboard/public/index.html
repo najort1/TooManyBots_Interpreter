@@ -224,6 +224,7 @@
   <script>
     // Configurações globais
     let currentMode = 'CONVERSATION'; // Padrão, atualizado no load
+    let currentFlowPath = '';
     let charts = {};
     let allLogs = [];
     
@@ -270,6 +271,7 @@
         const health = await healthRes.json();
         
         currentMode = health.mode === 'command' ? 'COMMAND' : 'CONVERSATION';
+        currentFlowPath = String(health.flowPath || '');
         els.botName.textContent = health.flowFile || 'Desconhecido';
         els.uptime.textContent = fmtUptime(health.uptimeMs || 0);
         
@@ -361,7 +363,7 @@
         
         // Carrega logs recentes se estivermos carregando inicial
         if (allLogs.length === 0) {
-          const logsRes = await fetch('/api/logs?limit=50');
+          const logsRes = await fetch(`/api/logs?limit=50&mode=${modeParam}`);
           const logsData = await logsRes.json();
           allLogs = (logsData.logs || []).reverse();
           renderLogs();
@@ -703,23 +705,28 @@
         }
 
         // Status List
+        const started = Number(stats.conversationsStarted || 0);
+        const completed = Number(stats.completedSessions || 0);
+        const abandoned = Number(stats.abandonedSessions || 0);
+        const conversionRate = started > 0 ? (completed / started) * 100 : 0;
+
         els.statusList.innerHTML = `
           <div class="grid grid-cols-2 gap-4">
             <div class="bg-slate-50 p-3 rounded border border-slate-100">
               <div class="text-xs text-slate-500 mb-1">Taxa de Conversão</div>
-              <div class="font-bold text-lg text-slate-800">28%</div>
+              <div class="font-bold text-lg text-slate-800">${conversionRate.toFixed(1)}%</div>
             </div>
             <div class="bg-slate-50 p-3 rounded border border-slate-100">
               <div class="text-xs text-slate-500 mb-1">Tempo Mediano</div>
               <div class="font-bold text-lg text-slate-800">${fmtDuration(stats.medianDurationMs || 38000)}</div>
             </div>
             <div class="bg-slate-50 p-3 rounded border border-slate-100">
-              <div class="text-xs text-slate-500 mb-1">Reengajamento</div>
-              <div class="font-bold text-lg text-slate-800">15%</div>
+              <div class="text-xs text-slate-500 mb-1">Concluídas</div>
+              <div class="font-bold text-lg text-slate-800">${completed}</div>
             </div>
             <div class="bg-slate-50 p-3 rounded border border-slate-100">
-              <div class="text-xs text-slate-500 mb-1">Retenção 24h</div>
-              <div class="font-bold text-lg text-slate-800">12%</div>
+              <div class="text-xs text-slate-500 mb-1">Abandonadas</div>
+              <div class="font-bold text-lg text-slate-800">${abandoned}</div>
             </div>
           </div>
         `;
@@ -770,6 +777,9 @@
         try {
           const data = JSON.parse(evt.data);
           if (data.type === 'event' && data.payload) {
+            if (currentFlowPath && data.payload.flowPath && data.payload.flowPath !== currentFlowPath) {
+              return;
+            }
             allLogs.push(data.payload);
             if (allLogs.length > 200) allLogs.shift();
             renderLogs();

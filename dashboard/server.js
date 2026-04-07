@@ -7,8 +7,13 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import {
   getConversationDashboardStats,
+  getConversationEndedByReasonCount,
+  listConversationSessionStarts,
+  listConversationSessionEndsByReason,
   listConversationEvents,
+  listConversationEventsByFlowPath,
   listConversationEventsSince,
+  listConversationEventsSinceByFlowPath,
 } from '../db/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -29,6 +34,75 @@ function sendJson(res, statusCode, payload) {
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(payload));
+}
+
+function normalizeFlowPath(value) {
+  return String(value ?? '').trim();
+}
+
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function toDateKeyLocal(ts) {
+  const d = new Date(Number(ts) || 0);
+  const y = d.getFullYear();
+  const m = pad2(d.getMonth() + 1);
+  const day = pad2(d.getDate());
+  return `${y}-${m}-${day}`;
+}
+
+function startOfDayTsLocal(date) {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+}
+
+function weekdayShortPtBr(date) {
+  const names = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
+  return names[date.getDay()] || 'Dia';
+}
+
+function buildWeeklyTrend({ now = new Date(), days = 7, startedTimestamps = [], abandonedTimestamps = [] } = {}) {
+  const safeDays = Math.max(1, Math.min(30, Number(days) || 7));
+  const todayStart = startOfDayTsLocal(now);
+  const firstDayStart = todayStart - (safeDays - 1) * 24 * 60 * 60 * 1000;
+
+  const buckets = new Map();
+  for (let i = 0; i < safeDays; i++) {
+    const dayStart = firstDayStart + i * 24 * 60 * 60 * 1000;
+    const key = toDateKeyLocal(dayStart);
+    buckets.set(key, {
+      date: weekdayShortPtBr(new Date(dayStart)),
+      started: 0,
+      abandoned: 0,
+    });
+  }
+
+  for (const ts of startedTimestamps) {
+    const key = toDateKeyLocal(ts);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.started += 1;
+  }
+
+  for (const ts of abandonedTimestamps) {
+    const key = toDateKeyLocal(ts);
+    const bucket = buckets.get(key);
+    if (bucket) bucket.abandoned += 1;
+  }
+
+  return [...buckets.values()];
+}
+
+function buildConversationFunnel({ started = 0, abandoned = 0, completed = 0 } = {}) {
+  const startedSafe = Math.max(0, Number(started) || 0);
+  const abandonedSafe = Math.max(0, Number(abandoned) || 0);
+  const nonAbandoned = Math.max(0, startedSafe - abandonedSafe);
+  const completedSafe = Math.max(0, Math.min(Number(completed) || 0, nonAbandoned));
+
+  return [
+    { step: 'start', count: startedSafe, label: 'Início' },
+    { step: 'retained', count: nonAbandoned, label: 'Sem Abandono' },
+    { step: 'completed', count: completedSafe, label: 'Concluídas' },
+  ];
 }
 
 function normalizeActorJidFromEvent(event) {
@@ -161,7 +235,8 @@ export class DashboardServer {
           status: 'ok',
           uptimeMs: Date.now() - this.startupTime,
           mode: info.mode || 'conversation',
-          flowFile: info.flowFile || 'unknown'
+          flowFile: info.flowFile || 'unknown',
+          flowPath: normalizeFlowPath(info.flowPath),
         });
         return;
       }
@@ -191,12 +266,16 @@ export class DashboardServer {
       }
 
       if (requestUrl.pathname === '/api/stats') {
-        const mode = requestUrl.searchParams.get('mode') || 'conversation';
+        const runtimeInfo = this.getRuntimeInfo();
+        const mode = requestUrl.searchParams.get('mode') || runtimeInfo.mode || 'conversation';
+        const flowPath = normalizeFlowPath(runtimeInfo.flowPath);
         const { start, end } = getTodayBounds(new Date());
         
         // Base stats from db
-        const baseStats = getConversationDashboardStats({ from: start, to: end });
-        const todayEvents = listConversationEventsSince(start, 10000);
+        const baseStats = getConversationDashboardStats({ from: start, to: end, flowPath });
+        const todayEvents = flowPath
+          ? listConversationEventsSinceByFlowPath(flowPath, start, 10000)
+          : listConversationEventsSince(start, 10000);
         
         const hourlyVolume = Array(24).fill(0);
         const userCounts = {};
@@ -216,9 +295,13 @@ export class DashboardServer {
             if (actorJid.endsWith('@g.us') || actorJid === 'status@broadcast') continue;
 
             if (!userCounts[actorJid]) {
-              userCounts[actorJid] = { count: 0, commands: {} };
+              userCounts[actorJid] = { count: 0, commands: {}, lastActivity: 0 };
             }
             userCounts[actorJid].count++;
+            userCounts[actorJid].lastActivity = Math.max(
+              userCounts[actorJid].lastActivity || 0,
+              Number(ev.occurredAt) || 0
+            );
             
             if (ev.messageText && ev.messageText.startsWith('/')) {
               totalCommands++;
@@ -246,6 +329,7 @@ export class DashboardServer {
               jid,
               name, 
               messageCount: data.count,
+              lastActivity: data.lastActivity || 0,
               totalCommands: Object.values(data.commands).reduce((a,b)=>a+b, 0),
               favoriteCommand: favCmd
             };
@@ -267,30 +351,40 @@ export class DashboardServer {
         }
 
         if (mode === 'conversation') {
+          const completedSessions =
+            getConversationEndedByReasonCount({ from: start, to: end, endReason: 'flow-complete', flowPath }) +
+            getConversationEndedByReasonCount({ from: start, to: end, endReason: 'end-conversation', flowPath });
+
+          const weekStart = start - (6 * 24 * 60 * 60 * 1000);
+          const weeklyStarted = listConversationSessionStarts({ from: weekStart, to: end, flowPath });
+          const weeklyAbandoned = listConversationSessionEndsByReason({
+            from: weekStart,
+            to: end,
+            endReason: 'timeout',
+            flowPath,
+          });
+
           sendJson(res, 200, {
             ...baseStats,
-            medianDurationMs: Math.max(0, baseStats.averageDurationMs - 5000),
+            completedSessions,
+            medianDurationMs: baseStats.averageDurationMs,
             hourlyVolume,
-            funnel: [
-              { step: "initial", count: baseStats.conversationsStarted || 0, label: "Início" },
-              { step: "menu", count: Math.floor((baseStats.conversationsStarted || 0) * 0.72), label: "Menu" },
-              { step: "data", count: Math.floor((baseStats.conversationsStarted || 0) * 0.45), label: "Dados" },
-              { step: "checkout", count: Math.floor((baseStats.conversationsStarted || 0) * 0.28), label: "Checkout" }
-            ],
+            funnel: buildConversationFunnel({
+              started: baseStats.conversationsStarted,
+              abandoned: baseStats.abandonedSessions,
+              completed: completedSessions,
+            }),
             topContacts: topUsers,
-            weeklyTrend: [
-              { date: "Seg", started: 45, abandoned: 13 },
-              { date: "Ter", started: 52, abandoned: 15 },
-              { date: "Qua", started: 38, abandoned: 10 },
-              { date: "Qui", started: 65, abandoned: 20 },
-              { date: "Sex", started: 48, abandoned: 12 },
-              { date: "Sab", started: 25, abandoned: 5 },
-              { date: "Dom", started: 20, abandoned: 3 }
-            ]
+            weeklyTrend: buildWeeklyTrend({
+              now: new Date(),
+              days: 7,
+              startedTimestamps: weeklyStarted,
+              abandonedTimestamps: weeklyAbandoned,
+            }),
           });
         } else {
           // Command mode
-          const info = this.getRuntimeInfo();
+          const info = runtimeInfo;
           sendJson(res, 200, {
             totalExecutions: totalCommands || baseStats.conversationsStarted || 0,
             avgLatencyMs: 245, // Mocked (requer interceptação no FlowLoader p/ APIs externas)
@@ -309,9 +403,17 @@ export class DashboardServer {
       }
 
       if (requestUrl.pathname === '/api/logs') {
+        const runtimeInfo = this.getRuntimeInfo();
+        const flowPath = normalizeFlowPath(runtimeInfo.flowPath);
         const limit = Math.max(1, Math.min(500, toInt(requestUrl.searchParams.get('limit'), 150)));
         const since = toInt(requestUrl.searchParams.get('since'), 0);
-        const logs = since > 0 ? listConversationEventsSince(since, limit) : listConversationEvents(limit);
+        const logs = flowPath
+          ? (since > 0
+              ? listConversationEventsSinceByFlowPath(flowPath, since, limit)
+              : listConversationEventsByFlowPath(flowPath, limit))
+          : (since > 0
+              ? listConversationEventsSince(since, limit)
+              : listConversationEvents(limit));
         sendJson(res, 200, { logs });
         return;
       }
