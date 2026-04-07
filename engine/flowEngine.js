@@ -6,7 +6,16 @@
  */
 
 import { HANDLERS } from '../handlers/index.js';
-import { getSession, createSession, updateSession, getActiveSessions } from '../db/index.js';
+import {
+  getSession,
+  createSession,
+  updateSession,
+  getActiveSessions,
+  deleteSession,
+  addConversationEvent,
+  createConversationSessionRecord,
+  finishConversationSessionRecord,
+} from '../db/index.js';
 import { LRUCache } from './utils.js';
 import { parseCommandInput } from './commandParser.js';
 import { resolveKeyword } from './resolvers/keywordResolver.js';
@@ -47,6 +56,18 @@ const PROCESSED_IDS = new LRUCache(ENGINE_LIMITS.PROCESSED_IDS_MAX, ENGINE_LIMIT
 
 function getRuntimeConfig(flow) {
   return flow?.runtimeConfig ?? {};
+}
+
+function formatErrorForEvent(err) {
+  if (!err) return 'Unknown error';
+  if (err instanceof Error) {
+    return `${err.name}: ${err.message}`;
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
 }
 
 function isCommandMode(flow) {
@@ -106,9 +127,18 @@ function getNumericInternalVar(session, key, fallback = 0) {
   return Number.isFinite(value) ? value : fallback;
 }
 
-function createOrResetSessionRuntimeState(jid, nowTs) {
+function createSessionId(jid, nowTs) {
+  return `${jid}:${nowTs}`;
+}
+
+function getSessionId(session) {
+  return String(session?.variables?.[INTERNAL_VAR.SESSION_ID] ?? '').trim();
+}
+
+function createOrResetSessionRuntimeState(jid, nowTs, flow) {
   createSession(jid);
   const session = getSession(jid);
+  const sessionId = createSessionId(jid, nowTs);
 
   updateSession(jid, {
     blockIndex: 0,
@@ -116,6 +146,7 @@ function createOrResetSessionRuntimeState(jid, nowTs) {
     status: SESSION_STATUS.ACTIVE,
     variables: {
       ...session.variables,
+      [INTERNAL_VAR.SESSION_ID]: sessionId,
       [INTERNAL_VAR.SESSION_STARTED_AT]: nowTs,
       [INTERNAL_VAR.SESSION_LAST_ACTIVITY_AT]: nowTs,
       [INTERNAL_VAR.SESSION_MESSAGE_COUNT]: 0,
@@ -124,10 +155,32 @@ function createOrResetSessionRuntimeState(jid, nowTs) {
     },
   });
 
+  createConversationSessionRecord({
+    sessionId,
+    jid,
+    flowPath: flow?.flowPath ?? '',
+    startedAt: nowTs,
+  });
+
+  addConversationEvent({
+    occurredAt: nowTs,
+    eventType: 'session-start',
+    direction: 'system',
+    jid,
+    flowPath: flow?.flowPath ?? '',
+    messageText: '',
+    metadata: { sessionId },
+  });
+
   return getSession(jid);
 }
 
-function endSession(jid, session, nowTs, reason) {
+function endSession(jid, session, nowTs, reason, flow) {
+  if (!session) return;
+  const startedAt = getNumericInternalVar(session, INTERNAL_VAR.SESSION_STARTED_AT, 0);
+  const sessionId = getSessionId(session);
+  const durationMs = startedAt > 0 ? Math.max(0, nowTs - startedAt) : 0;
+
   updateSession(jid, {
     status: SESSION_STATUS.ENDED,
     waitingFor: null,
@@ -136,6 +189,26 @@ function endSession(jid, session, nowTs, reason) {
       [INTERNAL_VAR.SESSION_LAST_ACTIVITY_AT]: nowTs,
       [INTERNAL_VAR.SESSION_ENDED_AT]: nowTs,
       [INTERNAL_VAR.SESSION_END_REASON]: reason,
+    },
+  });
+
+  finishConversationSessionRecord({
+    sessionId,
+    endedAt: nowTs,
+    endReason: reason,
+  });
+
+  addConversationEvent({
+    occurredAt: nowTs,
+    eventType: 'session-end',
+    direction: 'system',
+    jid,
+    flowPath: flow?.flowPath ?? '',
+    messageText: '',
+    metadata: {
+      reason,
+      sessionId,
+      durationMs,
     },
   });
 }
@@ -158,7 +231,7 @@ async function enforceSessionLimits(sock, jid, session, flow, nowTs) {
     if (limits.timeoutMessage) {
       await sock.sendMessage(jid, { text: limits.timeoutMessage });
     }
-    endSession(jid, session, nowTs, 'timeout');
+    endSession(jid, session, nowTs, 'timeout', flow);
     return { blocked: true, session: getSession(jid) };
   }
 
@@ -177,7 +250,7 @@ async function enforceSessionLimits(sock, jid, session, flow, nowTs) {
     if (limits.timeoutMessage) {
       await sock.sendMessage(jid, { text: limits.timeoutMessage });
     }
-    endSession(jid, session, nowTs, 'max-messages');
+    endSession(jid, session, nowTs, 'max-messages', flow);
     return { blocked: true, session: getSession(jid) };
   }
 
@@ -195,7 +268,7 @@ async function resolveSessionStartPolicy(sock, jid, session, flow, nowTs) {
   }
 
   if (!session) {
-    return { blocked: false, session: createOrResetSessionRuntimeState(jid, nowTs) };
+    return { blocked: false, session: createOrResetSessionRuntimeState(jid, nowTs, flow) };
   }
 
   if (session.status !== SESSION_STATUS.ENDED) {
@@ -224,7 +297,7 @@ async function resolveSessionStartPolicy(sock, jid, session, flow, nowTs) {
     }
   }
 
-  return { blocked: false, session: createOrResetSessionRuntimeState(jid, nowTs) };
+  return { blocked: false, session: createOrResetSessionRuntimeState(jid, nowTs, flow) };
 }
 
 /**
@@ -242,14 +315,30 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
   return executeWithLock(jid, async () => {
     const nowTs = Date.now();
     const commandMode = isCommandMode(flow);
+    const normalizedIncoming = String(message ?? '').trim();
+    const hasCommandPrefix = normalizedIncoming.startsWith('/');
     let session = getSession(jid);
     let commandCandidate = null;
 
-    if (commandMode && (!session || session.status === SESSION_STATUS.ENDED)) {
+    const shouldResolveCommandCandidate =
+      commandMode && (
+        !session ||
+        session.status === SESSION_STATUS.ENDED ||
+        (hasCommandPrefix && session.waitingFor == null)
+      );
+
+    if (shouldResolveCommandCandidate) {
       commandCandidate = findCommandCandidate(flow, message);
       if (!commandCandidate) {
+        if (hasCommandPrefix) {
+          console.log(`[CommandMode] comando sem match para ${jid}: "${normalizedIncoming}"`);
+        }
         return;
       }
+
+      console.log(
+        `[CommandMode] comando roteado para blockIndex ${commandCandidate.index} (${commandCandidate.blockId}) em ${jid}`
+      );
     }
 
     const startResolution = await resolveSessionStartPolicy(sock, jid, session, flow, nowTs);
@@ -282,6 +371,15 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
         if (!session) return;
       } catch (err) {
         console.error(`[handleIncoming] Erro em resolveKeywordWait para ${jid}:`, err);
+        addConversationEvent({
+          occurredAt: Date.now(),
+          eventType: 'engine-error',
+          direction: 'system',
+          jid,
+          flowPath: flow?.flowPath ?? '',
+          messageText: 'Erro em resolveKeywordWait',
+          metadata: { error: formatErrorForEvent(err) },
+        });
         return;
       }
     } else if (session.waitingFor === WAIT_TYPE.LIST) {
@@ -290,6 +388,15 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
         if (!session) return;
       } catch (err) {
         console.error(`[handleIncoming] Erro em resolveListWait para ${jid}:`, err);
+        addConversationEvent({
+          occurredAt: Date.now(),
+          eventType: 'engine-error',
+          direction: 'system',
+          jid,
+          flowPath: flow?.flowPath ?? '',
+          messageText: 'Erro em resolveListWait',
+          metadata: { error: formatErrorForEvent(err) },
+        });
         return;
       }
     } else if (session.waitingFor === WAIT_TYPE.MULTIPLE_CHOICE) {
@@ -298,6 +405,15 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
         if (!session) return;
       } catch (err) {
         console.error(`[handleIncoming] Erro em resolveMultipleChoiceWait para ${jid}:`, err);
+        addConversationEvent({
+          occurredAt: Date.now(),
+          eventType: 'engine-error',
+          direction: 'system',
+          jid,
+          flowPath: flow?.flowPath ?? '',
+          messageText: 'Erro em resolveMultipleChoiceWait',
+          metadata: { error: formatErrorForEvent(err) },
+        });
         return;
       }
     }
@@ -325,7 +441,7 @@ async function runEngine(sock, jid, session, flow, runtime = {}) {
 
     if (session.blockIndex >= flow.blocks.length) {
       console.log(`[Engine] ${jid} reached end of flow.`);
-      endSession(jid, session, Date.now(), 'flow-complete');
+      endSession(jid, session, Date.now(), 'flow-complete', flow);
       return;
     }
 
@@ -354,6 +470,20 @@ async function runEngine(sock, jid, session, flow, runtime = {}) {
       result = await handler({ block, session, sock, jid, flow, runtime });
     } catch (err) {
       console.error(`[Engine] Error in handler "${block.type}":`, err);
+      addConversationEvent({
+        occurredAt: Date.now(),
+        eventType: 'engine-error',
+        direction: 'system',
+        jid,
+        flowPath: flow?.flowPath ?? '',
+        messageText: `Erro no handler ${block.type}`,
+        metadata: {
+          blockId: block?.id ?? '',
+          blockType: block?.type ?? '',
+          blockName: block?.name ?? '',
+          error: formatErrorForEvent(err),
+        },
+      });
       return;
     }
 
@@ -366,7 +496,7 @@ async function runEngine(sock, jid, session, flow, runtime = {}) {
     session = getSession(jid);
 
     if (result.done) {
-      endSession(jid, session, Date.now(), 'end-conversation');
+      endSession(jid, session, Date.now(), 'end-conversation', flow);
       return;
     }
 
@@ -443,10 +573,26 @@ export function startSessionCleanup(sock, flow) {
             if (limits.timeoutMessage) {
               await sock.sendMessage(session.jid, { text: limits.timeoutMessage }).catch(console.error);
             }
-            endSession(session.jid, syncSession, nowTs, 'timeout');
+            endSession(session.jid, syncSession, nowTs, 'timeout', flow);
           }
         });
       }
     }
   }, 15000); // 15 seconds intervals
+}
+
+export async function resetActiveSessions(reason = 'manual-reload', flow = null) {
+  const activeSessions = getActiveSessions();
+  const nowTs = Date.now();
+
+  for (const session of activeSessions) {
+    await executeWithLock(session.jid, async () => {
+      const current = getSession(session.jid);
+      if (!current || current.status !== SESSION_STATUS.ACTIVE) return;
+      endSession(session.jid, current, nowTs, reason, flow);
+      deleteSession(session.jid);
+    });
+  }
+
+  return activeSessions.length;
 }

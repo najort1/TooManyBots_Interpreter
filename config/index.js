@@ -1,45 +1,29 @@
-/**
- * config/index.js
- *
- * Configuração central. Edite estes valores para personalizar o bot.
- */
-
-import fs from 'fs';
+﻿import fs from 'fs';
 import path from 'path';
 
+export const RUNTIME_MODE = {
+  PRODUCTION: 'production',
+  DEVELOPMENT: 'development',
+  RESTRICTED_TEST: 'restricted-test',
+};
+
+const MODE_LOG_LEVEL = {
+  [RUNTIME_MODE.PRODUCTION]: 'warn',
+  [RUNTIME_MODE.DEVELOPMENT]: 'debug',
+  [RUNTIME_MODE.RESTRICTED_TEST]: 'info',
+};
+
+const VALID_MODES = new Set(Object.values(RUNTIME_MODE));
+
 export const config = {
-  // Caminho para o arquivo de fluxo .tmb (relativo à raiz do projeto)
   flowPath: './bots/flow.tmb',
-
-  // Nível de log: 'silent' | 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace'
-  logLevel: 'silent',
-
-  // Imprimir logs de forma legível em desenvolvimento
-  prettyLogs: true,
-
-  // Duração do indicador de digitação (ms) antes de enviar uma mensagem
-  typingDuration: 800,
-
-  // Número máximo de passos do motor antes de abortar (previne loops infinitos)
-  maxSteps: 100,
-
-  // Ignorar mensagens de grupo (recomendado: true)
-  ignoreGroups: true,
-
-  testMode: true,
-
-  testTargetMode: 'contacts',
-
-  testJid: '551111111111@s.whatsapp.net',
-
+  runtimeMode: RUNTIME_MODE.PRODUCTION,
+  testTargetMode: 'contacts-and-groups',
+  testJid: '',
   testJids: [],
-
   groupWhitelistJids: [],
-
-  debugMode: true,
-
-  // Tempo limite da sessão em segundos — sessões mais antigas que isso serão reiniciadas (0 = desativado)
-  sessionTimeoutSeconds: 60 * 60 * 24, // 24 hours
+  dashboardHost: '127.0.0.1',
+  dashboardPort: 8787,
 };
 
 const USER_CONFIG_FILE = path.resolve('./config.user.json');
@@ -49,21 +33,54 @@ function toStringArray(value) {
   return value.map(item => String(item ?? '').trim()).filter(Boolean);
 }
 
+function normalizeRuntimeMode(value) {
+  const mode = String(value ?? '').trim().toLowerCase();
+  if (VALID_MODES.has(mode)) return mode;
+  return null;
+}
+
+function deriveRuntimeModeFromLegacy(input) {
+  const explicit = normalizeRuntimeMode(input.runtimeMode);
+  if (explicit) return explicit;
+
+  if (Boolean(input.testMode)) return RUNTIME_MODE.RESTRICTED_TEST;
+  if (Boolean(input.debugMode)) return RUNTIME_MODE.DEVELOPMENT;
+  return RUNTIME_MODE.PRODUCTION;
+}
+
+function toPortNumber(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  if (n <= 0 || n > 65535) return fallback;
+  return Math.floor(n);
+}
+
 function normalizeConfigShape(input) {
   const normalized = { ...input };
 
-  normalized.testMode = Boolean(normalized.testMode);
-  normalized.testTargetMode = String(normalized.testTargetMode ?? 'contacts');
+  normalized.runtimeMode = deriveRuntimeModeFromLegacy(normalized);
+  normalized.flowPath = String(normalized.flowPath ?? config.flowPath).trim() || config.flowPath;
+
+  normalized.testTargetMode = String(normalized.testTargetMode ?? config.testTargetMode).trim() || config.testTargetMode;
   normalized.testJid = String(normalized.testJid ?? '').trim();
   normalized.testJids = toStringArray(normalized.testJids);
   normalized.groupWhitelistJids = toStringArray(normalized.groupWhitelistJids);
 
-  if (normalized.testMode && normalized.testJid && !normalized.testJids.includes(normalized.testJid)) {
+  if (normalized.testJid && !normalized.testJids.includes(normalized.testJid)) {
     normalized.testJids = [normalized.testJid, ...normalized.testJids];
   }
 
+  normalized.dashboardHost = String(normalized.dashboardHost ?? config.dashboardHost).trim() || config.dashboardHost;
+  normalized.dashboardPort = toPortNumber(normalized.dashboardPort, config.dashboardPort);
+
+  normalized.testMode = normalized.runtimeMode === RUNTIME_MODE.RESTRICTED_TEST;
+  normalized.debugMode = normalized.runtimeMode === RUNTIME_MODE.DEVELOPMENT;
+  normalized.logLevel = MODE_LOG_LEVEL[normalized.runtimeMode] ?? MODE_LOG_LEVEL[RUNTIME_MODE.PRODUCTION];
+  normalized.prettyLogs = Boolean(process.stdout?.isTTY);
+
   if (!normalized.testMode) {
     normalized.testJids = [];
+    normalized.testJid = '';
   }
 
   return normalized;
@@ -71,7 +88,17 @@ function normalizeConfigShape(input) {
 
 function sanitizeConfigForSave(input) {
   const { __startupChoice, ...rest } = input;
-  return normalizeConfigShape(rest);
+  const normalized = normalizeConfigShape(rest);
+  return {
+    flowPath: normalized.flowPath,
+    runtimeMode: normalized.runtimeMode,
+    testTargetMode: normalized.testTargetMode,
+    testJid: normalized.testJid,
+    testJids: normalized.testJids,
+    groupWhitelistJids: normalized.groupWhitelistJids,
+    dashboardHost: normalized.dashboardHost,
+    dashboardPort: normalized.dashboardPort,
+  };
 }
 
 export function loadSavedUserConfig() {
@@ -113,13 +140,13 @@ export async function getConfig({ interactive = true } = {}) {
     });
 
     if (!chosen) {
-      throw new Error('Configuração cancelada pelo usuário.');
+      throw new Error('Configuracao cancelada pelo usuario.');
     }
 
     saveUserConfig(chosen);
     return normalizeConfigShape(chosen);
   } catch (err) {
-    console.error('❌ Falha ao obter configuração interativa:', err);
+    console.error('Falha ao obter configuracao interativa:', err);
     throw err;
   }
 }

@@ -15,6 +15,7 @@
 import { sendTextMessage, sendListMessage } from '../engine/sender.js';
 import { interpolate, safeParseJSON } from '../engine/utils.js';
 import { parseCommandInput } from '../engine/commandParser.js';
+import { addConversationEvent } from '../db/index.js';
 import {
   BLOCK_TYPE,
   SESSION_STATUS,
@@ -89,6 +90,42 @@ function findEndIf(flow, currentIndex) {
 
 function getIfStack(session) {
   return safeParseJSON(session.variables[INTERNAL_VAR.IF_STACK], []);
+}
+
+function stringifyError(error) {
+  if (!error) return '';
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function logHandlerErrorEvent({ block, session, jid, flow, userMessage = '', error, stage = '' }) {
+  const command = toText(session?.variables?.[INTERNAL_VAR.LAST_COMMAND] ?? '');
+  const safeUserMessage = toText(userMessage);
+  const safeError = stringifyError(error);
+
+  addConversationEvent({
+    occurredAt: Date.now(),
+    eventType: 'flow-error',
+    direction: 'system',
+    jid: toText(jid) || 'unknown',
+    flowPath: toText(flow?.flowPath),
+    messageText: safeUserMessage || safeError || 'Flow error',
+    metadata: {
+      stage,
+      command,
+      blockId: toText(block?.id),
+      blockType: toText(block?.type),
+      blockName: toText(block?.name),
+      userMessage: safeUserMessage,
+      error: safeError,
+    },
+  });
 }
 
 function toText(value) {
@@ -585,14 +622,28 @@ async function handleHttpRequest({ block, session, sock, jid }) {
     };
   } catch (error) {
     const errorMessage = interpolate(toText(cfg.errorMessage || 'Erro ao fazer requisicao HTTP.'), session.variables);
+    logHandlerErrorEvent({
+      block,
+      session,
+      jid,
+      flow,
+      userMessage: errorMessage,
+      error,
+      stage: 'http-request',
+    });
+
     if (errorMessage) {
       await sendTextMessage(sock, jid, errorMessage);
     }
 
     const variables = { ...session.variables };
-    if (cfg.saveStatusCode && error?.status !== undefined) {
+    if (cfg.saveResponse !== false) {
+      const responseVariable = toText(cfg.responseVariable || 'http_response');
+      variables[responseVariable] = error?.data ?? null;
+    }
+    if (cfg.saveStatusCode) {
       const statusVar = toText(cfg.statusCodeVariable || 'http_status');
-      variables[statusVar] = error.status;
+      variables[statusVar] = Number.isFinite(Number(error?.status)) ? Number(error.status) : 0;
     }
 
     if (onError === 'stop' || onError === 'end' || onError === 'halt') {
@@ -633,6 +684,16 @@ async function handleDataProcessor({ block, session, sock, jid }) {
     };
   } catch (error) {
     const errorMessage = interpolate(toText(cfg.errorMessage || 'Erro ao processar dados.'), session.variables);
+    logHandlerErrorEvent({
+      block,
+      session,
+      jid,
+      flow,
+      userMessage: errorMessage,
+      error,
+      stage: 'data-processor',
+    });
+
     if (errorMessage) {
       await sendTextMessage(sock, jid, errorMessage);
     }

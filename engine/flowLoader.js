@@ -131,6 +131,7 @@ export function loadFlow(flowPath) {
   buildJumpMaps(blocks, branchMap, endIfMap);
 
   return {
+    flowPath: resolved,
     blocks,
     blockMap,
     indexMap,

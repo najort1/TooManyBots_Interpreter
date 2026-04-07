@@ -71,6 +71,7 @@ export const LOGICAL_OPERATOR = {
 
 // ─── Variáveis Internas do Engine ─────────────────────────────────────────────
 export const INTERNAL_VAR = {
+  SESSION_ID: '__sessionId',
   KEYWORDS: '__keywords',
   NEXT_BLOCK_ON_KEYWORD: '__nextBlockOnKeyword',
   CAPTURE_VARIABLE: '__captureVariable',
