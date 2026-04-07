@@ -16,6 +16,26 @@ const REQUIRED_BLOCK_FIELDS = ['id', 'type', 'config'];
 
 const SUPPORTED_TYPES = new Set(Object.values(BLOCK_TYPE));
 
+function normalizeBlockType(type) {
+  const raw = String(type ?? '').trim();
+  const normalized = raw.toLowerCase();
+
+  if (normalized === 'else-condition' || normalized === 'else_block') {
+    return BLOCK_TYPE.ELSE;
+  }
+
+  if (
+    normalized === 'elseif-condition' ||
+    normalized === 'else-if-condition' ||
+    normalized === 'elseif' ||
+    normalized === 'else_if'
+  ) {
+    return BLOCK_TYPE.ELSE_IF;
+  }
+
+  return raw;
+}
+
 function toPositiveNumber(value, fallback = 0) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed < 0) return fallback;
@@ -73,8 +93,13 @@ export function loadFlow(flowPath) {
     throw new Error('Arquivo de fluxo deve conter um array "blocks" não vazio.');
   }
 
+  const normalizedBlocks = raw.blocks.map(block => ({
+    ...block,
+    type: normalizeBlockType(block?.type),
+  }));
+
   // Validar cada bloco
-  for (const block of raw.blocks) {
+  for (const block of normalizedBlocks) {
     for (const field of REQUIRED_BLOCK_FIELDS) {
       if (block[field] === undefined) {
         throw new Error(`Bloco com campo ausente "${field}": ${JSON.stringify(block)}`);
@@ -90,14 +115,14 @@ export function loadFlow(flowPath) {
   const blockMap = new Map();
   const indexMap = new Map(); // id → índice do array
 
-  raw.blocks.forEach((block, i) => {
+  normalizedBlocks.forEach((block, i) => {
     if (block.active === false) return; // pular blocos desativados
     blockMap.set(block.id, block);
     indexMap.set(block.id, i);
   });
 
   // Apenas blocos ativos (preservar ordem)
-  const blocks = raw.blocks.filter(b => b.active !== false);
+  const blocks = normalizedBlocks.filter(b => b.active !== false);
 
   // ─── Pré-cálculo de mapas de salto O(1) ─────────────────────────────────────
   const branchMap = new Map(); // blockIndex → nextBranch index

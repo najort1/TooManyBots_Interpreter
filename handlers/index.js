@@ -286,9 +286,13 @@ function applyDataTransform(sourceValue, cfg, sessionVariables) {
     case 'array_map': {
       if (!Array.isArray(inputValue)) throw new Error('Fonte nao e um array para array_map.');
       const expression = toText(cfg.mapExpression) || 'item';
-      return inputValue.map((item, index, array) =>
-        evaluateExpression(expression, { item, index, array, vars: sessionVariables }, item)
-      );
+      return inputValue.map((item, index, array) => {
+        const scope = { item, index, array, vars: sessionVariables };
+        if (expression.includes('{{') && expression.includes('}}')) {
+          return interpolate(expression, scope);
+        }
+        return evaluateExpression(expression, scope, item);
+      });
     }
     case 'array_filter': {
       if (!Array.isArray(inputValue)) throw new Error('Fonte nao e um array para array_filter.');
@@ -306,7 +310,11 @@ function applyDataTransform(sourceValue, cfg, sessionVariables) {
       if (hasInitial) {
         return inputValue.reduce(
           (acc, item, index, array) =>
-            evaluateExpression(expression, { acc, item, index, array, vars: sessionVariables }, acc),
+            evaluateExpression(
+              expression,
+              { acc, curr: item, prev: acc, item, index, array, vars: sessionVariables },
+              acc
+            ),
           initialValue
         );
       }
@@ -314,7 +322,11 @@ function applyDataTransform(sourceValue, cfg, sessionVariables) {
       if (inputValue.length === 0) return inputValue;
       return inputValue.slice(1).reduce(
         (acc, item, index) =>
-          evaluateExpression(expression, { acc, item, index: index + 1, array: inputValue, vars: sessionVariables }, acc),
+          evaluateExpression(
+            expression,
+            { acc, curr: item, prev: acc, item, index: index + 1, array: inputValue, vars: sessionVariables },
+            acc
+          ),
         inputValue[0]
       );
     }

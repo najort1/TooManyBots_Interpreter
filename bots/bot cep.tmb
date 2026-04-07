@@ -564,7 +564,7 @@
     {
       "id": "bkrq6l2nx",
       "type": "data-processor",
-      "name": "Processar Dados",
+      "name": "Parse JSON Cotação",
       "active": true,
       "config": {
         "operation": "transform",
@@ -577,16 +577,92 @@
         "mapExpression": "",
         "customCode": "",
         "onError": "continue",
-        "errorMessage": "Erro ao processar dados"
+        "errorMessage": "Erro ao processar resposta da API"
+      }
+    },
+    {
+      "id": "extrair_cotacoes",
+      "type": "data-processor",
+      "name": "Extrair Array Cotações",
+      "active": true,
+      "config": {
+        "operation": "transform",
+        "sourceVariable": "dados_cotacao",
+        "outputVariable": "cotacoes_array",
+        "transformType": "extract_field",
+        "jsonPath": "cotacoes",
+        "arrayOperation": "map",
+        "filterCondition": "",
+        "mapExpression": "",
+        "customCode": "",
+        "onError": "continue",
+        "errorMessage": "Erro ao extrair cotações"
+      }
+    },
+    {
+      "id": "formatar_cotacoes",
+      "type": "data-processor",
+      "name": "Formatar Cotações",
+      "active": true,
+      "config": {
+        "operation": "transform",
+        "sourceVariable": "cotacoes_array",
+        "outputVariable": "cotacoes_formatadas",
+        "transformType": "array_map",
+        "jsonPath": "",
+        "arrayOperation": "map",
+        "filterCondition": "",
+        "mapExpression": "📌 {{item.tipo_boletim}}\n💰 Compra: R$ {{item.cotacao_compra}}\n💵 Venda: R$ {{item.cotacao_venda}}\n🕐 {{item.data_hora_cotacao}}",
+        "customCode": "",
+        "onError": "continue",
+        "errorMessage": "Erro ao formatar cotações"
+      }
+    },
+    {
+      "id": "juntar_cotacoes",
+      "type": "data-processor",
+      "name": "Juntar Cotações",
+      "active": true,
+      "config": {
+        "operation": "transform",
+        "sourceVariable": "cotacoes_formatadas",
+        "outputVariable": "cotacoes_texto",
+        "transformType": "array_reduce",
+        "jsonPath": "",
+        "arrayOperation": "reduce",
+        "filterCondition": "",
+        "mapExpression": "acc + (acc ? '\\n\\n' : '') + curr",
+        "customCode": "",
+        "onError": "continue",
+        "errorMessage": "Erro ao juntar cotações"
+      }
+    },
+    {
+      "id": "extrair_data",
+      "type": "data-processor",
+      "name": "Extrair Data",
+      "active": true,
+      "config": {
+        "operation": "transform",
+        "sourceVariable": "dados_cotacao",
+        "outputVariable": "data_resp",
+        "transformType": "extract_field",
+        "jsonPath": "data",
+        "arrayOperation": "map",
+        "filterCondition": "",
+        "mapExpression": "",
+        "customCode": "",
+        "onError": "continue",
+        "errorMessage": "Erro ao extrair data"
       }
     },
     {
       "id": "h7v24oyuf",
       "type": "send-text",
-      "name": "Enviar Texto",
+      "name": "Enviar Todas Cotações",
       "active": true,
       "config": {
-        "text": "📊 Cotação {{$moeda}} - {{$data}}\n\n💰 Compra: R$ {{$cotacoes.cotacoes[0].cotacao_compra}}\n💵 Venda: R$ {{$cotacoes.cotacoes[0].cotacao_venda}}\n📌 Tipo: {{$cotacoes.cotacoes[0].tipo_boletim}}\n🕐 Atualizado: {{$cotacoes.cotacoes[0].data_hora_cotacao}}",
+        "text": "📊 Cotações {{$moeda}} - {{$data_resp}}\n\n{{$cotacoes_texto}}",
         "waitForResponse": false,
         "keywords": [],
         "captureResponse": false,

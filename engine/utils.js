@@ -107,7 +107,9 @@ function getSystemInterpolationVariables(now = new Date()) {
     timestamp: timestampMs,
     unix,
     date,
+    data: date,
     time,
+    hora: `${hour}:${minute}`,
     datetime,
     today: date,
     now: datetime,
@@ -120,12 +122,43 @@ function getSystemInterpolationVariables(now = new Date()) {
   };
 }
 
+function normalizePathTokens(pathExpression) {
+  const normalized = String(pathExpression ?? '')
+    .trim()
+    .replace(/\[(\d+)\]/g, '.$1')
+    .replace(/\[['"]([^'"\]]+)['"]\]/g, '.$1')
+    .replace(/^\./, '');
+
+  if (!normalized) return [];
+  return normalized
+    .split('.')
+    .map(token => token.trim())
+    .filter(Boolean);
+}
+
+function resolveByPath(root, pathExpression) {
+  const tokens = normalizePathTokens(pathExpression);
+  if (tokens.length === 0) return undefined;
+
+  let current = root;
+  for (const token of tokens) {
+    if (current == null) return undefined;
+    current = current[token];
+  }
+  return current;
+}
+
 export function interpolate(text, variables = {}) {
   if (typeof text !== 'string') return text;
   const systemVars = getSystemInterpolationVariables(new Date());
 
-  return text.replace(/\{\{\s*\$?\s*([\w_]+)\s*\}\}/g, (_, key) => {
-    const value = variables[key] ?? systemVars[key] ?? '';
+  return text.replace(/\{\{\s*\$?\s*([^}]+?)\s*\}\}/g, (_, rawExpression) => {
+    const expression = String(rawExpression ?? '').trim();
+    if (!expression) return '';
+
+    const valueFromSession = resolveByPath(variables, expression);
+    const valueFromSystem = resolveByPath(systemVars, expression);
+    const value = valueFromSession ?? valueFromSystem ?? '';
     if (value == null) return '';
     return String(value);
   });
