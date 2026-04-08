@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchHandoffBlocks,
   fetchHandoffHistory,
@@ -7,6 +7,7 @@ import {
   fetchLogs,
   fetchStats,
   postHandoffEnd,
+  postHandoffImage,
   postHandoffMessage,
   postHandoffResume,
   postReloadFlow,
@@ -16,6 +17,7 @@ import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { HandoffView } from './components/handoff/HandoffView';
+import { Modal } from './components/Modal';
 import type {
   DashboardMode,
   DashboardStats,
@@ -32,6 +34,9 @@ const WS_REFRESH_EVENT_TYPES = new Set([
   'flow-error',
   'engine-error',
   'message-outgoing-error',
+  'message-outgoing',
+  'human-message-outgoing',
+  'human-image-outgoing',
 ]);
 
 function toDashboardMode(mode: string): DashboardMode {
@@ -106,6 +111,24 @@ function sortHistory(logs: EventLog[]): EventLog[] {
   });
 }
 
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== 'string' || !result.startsWith('data:')) {
+        reject(new Error('Falha ao converter imagem para envio.'));
+        return;
+      }
+      resolve(result);
+    };
+    reader.onerror = () => {
+      reject(new Error('Falha ao ler o arquivo selecionado.'));
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
 function App() {
   const [view, setView] = useState<DashboardView>('analytics');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -123,8 +146,10 @@ function App() {
   const [handoffMessage, setHandoffMessage] = useState('');
   const [resumeBlockId, setResumeBlockId] = useState('');
   const [busySend, setBusySend] = useState(false);
+  const [busySendImage, setBusySendImage] = useState(false);
   const [busyResume, setBusyResume] = useState(false);
   const [busyEnd, setBusyEnd] = useState(false);
+  const [confirmEndOpen, setConfirmEndOpen] = useState(false);
 
   const modeQuery = useMemo(() => modeToQuery(mode), [mode]);
 
@@ -154,6 +179,24 @@ function App() {
     noticeTimeoutRef.current = window.setTimeout(() => {
       setNotice('');
     }, 3500);
+  }, []);
+
+  const markSessionAsResponded = useCallback((jid: string, text: string, eventType: string) => {
+    const nowTs = Date.now();
+    setHandoffSessions(previous =>
+      previous.map(session => {
+        if (session.jid !== jid) return session;
+        return {
+          ...session,
+          lastMessage: {
+            eventType,
+            occurredAt: nowTs,
+            text: text || session.lastMessage?.text || '',
+          },
+          lastActivityAt: nowTs,
+        };
+      })
+    );
   }, []);
 
   const loadHealth = useCallback(async () => {
@@ -327,6 +370,7 @@ function App() {
     try {
       await postHandoffMessage(jid, text);
       setHandoffMessage('');
+      markSessionAsResponded(jid, text, 'human-message-outgoing');
       await refreshHandoffHistory(jid);
       await refreshHandoffQueue();
     } catch (error) {
@@ -334,7 +378,36 @@ function App() {
     } finally {
       setBusySend(false);
     }
-  }, [handoffMessage, refreshHandoffHistory, refreshHandoffQueue, showNotice]);
+  }, [handoffMessage, markSessionAsResponded, refreshHandoffHistory, refreshHandoffQueue, showNotice]);
+
+  const handleSendHandoffImage = useCallback(async (file: File) => {
+    const jid = selectedJidRef.current;
+    if (!jid) return;
+
+    if (!file.type.startsWith('image/')) {
+      showNotice('Selecione um arquivo de imagem válido.');
+      return;
+    }
+
+    setBusySendImage(true);
+    try {
+      const imageDataUrl = await fileToDataUrl(file);
+      const caption = handoffMessage.trim();
+      await postHandoffImage(jid, imageDataUrl, {
+        caption,
+        fileName: file.name,
+        mimeType: file.type,
+      });
+      setHandoffMessage('');
+      markSessionAsResponded(jid, caption || `[Imagem] ${file.name}`, 'human-image-outgoing');
+      await refreshHandoffHistory(jid);
+      await refreshHandoffQueue();
+    } catch (error) {
+      showNotice(`Não foi possível enviar a imagem: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusySendImage(false);
+    }
+  }, [handoffMessage, markSessionAsResponded, refreshHandoffHistory, refreshHandoffQueue, showNotice]);
 
   const handleResumeHandoff = useCallback(async () => {
     const jid = selectedJidRef.current;
@@ -360,8 +433,6 @@ function App() {
   const handleEndHandoff = useCallback(async () => {
     const jid = selectedJidRef.current;
     if (!jid) return;
-    const confirmed = window.confirm('Deseja encerrar esta sessão agora?');
-    if (!confirmed) return;
 
     setBusyEnd(true);
     try {
@@ -369,6 +440,7 @@ function App() {
       setSelectedHandoffJid('');
       setSelectedHandoffHistory([]);
       setResumeBlockId('');
+      setConfirmEndOpen(false);
       await Promise.all([refreshHandoffQueue(), refreshStats()]);
       showNotice('Sessão encerrada com sucesso.');
     } catch (error) {
@@ -377,6 +449,11 @@ function App() {
       setBusyEnd(false);
     }
   }, [refreshHandoffQueue, refreshStats, showNotice]);
+
+  const openEndSessionModal = useCallback(() => {
+    if (!selectedJidRef.current) return;
+    setConfirmEndOpen(true);
+  }, []);
 
   return (
     <div className="app-shell">
@@ -417,6 +494,7 @@ function App() {
               messageText={handoffMessage}
               selectedBlockId={resumeBlockId}
               busySend={busySend}
+              busySendImage={busySendImage}
               busyResume={busyResume}
               busyEnd={busyEnd}
               onMessageChange={setHandoffMessage}
@@ -425,15 +503,12 @@ function App() {
               onRefreshSessions={() => {
                 void refreshHandoffQueue();
               }}
-              onSend={() => {
-                void handleSendHandoff();
-              }}
+              onSend={handleSendHandoff}
+              onSendImage={handleSendHandoffImage}
               onResume={() => {
                 void handleResumeHandoff();
               }}
-              onEnd={() => {
-                void handleEndHandoff();
-              }}
+              onEnd={openEndSessionModal}
             />
           )}
 
@@ -451,8 +526,32 @@ function App() {
           )}
         </main>
       </div>
+
+      <Modal
+        open={confirmEndOpen}
+        title="Encerrar sessão"
+        description="Deseja encerrar esta sessão agora?"
+        onClose={() => setConfirmEndOpen(false)}
+        actions={[
+          {
+            label: 'Cancelar',
+            variant: 'ghost',
+            onClick: () => setConfirmEndOpen(false),
+            disabled: busyEnd,
+          },
+          {
+            label: busyEnd ? 'Encerrando...' : 'Encerrar',
+            variant: 'danger',
+            onClick: () => {
+              void handleEndHandoff();
+            },
+            disabled: busyEnd,
+          },
+        ]}
+      />
     </div>
   );
 }
 
 export default App;
+

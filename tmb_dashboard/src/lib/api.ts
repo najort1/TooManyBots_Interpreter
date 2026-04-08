@@ -95,6 +95,25 @@ export async function postHandoffMessage(jid: string, text: string): Promise<voi
   });
 }
 
+export async function postHandoffImage(
+  jid: string,
+  imageDataUrl: string,
+  options?: { caption?: string; fileName?: string; mimeType?: string }
+): Promise<void> {
+  await requestJson('/api/handoff/send-image', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jid,
+      imageDataUrl,
+      caption: String(options?.caption ?? ''),
+      fileName: String(options?.fileName ?? ''),
+      mimeType: String(options?.mimeType ?? ''),
+      agentId: 'dashboard-agent',
+    }),
+  });
+}
+
 export async function postHandoffResume(jid: string, targetBlockId: string): Promise<void> {
   await requestJson('/api/handoff/resume', {
     method: 'POST',

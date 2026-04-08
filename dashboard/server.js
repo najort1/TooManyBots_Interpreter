@@ -25,6 +25,7 @@ const __dirname = path.dirname(__filename);
 const LEGACY_PUBLIC_DIR = path.join(__dirname, 'public');
 const VITE_DIST_DIR = path.resolve(__dirname, '..', 'tmb_dashboard', 'dist');
 const PUBLIC_DIR = fs.existsSync(path.join(VITE_DIST_DIR, 'index.html')) ? VITE_DIST_DIR : LEGACY_PUBLIC_DIR;
+const HANDOFF_MEDIA_DIR = path.resolve(__dirname, '..', 'data', 'handoff-media');
 
 const STATIC_MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
@@ -38,6 +39,13 @@ const STATIC_MIME_TYPES = {
   '.gif': 'image/gif',
   '.ico': 'image/x-icon',
 };
+
+const ALLOWED_HANDOFF_IMAGE_MIME = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/gif',
+]);
 
 function toInt(value, fallback) {
   const n = Number(value);
@@ -116,6 +124,58 @@ async function readJsonBody(req) {
   }
 }
 
+function sanitizeFileName(value) {
+  return String(value ?? '')
+    .replace(/[^\w.-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 90);
+}
+
+function extensionFromMimeType(mimeType) {
+  if (mimeType === 'image/jpeg') return '.jpg';
+  if (mimeType === 'image/png') return '.png';
+  if (mimeType === 'image/webp') return '.webp';
+  if (mimeType === 'image/gif') return '.gif';
+  return '';
+}
+
+function parseDataUrlImage(dataUrl, declaredMimeType = '') {
+  const raw = String(dataUrl ?? '').trim();
+  const match = raw.match(/^data:([^;]+);base64,([a-z0-9+/=]+)$/i);
+  if (!match) {
+    throw new Error('imageDataUrl inválido');
+  }
+
+  const inferredMimeType = String(match[1] || '').toLowerCase();
+  const mimeType = String(declaredMimeType || inferredMimeType).toLowerCase();
+  if (!ALLOWED_HANDOFF_IMAGE_MIME.has(mimeType)) {
+    throw new Error('Tipo de imagem não suportado');
+  }
+
+  const base64 = match[2];
+  const buffer = Buffer.from(base64, 'base64');
+  if (!buffer.length) throw new Error('Imagem vazia');
+  if (buffer.length > 8 * 1024 * 1024) throw new Error('Imagem excede limite de 8MB');
+  return { buffer, mimeType };
+}
+
+function saveHandoffMedia({ imageBuffer, mimeType, fileName = '' }) {
+  fs.mkdirSync(HANDOFF_MEDIA_DIR, { recursive: true });
+
+  const ext = extensionFromMimeType(mimeType) || '.bin';
+  const baseName = sanitizeFileName(fileName).replace(/\.[^.]+$/, '') || 'upload';
+  const mediaId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${baseName}${ext}`;
+  const mediaPath = path.resolve(HANDOFF_MEDIA_DIR, mediaId);
+
+  fs.writeFileSync(mediaPath, imageBuffer);
+  return {
+    mediaId,
+    mediaPath,
+    mediaUrl: `/api/handoff/media/${encodeURIComponent(mediaId)}`,
+  };
+}
+
 function normalizeFlowPath(value) {
   return String(value ?? '').trim();
 }
@@ -144,7 +204,12 @@ function findLastMessageForSession(events = []) {
     const event = events[i];
     const text = String(event?.messageText ?? '').trim();
     if (!text) continue;
-    if (event?.eventType === 'message-incoming' || event?.eventType === 'message-outgoing' || event?.eventType === 'human-message-outgoing') {
+    if (
+      event?.eventType === 'message-incoming' ||
+      event?.eventType === 'message-outgoing' ||
+      event?.eventType === 'human-message-outgoing' ||
+      event?.eventType === 'human-image-outgoing'
+    ) {
       return {
         eventType: event.eventType,
         occurredAt: Number(event.occurredAt) || 0,
@@ -353,6 +418,7 @@ export class DashboardServer {
     getContactName = () => null,
     onReload = async () => {},
     onHumanSendMessage = async () => ({ ok: false, error: 'not-implemented' }),
+    onHumanSendImage = async () => ({ ok: false, error: 'not-implemented' }),
     onHumanResumeSession = async () => ({ ok: false, error: 'not-implemented' }),
     onHumanEndSession = async () => ({ ok: false, error: 'not-implemented' }),
   } = {}) {
@@ -363,6 +429,7 @@ export class DashboardServer {
     this.getContactName = getContactName;
     this.onReload = onReload;
     this.onHumanSendMessage = onHumanSendMessage;
+    this.onHumanSendImage = onHumanSendImage;
     this.onHumanResumeSession = onHumanResumeSession;
     this.onHumanEndSession = onHumanEndSession;
     this.server = null;
@@ -418,6 +485,28 @@ export class DashboardServer {
       if (requestUrl.pathname === '/api/handoff/blocks') {
         const blocks = normalizeFlowBlocks(this.getFlowBlocks());
         sendJson(res, 200, { blocks });
+        return;
+      }
+
+      if (requestUrl.pathname.startsWith('/api/handoff/media/')) {
+        const mediaId = decodePathComponent(requestUrl.pathname.slice('/api/handoff/media/'.length));
+        const safeId = path.basename(mediaId);
+        const mediaPath = path.resolve(HANDOFF_MEDIA_DIR, safeId);
+        if (!isPathInsideRoot(HANDOFF_MEDIA_DIR, mediaPath)) {
+          sendText(res, 403, 'Forbidden');
+          return;
+        }
+        if (!fs.existsSync(mediaPath) || !fs.statSync(mediaPath).isFile()) {
+          sendText(res, 404, 'Not found');
+          return;
+        }
+
+        const ext = path.extname(mediaPath).toLowerCase();
+        const contentType = STATIC_MIME_TYPES[ext] || 'application/octet-stream';
+        res.statusCode = 200;
+        res.setHeader('Content-Type', contentType);
+        res.setHeader('Cache-Control', 'public, max-age=604800');
+        res.end(fs.readFileSync(mediaPath));
         return;
       }
 
@@ -491,6 +580,58 @@ export class DashboardServer {
         }
 
         sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/handoff/send-image' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const jid = String(body?.jid ?? '').trim();
+        const actor = normalizeActor(body?.agentId);
+        const caption = String(body?.caption ?? '').trim();
+        const fileName = String(body?.fileName ?? '').trim();
+        const declaredMimeType = String(body?.mimeType ?? '').trim();
+        const imageDataUrl = String(body?.imageDataUrl ?? '').trim();
+
+        if (!jid || !imageDataUrl) {
+          sendJson(res, 400, { error: 'jid and imageDataUrl are required' });
+          return;
+        }
+
+        let parsedImage;
+        try {
+          parsedImage = parseDataUrlImage(imageDataUrl, declaredMimeType);
+        } catch (error) {
+          sendJson(res, 400, { error: String(error?.message || 'invalid-image') });
+          return;
+        }
+
+        const media = saveHandoffMedia({
+          imageBuffer: parsedImage.buffer,
+          mimeType: parsedImage.mimeType,
+          fileName,
+        });
+
+        const result = await this.onHumanSendImage({
+          jid,
+          actor,
+          caption,
+          fileName: fileName || media.mediaId,
+          imageBuffer: parsedImage.buffer,
+          mimeType: parsedImage.mimeType,
+          mediaId: media.mediaId,
+          mediaPath: media.mediaPath,
+          mediaUrl: media.mediaUrl,
+        });
+
+        if (!result?.ok) {
+          sendJson(res, 500, { error: result?.error || 'failed-to-send-human-image' });
+          return;
+        }
+
+        sendJson(res, 200, {
+          ok: true,
+          mediaUrl: media.mediaUrl,
+        });
         return;
       }
 

@@ -213,6 +213,8 @@ function logConversationEvent({
 function extractOutgoingMessageText(content) {
   if (!content || typeof content !== 'object') return '';
   if (typeof content.text === 'string' && content.text.trim()) return content.text;
+  if (content.image?.caption) return String(content.image.caption);
+  if (content.image) return '[imagem]';
   if (content.react?.text) return `[react] ${content.react.text}`;
   if (content.listMessage?.description) return content.listMessage.description;
   if (content.listMessage?.title) return content.listMessage.title;
@@ -223,6 +225,7 @@ function extractOutgoingMessageText(content) {
 function extractOutgoingKind(content) {
   if (!content || typeof content !== 'object') return 'unknown';
   if (content.text) return 'text';
+  if (content.image) return 'image';
   if (content.react) return 'reaction';
   if (content.listMessage) return 'list';
   if (content.buttons) return 'buttons';
@@ -293,30 +296,38 @@ function attachOutgoingMessageLogger(sock) {
 
   const original = sock.sendMessage.bind(sock);
   sock.sendMessage = async (jid, content, options) => {
+    const safeOptions = options && typeof options === 'object' ? { ...options } : {};
+    const skipConversationLog = safeOptions.__skipConversationLog === true;
+    delete safeOptions.__skipConversationLog;
+
     const text = extractOutgoingMessageText(content);
     const kind = extractOutgoingKind(content);
 
     try {
-      const result = await original(jid, content, options);
-      logConversationEvent({
-        eventType: 'message-outgoing',
-        direction: 'outgoing',
-        jid,
-        messageText: text,
-        metadata: { kind },
-      });
+      const result = await original(jid, content, safeOptions);
+      if (!skipConversationLog) {
+        logConversationEvent({
+          eventType: 'message-outgoing',
+          direction: 'outgoing',
+          jid,
+          messageText: text,
+          metadata: { kind },
+        });
+      }
       return result;
     } catch (err) {
-      logConversationEvent({
-        eventType: 'message-outgoing-error',
-        direction: 'system',
-        jid,
-        messageText: text,
-        metadata: {
-          kind,
-          error: formatError(err),
-        },
-      });
+      if (!skipConversationLog) {
+        logConversationEvent({
+          eventType: 'message-outgoing-error',
+          direction: 'system',
+          jid,
+          messageText: text,
+          metadata: {
+            kind,
+            error: formatError(err),
+          },
+        });
+      }
       throw err;
     }
   };
@@ -360,10 +371,58 @@ async function startDashboardServer() {
       }
 
       try {
-        await sock.sendMessage(jid, { text });
+        await sock.sendMessage(jid, { text }, { __skipConversationLog: true });
+        logConversationEvent({
+          eventType: 'human-message-outgoing',
+          direction: 'outgoing',
+          jid,
+          messageText: text,
+          metadata: {
+            kind: 'text',
+            actor,
+            source: 'dashboard-human-support',
+          },
+        });
         return { ok: true };
       } catch (error) {
         return { ok: false, error: String(error?.message || error || 'send-failed') };
+      }
+    },
+    onHumanSendImage: async ({ jid, actor, caption, imageBuffer, mimeType, mediaId, mediaUrl, fileName }) => {
+      const sock = currentSocket;
+      if (!sock) {
+        return { ok: false, error: 'socket-not-ready' };
+      }
+
+      try {
+        await sock.sendMessage(
+          jid,
+          {
+            image: imageBuffer,
+            caption: String(caption || '').trim() || undefined,
+            mimetype: mimeType,
+          },
+          { __skipConversationLog: true }
+        );
+
+        logConversationEvent({
+          eventType: 'human-image-outgoing',
+          direction: 'outgoing',
+          jid,
+          messageText: String(caption || '').trim() || `[Imagem] ${fileName || mediaId || ''}`.trim(),
+          metadata: {
+            kind: 'image',
+            actor,
+            source: 'dashboard-human-support',
+            mediaId: mediaId || null,
+            mediaUrl: mediaUrl || null,
+            mediaType: mimeType || null,
+            fileName: fileName || null,
+          },
+        });
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: String(error?.message || error || 'send-image-failed') };
       }
     },
     onHumanResumeSession: async ({ jid, targetBlockIndex, targetBlockId, actor }) => {

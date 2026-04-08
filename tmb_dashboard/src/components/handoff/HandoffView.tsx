@@ -1,4 +1,4 @@
-﻿import { useMemo } from 'react';
+﻿import { useMemo, useRef } from 'react';
 import { fmtTime, formatJidPhone } from '../../lib/format';
 import type { EventLog, HandoffBlock, HandoffSession } from '../../types';
 
@@ -10,15 +10,25 @@ interface HandoffViewProps {
   messageText: string;
   selectedBlockId: string;
   busySend: boolean;
+  busySendImage: boolean;
   busyResume: boolean;
   busyEnd: boolean;
   onMessageChange: (value: string) => void;
   onSelectBlock: (value: string) => void;
   onSelectSession: (jid: string) => void;
   onRefreshSessions: () => void;
-  onSend: () => void;
+  onSend: () => Promise<void> | void;
+  onSendImage: (file: File) => Promise<void> | void;
   onResume: () => void;
   onEnd: () => void;
+}
+
+function getSessionBadge(session: HandoffSession): string {
+  const eventType = String(session.lastMessage?.eventType || '').toLowerCase();
+  if (eventType === 'human-message-outgoing' || eventType === 'human-image-outgoing') {
+    return 'Respondido';
+  }
+  return 'Aguardando';
 }
 
 function getTimelineLabel(event: EventLog): string {
@@ -31,10 +41,14 @@ function getTimelineLabel(event: EventLog): string {
   return 'Sistema';
 }
 
-function readMetadataText(event: EventLog, key: string): string {
+function readMetadataValue(event: EventLog, key: string): unknown {
   const metadata = event.metadata;
-  if (!metadata || typeof metadata !== 'object') return '';
-  const value = (metadata as Record<string, unknown>)[key];
+  if (!metadata || typeof metadata !== 'object') return undefined;
+  return (metadata as Record<string, unknown>)[key];
+}
+
+function readMetadataText(event: EventLog, key: string): string {
+  const value = readMetadataValue(event, key);
   return typeof value === 'string' ? value.trim() : '';
 }
 
@@ -64,6 +78,7 @@ export function HandoffView({
   messageText,
   selectedBlockId,
   busySend,
+  busySendImage,
   busyResume,
   busyEnd,
   onMessageChange,
@@ -71,9 +86,13 @@ export function HandoffView({
   onSelectSession,
   onRefreshSessions,
   onSend,
+  onSendImage,
   onResume,
   onEnd,
 }: HandoffViewProps) {
+  const messageInputRef = useRef<HTMLInputElement | null>(null);
+  const imageInputRef = useRef<HTMLInputElement | null>(null);
+
   const sortedTimeline = useMemo(
     () => [...history].sort((a, b) => (a.occurredAt || 0) - (b.occurredAt || 0)),
     [history]
@@ -93,6 +112,7 @@ export function HandoffView({
             sessions.map(session => {
               const isActive = selectedJid === session.jid;
               const snippet = session.lastMessage?.text || 'Sem mensagem recente';
+              const badge = getSessionBadge(session);
               return (
                 <button
                   type="button"
@@ -102,7 +122,7 @@ export function HandoffView({
                 >
                   <div className="handoff-session-top">
                     <strong>{formatJidPhone(session.jid)}</strong>
-                    <span className="queue-tag">Aguardando</span>
+                    <span className={`queue-tag ${badge === 'Respondido' ? 'is-answered' : ''}`}>{badge}</span>
                   </div>
                   <small>Fila: {session.queue || 'default'} · {session.lastActivityAt ? fmtTime(session.lastActivityAt) : '--:--'}</small>
                   <p>{snippet}</p>
@@ -139,6 +159,21 @@ export function HandoffView({
                   <time>{event.occurredAt ? fmtTime(event.occurredAt) : '--:--'}</time>
                 </div>
                 <p>{event.messageText || `[${event.eventType || 'evento'}]`}</p>
+                {(() => {
+                  const mediaUrl = readMetadataText(event, 'mediaUrl');
+                  if (!mediaUrl) return null;
+                  const mediaType = readMetadataText(event, 'mediaType').toLowerCase();
+                  if (!mediaType.startsWith('image/')) return null;
+
+                  return (
+                    <img
+                      className="handoff-line-image"
+                      src={mediaUrl}
+                      alt={event.messageText || 'Imagem da conversa'}
+                      loading="lazy"
+                    />
+                  );
+                })()}
               </div>
             ))
           )}
@@ -147,20 +182,43 @@ export function HandoffView({
         <div className="handoff-actions">
           <div className="handoff-send">
             <input
+              ref={messageInputRef}
               type="text"
               value={messageText}
               onChange={event => onMessageChange(event.target.value)}
               placeholder="Digite a mensagem do atendente..."
               disabled={!selectedJid || busySend}
-              onKeyDown={event => {
+              onKeyDown={async event => {
                 if (event.key === 'Enter') {
                   event.preventDefault();
-                  onSend();
+                  await onSend();
+                  messageInputRef.current?.focus();
                 }
               }}
             />
             <button type="button" className="primary-btn" onClick={onSend} disabled={!selectedJid || busySend}>
               {busySend ? 'Enviando...' : 'Enviar'}
+            </button>
+            <input
+              ref={imageInputRef}
+              type="file"
+              accept="image/*"
+              className="handoff-file-input"
+              onChange={async event => {
+                const file = event.target.files?.[0];
+                if (!file) return;
+                await onSendImage(file);
+                event.target.value = '';
+                messageInputRef.current?.focus();
+              }}
+            />
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => imageInputRef.current?.click()}
+              disabled={!selectedJid || busySendImage}
+            >
+              {busySendImage ? 'Enviando imagem...' : 'Enviar imagem'}
             </button>
           </div>
           <div className="handoff-resume">
