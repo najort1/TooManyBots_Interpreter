@@ -127,8 +127,8 @@ function getBottomChartConfig(stats: DashboardStats): ChartConfiguration<'bar'> 
 
 function PanelTitle({ icon, text }: { icon: string; text: string }) {
   return (
-    <h3 className="panel-title-with-icon">
-      <i className={icon} aria-hidden="true" />
+    <h3 className="inline-flex items-center gap-2 text-base font-extrabold">
+      <i className={`${icon} text-[0.9rem] text-[#2f5f9f]`} aria-hidden="true" />
       <span>{text}</span>
     </h3>
   );
@@ -136,15 +136,17 @@ function PanelTitle({ icon, text }: { icon: string; text: string }) {
 
 function KpiCard({ title, value, icon, valueClass = '' }: { title: string; value: string | number; icon: string; valueClass?: string }) {
   return (
-    <article className="kpi-card">
-      <p className="kpi-title kpi-title-with-icon">
-        <i className={icon} aria-hidden="true" />
+    <article className="rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]">
+      <p className="inline-flex items-center gap-2 text-[0.78rem] uppercase tracking-[0.06em] text-slate-500">
+        <i className={`${icon} text-[0.78rem] text-[#2b5ea5]`} aria-hidden="true" />
         <span>{title}</span>
       </p>
-      <p className={`kpi-value ${valueClass}`.trim()}>{value}</p>
+      <p className={`mt-1 text-[1.78rem] font-extrabold ${valueClass}`.trim()}>{value}</p>
     </article>
   );
 }
+
+const panel = 'rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]';
 
 export function AnalyticsView({
   mode,
@@ -166,8 +168,8 @@ export function AnalyticsView({
   const apiHealth = safeStats.apiHealth ?? [];
 
   return (
-    <section className="view-section">
-      <div className="kpi-grid">
+    <section className="mx-auto max-w-[1560px]">
+      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {mode === 'CONVERSATION' ? (
           <>
             <KpiCard title="Conversas Hoje" value={safeStats.conversationsStarted ?? 0} icon="fa-regular fa-comments" />
@@ -175,10 +177,10 @@ export function AnalyticsView({
               title="Abandono"
               value={`${((safeStats.abandonmentRate ?? 0) * 100).toFixed(1)}%`}
               icon="fa-solid fa-person-walking-arrow-right"
-              valueClass="text-danger"
+              valueClass="text-[#c62828]"
             />
             <KpiCard title="Tempo Medio" value={fmtDuration(avgDuration)} icon="fa-regular fa-clock" />
-            <KpiCard title="Sessoes Ativas" value={safeStats.activeSessions ?? 0} icon="fa-solid fa-signal" valueClass="text-success" />
+            <KpiCard title="Sessoes Ativas" value={safeStats.activeSessions ?? 0} icon="fa-solid fa-signal" valueClass="text-[#0f766e]" />
           </>
         ) : (
           <>
@@ -188,59 +190,69 @@ export function AnalyticsView({
               title="Sucesso"
               value={`${((safeStats.successRate ?? 0) * 100).toFixed(1)}%`}
               icon="fa-regular fa-circle-check"
-              valueClass="text-success"
+              valueClass="text-[#0f766e]"
             />
             <KpiCard title="Pico / Hora" value={safeStats.peakPerHour ?? 0} icon="fa-solid fa-chart-line" />
           </>
         )}
       </div>
 
-      <div className="analytics-grid">
-        <article className="panel panel-primary">
-          <header className="panel-header">
-            <PanelTitle icon={mode === 'CONVERSATION' ? 'fa-solid fa-filter-circle-dollar' : 'fa-solid fa-fire'} text={mode === 'CONVERSATION' ? 'Funil de Conversacao' : 'Comandos Populares'} />
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <article className={`${panel} xl:col-span-2`}>
+          <header className="mb-3">
+            <PanelTitle
+              icon={mode === 'CONVERSATION' ? 'fa-solid fa-filter-circle-dollar' : 'fa-solid fa-fire'}
+              text={mode === 'CONVERSATION' ? 'Funil de Conversacao' : 'Comandos Populares'}
+            />
           </header>
           <ChartCanvas config={primaryChartConfig} height={320} />
         </article>
 
-        <article className="panel">
-          <header className="panel-header">
+        <article className={panel}>
+          <header className="mb-3">
             <PanelTitle icon="fa-regular fa-clock" text="Volume Horario" />
           </header>
           <ChartCanvas config={volumeChartConfig} height={320} />
         </article>
 
-        <article className="panel panel-list">
-          <header className="panel-header">
-            <PanelTitle icon={mode === 'CONVERSATION' ? 'fa-solid fa-users' : 'fa-solid fa-user-group'} text={mode === 'CONVERSATION' ? 'Contatos Mais Ativos' : 'Usuarios Mais Ativos'} />
+        <article className={panel}>
+          <header className="mb-3">
+            <PanelTitle
+              icon={mode === 'CONVERSATION' ? 'fa-solid fa-users' : 'fa-solid fa-user-group'}
+              text={mode === 'CONVERSATION' ? 'Contatos Mais Ativos' : 'Usuarios Mais Ativos'}
+            />
           </header>
-          <div className="list-scroll">
+          <div className="max-h-[320px] overflow-auto">
             {mode === 'CONVERSATION' ? (
               (safeStats.topContacts ?? []).length === 0 ? (
-                <p className="empty-hint">Nenhum dado ainda.</p>
+                <p className="py-4 text-center text-sm text-slate-500">Nenhum dado ainda.</p>
               ) : (
                 (safeStats.topContacts ?? []).map((item, index) => (
-                  <div className="list-row" key={`${item.jid}-${index}`}>
-                    <div className="list-rank">{index + 1}</div>
-                    <div className="list-content">
-                      <strong>{item.name || item.jid}</strong>
-                      <small>Ultima atividade: {item.lastActivity ? fmtTime(item.lastActivity) : '--:--'}</small>
+                  <div key={`${item.jid}-${index}`} className="flex items-center gap-3 border-b border-[#edf2f7] py-2 last:border-b-0">
+                    <div className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-[#dbeafe] text-sm font-bold text-[#1d4ed8]">
+                      {index + 1}
                     </div>
-                    <span className="list-stat">{item.messageCount} msgs</span>
+                    <div className="min-w-0">
+                      <strong className="block truncate text-[0.86rem]">{item.name || item.jid}</strong>
+                      <small className="text-[0.74rem] text-slate-500">
+                        Ultima atividade: {item.lastActivity ? fmtTime(item.lastActivity) : '--:--'}
+                      </small>
+                    </div>
+                    <span className="ml-auto text-xs font-bold text-slate-700">{item.messageCount} msgs</span>
                   </div>
                 ))
               )
             ) : (
               (safeStats.topUsers ?? []).length === 0 ? (
-                <p className="empty-hint">Nenhum dado ainda.</p>
+                <p className="py-4 text-center text-sm text-slate-500">Nenhum dado ainda.</p>
               ) : (
                 (safeStats.topUsers ?? []).map(item => (
-                  <div className="list-row compact" key={item.jid}>
-                    <div className="list-content">
-                      <strong>{item.name || item.jid}</strong>
-                      <small>Favorito: {item.favoriteCommand || 'N/A'}</small>
+                  <div key={item.jid} className="flex items-start justify-between gap-3 border-b border-[#edf2f7] py-2 last:border-b-0">
+                    <div>
+                      <strong className="block text-[0.86rem]">{item.name || item.jid}</strong>
+                      <small className="text-[0.74rem] text-slate-500">Favorito: {item.favoriteCommand || 'N/A'}</small>
                     </div>
-                    <span className="list-stat">{item.totalCommands} cmd</span>
+                    <span className="text-xs font-bold text-slate-700">{item.totalCommands} cmd</span>
                   </div>
                 ))
               )
@@ -248,38 +260,45 @@ export function AnalyticsView({
           </div>
         </article>
 
-        <article className="panel panel-logs">
-          <header className="panel-header panel-header-space">
+        <article className={`${panel} xl:col-span-2 min-h-[420px]`}>
+          <header className="mb-3 flex items-center justify-between gap-3">
             <PanelTitle icon="fa-regular fa-rectangle-list" text={mode === 'CONVERSATION' ? 'Logs em Tempo Real' : 'Logs de Comandos'} />
-            <button type="button" className="ghost-btn minimal-btn" onClick={onExport}>
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#d4e0f1] bg-white/80 px-3 py-1.5 text-[0.78rem] font-semibold text-slate-700 transition hover:bg-slate-50"
+              onClick={onExport}
+            >
               <i className="fa-solid fa-file-export" aria-hidden="true" /> Exportar CSV
             </button>
           </header>
-          <div className="logs-scroll">
+          <div className="max-h-[360px] overflow-auto rounded-[10px] border border-[#dce6f2] bg-[#eef3fb] p-2.5">
             {logs.length === 0 ? (
-              <p className="empty-hint">Aguardando mensagens...</p>
+              <p className="py-4 text-center text-sm text-slate-500">Aguardando mensagens...</p>
             ) : mode === 'CONVERSATION' ? (
               logs.map((log, index) => {
                 const isOutgoing = log.direction === 'outgoing';
                 const label = isOutgoing ? 'Bot/Atendente' : 'Usuario';
                 const text = log.messageText || '[Evento de sistema]';
                 return (
-                  <div key={`${log.occurredAt}-${index}`} className={`log-line ${isOutgoing ? 'is-outgoing' : ''}`}>
-                    <time>{fmtTime(log.occurredAt)}</time>
-                    <p>
+                  <div
+                    key={`${log.occurredAt}-${index}`}
+                    className={`mb-1 grid grid-cols-[68px_1fr] gap-2 rounded-[10px] p-2 ${isOutgoing ? 'bg-[#e2e8f0]' : ''}`}
+                  >
+                    <time className="text-xs text-slate-500">{fmtTime(log.occurredAt)}</time>
+                    <p className="text-[0.84rem] leading-[1.45]">
                       <strong>{label}:</strong> {text}
                     </p>
                   </div>
                 );
               })
             ) : (
-              <table className="logs-table">
+              <table className="w-full border-collapse text-[0.77rem]">
                 <thead>
                   <tr>
-                    <th>Hora</th>
-                    <th>JID</th>
-                    <th>Comando</th>
-                    <th>Res</th>
+                    <th className="border-b border-[#e2e8f0] p-2 text-left font-bold text-slate-500">Hora</th>
+                    <th className="border-b border-[#e2e8f0] p-2 text-left font-bold text-slate-500">JID</th>
+                    <th className="border-b border-[#e2e8f0] p-2 text-left font-bold text-slate-500">Comando</th>
+                    <th className="border-b border-[#e2e8f0] p-2 text-left font-bold text-slate-500">Res</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -289,10 +308,10 @@ export function AnalyticsView({
                     const failed = log.eventType.includes('error') || isLikelyErrorMessage(String(log.messageText ?? ''));
                     return (
                       <tr key={`${log.occurredAt}-${index}`}>
-                        <td>{fmtTime(log.occurredAt)}</td>
-                        <td>{log.jid}</td>
-                        <td>{command}</td>
-                        <td>{failed ? 'ERRO' : 'OK'}</td>
+                        <td className="border-b border-[#e2e8f0] p-2">{fmtTime(log.occurredAt)}</td>
+                        <td className="border-b border-[#e2e8f0] p-2">{log.jid}</td>
+                        <td className="border-b border-[#e2e8f0] p-2">{command}</td>
+                        <td className="border-b border-[#e2e8f0] p-2">{failed ? 'ERRO' : 'OK'}</td>
                       </tr>
                     );
                   })}
@@ -304,51 +323,51 @@ export function AnalyticsView({
 
         {mode === 'CONVERSATION' ? (
           <>
-            <article className="panel panel-primary">
-              <header className="panel-header">
+            <article className={`${panel} xl:col-span-2`}>
+              <header className="mb-3">
                 <PanelTitle icon="fa-solid fa-chart-column" text="Tendencia Semanal" />
               </header>
               <ChartCanvas config={bottomChartConfig} height={260} />
             </article>
-            <article className="panel">
-              <header className="panel-header">
+            <article className={panel}>
+              <header className="mb-3">
                 <PanelTitle icon="fa-solid fa-chart-simple" text="Metricas Avancadas" />
               </header>
-              <div className="metric-grid">
-                <div className="metric-card">
-                  <span>Taxa de Conversao</span>
-                  <strong>{conversionRate.toFixed(1)}%</strong>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="rounded-xl border border-[#dce7f5] bg-[#f8fbff] p-3">
+                  <span className="block text-xs text-slate-500">Taxa de Conversao</span>
+                  <strong className="mt-1 block text-xl">{conversionRate.toFixed(1)}%</strong>
                 </div>
-                <div className="metric-card">
-                  <span>Tempo Mediano</span>
-                  <strong>{fmtDuration(safeStats.medianDurationMs ?? avgDuration)}</strong>
+                <div className="rounded-xl border border-[#dce7f5] bg-[#f8fbff] p-3">
+                  <span className="block text-xs text-slate-500">Tempo Mediano</span>
+                  <strong className="mt-1 block text-xl">{fmtDuration(safeStats.medianDurationMs ?? avgDuration)}</strong>
                 </div>
-                <div className="metric-card">
-                  <span>Concluidas</span>
-                  <strong>{completed}</strong>
+                <div className="rounded-xl border border-[#dce7f5] bg-[#f8fbff] p-3">
+                  <span className="block text-xs text-slate-500">Concluidas</span>
+                  <strong className="mt-1 block text-xl">{completed}</strong>
                 </div>
-                <div className="metric-card">
-                  <span>Abandonadas</span>
-                  <strong>{abandoned}</strong>
+                <div className="rounded-xl border border-[#dce7f5] bg-[#f8fbff] p-3">
+                  <span className="block text-xs text-slate-500">Abandonadas</span>
+                  <strong className="mt-1 block text-xl">{abandoned}</strong>
                 </div>
               </div>
             </article>
           </>
         ) : (
           <>
-            <article className="panel panel-primary">
-              <header className="panel-header">
+            <article className={`${panel} xl:col-span-2`}>
+              <header className="mb-3">
                 <PanelTitle icon="fa-solid fa-triangle-exclamation" text="Erros Recentes" />
               </header>
-              <div className="status-stack">
+              <div className="max-h-[250px] overflow-auto">
                 {recentErrors.length === 0 ? (
-                  <p className="empty-hint">Nenhum erro recente.</p>
+                  <p className="py-4 text-center text-sm text-slate-500">Nenhum erro recente.</p>
                 ) : (
                   recentErrors.map((item, index) => (
-                    <div className="status-row danger" key={`${item.command}-${index}`}>
+                    <div key={`${item.command}-${index}`} className="flex items-start justify-between gap-3 border-b border-[#ebf1f8] py-2 last:border-b-0">
                       <div>
-                        <strong>{item.command}</strong>
-                        <p>{item.error}</p>
+                        <strong className="block text-[0.85rem] text-[#b4232c]">{item.command}</strong>
+                        <p className="mt-1 text-[0.76rem] text-[#7f1d1d]">{item.error}</p>
                       </div>
                       <span>{item.count}x</span>
                     </div>
@@ -356,21 +375,21 @@ export function AnalyticsView({
                 )}
               </div>
             </article>
-            <article className="panel">
-              <header className="panel-header">
+            <article className={panel}>
+              <header className="mb-3">
                 <PanelTitle icon="fa-solid fa-heart-pulse" text="Saude das APIs" />
               </header>
-              <div className="status-stack">
+              <div className="max-h-[250px] overflow-auto">
                 {apiHealth.length === 0 ? (
-                  <p className="empty-hint">Sem integracoes mapeadas.</p>
+                  <p className="py-4 text-center text-sm text-slate-500">Sem integracoes mapeadas.</p>
                 ) : (
                   apiHealth.map((item, index) => (
-                    <div className="status-row" key={`${item.name}-${index}`}>
+                    <div key={`${item.name}-${index}`} className="flex items-start justify-between gap-3 border-b border-[#ebf1f8] py-2 last:border-b-0">
                       <div>
-                        <strong>{item.name}</strong>
-                        <p>{item.avgLatencyMs}ms · {(item.uptime * 100).toFixed(0)}% uptime</p>
+                        <strong className="block text-[0.85rem]">{item.name}</strong>
+                        <p className="mt-1 text-[0.76rem] text-slate-500">{item.avgLatencyMs}ms · {(item.uptime * 100).toFixed(0)}% uptime</p>
                       </div>
-                      <span className={item.status === 'healthy' ? 'status-ok' : 'status-fail'}>
+                      <span className={item.status === 'healthy' ? 'font-bold text-[#0f766e]' : 'font-bold text-[#c62828]'}>
                         {item.status === 'healthy' ? 'OK' : 'ALERTA'}
                       </span>
                     </div>

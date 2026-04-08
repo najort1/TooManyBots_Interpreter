@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+﻿import { useEffect, useRef } from 'react';
 import {
   Chart,
   type ChartConfiguration,
@@ -45,7 +45,7 @@ export function ChartCanvas({
   }, [config]);
 
   return (
-    <div className="chart-shell" style={{ height }}>
+    <div style={{ height }} className="relative">
       <canvas ref={canvasRef} />
     </div>
   );

@@ -71,6 +71,10 @@ function getTimelineItemKey(event: EventLog, index: number): string {
   ].join('-');
 }
 
+const panel = 'rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]';
+const minimalBtn =
+  'inline-flex h-9 items-center justify-center rounded-full border px-3 text-[0.78rem] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60';
+
 export function HandoffView({
   sessions,
   blocks,
@@ -108,13 +112,13 @@ export function HandoffView({
   }, [selectedJid, busySend, busySendImage]);
 
   return (
-    <section className="handoff-grid">
-      <article className="panel">
-        <header className="panel-header panel-header-space">
-          <h3>Sessoes em Espera</h3>
+    <section className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(260px,320px)_1fr]">
+      <article className={`${panel} min-w-0`}>
+        <header className="mb-3 flex items-center justify-between gap-3">
+          <h3 className="text-base font-extrabold">Sessoes em Espera</h3>
           <button
             type="button"
-            className="ghost-btn minimal-btn icon-only-btn"
+            className={`${minimalBtn} w-9 border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-[#f8fafc]`}
             onClick={onRefreshSessions}
             aria-label="Atualizar sessoes"
             title="Atualizar sessoes"
@@ -122,9 +126,9 @@ export function HandoffView({
             <i className="fa-solid fa-arrows-rotate" aria-hidden="true" />
           </button>
         </header>
-        <div className="handoff-session-list">
+        <div className="flex max-h-[560px] flex-col gap-2 overflow-auto">
           {sessions.length === 0 ? (
-            <p className="empty-hint">Nenhuma sessao aguardando atendimento.</p>
+            <p className="py-4 text-center text-sm text-slate-500">Nenhuma sessao aguardando atendimento.</p>
           ) : (
             sessions.map(session => {
               const isActive = selectedJid === session.jid;
@@ -134,15 +138,31 @@ export function HandoffView({
                 <button
                   type="button"
                   key={session.jid}
-                  className={`handoff-session-item ${isActive ? 'is-active' : ''}`}
+                  className={[
+                    'rounded-xl border bg-white p-3 text-left transition',
+                    isActive
+                      ? 'border-[#7ca4db] bg-[#eff6ff]'
+                      : 'border-[#dce6f3] hover:border-[#9fb7d8]',
+                  ].join(' ')}
                   onClick={() => onSelectSession(session.jid)}
                 >
-                  <div className="handoff-session-top">
+                  <div className="flex items-center justify-between gap-2">
                     <strong>{formatJidPhone(session.jid)}</strong>
-                    <span className={`queue-tag ${badge === 'Respondido' ? 'is-answered' : ''}`}>{badge}</span>
+                    <span
+                      className={[
+                        'rounded-full px-2 py-0.5 text-[0.66rem] font-bold',
+                        badge === 'Respondido'
+                          ? 'bg-[#dcfce7] text-[#166534]'
+                          : 'bg-[#fef3c7] text-[#92400e]',
+                      ].join(' ')}
+                    >
+                      {badge}
+                    </span>
                   </div>
-                  <small>Fila: {session.queue || 'default'} · {session.lastActivityAt ? fmtTime(session.lastActivityAt) : '--:--'}</small>
-                  <p>{snippet}</p>
+                  <small className="mt-1 block text-xs text-slate-500">
+                    Fila: {session.queue || 'default'} · {session.lastActivityAt ? fmtTime(session.lastActivityAt) : '--:--'}
+                  </small>
+                  <p className="mt-1 whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-sm text-slate-700">{snippet}</p>
                 </button>
               );
             })
@@ -150,32 +170,39 @@ export function HandoffView({
         </div>
       </article>
 
-      <article className="panel panel-handoff-chat">
-        <header className="panel-header panel-header-space">
+      <article className={`${panel} min-h-[620px] min-w-0`}>
+        <header className="mb-3 flex items-center justify-between gap-3">
           <div>
-            <h3>Chat em Tempo Real</h3>
-            <small>
+            <h3 className="text-base font-extrabold">Chat em Tempo Real</h3>
+            <small className="mt-1 block text-xs text-slate-500">
               {selectedJid ? `Sessao ativa: ${formatJidPhone(selectedJid)}` : 'Selecione uma sessao na lista'}
             </small>
           </div>
-          <button type="button" className="danger-btn minimal-btn" onClick={onEnd} disabled={!selectedJid || busyEnd}>
+          <button
+            type="button"
+            className={`${minimalBtn} border-[#f2c4ca] bg-[#fff5f5] text-[#b4232c] hover:bg-[#ffe4e6]`}
+            onClick={onEnd}
+            disabled={!selectedJid || busyEnd}
+          >
             <i className="fa-regular fa-circle-xmark" aria-hidden="true" /> {busyEnd ? 'Encerrando...' : 'Encerrar sessao'}
           </button>
         </header>
 
-        <div className="handoff-history">
+        <div className="h-[380px] overflow-auto overflow-x-hidden rounded-xl border border-[#dce6f3] bg-[#eef3fb] p-2">
           {!selectedJid ? (
-            <p className="empty-hint">Selecione uma sessao para ver as mensagens.</p>
+            <p className="py-4 text-center text-sm text-slate-500">Selecione uma sessao para ver as mensagens.</p>
           ) : sortedTimeline.length === 0 ? (
-            <p className="empty-hint">Sem historico para esta sessao.</p>
+            <p className="py-4 text-center text-sm text-slate-500">Sem historico para esta sessao.</p>
           ) : (
             sortedTimeline.map((event, index) => (
-              <div className="handoff-line" key={getTimelineItemKey(event, index)}>
-                <div className="handoff-line-header">
+              <div key={getTimelineItemKey(event, index)} className="mb-2 rounded-[10px] border border-[#e5edf7] bg-white p-2.5 last:mb-0">
+                <div className="mb-1 flex items-center justify-between text-[0.72rem] font-bold text-[#59687b]">
                   <span>{getTimelineLabel(event)}</span>
                   <time>{event.occurredAt ? fmtTime(event.occurredAt) : '--:--'}</time>
                 </div>
-                <p>{event.messageText || `[${event.eventType || 'evento'}]`}</p>
+                <p className="whitespace-pre-wrap break-words [overflow-wrap:anywhere] text-[0.86rem] leading-[1.45]">
+                  {event.messageText || `[${event.eventType || 'evento'}]`}
+                </p>
                 {(() => {
                   const mediaUrl = readMetadataText(event, 'mediaUrl');
                   if (!mediaUrl) return null;
@@ -184,7 +211,7 @@ export function HandoffView({
 
                   return (
                     <img
-                      className="handoff-line-image"
+                      className="mt-2 max-h-[280px] max-w-full rounded-[10px] border border-[#d7e3f2] object-cover"
                       src={mediaUrl}
                       alt={event.messageText || 'Imagem da conversa'}
                       loading="lazy"
@@ -196,8 +223,8 @@ export function HandoffView({
           )}
         </div>
 
-        <div className="handoff-actions">
-          <div className="handoff-send">
+        <div className="mt-3 grid gap-2.5">
+          <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto]">
             <input
               ref={messageInputRef}
               type="text"
@@ -205,6 +232,7 @@ export function HandoffView({
               onChange={event => onMessageChange(event.target.value)}
               placeholder="Digite a mensagem do atendente..."
               disabled={!selectedJid}
+              className="rounded-[10px] border border-[#cfdcec] bg-white px-3 py-2 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
               onKeyDown={async event => {
                 if (busySend || !selectedJid) return;
                 if (event.key === 'Enter') {
@@ -218,7 +246,7 @@ export function HandoffView({
             />
             <button
               type="button"
-              className="primary-btn minimal-btn icon-only-btn"
+              className={`${minimalBtn} h-9 w-9 border-[#174d9d] bg-[#1e63c9] p-0 text-white hover:bg-[#174d9d]`}
               onClick={async () => {
                 await onSend();
                 window.requestAnimationFrame(() => {
@@ -235,7 +263,7 @@ export function HandoffView({
               ref={imageInputRef}
               type="file"
               accept="image/*"
-              className="handoff-file-input"
+              className="hidden"
               onChange={async event => {
                 const file = event.target.files?.[0];
                 if (!file) return;
@@ -248,7 +276,7 @@ export function HandoffView({
             />
             <button
               type="button"
-              className="ghost-btn minimal-btn icon-only-btn"
+              className={`${minimalBtn} h-9 w-9 border-[#d4e0f1] bg-white/80 p-0 text-slate-700 hover:bg-slate-50`}
               onClick={() => imageInputRef.current?.click()}
               disabled={!selectedJid || busySendImage}
               aria-label={busySendImage ? 'Enviando imagem' : 'Enviar imagem'}
@@ -257,7 +285,7 @@ export function HandoffView({
               <i className={busySendImage ? 'fa-solid fa-spinner fa-spin' : 'fa-regular fa-image'} aria-hidden="true" />
             </button>
           </div>
-          <div className="handoff-resume">
+          <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
             <Select2Field
               value={selectedBlockId}
               onChange={onSelectBlock}
@@ -267,9 +295,13 @@ export function HandoffView({
                 value: block.id,
                 label: `#${block.index} · ${block.name || block.id} (${block.type})`,
               }))}
-              className="handoff-resume-select"
             />
-            <button type="button" className="success-btn minimal-btn" onClick={onResume} disabled={!selectedJid || busyResume}>
+            <button
+              type="button"
+              className={`${minimalBtn} border-[#0e6059] bg-[#0f766e] text-white hover:bg-[#0e6059]`}
+              onClick={onResume}
+              disabled={!selectedJid || busyResume}
+            >
               <i className="fa-solid fa-play" aria-hidden="true" /> {busyResume ? 'Retomando...' : 'Retomar'}
             </button>
           </div>

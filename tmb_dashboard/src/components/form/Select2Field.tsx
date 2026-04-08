@@ -84,7 +84,7 @@ export function Select2Field({
   return (
     <select
       ref={selectRef}
-      className={`select2-native ${className}`.trim()}
+      className={`w-full ${className}`.trim()}
       value={value}
       onChange={event => onChange(event.target.value)}
       disabled={disabled}

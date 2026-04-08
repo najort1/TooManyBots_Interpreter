@@ -526,14 +526,14 @@ function App() {
   }, []);
 
   return (
-    <div className="app-shell">
+    <div className="flex min-h-screen">
       <Sidebar
         currentView={view}
         onNavigate={setView}
         mobileOpen={sidebarOpen}
         onCloseMobile={() => setSidebarOpen(false)}
       />
-      <div className="app-main">
+      <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           mode={mode}
           botName={botName}
@@ -545,7 +545,7 @@ function App() {
 
         <ToastCenter items={toasts} onDismiss={dismissToast} />
 
-        <main className="app-content">
+        <main className="flex-1 overflow-auto p-3 sm:p-5">
           {view === 'analytics' && (
             <AnalyticsView
               mode={mode}
@@ -583,12 +583,12 @@ function App() {
           )}
 
           {view === 'settings' && (
-            <section className="view-section">
-              <article className="panel">
-                <header className="panel-header">
-                  <h3>Configurações</h3>
+            <section className="mx-auto max-w-[1560px]">
+              <article className="rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]">
+                <header className="mb-3">
+                  <h3 className="text-base font-extrabold">Configurações</h3>
                 </header>
-                <p className="settings-placeholder">
+                <p className="m-0 text-[0.95rem] leading-[1.6] text-slate-500">
                   Esta área está pronta para receber controles avançados de runtime, alertas e preferências da equipe.
                 </p>
               </article>
