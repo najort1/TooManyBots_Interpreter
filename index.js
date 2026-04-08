@@ -7,7 +7,7 @@ import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 
 import { initDb, addConversationEvent, onConversationEvent } from './db/index.js';
-import { useSqliteAuthState } from './db/authState.js';
+import { cleanupAuthSignalSessions, useSqliteAuthState } from './db/authState.js';
 import { loadFlow } from './engine/flowLoader.js';
 import { parseMessage } from './engine/messageParser.js';
 import {
@@ -48,6 +48,7 @@ let flowWatcher = null;
 let terminalCommandInterface = null;
 let dashboardServer = null;
 let removeConversationEventListener = null;
+let authStateMaintenanceTimer = null;
 const contactCache = new Map();
 
 const FATAL_LOG_FILE = path.resolve('./fatal-error.log');
@@ -105,6 +106,83 @@ process.on('unhandledRejection', reason => {
 process.on('uncaughtException', err => {
   void handleFatal('Uncaught Exception', err);
 });
+
+const LIBSIGNAL_NOISE_PREFIXES = [
+  'Failed to decrypt message with any known session',
+  'Session error:',
+  'Closing open session in favor of incoming prekey bundle',
+  'Closing session:',
+  'Decrypted message with closed session.',
+];
+
+let libSignalNoiseFilterInstalled = false;
+
+function shouldSuppressLibSignalConsoleNoise(args) {
+  const firstText = args.find(arg => typeof arg === 'string');
+  if (!firstText) return false;
+  return LIBSIGNAL_NOISE_PREFIXES.some(prefix => firstText.startsWith(prefix));
+}
+
+function installLibSignalNoiseFilter(enabled) {
+  if (!enabled || libSignalNoiseFilterInstalled) return;
+  libSignalNoiseFilterInstalled = true;
+
+  const original = {
+    error: console.error.bind(console),
+    warn: console.warn.bind(console),
+    info: console.info.bind(console),
+  };
+
+  console.error = (...args) => {
+    if (shouldSuppressLibSignalConsoleNoise(args)) return;
+    original.error(...args);
+  };
+
+  console.warn = (...args) => {
+    if (shouldSuppressLibSignalConsoleNoise(args)) return;
+    original.warn(...args);
+  };
+
+  console.info = (...args) => {
+    if (shouldSuppressLibSignalConsoleNoise(args)) return;
+    original.info(...args);
+  };
+}
+
+function shouldSuppressBaileysDecryptNoise(args) {
+  const msg = [...args].reverse().find(arg => typeof arg === 'string') || '';
+  if (msg !== 'failed to decrypt message') return false;
+
+  const meta = args.find(arg => arg && typeof arg === 'object' && !Array.isArray(arg));
+  const err = meta?.err ?? {};
+  const errName = String(err?.name ?? err?.type ?? '');
+  const errMessage = String(err?.message ?? '');
+
+  return errName === 'SessionError' && errMessage.includes('No matching sessions found for message');
+}
+
+function createRuntimeLogger(currentConfig) {
+  const suppressDecryptNoise =
+    currentConfig.runtimeMode === RUNTIME_MODE.PRODUCTION &&
+    String(process.env.TMB_SUPPRESS_SIGNAL_NOISE ?? '1') !== '0';
+
+  const pinoOptions = currentConfig.prettyLogs
+    ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
+    : {};
+
+  if (suppressDecryptNoise) {
+    pinoOptions.hooks = {
+      logMethod(args, method) {
+        if (shouldSuppressBaileysDecryptNoise(args)) return;
+        method.apply(this, args);
+      },
+    };
+  }
+
+  const runtimeLogger = pino(pinoOptions);
+  runtimeLogger.level = currentConfig.logLevel;
+  return runtimeLogger;
+}
 
 function isDevelopmentMode(currentConfig) {
   return String(currentConfig?.runtimeMode ?? '').toLowerCase() === RUNTIME_MODE.DEVELOPMENT;
@@ -172,6 +250,41 @@ function extractApiHostFromTemplateUrl(rawUrl) {
 
     const match = normalized.match(/^(?:[a-z]+:\/\/)?([^\/\s?#]+)/i);
     return String(match?.[1] ?? 'host-desconhecido');
+  }
+}
+
+function cleanupSignalAuthState({ reason = 'manual', forceLog = false } = {}) {
+  try {
+    const summary = cleanupAuthSignalSessions();
+    const shouldLog =
+      forceLog ||
+      summary.changedRows > 0 ||
+      summary.deletedRows > 0 ||
+      summary.removedSessions > 0;
+
+    if (shouldLog) {
+      console.log(
+        `[AuthState] cleanup(${reason}) rows=${summary.scannedRows} changed=${summary.changedRows} deleted=${summary.deletedRows} removedSessions=${summary.removedSessions}`
+      );
+    }
+
+    return summary;
+  } catch (error) {
+    console.error(`[AuthState] cleanup falhou (${reason}):`, error?.message || error);
+    return null;
+  }
+}
+
+function startAuthStateMaintenance() {
+  if (authStateMaintenanceTimer) return;
+
+  const intervalMs = Math.max(60_000, Number(process.env.TMB_AUTH_CLEANUP_INTERVAL_MS) || (10 * 60 * 1000));
+  authStateMaintenanceTimer = setInterval(() => {
+    cleanupSignalAuthState({ reason: 'interval' });
+  }, intervalMs);
+
+  if (typeof authStateMaintenanceTimer.unref === 'function') {
+    authStateMaintenanceTimer.unref();
   }
 }
 
@@ -463,15 +576,17 @@ async function start() {
 
   config = await getConfig({ interactive: true });
 
-  logger = pino(
-    config.prettyLogs
-      ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
-      : {}
-  );
-  logger.level = config.logLevel;
+  const suppressSignalNoise =
+    config.runtimeMode === RUNTIME_MODE.PRODUCTION &&
+    String(process.env.TMB_SUPPRESS_SIGNAL_NOISE ?? '1') !== '0';
+  installLibSignalNoiseFilter(suppressSignalNoise);
+
+  logger = createRuntimeLogger(config);
 
   await initDb();
   console.log('Banco de dados inicializado (better-sqlite3 + WAL)');
+  cleanupSignalAuthState({ reason: 'startup', forceLog: true });
+  startAuthStateMaintenance();
 
   currentFlow = loadFlow(config.flowPath);
   console.log(`Fluxo carregado - ${currentFlow.blocks.length} bloco(s) ativo(s)\n`);
