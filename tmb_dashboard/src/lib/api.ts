@@ -6,13 +6,52 @@ import type {
   RuntimeHealth,
 } from '../types';
 
+const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').trim();
+
+function resolveApiUrl(url: string): string {
+  if (!API_BASE_URL) return url;
+  return new URL(url, API_BASE_URL).toString();
+}
+
+function stripHtmlPreview(raw: string): string {
+  const compact = raw.replace(/\s+/g, ' ').trim();
+  if (!compact) return '';
+  return compact.slice(0, 120);
+}
+
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+  const resolvedUrl = resolveApiUrl(url);
+  const response = await fetch(resolvedUrl, init);
+  const text = await response.text().catch(() => '');
+
   if (!response.ok) {
-    const text = await response.text().catch(() => '');
     throw new Error(text || `Request failed: ${response.status}`);
   }
-  return response.json() as Promise<T>;
+
+  const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('application/json')) {
+    try {
+      return JSON.parse(text) as T;
+    } catch (error) {
+      throw new Error(`Resposta JSON invalida em ${resolvedUrl}: ${String((error as Error)?.message || error)}`);
+    }
+  }
+
+  const preview = stripHtmlPreview(text);
+  const seemsHtml = preview.startsWith('<!doctype') || preview.startsWith('<html') || preview.startsWith('<');
+  if (seemsHtml) {
+    throw new Error(
+      `API respondeu HTML em ${resolvedUrl}. Verifique se o frontend está apontando para o backend correto (/api via proxy ou VITE_API_BASE_URL).`
+    );
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch (error) {
+    throw new Error(
+      `Nao foi possivel interpretar resposta da API em ${resolvedUrl}: ${String((error as Error)?.message || error)}`
+    );
+  }
 }
 
 export async function fetchHealth(): Promise<RuntimeHealth> {
