@@ -7,10 +7,10 @@ interface SidebarProps {
   onCloseMobile: () => void;
 }
 
-const navItems: Array<{ id: DashboardView; label: string; icon: string }> = [
-  { id: 'analytics', label: 'Dashboard', icon: 'DB' },
-  { id: 'handoff', label: 'Atendimento Humano', icon: 'AT' },
-  { id: 'settings', label: 'Configuracoes', icon: 'CF' },
+const navItems: Array<{ id: DashboardView; label: string; iconClass: string }> = [
+  { id: 'analytics', label: 'Dashboard', iconClass: 'fa-solid fa-chart-pie' },
+  { id: 'handoff', label: 'Atendimento Humano', iconClass: 'fa-solid fa-headset' },
+  { id: 'settings', label: 'Configuracoes', iconClass: 'fa-solid fa-sliders' },
 ];
 
 export function Sidebar({
@@ -42,7 +42,9 @@ export function Sidebar({
                 onCloseMobile();
               }}
             >
-              <span className="sidebar-link-icon" aria-hidden="true">{item.icon}</span>
+              <span className="sidebar-link-icon" aria-hidden="true">
+                <i className={item.iconClass} />
+              </span>
               <span>{item.label}</span>
             </button>
           ))}

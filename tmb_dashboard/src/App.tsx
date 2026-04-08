@@ -18,6 +18,8 @@ import { TopBar } from './components/layout/TopBar';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { HandoffView } from './components/handoff/HandoffView';
 import { Modal } from './components/Modal';
+import { ToastCenter } from './components/feedback/ToastCenter';
+import type { ToastItem, ToastTone } from './components/feedback/ToastCenter';
 import type {
   DashboardMode,
   DashboardStats,
@@ -129,6 +131,14 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+function mapMessageToTone(message: string): ToastTone {
+  const normalized = String(message || '').toLowerCase();
+  if (normalized.includes('sucesso')) return 'success';
+  if (normalized.includes('erro') || normalized.includes('falha')) return 'danger';
+  if (normalized.includes('aten') || normalized.includes('aguardando')) return 'warning';
+  return 'info';
+}
+
 function App() {
   const [view, setView] = useState<DashboardView>('analytics');
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -138,7 +148,7 @@ function App() {
   const [uptimeMs, setUptimeMs] = useState(0);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [logs, setLogs] = useState<EventLog[]>([]);
-  const [notice, setNotice] = useState('');
+  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [handoffBlocks, setHandoffBlocks] = useState<HandoffBlock[]>([]);
   const [handoffSessions, setHandoffSessions] = useState<HandoffSession[]>([]);
   const [selectedHandoffJid, setSelectedHandoffJid] = useState('');
@@ -156,8 +166,10 @@ function App() {
   const flowPathRef = useRef(flowPath);
   const logsRef = useRef(logs);
   const selectedJidRef = useRef(selectedHandoffJid);
+  const handoffSessionsRef = useRef(handoffSessions);
   const refreshTimeoutRef = useRef<number | null>(null);
-  const noticeTimeoutRef = useRef<number | null>(null);
+  const toastTimersRef = useRef<Map<string, number>>(new Map());
+  const lastCustomerToastByJidRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     flowPathRef.current = flowPath;
@@ -171,15 +183,31 @@ function App() {
     selectedJidRef.current = selectedHandoffJid;
   }, [selectedHandoffJid]);
 
-  const showNotice = useCallback((message: string) => {
-    setNotice(message);
-    if (noticeTimeoutRef.current) {
-      window.clearTimeout(noticeTimeoutRef.current);
+  useEffect(() => {
+    handoffSessionsRef.current = handoffSessions;
+  }, [handoffSessions]);
+
+  const dismissToast = useCallback((id: string) => {
+    setToasts(previous => previous.filter(item => item.id !== id));
+    const timer = toastTimersRef.current.get(id);
+    if (timer) {
+      window.clearTimeout(timer);
+      toastTimersRef.current.delete(id);
     }
-    noticeTimeoutRef.current = window.setTimeout(() => {
-      setNotice('');
-    }, 3500);
   }, []);
+
+  const pushToast = useCallback((title: string, message: string, tone: ToastTone = 'info', ttlMs = 4200) => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    setToasts(previous => [...previous.slice(-4), { id, title, message, tone }]);
+    const timer = window.setTimeout(() => {
+      dismissToast(id);
+    }, ttlMs);
+    toastTimersRef.current.set(id, timer);
+  }, [dismissToast]);
+
+  const showNotice = useCallback((message: string) => {
+    pushToast('Notificação', message, mapMessageToTone(message));
+  }, [pushToast]);
 
   const markSessionAsResponded = useCallback((jid: string, text: string, eventType: string) => {
     const nowTs = Date.now();
@@ -278,11 +306,15 @@ function App() {
       void refreshHandoffQueue().catch(() => {});
     }, 30000);
 
+    const toastTimers = toastTimersRef.current;
     return () => {
       cancelled = true;
       window.clearInterval(pollTimer);
       if (refreshTimeoutRef.current) window.clearTimeout(refreshTimeoutRef.current);
-      if (noticeTimeoutRef.current) window.clearTimeout(noticeTimeoutRef.current);
+      for (const timer of toastTimers.values()) {
+        window.clearTimeout(timer);
+      }
+      toastTimers.clear();
     };
   }, [loadHealth, refreshHandoffQueue, refreshStats, showNotice]);
 
@@ -311,10 +343,48 @@ function App() {
           }
 
           const eventType = String(payload.eventType || '');
+          const chatJidFromMetadata = readMetadataText(payload, 'chatJid');
+          const sessionJid = String(chatJidFromMetadata || payload.jid || '').trim();
           const outgoingErrorByText =
             eventType === 'message-outgoing' && isLikelyErrorMessage(String(payload.messageText || ''));
           const shouldRefresh =
             WS_REFRESH_EVENT_TYPES.has(eventType) || outgoingErrorByText || eventType.includes('human-handoff');
+
+          if (eventType === 'human-handoff-requested') {
+            pushToast(
+              'Novo Atendimento Humano',
+              `${payload.jid || 'Usuário'} entrou na fila de atendimento.`,
+              'warning',
+              5200
+            );
+          }
+
+          if (eventType === 'engine-error' || eventType === 'flow-error' || eventType === 'message-outgoing-error') {
+            pushToast(
+              'Erro no Sistema',
+              String(payload.messageText || 'Ocorreu um erro durante o processamento.'),
+              'danger',
+              6200
+            );
+          }
+
+          if (eventType === 'message-incoming' && sessionJid) {
+            const inHandoffQueue = handoffSessionsRef.current.some(session => session.jid === sessionJid);
+            const focusedSession = selectedJidRef.current === sessionJid;
+            if (inHandoffQueue && !focusedSession) {
+              const nowTs = Date.now();
+              const lastToastAt = lastCustomerToastByJidRef.current.get(sessionJid) || 0;
+              if (nowTs - lastToastAt > 4000) {
+                lastCustomerToastByJidRef.current.set(sessionJid, nowTs);
+                pushToast(
+                  'Nova Mensagem do Cliente',
+                  `${sessionJid} enviou uma nova mensagem.`,
+                  'info',
+                  4500
+                );
+              }
+            }
+          }
 
           if (eventType.includes('human-handoff')) {
             void refreshHandoffQueue();
@@ -339,7 +409,7 @@ function App() {
       if (reconnectTimeout) window.clearTimeout(reconnectTimeout);
       if (ws && ws.readyState < WebSocket.CLOSING) ws.close();
     };
-  }, [refreshHandoffQueue, scheduleSoftRefresh]);
+  }, [pushToast, refreshHandoffQueue, scheduleSoftRefresh]);
 
   const handleReload = useCallback(async () => {
     try {
@@ -473,7 +543,7 @@ function App() {
           onOpenSidebar={() => setSidebarOpen(true)}
         />
 
-        {notice && <div className="notice-banner">{notice}</div>}
+        <ToastCenter items={toasts} onDismiss={dismissToast} />
 
         <main className="app-content">
           {view === 'analytics' && (

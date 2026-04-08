@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+﻿import { useMemo } from 'react';
 import type { ChartConfiguration } from 'chart.js';
 import { ChartCanvas } from '../charts/ChartCanvas';
 import { fmtDuration, fmtTime, isLikelyErrorMessage } from '../../lib/format';
@@ -13,14 +13,14 @@ interface AnalyticsViewProps {
 
 function getPrimaryChartConfig(mode: DashboardMode, stats: DashboardStats): ChartConfiguration {
   if (mode === 'CONVERSATION') {
-    const funnel = stats.funnel ?? [{ step: 'start', label: 'Início', count: stats.conversationsStarted ?? 0 }];
+    const funnel = stats.funnel ?? [{ step: 'start', label: 'Inicio', count: stats.conversationsStarted ?? 0 }];
     return {
       type: 'bar',
       data: {
         labels: funnel.map(item => item.label),
         datasets: [
           {
-            label: 'Usuários',
+            label: 'Usuarios',
             data: funnel.map(item => item.count),
             backgroundColor: 'rgba(30, 99, 201, 0.85)',
             borderRadius: 6,
@@ -101,7 +101,7 @@ function getVolumeChartConfig(mode: DashboardMode, stats: DashboardStats): Chart
 
 function getBottomChartConfig(stats: DashboardStats): ChartConfiguration<'bar'> {
   const trend = stats.weeklyTrend ?? [];
-  const labels = trend.length ? trend.map(item => item.date) : ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
+  const labels = trend.length ? trend.map(item => item.date) : ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'];
   const started = trend.length ? trend.map(item => item.started) : [0, 0, 0, 0, 0, 0, 0];
   const abandoned = trend.length ? trend.map(item => item.abandoned) : [0, 0, 0, 0, 0, 0, 0];
 
@@ -123,6 +123,27 @@ function getBottomChartConfig(stats: DashboardStats): ChartConfiguration<'bar'> 
       },
     },
   };
+}
+
+function PanelTitle({ icon, text }: { icon: string; text: string }) {
+  return (
+    <h3 className="panel-title-with-icon">
+      <i className={icon} aria-hidden="true" />
+      <span>{text}</span>
+    </h3>
+  );
+}
+
+function KpiCard({ title, value, icon, valueClass = '' }: { title: string; value: string | number; icon: string; valueClass?: string }) {
+  return (
+    <article className="kpi-card">
+      <p className="kpi-title kpi-title-with-icon">
+        <i className={icon} aria-hidden="true" />
+        <span>{title}</span>
+      </p>
+      <p className={`kpi-value ${valueClass}`.trim()}>{value}</p>
+    </article>
+  );
 }
 
 export function AnalyticsView({
@@ -149,41 +170,27 @@ export function AnalyticsView({
       <div className="kpi-grid">
         {mode === 'CONVERSATION' ? (
           <>
-            <article className="kpi-card">
-              <p className="kpi-title">Conversas Hoje</p>
-              <p className="kpi-value">{safeStats.conversationsStarted ?? 0}</p>
-            </article>
-            <article className="kpi-card">
-              <p className="kpi-title">Abandono</p>
-              <p className="kpi-value text-danger">{((safeStats.abandonmentRate ?? 0) * 100).toFixed(1)}%</p>
-            </article>
-            <article className="kpi-card">
-              <p className="kpi-title">Tempo Médio</p>
-              <p className="kpi-value">{fmtDuration(avgDuration)}</p>
-            </article>
-            <article className="kpi-card">
-              <p className="kpi-title">Sessões Ativas</p>
-              <p className="kpi-value text-success">{safeStats.activeSessions ?? 0}</p>
-            </article>
+            <KpiCard title="Conversas Hoje" value={safeStats.conversationsStarted ?? 0} icon="fa-regular fa-comments" />
+            <KpiCard
+              title="Abandono"
+              value={`${((safeStats.abandonmentRate ?? 0) * 100).toFixed(1)}%`}
+              icon="fa-solid fa-person-walking-arrow-right"
+              valueClass="text-danger"
+            />
+            <KpiCard title="Tempo Medio" value={fmtDuration(avgDuration)} icon="fa-regular fa-clock" />
+            <KpiCard title="Sessoes Ativas" value={safeStats.activeSessions ?? 0} icon="fa-solid fa-signal" valueClass="text-success" />
           </>
         ) : (
           <>
-            <article className="kpi-card">
-              <p className="kpi-title">Execuções Hoje</p>
-              <p className="kpi-value">{safeStats.totalExecutions ?? 0}</p>
-            </article>
-            <article className="kpi-card">
-              <p className="kpi-title">Latência Média</p>
-              <p className="kpi-value">{safeStats.avgLatencyMs ?? 0}ms</p>
-            </article>
-            <article className="kpi-card">
-              <p className="kpi-title">Sucesso</p>
-              <p className="kpi-value text-success">{((safeStats.successRate ?? 0) * 100).toFixed(1)}%</p>
-            </article>
-            <article className="kpi-card">
-              <p className="kpi-title">Pico / Hora</p>
-              <p className="kpi-value">{safeStats.peakPerHour ?? 0}</p>
-            </article>
+            <KpiCard title="Execucoes Hoje" value={safeStats.totalExecutions ?? 0} icon="fa-solid fa-bolt" />
+            <KpiCard title="Latencia Media" value={`${safeStats.avgLatencyMs ?? 0}ms`} icon="fa-solid fa-gauge-high" />
+            <KpiCard
+              title="Sucesso"
+              value={`${((safeStats.successRate ?? 0) * 100).toFixed(1)}%`}
+              icon="fa-regular fa-circle-check"
+              valueClass="text-success"
+            />
+            <KpiCard title="Pico / Hora" value={safeStats.peakPerHour ?? 0} icon="fa-solid fa-chart-line" />
           </>
         )}
       </div>
@@ -191,21 +198,21 @@ export function AnalyticsView({
       <div className="analytics-grid">
         <article className="panel panel-primary">
           <header className="panel-header">
-            <h3>{mode === 'CONVERSATION' ? 'Funil de Conversação' : 'Comandos Populares'}</h3>
+            <PanelTitle icon={mode === 'CONVERSATION' ? 'fa-solid fa-filter-circle-dollar' : 'fa-solid fa-fire'} text={mode === 'CONVERSATION' ? 'Funil de Conversacao' : 'Comandos Populares'} />
           </header>
           <ChartCanvas config={primaryChartConfig} height={320} />
         </article>
 
         <article className="panel">
           <header className="panel-header">
-            <h3>Volume Horário</h3>
+            <PanelTitle icon="fa-regular fa-clock" text="Volume Horario" />
           </header>
           <ChartCanvas config={volumeChartConfig} height={320} />
         </article>
 
         <article className="panel panel-list">
           <header className="panel-header">
-            <h3>{mode === 'CONVERSATION' ? 'Contatos Mais Ativos' : 'Usuários Mais Ativos'}</h3>
+            <PanelTitle icon={mode === 'CONVERSATION' ? 'fa-solid fa-users' : 'fa-solid fa-user-group'} text={mode === 'CONVERSATION' ? 'Contatos Mais Ativos' : 'Usuarios Mais Ativos'} />
           </header>
           <div className="list-scroll">
             {mode === 'CONVERSATION' ? (
@@ -217,7 +224,7 @@ export function AnalyticsView({
                     <div className="list-rank">{index + 1}</div>
                     <div className="list-content">
                       <strong>{item.name || item.jid}</strong>
-                      <small>Última atividade: {item.lastActivity ? fmtTime(item.lastActivity) : '--:--'}</small>
+                      <small>Ultima atividade: {item.lastActivity ? fmtTime(item.lastActivity) : '--:--'}</small>
                     </div>
                     <span className="list-stat">{item.messageCount} msgs</span>
                   </div>
@@ -243,8 +250,10 @@ export function AnalyticsView({
 
         <article className="panel panel-logs">
           <header className="panel-header panel-header-space">
-            <h3>{mode === 'CONVERSATION' ? 'Logs em Tempo Real' : 'Logs de Comandos'}</h3>
-            <button type="button" className="ghost-btn" onClick={onExport}>Exportar CSV</button>
+            <PanelTitle icon="fa-regular fa-rectangle-list" text={mode === 'CONVERSATION' ? 'Logs em Tempo Real' : 'Logs de Comandos'} />
+            <button type="button" className="ghost-btn minimal-btn" onClick={onExport}>
+              <i className="fa-solid fa-file-export" aria-hidden="true" /> Exportar CSV
+            </button>
           </header>
           <div className="logs-scroll">
             {logs.length === 0 ? (
@@ -252,7 +261,7 @@ export function AnalyticsView({
             ) : mode === 'CONVERSATION' ? (
               logs.map((log, index) => {
                 const isOutgoing = log.direction === 'outgoing';
-                const label = isOutgoing ? 'Bot/Atendente' : 'Usuário';
+                const label = isOutgoing ? 'Bot/Atendente' : 'Usuario';
                 const text = log.messageText || '[Evento de sistema]';
                 return (
                   <div key={`${log.occurredAt}-${index}`} className={`log-line ${isOutgoing ? 'is-outgoing' : ''}`}>
@@ -297,17 +306,17 @@ export function AnalyticsView({
           <>
             <article className="panel panel-primary">
               <header className="panel-header">
-                <h3>Tendência Semanal</h3>
+                <PanelTitle icon="fa-solid fa-chart-column" text="Tendencia Semanal" />
               </header>
               <ChartCanvas config={bottomChartConfig} height={260} />
             </article>
             <article className="panel">
               <header className="panel-header">
-                <h3>Métricas Avançadas</h3>
+                <PanelTitle icon="fa-solid fa-chart-simple" text="Metricas Avancadas" />
               </header>
               <div className="metric-grid">
                 <div className="metric-card">
-                  <span>Taxa de Conversão</span>
+                  <span>Taxa de Conversao</span>
                   <strong>{conversionRate.toFixed(1)}%</strong>
                 </div>
                 <div className="metric-card">
@@ -315,7 +324,7 @@ export function AnalyticsView({
                   <strong>{fmtDuration(safeStats.medianDurationMs ?? avgDuration)}</strong>
                 </div>
                 <div className="metric-card">
-                  <span>Concluídas</span>
+                  <span>Concluidas</span>
                   <strong>{completed}</strong>
                 </div>
                 <div className="metric-card">
@@ -329,7 +338,7 @@ export function AnalyticsView({
           <>
             <article className="panel panel-primary">
               <header className="panel-header">
-                <h3>Erros Recentes</h3>
+                <PanelTitle icon="fa-solid fa-triangle-exclamation" text="Erros Recentes" />
               </header>
               <div className="status-stack">
                 {recentErrors.length === 0 ? (
@@ -349,11 +358,11 @@ export function AnalyticsView({
             </article>
             <article className="panel">
               <header className="panel-header">
-                <h3>Saúde das APIs</h3>
+                <PanelTitle icon="fa-solid fa-heart-pulse" text="Saude das APIs" />
               </header>
               <div className="status-stack">
                 {apiHealth.length === 0 ? (
-                  <p className="empty-hint">Sem integrações mapeadas.</p>
+                  <p className="empty-hint">Sem integracoes mapeadas.</p>
                 ) : (
                   apiHealth.map((item, index) => (
                     <div className="status-row" key={`${item.name}-${index}`}>

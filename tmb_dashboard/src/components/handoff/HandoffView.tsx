@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useRef } from 'react';
 import { fmtTime, formatJidPhone } from '../../lib/format';
 import type { EventLog, HandoffBlock, HandoffSession } from '../../types';
+import { Select2Field } from '../form/Select2Field';
 
 interface HandoffViewProps {
   sessions: HandoffSession[];
@@ -111,7 +112,15 @@ export function HandoffView({
       <article className="panel">
         <header className="panel-header panel-header-space">
           <h3>Sessoes em Espera</h3>
-          <button type="button" className="ghost-btn" onClick={onRefreshSessions}>Atualizar</button>
+          <button
+            type="button"
+            className="ghost-btn minimal-btn icon-only-btn"
+            onClick={onRefreshSessions}
+            aria-label="Atualizar sessoes"
+            title="Atualizar sessoes"
+          >
+            <i className="fa-solid fa-arrows-rotate" aria-hidden="true" />
+          </button>
         </header>
         <div className="handoff-session-list">
           {sessions.length === 0 ? (
@@ -149,8 +158,8 @@ export function HandoffView({
               {selectedJid ? `Sessao ativa: ${formatJidPhone(selectedJid)}` : 'Selecione uma sessao na lista'}
             </small>
           </div>
-          <button type="button" className="danger-btn" onClick={onEnd} disabled={!selectedJid || busyEnd}>
-            {busyEnd ? 'Encerrando...' : 'Encerrar sessao'}
+          <button type="button" className="danger-btn minimal-btn" onClick={onEnd} disabled={!selectedJid || busyEnd}>
+            <i className="fa-regular fa-circle-xmark" aria-hidden="true" /> {busyEnd ? 'Encerrando...' : 'Encerrar sessao'}
           </button>
         </header>
 
@@ -209,7 +218,7 @@ export function HandoffView({
             />
             <button
               type="button"
-              className="primary-btn"
+              className="primary-btn minimal-btn icon-only-btn"
               onClick={async () => {
                 await onSend();
                 window.requestAnimationFrame(() => {
@@ -217,8 +226,10 @@ export function HandoffView({
                 });
               }}
               disabled={!selectedJid || busySend}
+              aria-label={busySend ? 'Enviando mensagem' : 'Enviar mensagem'}
+              title={busySend ? 'Enviando mensagem' : 'Enviar mensagem'}
             >
-              {busySend ? 'Enviando...' : 'Enviar'}
+              <i className={busySend ? 'fa-solid fa-spinner fa-spin' : 'fa-regular fa-paper-plane'} aria-hidden="true" />
             </button>
             <input
               ref={imageInputRef}
@@ -237,28 +248,29 @@ export function HandoffView({
             />
             <button
               type="button"
-              className="ghost-btn"
+              className="ghost-btn minimal-btn icon-only-btn"
               onClick={() => imageInputRef.current?.click()}
               disabled={!selectedJid || busySendImage}
+              aria-label={busySendImage ? 'Enviando imagem' : 'Enviar imagem'}
+              title={busySendImage ? 'Enviando imagem' : 'Enviar imagem'}
             >
-              {busySendImage ? 'Enviando imagem...' : 'Enviar imagem'}
+              <i className={busySendImage ? 'fa-solid fa-spinner fa-spin' : 'fa-regular fa-image'} aria-hidden="true" />
             </button>
           </div>
           <div className="handoff-resume">
-            <select
+            <Select2Field
               value={selectedBlockId}
-              onChange={event => onSelectBlock(event.target.value)}
+              onChange={onSelectBlock}
               disabled={!selectedJid || busyResume}
-            >
-              <option value="">Selecione bloco para retomar</option>
-              {blocks.map(block => (
-                <option key={block.id} value={block.id}>
-                  #{block.index} · {block.name || block.id} ({block.type})
-                </option>
-              ))}
-            </select>
-            <button type="button" className="success-btn" onClick={onResume} disabled={!selectedJid || busyResume}>
-              {busyResume ? 'Retomando...' : 'Retomar'}
+              placeholder="Selecione bloco para retomar"
+              options={blocks.map(block => ({
+                value: block.id,
+                label: `#${block.index} · ${block.name || block.id} (${block.type})`,
+              }))}
+              className="handoff-resume-select"
+            />
+            <button type="button" className="success-btn minimal-btn" onClick={onResume} disabled={!selectedJid || busyResume}>
+              <i className="fa-solid fa-play" aria-hidden="true" /> {busyResume ? 'Retomando...' : 'Retomar'}
             </button>
           </div>
         </div>

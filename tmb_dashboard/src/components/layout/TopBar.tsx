@@ -1,4 +1,4 @@
-import type { DashboardMode } from '../../types';
+﻿import type { DashboardMode } from '../../types';
 import { fmtUptime } from '../../lib/format';
 
 interface TopBarProps {
@@ -22,7 +22,7 @@ export function TopBar({
     <header className="topbar">
       <div className="topbar-left">
         <button type="button" className="ghost-btn mobile-only" onClick={onOpenSidebar} aria-label="Abrir menu">
-          ☰
+          <i className="fa-solid fa-bars" aria-hidden="true" />
         </button>
         <div className="presence-pill">
           <span className="presence-dot" />
@@ -38,8 +38,12 @@ export function TopBar({
           <span>Bot: <strong>{botName || 'Desconhecido'}</strong></span>
           <span>Uptime: <strong>{fmtUptime(uptimeMs)}</strong></span>
         </div>
-        <button type="button" className="ghost-btn" onClick={onReload}>Recarregar</button>
-        <button type="button" className="ghost-btn" onClick={onOpenSettings}>Configurações</button>
+        <button type="button" className="ghost-btn" onClick={onReload}>
+          <i className="fa-solid fa-rotate-right" aria-hidden="true" /> Recarregar
+        </button>
+        <button type="button" className="ghost-btn" onClick={onOpenSettings}>
+          <i className="fa-solid fa-gear" aria-hidden="true" /> Configurações
+        </button>
       </div>
     </header>
   );
