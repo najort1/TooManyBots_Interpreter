@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8" />
@@ -8,72 +8,16 @@
   <!-- CSS Framework -->
   <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
   
-  <!-- Ícones -->
+  <!-- Ãcones -->
   <script src="https://unpkg.com/@phosphor-icons/web"></script>
   
-  <!-- Gráficos -->
+  <!-- GrÃ¡ficos -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   
   <!-- Fonte -->
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   
-  <style>
-    body {
-      font-family: 'Inter', sans-serif;
-      background-color: #f8fafc;
-      color: #0f172a;
-    }
-    
-    .card {
-      background-color: white;
-      border-radius: 0.75rem;
-      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-      border: 1px solid #e2e8f0;
-      padding: 1.25rem;
-    }
-    
-    .status-badge {
-      display: inline-flex;
-      align-items: center;
-      padding: 0.25rem 0.75rem;
-      border-radius: 9999px;
-      font-size: 0.875rem;
-      font-weight: 500;
-    }
-    
-    .status-online {
-      background-color: #dcfce7;
-      color: #166534;
-    }
-    
-    .status-offline {
-      background-color: #fee2e2;
-      color: #991b1b;
-    }
-    
-    .logs-container {
-      height: 300px;
-      overflow-y: auto;
-    }
-    
-    /* Scrollbar styling */
-    ::-webkit-scrollbar {
-      width: 6px;
-      height: 6px;
-    }
-    ::-webkit-scrollbar-track {
-      background: #f1f5f9; 
-      border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb {
-      background: #cbd5e1; 
-      border-radius: 4px;
-    }
-    ::-webkit-scrollbar-thumb:hover {
-      background: #94a3b8; 
-    }
-    
-  </style>
+    <link href="/assets/css/dashboard.css" rel="stylesheet">
 </head>
 <body class="bg-slate-50 text-slate-800 flex h-screen overflow-hidden">
 
@@ -96,14 +40,14 @@
         <i class="ph ph-users text-lg"></i> Contatos
       </a>
       <a href="#" class="flex items-center gap-3 px-3 py-2 text-slate-600 hover:bg-slate-50 rounded-md font-medium transition-colors">
-        <i class="ph ph-plugs-connected text-lg"></i> Integrações
+        <i class="ph ph-plugs-connected text-lg"></i> IntegraÃ§Ãµes
       </a>
       <a href="#" id="nav-settings" class="flex items-center gap-3 px-3 py-2 text-slate-600 hover:bg-slate-50 rounded-md font-medium transition-colors">
-        <i class="ph ph-gear text-lg"></i> Configurações
+        <i class="ph ph-gear text-lg"></i> ConfiguraÃ§Ãµes
       </a>
     </nav>
     <div class="p-4 border-t border-slate-200">
-      <div class="text-xs text-slate-500 text-center">Versão 1.0.0</div>
+      <div class="text-xs text-slate-500 text-center">VersÃ£o 1.0.0</div>
     </div>
   </aside>
 
@@ -133,7 +77,7 @@
         <button id="btn-reload" class="p-2 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors text-slate-700" title="Recarregar Flow">
           <i class="ph ph-arrows-clockwise text-lg"></i>
         </button>
-        <button id="btn-gear" class="p-2 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors text-slate-700" title="Configurações">
+        <button id="btn-gear" class="p-2 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors text-slate-700" title="ConfiguraÃ§Ãµes">
           <i class="ph ph-gear text-lg"></i>
         </button>
       </div>
@@ -154,7 +98,7 @@
       <!-- Primary Chart -->
       <div class="lg:col-span-2 card flex flex-col">
         <h2 class="text-lg font-bold mb-4 flex items-center gap-2" id="primary-chart-title">
-          <i class="ph ph-chart-bar text-blue-500"></i> Gráfico Principal
+          <i class="ph ph-chart-bar text-blue-500"></i> GrÃ¡fico Principal
         </h2>
         <div class="flex-grow flex items-center justify-center min-h-[300px] relative">
           <canvas id="primaryChart"></canvas>
@@ -164,7 +108,7 @@
       <!-- Secondary Chart / Volume -->
       <div class="card flex flex-col">
         <h2 class="text-lg font-bold mb-4 flex items-center gap-2" id="secondary-chart-title">
-          <i class="ph ph-trend-up text-indigo-500"></i> Volume Horário
+          <i class="ph ph-trend-up text-indigo-500"></i> Volume HorÃ¡rio
         </h2>
         <div class="flex-grow min-h-[250px] relative">
           <canvas id="volumeChart"></canvas>
@@ -201,7 +145,7 @@
       <!-- Bottom Left: Weekly Trend / Errors -->
       <div class="lg:col-span-2 card flex flex-col hidden" id="bottom-left-card">
         <h2 class="text-lg font-bold mb-4 flex items-center gap-2" id="bottom-left-title">
-          <i class="ph ph-calendar-blank text-orange-500"></i> Tendência Semanal
+          <i class="ph ph-calendar-blank text-orange-500"></i> TendÃªncia Semanal
         </h2>
         <div class="flex-grow min-h-[200px] relative">
           <canvas id="bottomChart"></canvas>
@@ -227,14 +171,14 @@
             <div class="flex items-center justify-between border-b border-slate-200 pb-2 mb-3">
               <h2 class="font-bold text-slate-800 flex items-center gap-2">
                 <i class="ph ph-headset text-emerald-600"></i>
-                Sessões em Espera
+                SessÃµes em Espera
               </h2>
               <button id="btn-refresh-handoff" class="text-xs bg-slate-100 hover:bg-slate-200 px-2 py-1 rounded text-slate-700">
                 Atualizar
               </button>
             </div>
             <div id="handoff-sessions-list" class="overflow-y-auto pr-1 text-sm space-y-2 flex-1">
-              <div class="text-slate-400 text-center py-4">Carregando sessões...</div>
+              <div class="text-slate-400 text-center py-4">Carregando sessÃµes...</div>
             </div>
           </section>
 
@@ -245,15 +189,15 @@
                   <i class="ph ph-chat-circle-dots text-blue-600"></i>
                   Chat em Tempo Real
                 </h2>
-                <div id="handoff-selected-jid" class="text-xs text-slate-500 mt-1">Selecione uma sessão na lista</div>
+                <div id="handoff-selected-jid" class="text-xs text-slate-500 mt-1">Selecione uma sessÃ£o na lista</div>
               </div>
               <button id="btn-end-handoff" class="text-xs bg-red-50 hover:bg-red-100 text-red-700 px-3 py-1 rounded disabled:opacity-50" disabled>
-                Encerrar sessão
+                Encerrar sessÃ£o
               </button>
             </div>
 
             <div id="handoff-chat-history" class="flex-1 overflow-y-auto bg-slate-50 border border-slate-100 rounded p-3 text-sm space-y-2 min-h-[260px]">
-              <div class="text-slate-400 text-center py-8">Selecione uma sessão para ver as mensagens.</div>
+              <div class="text-slate-400 text-center py-8">Selecione uma sessÃ£o para ver as mensagens.</div>
             </div>
 
             <div class="mt-3 grid grid-cols-1 lg:grid-cols-3 gap-2">
@@ -279,931 +223,10 @@
     </main>
   </div>
 
-  <script>
-    // Configurações globais
-    let currentMode = 'CONVERSATION'; // Padrão, atualizado no load
-    let currentFlowPath = '';
-    let currentView = 'analytics';
-    let charts = {};
-    let allLogs = [];
-    let handoffSessions = [];
-    let handoffBlocks = [];
-    let selectedHandoffJid = '';
-    let selectedHandoffHistory = [];
-    
-    const els = {
-      modeBadge: document.getElementById('mode-badge'),
-      botName: document.getElementById('bot-name'),
-      uptime: document.getElementById('uptime'),
-      analyticsView: document.getElementById('analytics-view'),
-      handoffView: document.getElementById('handoff-view'),
-      navDashboard: document.getElementById('nav-dashboard'),
-      navHumanSupport: document.getElementById('nav-human-support'),
-      navSettings: document.getElementById('nav-settings'),
-      kpiCards: document.getElementById('kpi-cards'),
-      primaryChartTitle: document.getElementById('primary-chart-title'),
-      secondaryChartTitle: document.getElementById('secondary-chart-title'),
-      listTitle: document.getElementById('list-title'),
-      rankingList: document.getElementById('ranking-list'),
-      logsTitle: document.getElementById('logs-title'),
-      logsContainer: document.getElementById('logs-container'),
-      bottomLeftCard: document.getElementById('bottom-left-card'),
-      bottomLeftTitle: document.getElementById('bottom-left-title'),
-      bottomRightCard: document.getElementById('bottom-right-card'),
-      bottomRightTitle: document.getElementById('bottom-right-title'),
-      statusList: document.getElementById('status-list'),
-      handoffSessionsList: document.getElementById('handoff-sessions-list'),
-      handoffSelectedJid: document.getElementById('handoff-selected-jid'),
-      handoffChatHistory: document.getElementById('handoff-chat-history'),
-      handoffMessageInput: document.getElementById('handoff-message-input'),
-      btnSendHandoff: document.getElementById('btn-send-handoff'),
-      btnResumeHandoff: document.getElementById('btn-resume-handoff'),
-      btnEndHandoff: document.getElementById('btn-end-handoff'),
-      btnRefreshHandoff: document.getElementById('btn-refresh-handoff'),
-      handoffResumeBlock: document.getElementById('handoff-resume-block')
-    };
-
-    const navActiveClass = 'flex items-center gap-3 px-3 py-2 bg-blue-50 text-blue-700 rounded-md font-medium transition-colors';
-    const navDefaultClass = 'flex items-center gap-3 px-3 py-2 text-slate-600 hover:bg-slate-50 rounded-md font-medium transition-colors';
-
-    // Helpers
-    function fmtTime(ts) {
-      return new Date(ts).toLocaleTimeString('pt-BR');
-    }
-    
-    function fmtDuration(ms) {
-      if (ms < 1000) return ms + 'ms';
-      const sec = Math.round(ms / 1000);
-      if (sec < 60) return sec + 's';
-      return Math.round(sec / 60) + 'm ' + (sec % 60) + 's';
-    }
-    
-    function fmtUptime(ms) {
-      const h = Math.floor(ms / 3600000);
-      const m = Math.floor((ms % 3600000) / 60000);
-      return `${h}h ${m}m`;
-    }
-
-    function escapeHtml(value) {
-      return String(value ?? '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-    }
-
-    function setNavActive(target) {
-      const map = {
-        dashboard: els.navDashboard,
-        handoff: els.navHumanSupport,
-        settings: els.navSettings,
-      };
-
-      Object.values(map).forEach(link => {
-        if (!link) return;
-        link.className = navDefaultClass;
-      });
-
-      if (map[target]) {
-        map[target].className = navActiveClass;
-      }
-    }
-
-    function showView(nextView) {
-      currentView = nextView;
-      const showAnalytics = nextView === 'analytics';
-      els.analyticsView.classList.toggle('hidden', !showAnalytics);
-      els.handoffView.classList.toggle('hidden', showAnalytics);
-      setNavActive(showAnalytics ? 'dashboard' : 'handoff');
-    }
-
-    function setHandoffActionsEnabled(enabled) {
-      els.btnSendHandoff.disabled = !enabled;
-      els.btnResumeHandoff.disabled = !enabled;
-      els.btnEndHandoff.disabled = !enabled;
-      els.handoffResumeBlock.disabled = !enabled;
-    }
-
-    // Inicialização da Dashboard
-    async function initDashboard() {
-      try {
-        const healthRes = await fetch('/api/health');
-        const health = await healthRes.json();
-        
-        currentMode = health.mode === 'command' ? 'COMMAND' : 'CONVERSATION';
-        currentFlowPath = String(health.flowPath || '');
-        els.botName.textContent = health.flowFile || 'Desconhecido';
-        els.uptime.textContent = fmtUptime(health.uptimeMs || 0);
-        
-        if (currentMode === 'COMMAND') {
-          els.modeBadge.innerHTML = '<i class="ph ph-lightning text-yellow-500"></i> MODO COMANDO';
-          els.modeBadge.className = 'px-3 py-1 bg-yellow-100 text-yellow-800 rounded-md font-semibold flex items-center gap-2';
-        } else {
-          els.modeBadge.innerHTML = '<i class="ph ph-chat-circle text-blue-500"></i> MODO CONVERSAÇÃO';
-          els.modeBadge.className = 'px-3 py-1 bg-blue-100 text-blue-800 rounded-md font-semibold flex items-center gap-2';
-        }
-        
-        // Show bottom cards
-        els.bottomLeftCard.classList.remove('hidden');
-        els.bottomRightCard.classList.remove('hidden');
-
-        showView('analytics');
-        setHandoffActionsEnabled(false);
-
-        await refreshData();
-        await loadHandoffBlocks();
-        await refreshHandoffSessions();
-        setupWebSocket();
-        
-        // Polling para stat updates
-        setInterval(() => {
-          refreshData();
-          refreshHandoffSessions();
-        }, 30000);
-        
-        // Action buttons
-        document.getElementById('btn-reload').addEventListener('click', async () => {
-          try {
-            const btn = document.getElementById('btn-reload');
-            btn.querySelector('i').classList.add('animate-spin');
-            await fetch('/api/reload', { method: 'POST' });
-            setTimeout(() => btn.querySelector('i').classList.remove('animate-spin'), 1000);
-          } catch(e) { console.error('Erro ao recarregar flow', e); }
-        });
-        
-        document.getElementById('btn-export').addEventListener('click', () => {
-          window.open('/api/export?format=csv', '_blank');
-        });
-        
-        // --- Sidebar Logic ---
-        const sidebar = document.getElementById('sidebar');
-        const backdrop = document.getElementById('sidebar-backdrop');
-        const btnOpenSidebar = document.getElementById('btn-open-sidebar');
-        const btnCloseSidebar = document.getElementById('btn-close-sidebar');
-        const btnGear = document.getElementById('btn-gear');
-        
-        function toggleSidebar() {
-          sidebar.classList.toggle('hidden');
-          backdrop.classList.toggle('hidden');
-        }
-
-        btnOpenSidebar.addEventListener('click', toggleSidebar);
-        btnCloseSidebar.addEventListener('click', toggleSidebar);
-        backdrop.addEventListener('click', toggleSidebar);
-
-        function openSettings() {
-          if (window.innerWidth < 768 && sidebar.classList.contains('hidden')) {
-            toggleSidebar();
-          }
-          setNavActive('settings');
-          alert('Aqui entraria a tela de Configurações do Bot!');
-        }
-
-        btnGear.addEventListener('click', openSettings);
-        els.navSettings.addEventListener('click', (e) => {
-          e.preventDefault();
-          openSettings();
-        });
-
-        els.navDashboard.addEventListener('click', async (e) => {
-          e.preventDefault();
-          showView('analytics');
-          await refreshData();
-        });
-
-        els.navHumanSupport.addEventListener('click', async (e) => {
-          e.preventDefault();
-          showView('handoff');
-          await refreshHandoffSessions();
-        });
-
-        els.btnRefreshHandoff.addEventListener('click', () => {
-          refreshHandoffSessions();
-        });
-
-        els.btnSendHandoff.addEventListener('click', () => {
-          sendHandoffMessage();
-        });
-
-        els.handoffMessageInput.addEventListener('keydown', (event) => {
-          if (event.key === 'Enter') {
-            event.preventDefault();
-            sendHandoffMessage();
-          }
-        });
-
-        els.btnResumeHandoff.addEventListener('click', () => {
-          resumeHandoffSession();
-        });
-
-        els.btnEndHandoff.addEventListener('click', () => {
-          endHandoffSession();
-        });
-        
-      } catch (err) {
-        console.error('Erro ao inicializar', err);
-      }
-    }
-
-    // Dados baseados no modo
-    async function refreshData() {
-      const modeParam = currentMode === 'COMMAND' ? 'command' : 'conversation';
-      try {
-        const statsRes = await fetch(`/api/stats?mode=${modeParam}&period=today`);
-        const stats = await statsRes.json();
-        
-        renderKPIs(stats);
-        renderPrimaryChart(stats);
-        renderVolumeChart(stats);
-        renderRanking(stats);
-        renderBottomCards(stats);
-        
-        // Carrega logs recentes se estivermos carregando inicial
-        if (allLogs.length === 0) {
-          const logsRes = await fetch(`/api/logs?limit=50&mode=${modeParam}`);
-          const logsData = await logsRes.json();
-          allLogs = (logsData.logs || []).reverse();
-          renderLogs();
-        }
-        
-      } catch(e) {
-        console.error('Falha ao obter stats', e);
-      }
-    }
-
-    function renderKPIs(stats) {
-      if (currentMode === 'CONVERSATION') {
-        els.kpiCards.innerHTML = `
-          <div class="card flex flex-col items-center justify-center p-4">
-            <div class="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1 flex items-center gap-1">
-              <i class="ph ph-chat-teardrop"></i> Conversas
-            </div>
-            <div class="text-3xl font-black text-slate-800">${stats.conversationsStarted || 0}</div>
-            <div class="text-xs text-slate-400 mt-1">Hoje</div>
-          </div>
-          <div class="card flex flex-col items-center justify-center p-4">
-            <div class="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1 flex items-center gap-1">
-              <i class="ph ph-user-minus"></i> Abandono
-            </div>
-            <div class="text-3xl font-black text-red-500">${((stats.abandonmentRate || 0) * 100).toFixed(1)}%</div>
-            <div class="text-xs text-slate-400 mt-1">Taxa</div>
-          </div>
-          <div class="card flex flex-col items-center justify-center p-4">
-            <div class="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1 flex items-center gap-1">
-              <i class="ph ph-clock"></i> Tempo Médio
-            </div>
-            <div class="text-3xl font-black text-blue-500">${fmtDuration(stats.avgDurationMs || 0)}</div>
-            <div class="text-xs text-slate-400 mt-1">Duração</div>
-          </div>
-          <div class="card flex flex-col items-center justify-center p-4">
-            <div class="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1 flex items-center gap-1">
-              <i class="ph ph-activity"></i> Sessões Ativas
-            </div>
-            <div class="text-3xl font-black text-green-500">${stats.activeSessions || 0}</div>
-            <div class="text-xs text-slate-400 mt-1">Agora</div>
-          </div>
-        `;
-      } else {
-        els.kpiCards.innerHTML = `
-          <div class="card flex flex-col items-center justify-center p-4">
-            <div class="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1 flex items-center gap-1">
-              <i class="ph ph-lightning"></i> Execuções
-            </div>
-            <div class="text-3xl font-black text-slate-800">${stats.totalExecutions || 0}</div>
-            <div class="text-xs text-slate-400 mt-1">Hoje</div>
-          </div>
-          <div class="card flex flex-col items-center justify-center p-4">
-            <div class="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1 flex items-center gap-1">
-              <i class="ph ph-timer"></i> Latência
-            </div>
-            <div class="text-3xl font-black text-yellow-600">${stats.avgLatencyMs || 0}ms</div>
-            <div class="text-xs text-slate-400 mt-1">Média API</div>
-          </div>
-          <div class="card flex flex-col items-center justify-center p-4">
-            <div class="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1 flex items-center gap-1">
-              <i class="ph ph-check-circle"></i> Sucesso
-            </div>
-            <div class="text-3xl font-black text-green-500">${((stats.successRate || 0) * 100).toFixed(1)}%</div>
-            <div class="text-xs text-slate-400 mt-1">Taxa</div>
-          </div>
-          <div class="card flex flex-col items-center justify-center p-4">
-            <div class="text-xs text-slate-500 uppercase font-bold tracking-wider mb-1 flex items-center gap-1">
-              <i class="ph ph-trend-up"></i> Pico
-            </div>
-            <div class="text-3xl font-black text-indigo-500">${stats.peakPerHour || 0}</div>
-            <div class="text-xs text-slate-400 mt-1">/hora</div>
-          </div>
-        `;
-      }
-    }
-
-    function renderPrimaryChart(stats) {
-      const ctx = document.getElementById('primaryChart').getContext('2d');
-      
-      if (currentMode === 'CONVERSATION') {
-        els.primaryChartTitle.innerHTML = '<i class="ph ph-funnel text-blue-500"></i> Funil de Conversão';
-        const funnelData = stats.funnel || [
-          { step: "initial", count: stats.conversationsStarted || 0, label: "Início" }
-        ];
-        const labels = funnelData.map(d => d.label);
-        const data = funnelData.map(d => d.count);
-        
-        if (charts.primary) {
-          charts.primary.data.labels = labels;
-          charts.primary.data.datasets[0].data = data;
-          charts.primary.update('none');
-        } else {
-          charts.primary = new Chart(ctx, {
-            type: 'bar',
-            data: {
-              labels,
-              datasets: [{
-                label: 'Usuários na Etapa',
-                data,
-                backgroundColor: 'rgba(59, 130, 246, 0.8)',
-                borderRadius: 4,
-              }]
-            },
-            options: {
-              indexAxis: 'y',
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { legend: { display: false } },
-              scales: { x: { beginAtZero: true } }
-            }
-          });
-        }
-      } else {
-        els.primaryChartTitle.innerHTML = '<i class="ph ph-chart-pie-slice text-yellow-500"></i> Comandos Populares';
-        const cmds = stats.commands || [];
-        const labels = cmds.map(c => c.command);
-        const data = cmds.map(c => c.count);
-        const bgColors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#64748b'];
-        
-        if (charts.primary) {
-          charts.primary.data.labels = labels;
-          charts.primary.data.datasets[0].data = data;
-          charts.primary.data.datasets[0].backgroundColor = bgColors.slice(0, data.length);
-          charts.primary.update('none');
-        } else {
-          charts.primary = new Chart(ctx, {
-            type: 'doughnut',
-            data: {
-              labels,
-              datasets: [{
-                data,
-                backgroundColor: bgColors.slice(0, data.length),
-                borderWidth: 0
-              }]
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              plugins: { 
-                legend: { position: 'right' } 
-              },
-              cutout: '65%'
-            }
-          });
-        }
-      }
-    }
-
-    function renderVolumeChart(stats) {
-      const ctx = document.getElementById('volumeChart').getContext('2d');
-      const hourlyData = stats.hourlyVolume || Array(24).fill(0);
-      const labels = Array.from({length: 24}, (_, i) => `${i}h`);
-      
-      if (charts.volume) {
-        charts.volume.data.datasets[0].data = hourlyData;
-        charts.volume.update('none');
-      } else {
-        charts.volume = new Chart(ctx, {
-          type: 'line',
-          data: {
-            labels,
-            datasets: [{
-              label: 'Volume',
-              data: hourlyData,
-              borderColor: currentMode === 'CONVERSATION' ? '#3b82f6' : '#8b5cf6',
-              backgroundColor: currentMode === 'CONVERSATION' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(139, 92, 246, 0.1)',
-              borderWidth: 2,
-              fill: true,
-              tension: 0.4,
-              pointRadius: 0
-            }]
-          },
-          options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: { legend: { display: false } },
-            scales: { 
-              y: { beginAtZero: true, display: false },
-              x: { grid: { display: false } }
-            }
-          }
-        });
-      }
-    }
-
-    function renderRanking(stats) {
-      if (currentMode === 'CONVERSATION') {
-        els.listTitle.innerHTML = '<i class="ph ph-users text-blue-500"></i> Contatos Mais Ativos';
-        const contacts = stats.topContacts || [];
-        
-        if(contacts.length === 0) {
-          els.rankingList.innerHTML = '<div class="text-center text-slate-400 py-6">Nenhum dado ainda</div>';
-          return;
-        }
-
-        els.rankingList.innerHTML = contacts.map((c, i) => `
-          <div class="flex items-center justify-between py-3 border-b border-slate-100 last:border-0">
-            <div class="flex items-center gap-3">
-              <div class="w-8 h-8 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-xs">
-                ${i===0?'🥇':i===1?'🥈':i===2?'🥉':(i+1)}
-              </div>
-              <div>
-                <div class="font-semibold text-slate-800 text-sm truncate w-32">${c.name || c.jid}</div>
-                <div class="text-xs text-slate-500">Última: ${fmtTime(c.lastActivity || Date.now())}</div>
-              </div>
-            </div>
-            <div class="text-right">
-              <div class="font-bold text-slate-700 text-sm">${c.messageCount}</div>
-              <div class="text-xs text-slate-400">msgs</div>
-            </div>
-          </div>
-        `).join('');
-        
-      } else {
-        els.listTitle.innerHTML = '<i class="ph ph-users text-yellow-500"></i> Usuários Mais Ativos';
-        const users = stats.topUsers || [];
-        
-        if(users.length === 0) {
-          els.rankingList.innerHTML = '<div class="text-center text-slate-400 py-6">Nenhum dado ainda</div>';
-          return;
-        }
-
-        els.rankingList.innerHTML = users.map((u, i) => `
-          <div class="py-3 border-b border-slate-100 last:border-0">
-            <div class="flex items-center justify-between mb-1">
-              <div class="flex items-center gap-2">
-                <div class="font-bold text-sm text-slate-800">${i===0?'🥇 ':i===1?'🥈 ':i===2?'🥉 ':''}${u.name || u.jid}</div>
-              </div>
-              <div class="text-xs font-bold text-slate-600">${u.totalCommands} cmd</div>
-            </div>
-            <div class="flex items-center justify-between text-xs text-slate-500">
-              <div>Favorito: <span class="font-mono text-indigo-600 bg-indigo-50 px-1 rounded">${u.favoriteCommand}</span></div>
-            </div>
-          </div>
-        `).join('');
-      }
-    }
-
-    function renderLogs() {
-      if (currentMode === 'CONVERSATION') {
-        els.logsTitle.innerHTML = '<i class="ph ph-chats-circle text-blue-500"></i> Conversas em Tempo Real';
-        
-        if (allLogs.length === 0) {
-          els.logsContainer.innerHTML = '<div class="text-center text-slate-400 py-6">Aguardando mensagens...</div>';
-          return;
-        }
-
-        els.logsContainer.innerHTML = allLogs.map(log => {
-          const isBot = log.direction === 'outgoing';
-          const msg = log.messageText || (log.eventType === 'session-start' ? '[Sessão Iniciada]' : '[Evento de Sistema]');
-          const icon = isBot ? '🤖 Bot' : '👤 ' + (log.jid ? log.jid.split('@')[0].slice(-4) : 'User');
-          
-          return `
-            <div class="flex gap-3 mb-2 ${isBot ? 'bg-slate-100 p-2 rounded-r-lg rounded-bl-lg' : ''}">
-              <div class="text-slate-400 text-xs shrink-0 w-16 pt-1">${fmtTime(log.occurredAt)}</div>
-              <div class="flex-grow">
-                <span class="font-bold text-xs ${isBot ? 'text-blue-600' : 'text-slate-700'}">${icon}:</span>
-                <span class="text-slate-600 ml-1 text-sm break-words">${msg}</span>
-              </div>
-            </div>
-          `;
-        }).join('');
-      } else {
-        els.logsTitle.innerHTML = '<i class="ph ph-list-dashes text-yellow-500"></i> Logs de Comandos';
-        
-        els.logsContainer.innerHTML = `
-          <table class="w-full text-left text-xs text-slate-600">
-            <thead class="text-slate-400 sticky top-0 bg-slate-50 border-b border-slate-200">
-              <tr>
-                <th class="pb-2 font-medium">Hora</th>
-                <th class="pb-2 font-medium">JID</th>
-                <th class="pb-2 font-medium">Comando</th>
-                <th class="pb-2 font-medium text-right">Res</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${allLogs.map(log => {
-                const isCmd = log.metadata?.isCommand;
-                const cmd = log.metadata?.commandName || (log.messageText ? log.messageText.split(' ')[0] : 'n/a');
-                const success = log.metadata?.success !== false;
-                const resIcon = success ? '✅' : '❌';
-                
-                return `
-                  <tr class="border-b border-slate-100 last:border-0 hover:bg-slate-100">
-                    <td class="py-2">${fmtTime(log.occurredAt)}</td>
-                    <td class="py-2 truncate max-w-[80px]">${log.jid || 'n/a'}</td>
-                    <td class="py-2 font-mono text-indigo-600">${cmd}</td>
-                    <td class="py-2 text-right">${resIcon}</td>
-                  </tr>
-                `;
-              }).join('')}
-            </tbody>
-          </table>
-        `;
-      }
-      els.logsContainer.scrollTop = els.logsContainer.scrollHeight;
-    }
-
-    function renderBottomCards(stats) {
-      if (currentMode === 'CONVERSATION') {
-        els.bottomLeftTitle.innerHTML = '<i class="ph ph-calendar-blank text-orange-500"></i> Tendência Semanal';
-        els.bottomRightTitle.innerHTML = '<i class="ph ph-chart-line-up text-teal-500"></i> Métricas Avançadas';
-        
-        const ctx = document.getElementById('bottomChart').getContext('2d');
-        const trend = stats.weeklyTrend || [];
-        const labels = trend.length ? trend.map(t => t.date) : ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'];
-        const dataStarted = trend.length ? trend.map(t => t.started) : [12, 19, 15, 25, 22, 10, 8];
-        const dataAbandoned = trend.length ? trend.map(t => t.abandoned) : [3, 5, 2, 8, 4, 1, 1];
-
-        if (charts.bottom) {
-          charts.bottom.data.labels = labels;
-          charts.bottom.data.datasets[0].data = dataStarted;
-          charts.bottom.data.datasets[1].data = dataAbandoned;
-          charts.bottom.update('none');
-        } else {
-          charts.bottom = new Chart(ctx, {
-            type: 'bar',
-            data: {
-              labels,
-              datasets: [{
-                label: 'Conversas',
-                data: dataStarted,
-                backgroundColor: '#3b82f6',
-              }, {
-                label: 'Abandonos',
-                data: dataAbandoned,
-                backgroundColor: '#ef4444',
-              }]
-            },
-            options: {
-              responsive: true,
-              maintainAspectRatio: false,
-              scales: {
-                x: { stacked: true },
-                y: { stacked: true, beginAtZero: true }
-              }
-            }
-          });
-        }
-
-        // Status List
-        const started = Number(stats.conversationsStarted || 0);
-        const completed = Number(stats.completedSessions || 0);
-        const abandoned = Number(stats.abandonedSessions || 0);
-        const conversionRate = started > 0 ? (completed / started) * 100 : 0;
-
-        els.statusList.innerHTML = `
-          <div class="grid grid-cols-2 gap-4">
-            <div class="bg-slate-50 p-3 rounded border border-slate-100">
-              <div class="text-xs text-slate-500 mb-1">Taxa de Conversão</div>
-              <div class="font-bold text-lg text-slate-800">${conversionRate.toFixed(1)}%</div>
-            </div>
-            <div class="bg-slate-50 p-3 rounded border border-slate-100">
-              <div class="text-xs text-slate-500 mb-1">Tempo Mediano</div>
-              <div class="font-bold text-lg text-slate-800">${fmtDuration(stats.medianDurationMs || 38000)}</div>
-            </div>
-            <div class="bg-slate-50 p-3 rounded border border-slate-100">
-              <div class="text-xs text-slate-500 mb-1">Concluídas</div>
-              <div class="font-bold text-lg text-slate-800">${completed}</div>
-            </div>
-            <div class="bg-slate-50 p-3 rounded border border-slate-100">
-              <div class="text-xs text-slate-500 mb-1">Abandonadas</div>
-              <div class="font-bold text-lg text-slate-800">${abandoned}</div>
-            </div>
-          </div>
-        `;
-
-      } else {
-        els.bottomLeftTitle.innerHTML = '<i class="ph ph-warning-circle text-red-500"></i> Erros & Alertas';
-        els.bottomRightTitle.innerHTML = '<i class="ph ph-heartbeat text-green-500"></i> Saúde das APIs';
-
-        // Chart Area becomes Error List
-        const errors = stats.recentErrors || [];
-        const ctxContainer = document.getElementById('bottomChart').parentElement;
-        ctxContainer.innerHTML = errors.length === 0 ? 
-          '<div class="text-center text-slate-400 py-6">Nenhum erro recente</div>' :
-          errors.map(e => `
-            <div class="flex items-center gap-3 p-2 bg-red-50 border border-red-100 rounded mb-2">
-              <div class="w-2 h-2 rounded-full bg-red-500"></div>
-              <div class="font-mono text-sm text-red-800">${e.command}</div>
-              <div class="text-sm text-slate-600 flex-grow">${e.error}</div>
-              <div class="text-xs font-bold text-slate-500">${e.count}x</div>
-            </div>
-          `).join('');
-
-        // Status List (API Health)
-        const health = stats.apiHealth || [
-          { name: "Sistema Base", avgLatencyMs: stats.avgLatencyMs || 0, uptime: 1.0, status: "healthy" }
-        ];
-
-        els.statusList.innerHTML = health.map(h => `
-          <div class="flex items-center justify-between p-3 border-b border-slate-100 last:border-0">
-            <div class="flex items-center gap-2">
-              <div class="w-3 h-3 rounded-full ${h.status === 'healthy' ? 'bg-green-500' : 'bg-red-500'}"></div>
-              <div class="font-semibold text-sm text-slate-800">${h.name}</div>
-            </div>
-            <div class="flex gap-4 text-xs font-medium text-slate-600">
-              <span>${h.avgLatencyMs}ms</span>
-              <span>${(h.uptime * 100).toFixed(0)}% OK</span>
-            </div>
-          </div>
-        `).join('');
-      }
-    }
-
-    async function loadHandoffBlocks() {
-      try {
-        const response = await fetch('/api/handoff/blocks');
-        const data = await response.json();
-        handoffBlocks = Array.isArray(data?.blocks) ? data.blocks : [];
-      } catch (error) {
-        console.error('Falha ao carregar blocos para retomada', error);
-        handoffBlocks = [];
-      }
-
-      const options = ['<option value="">Selecione bloco para retomar</option>'];
-      for (const block of handoffBlocks) {
-        const label = `#${block.index} · ${block.name || block.id} (${block.type})`;
-        options.push(`<option value="${escapeHtml(block.id)}" data-index="${block.index}">${escapeHtml(label)}</option>`);
-      }
-      els.handoffResumeBlock.innerHTML = options.join('');
-    }
-
-    async function refreshHandoffSessions() {
-      try {
-        const response = await fetch('/api/handoff/sessions');
-        const data = await response.json();
-        handoffSessions = Array.isArray(data?.sessions) ? data.sessions : [];
-        renderHandoffSessionsList();
-
-        if (!selectedHandoffJid) return;
-        const stillExists = handoffSessions.some(session => session.jid === selectedHandoffJid);
-        if (!stillExists) {
-          selectedHandoffJid = '';
-          selectedHandoffHistory = [];
-          renderHandoffHistory();
-          setHandoffActionsEnabled(false);
-          return;
-        }
-
-        if (currentView === 'handoff') {
-          await loadSelectedHandoffHistory();
-        }
-      } catch (error) {
-        console.error('Falha ao atualizar sessões de handoff', error);
-      }
-    }
-
-    function renderHandoffSessionsList() {
-      if (!handoffSessions.length) {
-        els.handoffSessionsList.innerHTML = '<div class="text-slate-400 text-center py-4">Nenhuma sessão aguardando atendimento.</div>';
-        return;
-      }
-
-      els.handoffSessionsList.innerHTML = handoffSessions.map(session => {
-        const selected = selectedHandoffJid === session.jid;
-        const lastTime = session.lastActivityAt ? fmtTime(session.lastActivityAt) : '--:--';
-        const snippet = session.lastMessage?.text ? escapeHtml(session.lastMessage.text).slice(0, 70) : 'Sem mensagem recente';
-        const phone = String(session.jid || '').split('@')[0] || session.jid;
-        return `
-          <button data-handoff-jid="${escapeHtml(session.jid)}" class="w-full text-left border rounded p-2 transition ${selected ? 'border-blue-300 bg-blue-50' : 'border-slate-200 hover:border-slate-300 bg-white'}">
-            <div class="flex items-center justify-between mb-1">
-              <span class="font-semibold text-slate-800 text-xs">${escapeHtml(phone)}</span>
-              <span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">Aguardando</span>
-            </div>
-            <div class="text-[11px] text-slate-500 mb-1">Fila: ${escapeHtml(session.queue || 'default')} · ${lastTime}</div>
-            <div class="text-xs text-slate-600 truncate">${snippet}</div>
-          </button>
-        `;
-      }).join('');
-
-      els.handoffSessionsList.querySelectorAll('[data-handoff-jid]').forEach(button => {
-        button.addEventListener('click', async () => {
-          const jid = button.getAttribute('data-handoff-jid') || '';
-          if (!jid) return;
-          selectedHandoffJid = jid;
-          renderHandoffSessionsList();
-          await loadSelectedHandoffHistory();
-          setHandoffActionsEnabled(true);
-        });
-      });
-    }
-
-    async function loadSelectedHandoffHistory() {
-      if (!selectedHandoffJid) {
-        selectedHandoffHistory = [];
-        renderHandoffHistory();
-        return;
-      }
-
-      try {
-        const params = new URLSearchParams({ jid: selectedHandoffJid, limit: '200' });
-        const response = await fetch(`/api/handoff/history?${params.toString()}`);
-        const data = await response.json();
-        selectedHandoffHistory = Array.isArray(data?.logs) ? data.logs : [];
-      } catch (error) {
-        console.error('Falha ao carregar histórico de handoff', error);
-        selectedHandoffHistory = [];
-      }
-
-      renderHandoffHistory();
-    }
-
-    function renderHandoffHistory() {
-      if (!selectedHandoffJid) {
-        els.handoffSelectedJid.textContent = 'Selecione uma sessão na lista';
-        els.handoffChatHistory.innerHTML = '<div class="text-slate-400 text-center py-8">Selecione uma sessão para ver as mensagens.</div>';
-        return;
-      }
-
-      const phone = String(selectedHandoffJid).split('@')[0] || selectedHandoffJid;
-      els.handoffSelectedJid.textContent = `Sessão ativa: ${phone}`;
-
-      if (!selectedHandoffHistory.length) {
-        els.handoffChatHistory.innerHTML = '<div class="text-slate-400 text-center py-8">Sem histórico para esta sessão.</div>';
-        return;
-      }
-
-      const timeline = [...selectedHandoffHistory].sort((a, b) => (a.occurredAt || 0) - (b.occurredAt || 0));
-      els.handoffChatHistory.innerHTML = timeline.map(event => {
-        const eventType = String(event?.eventType || '').toLowerCase();
-        const direction = String(event?.direction || '').toLowerCase();
-        const isIncoming = direction === 'incoming' || eventType === 'message-incoming';
-        const isOutgoing = direction === 'outgoing' || eventType === 'human-message-outgoing' || eventType === 'message-outgoing';
-        const label = isIncoming ? 'Usuário' : (isOutgoing ? 'Atendente/Bot' : 'Sistema');
-        const badgeClass = isIncoming ? 'bg-slate-200 text-slate-700' : (isOutgoing ? 'bg-blue-100 text-blue-700' : 'bg-amber-100 text-amber-800');
-        const text = escapeHtml(event?.messageText || `[${event?.eventType || 'evento'}]`);
-        return `
-          <div class="border border-slate-100 rounded bg-white px-3 py-2">
-            <div class="flex items-center justify-between mb-1">
-              <span class="text-[11px] px-2 py-0.5 rounded-full ${badgeClass}">${label}</span>
-              <span class="text-[11px] text-slate-400">${fmtTime(event?.occurredAt || Date.now())}</span>
-            </div>
-            <div class="text-sm text-slate-700 break-words">${text}</div>
-          </div>
-        `;
-      }).join('');
-
-      els.handoffChatHistory.scrollTop = els.handoffChatHistory.scrollHeight;
-    }
-
-    async function sendHandoffMessage() {
-      if (!selectedHandoffJid) return;
-      const text = String(els.handoffMessageInput.value || '').trim();
-      if (!text) return;
-
-      els.btnSendHandoff.disabled = true;
-      try {
-        const response = await fetch('/api/handoff/send', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jid: selectedHandoffJid, text, agentId: 'dashboard-agent' }),
-        });
-        if (!response.ok) {
-          throw new Error('Falha ao enviar mensagem do atendente');
-        }
-        els.handoffMessageInput.value = '';
-        await loadSelectedHandoffHistory();
-      } catch (error) {
-        console.error(error);
-        alert('Não foi possível enviar a mensagem agora.');
-      } finally {
-        els.btnSendHandoff.disabled = false;
-      }
-    }
-
-    async function resumeHandoffSession() {
-      if (!selectedHandoffJid) return;
-      const targetBlockId = String(els.handoffResumeBlock.value || '').trim();
-      if (!targetBlockId) {
-        alert('Selecione um bloco para retomar a sessão.');
-        return;
-      }
-
-      els.btnResumeHandoff.disabled = true;
-      try {
-        const response = await fetch('/api/handoff/resume', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jid: selectedHandoffJid, targetBlockId, agentId: 'dashboard-agent' }),
-        });
-
-        if (!response.ok) {
-          throw new Error('Falha ao retomar sessão');
-        }
-
-        await refreshHandoffSessions();
-        await loadSelectedHandoffHistory();
-      } catch (error) {
-        console.error(error);
-        alert('Não foi possível retomar a sessão.');
-      } finally {
-        els.btnResumeHandoff.disabled = false;
-      }
-    }
-
-    async function endHandoffSession() {
-      if (!selectedHandoffJid) return;
-      const confirmed = window.confirm('Deseja encerrar esta sessão agora?');
-      if (!confirmed) return;
-
-      els.btnEndHandoff.disabled = true;
-      try {
-        const response = await fetch('/api/handoff/end', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jid: selectedHandoffJid, reason: 'human-agent-ended', agentId: 'dashboard-agent' }),
-        });
-
-        if (!response.ok) {
-          throw new Error('Falha ao encerrar sessão');
-        }
-
-        selectedHandoffJid = '';
-        selectedHandoffHistory = [];
-        setHandoffActionsEnabled(false);
-        await refreshHandoffSessions();
-        renderHandoffHistory();
-      } catch (error) {
-        console.error(error);
-        alert('Não foi possível encerrar a sessão.');
-      } finally {
-        els.btnEndHandoff.disabled = false;
-      }
-    }
-
-    function setupWebSocket() {
-      const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-      const ws = new WebSocket(scheme + '://' + location.host + '/ws');
-
-      ws.onmessage = (evt) => {
-        try {
-          const data = JSON.parse(evt.data);
-          if (data.type === 'event' && data.payload) {
-            if (currentFlowPath && data.payload.flowPath && data.payload.flowPath !== currentFlowPath) {
-              return;
-            }
-            allLogs.push(data.payload);
-            if (allLogs.length > 200) allLogs.shift();
-            renderLogs();
-
-            const payloadJid = String(data.payload?.jid || '').trim();
-            if (payloadJid && selectedHandoffJid && payloadJid === selectedHandoffJid) {
-              selectedHandoffHistory.push(data.payload);
-              if (selectedHandoffHistory.length > 300) {
-                selectedHandoffHistory.shift();
-              }
-              renderHandoffHistory();
-            }
-
-            if (data.payload.eventType && String(data.payload.eventType).includes('human-handoff')) {
-              refreshHandoffSessions();
-            }
-            
-            // Opcionalmente dar um soft refresh nos dados se for um evento importante
-            if ([
-              'session-start',
-              'session-end',
-              'command-executed',
-              'flow-error',
-              'engine-error',
-              'message-outgoing-error',
-            ].includes(data.payload.eventType) || (data.payload.eventType === 'message-outgoing' && /^erro\b/i.test(String(data.payload.messageText || '')))) {
-               // debounced refresh
-               clearTimeout(window.refreshTimeout);
-               window.refreshTimeout = setTimeout(() => {
-                 refreshData();
-                 refreshHandoffSessions();
-               }, 2000);
-            }
-          }
-        } catch(e) { console.error('WS Error', e); }
-      };
-      
-      ws.onclose = () => {
-        setTimeout(setupWebSocket, 3000);
-      };
-    }
-
-    // Start
-    window.addEventListener('DOMContentLoaded', initDashboard);
-
-  </script>
+    <script src="/assets/js/dashboard-shared.js"></script>
+  <script src="/assets/js/dashboard-analytics.js"></script>
+  <script src="/assets/js/dashboard-handoff.js"></script>
+  <script src="/assets/js/dashboard-main.js"></script>
 </body>
 </html>
+

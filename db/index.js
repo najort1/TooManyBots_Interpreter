@@ -78,6 +78,8 @@ export async function initDb() {
     );
     CREATE INDEX IF NOT EXISTS idx_conversation_events_occurred_at ON conversation_events(occurred_at DESC);
     CREATE INDEX IF NOT EXISTS idx_conversation_events_jid ON conversation_events(jid);
+    CREATE INDEX IF NOT EXISTS idx_conversation_events_jid_occurred_at ON conversation_events(jid, occurred_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS idx_conversation_events_flow_path_occurred_at ON conversation_events(flow_path, occurred_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_conversation_sessions_started_at ON conversation_sessions(started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_conversation_sessions_ended_at ON conversation_sessions(ended_at DESC);
   `);
@@ -529,4 +531,3 @@ export function onConversationEvent(listener) {
     conversationEventListeners.delete(listener);
   };
 }
-

@@ -22,6 +22,20 @@ import { INTERNAL_VAR } from '../config/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const PUBLIC_DIR = path.join(__dirname, 'public');
+
+const STATIC_MIME_TYPES = {
+  '.css': 'text/css; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.html': 'text/html; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+};
 
 function toInt(value, fallback) {
   const n = Number(value);
@@ -38,6 +52,49 @@ function sendJson(res, statusCode, payload) {
   res.statusCode = statusCode;
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.end(JSON.stringify(payload));
+}
+
+function sendText(res, statusCode, text) {
+  res.statusCode = statusCode;
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.end(text);
+}
+
+function decodePathComponent(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function isPathInsideRoot(rootPath, candidatePath) {
+  const relative = path.relative(rootPath, candidatePath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function tryServePublicAsset(pathname, res) {
+  if (!pathname.startsWith('/assets/')) return false;
+
+  const decodedPath = decodePathComponent(pathname);
+  const absolutePath = path.resolve(PUBLIC_DIR, `.${decodedPath}`);
+  if (!isPathInsideRoot(PUBLIC_DIR, absolutePath)) {
+    sendText(res, 403, 'Forbidden');
+    return true;
+  }
+
+  if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
+    sendText(res, 404, 'Not found');
+    return true;
+  }
+
+  const ext = path.extname(absolutePath).toLowerCase();
+  const contentType = STATIC_MIME_TYPES[ext] || 'application/octet-stream';
+  res.statusCode = 200;
+  res.setHeader('Content-Type', contentType);
+  res.setHeader('Cache-Control', 'public, max-age=300');
+  res.end(fs.readFileSync(absolutePath));
+  return true;
 }
 
 async function readJsonBody(req) {
@@ -321,7 +378,11 @@ export class DashboardServer {
       if (requestUrl.pathname === '/') {
         res.statusCode = 200;
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.end(fs.readFileSync(path.join(__dirname, 'public', 'index.html')));
+        res.end(fs.readFileSync(path.join(PUBLIC_DIR, 'index.html')));
+        return;
+      }
+
+      if (tryServePublicAsset(requestUrl.pathname, res)) {
         return;
       }
 
