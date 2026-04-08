@@ -37,6 +37,7 @@ const STATIC_MIME_TYPES = {
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.gif': 'image/gif',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon',
 };
 

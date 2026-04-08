@@ -1,4 +1,4 @@
-﻿import { useMemo, useRef } from 'react';
+﻿import { useEffect, useMemo, useRef } from 'react';
 import { fmtTime, formatJidPhone } from '../../lib/format';
 import type { EventLog, HandoffBlock, HandoffSession } from '../../types';
 
@@ -98,6 +98,14 @@ export function HandoffView({
     [history]
   );
 
+  useEffect(() => {
+    if (!selectedJid) return;
+    if (busySend || busySendImage) return;
+    window.requestAnimationFrame(() => {
+      messageInputRef.current?.focus();
+    });
+  }, [selectedJid, busySend, busySendImage]);
+
   return (
     <section className="handoff-grid">
       <article className="panel">
@@ -187,16 +195,29 @@ export function HandoffView({
               value={messageText}
               onChange={event => onMessageChange(event.target.value)}
               placeholder="Digite a mensagem do atendente..."
-              disabled={!selectedJid || busySend}
+              disabled={!selectedJid}
               onKeyDown={async event => {
+                if (busySend || !selectedJid) return;
                 if (event.key === 'Enter') {
                   event.preventDefault();
                   await onSend();
-                  messageInputRef.current?.focus();
+                  window.requestAnimationFrame(() => {
+                    messageInputRef.current?.focus();
+                  });
                 }
               }}
             />
-            <button type="button" className="primary-btn" onClick={onSend} disabled={!selectedJid || busySend}>
+            <button
+              type="button"
+              className="primary-btn"
+              onClick={async () => {
+                await onSend();
+                window.requestAnimationFrame(() => {
+                  messageInputRef.current?.focus();
+                });
+              }}
+              disabled={!selectedJid || busySend}
+            >
               {busySend ? 'Enviando...' : 'Enviar'}
             </button>
             <input
@@ -209,7 +230,9 @@ export function HandoffView({
                 if (!file) return;
                 await onSendImage(file);
                 event.target.value = '';
-                messageInputRef.current?.focus();
+                window.requestAnimationFrame(() => {
+                  messageInputRef.current?.focus();
+                });
               }}
             />
             <button

@@ -1,7 +1,7 @@
 ﻿import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
-import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion } from '@whiskeysockets/baileys';
+import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
@@ -50,6 +50,8 @@ let dashboardServer = null;
 let removeConversationEventListener = null;
 let authStateMaintenanceTimer = null;
 const contactCache = new Map();
+const HANDOFF_MEDIA_DIR = path.resolve('./data/handoff-media');
+const ALLOWED_INCOMING_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 const FATAL_LOG_FILE = path.resolve('./fatal-error.log');
 
@@ -253,6 +255,68 @@ function extractApiHostFromTemplateUrl(rawUrl) {
 
     const match = normalized.match(/^(?:[a-z]+:\/\/)?([^\/\s?#]+)/i);
     return String(match?.[1] ?? 'host-desconhecido');
+  }
+}
+
+function sanitizeMediaFileName(value) {
+  return String(value ?? '')
+    .replace(/[^\w.-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 90);
+}
+
+function extensionFromMimeType(mimeType) {
+  if (mimeType === 'image/jpeg') return '.jpg';
+  if (mimeType === 'image/png') return '.png';
+  if (mimeType === 'image/webp') return '.webp';
+  if (mimeType === 'image/gif') return '.gif';
+  return '.bin';
+}
+
+function saveIncomingHandoffImage({ buffer, mimeType, fileName = '' }) {
+  fs.mkdirSync(HANDOFF_MEDIA_DIR, { recursive: true });
+  const ext = extensionFromMimeType(mimeType);
+  const base = sanitizeMediaFileName(fileName).replace(/\.[^.]+$/, '') || 'incoming';
+  const mediaId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${base}${ext}`;
+  const mediaPath = path.resolve(HANDOFF_MEDIA_DIR, mediaId);
+  fs.writeFileSync(mediaPath, buffer);
+  return {
+    mediaId,
+    mediaPath,
+    mediaUrl: `/api/handoff/media/${encodeURIComponent(mediaId)}`,
+  };
+}
+
+async function captureIncomingImageForDashboard({ msg, sock, mimeType, fileName }) {
+  const normalizedMime = String(mimeType || '').toLowerCase();
+  if (!ALLOWED_INCOMING_IMAGE_MIME.has(normalizedMime)) return null;
+
+  try {
+    const buffer = await downloadMediaMessage(
+      msg,
+      'buffer',
+      {},
+      {
+        logger,
+        reuploadRequest: sock?.updateMediaMessage,
+      }
+    );
+
+    if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
+      return null;
+    }
+    if (buffer.length > 8 * 1024 * 1024) {
+      return null;
+    }
+
+    return saveIncomingHandoffImage({
+      buffer,
+      mimeType: normalizedMime,
+      fileName,
+    });
+  } catch {
+    return null;
   }
 }
 
@@ -805,7 +869,7 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
         continue;
       }
 
-      const { id, jid, text, listId, isGroup, messageKey } = parsed;
+      const { id, jid, text, listId, isGroup, messageKey, messageType, mediaMimeType, mediaFileName } = parsed;
       const actorJid = resolveIncomingActorJid(parsed);
 
       const interactionScope = normalizeInteractionScope(flow);
@@ -848,17 +912,36 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
         });
       }
 
+      let incomingMedia = null;
+      if (messageType === 'image') {
+        incomingMedia = await captureIncomingImageForDashboard({
+          msg,
+          sock,
+          mimeType: mediaMimeType,
+          fileName: mediaFileName || `incoming-${id || Date.now()}`,
+        });
+      }
+
+      const incomingText = String(text ?? '').trim();
+      const resolvedMessageText =
+        incomingText ||
+        (messageType === 'image' ? '[Imagem recebida]' : '');
+
       logConversationEvent({
         eventType: 'message-incoming',
         direction: 'incoming',
         jid: actorJid || jid,
-        messageText: text,
+        messageText: resolvedMessageText,
         metadata: {
           id,
           listId: listId ?? null,
           isGroup,
           actorJid: actorJid || null,
           chatJid: jid,
+          kind: messageType || 'unknown',
+          mediaType: messageType === 'image' ? mediaMimeType || null : null,
+          mediaUrl: incomingMedia?.mediaUrl || null,
+          mediaId: incomingMedia?.mediaId || null,
         },
       });
 
