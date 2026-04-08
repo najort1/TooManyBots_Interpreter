@@ -22,7 +22,9 @@ import { INTERNAL_VAR } from '../config/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const PUBLIC_DIR = path.join(__dirname, 'public');
+const LEGACY_PUBLIC_DIR = path.join(__dirname, 'public');
+const VITE_DIST_DIR = path.resolve(__dirname, '..', 'tmb_dashboard', 'dist');
+const PUBLIC_DIR = fs.existsSync(path.join(VITE_DIST_DIR, 'index.html')) ? VITE_DIST_DIR : LEGACY_PUBLIC_DIR;
 
 const STATIC_MIME_TYPES = {
   '.css': 'text/css; charset=utf-8',
@@ -376,9 +378,14 @@ export class DashboardServer {
       const requestUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
 
       if (requestUrl.pathname === '/') {
+        const indexPath = path.join(PUBLIC_DIR, 'index.html');
+        if (!fs.existsSync(indexPath)) {
+          sendText(res, 503, 'Dashboard frontend build not found. Run: npm --prefix tmb_dashboard run build');
+          return;
+        }
         res.statusCode = 200;
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.end(fs.readFileSync(path.join(PUBLIC_DIR, 'index.html')));
+        res.end(fs.readFileSync(indexPath));
         return;
       }
 

@@ -6,7 +6,10 @@
   "type": "module",
   "scripts": {
     "start": "node index.js",
-    "dev": "node --watch index.js"
+    "dev": "node --watch index.js",
+    "dashboard:dev": "npm --prefix tmb_dashboard run dev",
+    "dashboard:build": "npm --prefix tmb_dashboard run build",
+    "dashboard:lint": "npm --prefix tmb_dashboard run lint"
   },
   "dependencies": {
     "@whiskeysockets/baileys": "^6.7.16",
