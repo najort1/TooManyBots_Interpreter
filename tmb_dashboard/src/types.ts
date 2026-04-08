@@ -8,6 +8,11 @@ export interface RuntimeHealth {
   mode: string;
   flowFile: string;
   flowPath: string;
+  availableModes?: string[];
+  flowPathsByMode?: {
+    conversation?: string[];
+    command?: string[];
+  };
 }
 
 export interface EventLog {
@@ -98,6 +103,8 @@ export interface HandoffBlock {
 
 export interface HandoffSession {
   jid: string;
+  flowPath?: string;
+  botType?: string;
   waitingFor?: string;
   blockIndex?: number;
   status?: string;

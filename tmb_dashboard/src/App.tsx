@@ -143,8 +143,13 @@ function App() {
   const [view, setView] = useState<DashboardView>('analytics');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [mode, setMode] = useState<DashboardMode>('CONVERSATION');
+  const [availableModes, setAvailableModes] = useState<DashboardMode[]>(['CONVERSATION']);
   const [botName, setBotName] = useState('...');
   const [flowPath, setFlowPath] = useState('');
+  const [flowPathsByMode, setFlowPathsByMode] = useState<{ conversation: string[]; command: string[] }>({
+    conversation: [],
+    command: [],
+  });
   const [uptimeMs, setUptimeMs] = useState(0);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [logs, setLogs] = useState<EventLog[]>([]);
@@ -164,6 +169,7 @@ function App() {
   const modeQuery = useMemo(() => modeToQuery(mode), [mode]);
 
   const flowPathRef = useRef(flowPath);
+  const flowPathsByModeRef = useRef(flowPathsByMode);
   const logsRef = useRef(logs);
   const selectedJidRef = useRef(selectedHandoffJid);
   const handoffSessionsRef = useRef(handoffSessions);
@@ -174,6 +180,10 @@ function App() {
   useEffect(() => {
     flowPathRef.current = flowPath;
   }, [flowPath]);
+
+  useEffect(() => {
+    flowPathsByModeRef.current = flowPathsByMode;
+  }, [flowPathsByMode]);
 
   useEffect(() => {
     logsRef.current = logs;
@@ -229,9 +239,22 @@ function App() {
 
   const loadHealth = useCallback(async () => {
     const health = await fetchHealth();
-    setMode(toDashboardMode(health.mode));
+    const available = Array.isArray(health.availableModes) && health.availableModes.length > 0
+      ? health.availableModes.map(item => toDashboardMode(item))
+      : [toDashboardMode(health.mode)];
+    const uniqueAvailable = [...new Set(available)];
+    setAvailableModes(uniqueAvailable);
+    setMode(previous => (uniqueAvailable.includes(previous) ? previous : toDashboardMode(health.mode)));
     setBotName(health.flowFile || 'Desconhecido');
     setFlowPath(String(health.flowPath || ''));
+    setFlowPathsByMode({
+      conversation: Array.isArray(health.flowPathsByMode?.conversation)
+        ? health.flowPathsByMode.conversation.map(item => String(item))
+        : [],
+      command: Array.isArray(health.flowPathsByMode?.command)
+        ? health.flowPathsByMode.command.map(item => String(item))
+        : [],
+    });
     setUptimeMs(Number(health.uptimeMs || 0));
   }, []);
 
@@ -332,7 +355,14 @@ function App() {
           if (incoming.type !== 'event' || !incoming.payload) return;
 
           const payload = incoming.payload;
-          if (flowPathRef.current && payload.flowPath && payload.flowPath !== flowPathRef.current) {
+          const currentModeQuery = modeToQuery(mode);
+          const activeModeFlowPaths = flowPathsByModeRef.current[currentModeQuery] || [];
+          if (activeModeFlowPaths.length > 0) {
+            const payloadFlowPath = String(payload.flowPath || '');
+            if (!payloadFlowPath || !activeModeFlowPaths.includes(payloadFlowPath)) {
+              return;
+            }
+          } else if (flowPathRef.current && payload.flowPath && payload.flowPath !== flowPathRef.current) {
             return;
           }
 
@@ -409,7 +439,7 @@ function App() {
       if (reconnectTimeout) window.clearTimeout(reconnectTimeout);
       if (ws && ws.readyState < WebSocket.CLOSING) ws.close();
     };
-  }, [pushToast, refreshHandoffQueue, scheduleSoftRefresh]);
+  }, [mode, pushToast, refreshHandoffQueue, scheduleSoftRefresh]);
 
   const handleReload = useCallback(async () => {
     try {
@@ -536,6 +566,8 @@ function App() {
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
           mode={mode}
+          availableModes={availableModes}
+          onModeChange={setMode}
           botName={botName}
           uptimeMs={uptimeMs}
           onReload={handleReload}

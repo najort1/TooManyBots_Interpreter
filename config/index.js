@@ -7,6 +7,11 @@ export const RUNTIME_MODE = {
   RESTRICTED_TEST: 'restricted-test',
 };
 
+export const BOT_RUNTIME_MODE = {
+  SINGLE_FLOW: 'single-flow',
+  MULTI_BOT: 'multi-bot',
+};
+
 const MODE_LOG_LEVEL = {
   [RUNTIME_MODE.PRODUCTION]: 'warn',
   [RUNTIME_MODE.DEVELOPMENT]: 'debug',
@@ -14,9 +19,12 @@ const MODE_LOG_LEVEL = {
 };
 
 const VALID_MODES = new Set(Object.values(RUNTIME_MODE));
+const VALID_BOT_RUNTIME_MODES = new Set(Object.values(BOT_RUNTIME_MODE));
 
 export const config = {
+  botRuntimeMode: BOT_RUNTIME_MODE.SINGLE_FLOW,
   flowPath: './bots/flow.tmb',
+  flowPaths: ['./bots/flow.tmb'],
   runtimeMode: RUNTIME_MODE.PRODUCTION,
   testTargetMode: 'contacts-and-groups',
   testJid: '',
@@ -39,6 +47,12 @@ function normalizeRuntimeMode(value) {
   return null;
 }
 
+function normalizeBotRuntimeMode(value) {
+  const mode = String(value ?? '').trim().toLowerCase();
+  if (VALID_BOT_RUNTIME_MODES.has(mode)) return mode;
+  return null;
+}
+
 function deriveRuntimeModeFromLegacy(input) {
   const explicit = normalizeRuntimeMode(input.runtimeMode);
   if (explicit) return explicit;
@@ -55,11 +69,44 @@ function toPortNumber(value, fallback) {
   return Math.floor(n);
 }
 
+function normalizeFlowPaths(input) {
+  const values = Array.isArray(input) ? input : [];
+  const seen = new Set();
+  const result = [];
+
+  for (const value of values) {
+    const normalized = String(value ?? '').trim();
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    result.push(normalized);
+  }
+
+  return result;
+}
+
 function normalizeConfigShape(input) {
   const normalized = { ...input };
 
   normalized.runtimeMode = deriveRuntimeModeFromLegacy(normalized);
+  normalized.botRuntimeMode =
+    normalizeBotRuntimeMode(normalized.botRuntimeMode) ??
+    (Array.isArray(normalized.flowPaths) && normalized.flowPaths.length > 1
+      ? BOT_RUNTIME_MODE.MULTI_BOT
+      : BOT_RUNTIME_MODE.SINGLE_FLOW);
+
   normalized.flowPath = String(normalized.flowPath ?? config.flowPath).trim() || config.flowPath;
+  normalized.flowPaths = normalizeFlowPaths(normalized.flowPaths);
+  if (!normalized.flowPaths.includes(normalized.flowPath)) {
+    normalized.flowPaths = [normalized.flowPath, ...normalized.flowPaths].filter(Boolean);
+  }
+
+  if (normalized.botRuntimeMode === BOT_RUNTIME_MODE.SINGLE_FLOW) {
+    normalized.flowPaths = [normalized.flowPath];
+  } else if (normalized.flowPaths.length === 0) {
+    normalized.flowPaths = [normalized.flowPath];
+  }
+
+  normalized.flowPath = normalized.flowPaths[0] || config.flowPath;
 
   normalized.testTargetMode = String(normalized.testTargetMode ?? config.testTargetMode).trim() || config.testTargetMode;
   normalized.testJid = String(normalized.testJid ?? '').trim();
@@ -90,7 +137,9 @@ function sanitizeConfigForSave(input) {
   const { __startupChoice, ...rest } = input;
   const normalized = normalizeConfigShape(rest);
   return {
+    botRuntimeMode: normalized.botRuntimeMode,
     flowPath: normalized.flowPath,
+    flowPaths: normalized.flowPaths,
     runtimeMode: normalized.runtimeMode,
     testTargetMode: normalized.testTargetMode,
     testJid: normalized.testJid,

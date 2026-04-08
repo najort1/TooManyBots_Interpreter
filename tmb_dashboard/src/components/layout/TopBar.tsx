@@ -3,6 +3,8 @@ import { fmtUptime } from '../../lib/format';
 
 interface TopBarProps {
   mode: DashboardMode;
+  availableModes: DashboardMode[];
+  onModeChange: (mode: DashboardMode) => void;
   botName: string;
   uptimeMs: number;
   onReload: () => void;
@@ -15,12 +17,16 @@ const ghostBtn =
 
 export function TopBar({
   mode,
+  availableModes,
+  onModeChange,
   botName,
   uptimeMs,
   onReload,
   onOpenSettings,
   onOpenSidebar,
 }: TopBarProps) {
+  const showModeSwitch = availableModes.length > 1;
+
   return (
     <header className="sticky top-0 z-20 flex items-center justify-between gap-4 border-b border-[#d8e2ef] bg-[rgba(255,255,255,0.92)] px-4 py-3 backdrop-blur-[10px]">
       <div className="flex items-center gap-3">
@@ -44,6 +50,34 @@ export function TopBar({
         >
           {mode === 'COMMAND' ? 'Modo Comando' : 'Modo Conversacao'}
         </span>
+        {showModeSwitch && (
+          <div className="hidden items-center rounded-[10px] border border-[#d8e2ef] bg-white p-0.5 md:inline-flex">
+            <button
+              type="button"
+              className={[
+                'rounded-[8px] px-2.5 py-1 text-[0.74rem] font-bold transition',
+                mode === 'CONVERSATION'
+                  ? 'bg-blue-100 text-blue-700'
+                  : 'text-slate-600 hover:bg-slate-50',
+              ].join(' ')}
+              onClick={() => onModeChange('CONVERSATION')}
+            >
+              Conversa
+            </button>
+            <button
+              type="button"
+              className={[
+                'rounded-[8px] px-2.5 py-1 text-[0.74rem] font-bold transition',
+                mode === 'COMMAND'
+                  ? 'bg-orange-100 text-orange-800'
+                  : 'text-slate-600 hover:bg-slate-50',
+              ].join(' ')}
+              onClick={() => onModeChange('COMMAND')}
+            >
+              Comando
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="flex items-center gap-3">

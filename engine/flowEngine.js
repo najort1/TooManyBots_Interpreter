@@ -18,6 +18,7 @@ import {
 } from '../db/index.js';
 import { LRUCache } from './utils.js';
 import { parseCommandInput } from './commandParser.js';
+import { getFlowBotType } from './flowLoader.js';
 import { resolveKeyword } from './resolvers/keywordResolver.js';
 import { resolveList } from './resolvers/listResolver.js';
 import { resolveMultipleChoice } from './resolvers/multipleChoiceResolver.js';
@@ -31,22 +32,54 @@ import {
 
 const userLocks = new Map();
 
-async function executeWithLock(jid, task) {
-  while (userLocks.has(jid)) {
-    await userLocks.get(jid).catch(() => {});
+function normalizeFlowPath(flow) {
+  return String(flow?.flowPath ?? '').trim();
+}
+
+function buildSessionScope(flow) {
+  return {
+    flowPath: normalizeFlowPath(flow),
+    botType: getFlowBotType(flow),
+  };
+}
+
+function buildLockKey(jid, flow) {
+  return `${String(jid ?? '').trim()}::${normalizeFlowPath(flow)}`;
+}
+
+function createFlowScopedSocket(sock, flow) {
+  if (!sock || typeof sock !== 'object') return sock;
+  const flowPath = normalizeFlowPath(flow);
+  if (!flowPath || typeof sock.sendMessage !== 'function') return sock;
+
+  const scopedSock = Object.create(sock);
+  scopedSock.sendMessage = (jid, content, options = {}) => {
+    const safeOptions = options && typeof options === 'object' ? { ...options } : {};
+    if (safeOptions.__flowPath == null) {
+      safeOptions.__flowPath = flowPath;
+    }
+    return sock.sendMessage(jid, content, safeOptions);
+  };
+  return scopedSock;
+}
+
+async function executeWithLock(jid, flow, task) {
+  const lockKey = buildLockKey(jid, flow);
+  while (userLocks.has(lockKey)) {
+    await userLocks.get(lockKey).catch(() => {});
   }
 
   let resolveLock;
   const lockPromise = new Promise(resolve => {
     resolveLock = resolve;
   });
-  userLocks.set(jid, lockPromise);
+  userLocks.set(lockKey, lockPromise);
 
   try {
     return await task();
   } finally {
-    if (userLocks.get(jid) === lockPromise) {
-      userLocks.delete(jid);
+    if (userLocks.get(lockKey) === lockPromise) {
+      userLocks.delete(lockKey);
     }
     resolveLock();
   }
@@ -59,8 +92,9 @@ function getRuntimeConfig(flow) {
 }
 
 export async function resumeSessionFromHumanHandoff({ sock, jid, flow, targetBlockIndex, actor = 'dashboard-agent' }) {
-  return executeWithLock(jid, async () => {
-    const session = getSession(jid);
+  const scope = buildSessionScope(flow);
+  return executeWithLock(jid, flow, async () => {
+    const session = getSession(jid, scope);
     if (!session) {
       return { ok: false, error: 'session-not-found' };
     }
@@ -89,7 +123,7 @@ export async function resumeSessionFromHumanHandoff({ sock, jid, flow, targetBlo
         [INTERNAL_VAR.HUMAN_HANDOFF]: nextHandoff,
         [INTERNAL_VAR.SESSION_LAST_ACTIVITY_AT]: nowTs,
       },
-    });
+    }, scope);
 
     addConversationEvent({
       occurredAt: nowTs,
@@ -104,7 +138,7 @@ export async function resumeSessionFromHumanHandoff({ sock, jid, flow, targetBlo
       },
     });
 
-    const refreshed = getSession(jid);
+    const refreshed = getSession(jid, scope);
     await runEngine(sock, jid, refreshed, flow, {
       incoming: {
         text: '',
@@ -117,14 +151,15 @@ export async function resumeSessionFromHumanHandoff({ sock, jid, flow, targetBlo
 
     return {
       ok: true,
-      session: getSession(jid),
+      session: getSession(jid, scope),
     };
   });
 }
 
 export async function endSessionFromDashboard({ jid, flow, reason = 'human-agent-ended', actor = 'dashboard-agent' }) {
-  return executeWithLock(jid, async () => {
-    const session = getSession(jid);
+  const scope = buildSessionScope(flow);
+  return executeWithLock(jid, flow, async () => {
+    const session = getSession(jid, scope);
     if (!session) {
       return { ok: false, error: 'session-not-found' };
     }
@@ -142,11 +177,11 @@ export async function endSessionFromDashboard({ jid, flow, reason = 'human-agent
           closeReason: reason,
         },
       },
-    });
+    }, scope);
 
-    const refreshed = getSession(jid);
+    const refreshed = getSession(jid, scope);
     endSession(jid, refreshed, nowTs, reason, flow);
-    return { ok: true, session: getSession(jid) };
+    return { ok: true, session: getSession(jid, scope) };
   });
 }
 
@@ -239,8 +274,9 @@ function parseObjectVar(value) {
 }
 
 function createOrResetSessionRuntimeState(jid, nowTs, flow) {
-  createSession(jid);
-  const session = getSession(jid);
+  const scope = buildSessionScope(flow);
+  createSession(jid, scope);
+  const session = getSession(jid, scope);
   const sessionId = createSessionId(jid, nowTs);
 
   updateSession(jid, {
@@ -256,7 +292,8 @@ function createOrResetSessionRuntimeState(jid, nowTs, flow) {
       [INTERNAL_VAR.SESSION_ENDED_AT]: undefined,
       [INTERNAL_VAR.SESSION_END_REASON]: undefined,
     },
-  });
+    botType: scope.botType,
+  }, scope);
 
   createConversationSessionRecord({
     sessionId,
@@ -275,11 +312,12 @@ function createOrResetSessionRuntimeState(jid, nowTs, flow) {
     metadata: { sessionId },
   });
 
-  return getSession(jid);
+  return getSession(jid, scope);
 }
 
 function endSession(jid, session, nowTs, reason, flow) {
   if (!session) return;
+  const scope = buildSessionScope(flow);
   const startedAt = getNumericInternalVar(session, INTERNAL_VAR.SESSION_STARTED_AT, 0);
   const sessionId = getSessionId(session);
   const durationMs = startedAt > 0 ? Math.max(0, nowTs - startedAt) : 0;
@@ -293,7 +331,8 @@ function endSession(jid, session, nowTs, reason, flow) {
       [INTERNAL_VAR.SESSION_ENDED_AT]: nowTs,
       [INTERNAL_VAR.SESSION_END_REASON]: reason,
     },
-  });
+    botType: scope.botType,
+  }, scope);
 
   finishConversationSessionRecord({
     sessionId,
@@ -329,13 +368,14 @@ function isSessionTimedOut(session, flow, nowTs) {
 
 async function enforceSessionLimits(sock, jid, session, flow, nowTs) {
   const limits = getSessionLimits(flow);
+  const scope = buildSessionScope(flow);
 
   if (isSessionTimedOut(session, flow, nowTs)) {
     if (limits.timeoutMessage) {
       await sock.sendMessage(jid, { text: limits.timeoutMessage });
     }
     endSession(jid, session, nowTs, 'timeout', flow);
-    return { blocked: true, session: getSession(jid) };
+    return { blocked: true, session: getSession(jid, scope) };
   }
 
   const nextMessageCount = getNumericInternalVar(session, INTERNAL_VAR.SESSION_MESSAGE_COUNT, 0) + 1;
@@ -345,16 +385,16 @@ async function enforceSessionLimits(sock, jid, session, flow, nowTs) {
       [INTERNAL_VAR.SESSION_MESSAGE_COUNT]: nextMessageCount,
       [INTERNAL_VAR.SESSION_LAST_ACTIVITY_AT]: nowTs,
     },
-  });
+  }, scope);
 
-  session = getSession(jid);
+  session = getSession(jid, scope);
 
   if (limits.maxMessagesPerSession > 0 && nextMessageCount > limits.maxMessagesPerSession) {
     if (limits.timeoutMessage) {
       await sock.sendMessage(jid, { text: limits.timeoutMessage });
     }
     endSession(jid, session, nowTs, 'max-messages', flow);
-    return { blocked: true, session: getSession(jid) };
+    return { blocked: true, session: getSession(jid, scope) };
   }
 
   return { blocked: false, session };
@@ -407,20 +447,23 @@ async function resolveSessionStartPolicy(sock, jid, session, flow, nowTs) {
  * Main entry point called on every incoming WhatsApp message.
  */
 export async function handleIncoming(sock, jid, message, listId, flow, msgId, messageKey = null) {
+  const scope = buildSessionScope(flow);
+  const scopedSock = createFlowScopedSocket(sock, flow);
   if (msgId) {
-    if (PROCESSED_IDS.has(msgId)) {
-      console.log(`[handleIncoming] DUPLICATE message detected, skipping. ID: ${msgId}`);
+    const processedKey = `${scope.flowPath}::${msgId}`;
+    if (PROCESSED_IDS.has(processedKey)) {
+      console.log(`[handleIncoming] DUPLICATE message detected, skipping. ID: ${msgId} | flow=${scope.flowPath}`);
       return;
     }
-    PROCESSED_IDS.add(msgId);
+    PROCESSED_IDS.add(processedKey);
   }
 
-  return executeWithLock(jid, async () => {
+  return executeWithLock(jid, flow, async () => {
     const nowTs = Date.now();
     const commandMode = isCommandMode(flow);
     const normalizedIncoming = String(message ?? '').trim();
     const hasCommandPrefix = normalizedIncoming.startsWith('/');
-    let session = getSession(jid);
+    let session = getSession(jid, scope);
     let commandCandidate = null;
 
     const shouldResolveCommandCandidate =
@@ -444,13 +487,13 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
       );
     }
 
-    const startResolution = await resolveSessionStartPolicy(sock, jid, session, flow, nowTs);
+    const startResolution = await resolveSessionStartPolicy(scopedSock, jid, session, flow, nowTs);
     if (startResolution.blocked) return;
     session = startResolution.session;
 
     if (commandCandidate && session.blockIndex !== commandCandidate.index) {
-      updateSession(jid, { blockIndex: commandCandidate.index });
-      session = getSession(jid);
+      updateSession(jid, { blockIndex: commandCandidate.index }, scope);
+      session = getSession(jid, scope);
     }
 
     updateSession(jid, {
@@ -461,10 +504,11 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
         [INTERNAL_VAR.LAST_INCOMING_LIST_ID]: listId ?? '',
         [INTERNAL_VAR.LAST_INCOMING_MESSAGE_KEY]: messageKey ?? null,
       },
-    });
-    session = getSession(jid);
+      botType: scope.botType,
+    }, scope);
+    session = getSession(jid, scope);
 
-    const limitsResolution = await enforceSessionLimits(sock, jid, session, flow, nowTs);
+    const limitsResolution = await enforceSessionLimits(scopedSock, jid, session, flow, nowTs);
     if (limitsResolution.blocked) return;
     session = limitsResolution.session;
 
@@ -474,7 +518,7 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
 
     if (session.waitingFor === WAIT_TYPE.KEYWORD) {
       try {
-        session = await resolveKeywordWait(sock, jid, message, session, flow);
+        session = await resolveKeywordWait(scopedSock, jid, message, session, flow);
         if (!session) return;
       } catch (err) {
         console.error(`[handleIncoming] Erro em resolveKeywordWait para ${jid}:`, err);
@@ -491,7 +535,7 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
       }
     } else if (session.waitingFor === WAIT_TYPE.LIST) {
       try {
-        session = await resolveListWait(sock, jid, message, listId, session, flow);
+        session = await resolveListWait(scopedSock, jid, message, listId, session, flow);
         if (!session) return;
       } catch (err) {
         console.error(`[handleIncoming] Erro em resolveListWait para ${jid}:`, err);
@@ -508,7 +552,7 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
       }
     } else if (session.waitingFor === WAIT_TYPE.MULTIPLE_CHOICE) {
       try {
-        session = await resolveMultipleChoiceWait(sock, jid, message, session, flow);
+        session = await resolveMultipleChoiceWait(scopedSock, jid, message, session, flow);
         if (!session) return;
       } catch (err) {
         console.error(`[handleIncoming] Erro em resolveMultipleChoiceWait para ${jid}:`, err);
@@ -535,11 +579,13 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
       },
     };
 
-    await runEngine(sock, jid, session, flow, runtime);
+    await runEngine(scopedSock, jid, session, flow, runtime);
   });
 }
 
 async function runEngine(sock, jid, session, flow, runtime = {}) {
+  const scopedSock = createFlowScopedSocket(sock, flow);
+  const scope = buildSessionScope(flow);
   const MAX_STEPS = ENGINE_LIMITS.MAX_STEPS;
   let steps = 0;
 
@@ -567,14 +613,14 @@ async function runEngine(sock, jid, session, flow, runtime = {}) {
 
     if (!handler) {
       console.warn(`[Engine] No handler for block type "${block.type}" - skipping.`);
-      updateSession(jid, { blockIndex: session.blockIndex + 1 });
-      session = getSession(jid);
+      updateSession(jid, { blockIndex: session.blockIndex + 1 }, scope);
+      session = getSession(jid, scope);
       continue;
     }
 
     let result;
     try {
-      result = await handler({ block, session, sock, jid, flow, runtime });
+      result = await handler({ block, session, sock: scopedSock, jid, flow, runtime });
     } catch (err) {
       console.error(`[Engine] Error in handler "${block.type}":`, err);
       addConversationEvent({
@@ -599,8 +645,8 @@ async function runEngine(sock, jid, session, flow, runtime = {}) {
       blockIndex: result.nextBlockIndex ?? session.blockIndex,
     };
 
-    updateSession(jid, patch);
-    session = getSession(jid);
+    updateSession(jid, patch, scope);
+    session = getSession(jid, scope);
 
     if (result.done) {
       endSession(jid, session, Date.now(), 'end-conversation', flow);
@@ -616,17 +662,19 @@ async function runEngine(sock, jid, session, flow, runtime = {}) {
 }
 
 async function resolveKeywordWait(sock, jid, message, session, flow) {
+  const scope = buildSessionScope(flow);
   const { patch, matchedResponse } = resolveKeyword(sock, jid, message, session, flow);
 
   if (matchedResponse) {
     await sock.sendMessage(jid, { text: matchedResponse });
   }
 
-  updateSession(jid, patch);
-  return getSession(jid);
+  updateSession(jid, patch, scope);
+  return getSession(jid, scope);
 }
 
 async function resolveListWait(sock, jid, message, listId, session, flow) {
+  const scope = buildSessionScope(flow);
   const { patch, match } = resolveList(message, listId, session, flow);
 
   if (!match) {
@@ -637,11 +685,12 @@ async function resolveListWait(sock, jid, message, listId, session, flow) {
     return null;
   }
 
-  updateSession(jid, patch);
-  return getSession(jid);
+  updateSession(jid, patch, scope);
+  return getSession(jid, scope);
 }
 
 async function resolveMultipleChoiceWait(sock, jid, message, session, flow) {
+  const scope = buildSessionScope(flow);
   const { patch, selected } = resolveMultipleChoice(message, session, flow);
 
   if (!selected) {
@@ -653,51 +702,82 @@ async function resolveMultipleChoiceWait(sock, jid, message, session, flow) {
     return null;
   }
 
-  updateSession(jid, patch);
-  return getSession(jid);
+  updateSession(jid, patch, scope);
+  return getSession(jid, scope);
 }
 
-let cleanupInterval = null;
+const cleanupIntervals = new Map();
 
-export function startSessionCleanup(sock, flow) {
-  if (cleanupInterval) clearInterval(cleanupInterval);
-  
-  // Check periodically (e.g., every 15 seconds)
-  cleanupInterval = setInterval(async () => {
-    const limits = getSessionLimits(flow);
-    if (limits.sessionTimeoutMinutes <= 0) return;
-    
-    const activeSessions = getActiveSessions();
-    const nowTs = Date.now();
-    
-    for (const session of activeSessions) {
-      if (isSessionTimedOut(session, flow, nowTs)) {
-        await executeWithLock(session.jid, async () => {
-          // Re-fetch inside lock to make sure it wasn't updated just now
-          const syncSession = getSession(session.jid);
-          if (syncSession && syncSession.status === SESSION_STATUS.ACTIVE && isSessionTimedOut(syncSession, flow, nowTs)) {
-            console.log(`[SessionCleanup] Sessao para ${session.jid} atingiu o timeout (${limits.sessionTimeoutMinutes} min). Encerrando e enviando mensagem...`);
-            if (limits.timeoutMessage) {
-              await sock.sendMessage(session.jid, { text: limits.timeoutMessage }).catch(console.error);
-            }
-            endSession(session.jid, syncSession, nowTs, 'timeout', flow);
-          }
-        });
-      }
+function clearCleanupInterval(flowPath) {
+  const interval = cleanupIntervals.get(flowPath);
+  if (!interval) return;
+  clearInterval(interval);
+  cleanupIntervals.delete(flowPath);
+}
+
+export function startSessionCleanup(sock, flowOrFlows) {
+  const flows = Array.isArray(flowOrFlows) ? flowOrFlows : [flowOrFlows];
+  const validFlows = flows.filter(Boolean);
+  const activeFlowPaths = new Set(validFlows.map(flow => normalizeFlowPath(flow)).filter(Boolean));
+
+  for (const flowPath of [...cleanupIntervals.keys()]) {
+    if (!activeFlowPaths.has(flowPath)) {
+      clearCleanupInterval(flowPath);
     }
-  }, 15000); // 15 seconds intervals
+  }
+
+  for (const flow of validFlows) {
+    const flowPath = normalizeFlowPath(flow);
+    if (!flowPath) continue;
+    clearCleanupInterval(flowPath);
+
+    const scope = buildSessionScope(flow);
+    const interval = setInterval(async () => {
+      const limits = getSessionLimits(flow);
+      if (limits.sessionTimeoutMinutes <= 0) return;
+
+      const activeSessions = getActiveSessions(scope);
+      const nowTs = Date.now();
+
+      for (const session of activeSessions) {
+        if (isSessionTimedOut(session, flow, nowTs)) {
+          await executeWithLock(session.jid, flow, async () => {
+            const syncSession = getSession(session.jid, scope);
+            if (syncSession && syncSession.status === SESSION_STATUS.ACTIVE && isSessionTimedOut(syncSession, flow, nowTs)) {
+              console.log(`[SessionCleanup] Sessao para ${session.jid} atingiu o timeout (${limits.sessionTimeoutMinutes} min). Encerrando e enviando mensagem...`);
+              if (limits.timeoutMessage) {
+                await sock.sendMessage(session.jid, { text: limits.timeoutMessage }).catch(console.error);
+              }
+              endSession(session.jid, syncSession, nowTs, 'timeout', flow);
+            }
+          });
+        }
+      }
+    }, 15000);
+
+    if (typeof interval.unref === 'function') {
+      interval.unref();
+    }
+
+    cleanupIntervals.set(flowPath, interval);
+  }
 }
 
 export async function resetActiveSessions(reason = 'manual-reload', flow = null) {
-  const activeSessions = getActiveSessions();
+  const scope = flow ? buildSessionScope(flow) : null;
+  const activeSessions = getActiveSessions(scope);
   const nowTs = Date.now();
 
   for (const session of activeSessions) {
-    await executeWithLock(session.jid, async () => {
-      const current = getSession(session.jid);
+    const flowLike = flow ?? {
+      flowPath: session.flowPath,
+      runtimeConfig: { conversationMode: session.botType },
+    };
+    await executeWithLock(session.jid, flowLike, async () => {
+      const current = getSession(session.jid, { flowPath: session.flowPath, botType: session.botType });
       if (!current || current.status !== SESSION_STATUS.ACTIVE) return;
-      endSession(session.jid, current, nowTs, reason, flow);
-      deleteSession(session.jid);
+      endSession(session.jid, current, nowTs, reason, flowLike);
+      deleteSession(session.jid, { flowPath: session.flowPath });
     });
   }
 

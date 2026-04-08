@@ -28,6 +28,106 @@ let db;
 let stmts = {};
 const conversationEventListeners = new Set();
 
+function tableExists(name) {
+  return Boolean(
+    db.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1"
+    ).get(name)
+  );
+}
+
+function rebuildSessionsTableIfNeeded() {
+  if (!tableExists('sessions')) return;
+
+  const columns = db.prepare('PRAGMA table_info(sessions)').all();
+  const names = new Set(columns.map(column => String(column.name)));
+  const primaryKey = columns
+    .filter(column => Number(column.pk) > 0)
+    .sort((a, b) => Number(a.pk) - Number(b.pk))
+    .map(column => String(column.name));
+
+  const hasFlowPath = names.has('flow_path');
+  const hasBotType = names.has('bot_type');
+  const hasCompositePk = primaryKey.length === 2 && primaryKey[0] === 'jid' && primaryKey[1] === 'flow_path';
+  const needsRebuild = !hasFlowPath || !hasBotType || !hasCompositePk;
+
+  if (!needsRebuild) return;
+
+  const migrate = db.transaction(() => {
+    db.exec('DROP TABLE IF EXISTS sessions_legacy');
+    db.exec('ALTER TABLE sessions RENAME TO sessions_legacy');
+    db.exec(`
+      CREATE TABLE sessions (
+        jid         TEXT    NOT NULL,
+        flow_path   TEXT    NOT NULL DEFAULT '',
+        bot_type    TEXT    NOT NULL DEFAULT 'conversation',
+        block_index INTEGER NOT NULL DEFAULT 0,
+        variables   TEXT    NOT NULL DEFAULT '{}',
+        status      TEXT    NOT NULL DEFAULT 'active',
+        waiting_for TEXT    DEFAULT NULL,
+        updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+        PRIMARY KEY (jid, flow_path)
+      );
+    `);
+
+    const selectFlowPath = hasFlowPath ? "COALESCE(flow_path, '')" : "''";
+    const selectBotType = hasBotType
+      ? "CASE WHEN lower(COALESCE(bot_type, '')) = 'command' THEN 'command' ELSE 'conversation' END"
+      : "'conversation'";
+
+    db.exec(`
+      INSERT OR REPLACE INTO sessions (
+        jid, flow_path, bot_type, block_index, variables, status, waiting_for, updated_at
+      )
+      SELECT
+        jid,
+        ${selectFlowPath},
+        ${selectBotType},
+        COALESCE(block_index, 0),
+        COALESCE(variables, '{}'),
+        COALESCE(status, 'active'),
+        waiting_for,
+        COALESCE(updated_at, strftime('%s','now'))
+      FROM sessions_legacy
+      WHERE jid IS NOT NULL;
+    `);
+
+    db.exec('DROP TABLE sessions_legacy');
+  });
+
+  migrate();
+}
+
+function normalizeSessionScope(scope = null) {
+  if (typeof scope === 'string') {
+    return {
+      flowPath: String(scope || '').trim(),
+      botType: null,
+    };
+  }
+
+  if (scope && typeof scope === 'object') {
+    const flowPath = String(scope.flowPath ?? '').trim();
+    const botTypeRaw = String(scope.botType ?? '').trim().toLowerCase();
+    const botType = botTypeRaw === 'command' ? 'command' : (botTypeRaw ? 'conversation' : null);
+    return { flowPath, botType };
+  }
+
+  return { flowPath: '', botType: null };
+}
+
+function mapSessionRow(row) {
+  return {
+    jid: row.jid,
+    flowPath: row.flow_path,
+    botType: row.bot_type,
+    blockIndex: row.block_index,
+    variables: JSON.parse(row.variables),
+    status: row.status,
+    waitingFor: row.waiting_for,
+  };
+}
+
 // ─── Inicialização ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -47,12 +147,15 @@ export async function initDb() {
 
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
-      jid         TEXT PRIMARY KEY,
+      jid         TEXT    NOT NULL,
+      flow_path   TEXT    NOT NULL DEFAULT '',
+      bot_type    TEXT    NOT NULL DEFAULT 'conversation',
       block_index INTEGER NOT NULL DEFAULT 0,
       variables   TEXT    NOT NULL DEFAULT '{}',
       status      TEXT    NOT NULL DEFAULT 'active',
       waiting_for TEXT    DEFAULT NULL,
-      updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+      updated_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+      PRIMARY KEY (jid, flow_path)
     );
     CREATE TABLE IF NOT EXISTS auth_state (
       key   TEXT PRIMARY KEY,
@@ -84,26 +187,56 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_conversation_sessions_ended_at ON conversation_sessions(ended_at DESC);
   `);
 
+  rebuildSessionsTableIfNeeded();
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sessions_jid_updated_at ON sessions(jid, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sessions_status_updated_at ON sessions(status, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_sessions_flow_status ON sessions(flow_path, status);
+  `);
+
   // Pré-compilar prepared statements para performance máxima
   stmts = {
     getSession: db.prepare(
-      'SELECT jid, block_index, variables, status, waiting_for FROM sessions WHERE jid = ?'
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for
+       FROM sessions
+       WHERE jid = ? AND flow_path = ?`
+    ),
+    getLatestSessionByJid: db.prepare(
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for
+       FROM sessions
+       WHERE jid = ?
+       ORDER BY updated_at DESC
+       LIMIT 1`
     ),
     createSession: db.prepare(
-      `INSERT OR REPLACE INTO sessions (jid, block_index, variables, status, waiting_for)
-       VALUES (?, 0, '{}', ?, NULL)`
+      `INSERT OR REPLACE INTO sessions (jid, flow_path, bot_type, block_index, variables, status, waiting_for)
+       VALUES (?, ?, ?, 0, '{}', ?, NULL)`
     ),
     updateSession: db.prepare(
       `UPDATE sessions
-       SET block_index=?, variables=?, status=?, waiting_for=?,
+       SET bot_type=?, block_index=?, variables=?, status=?, waiting_for=?,
            updated_at=strftime('%s','now')
-       WHERE jid=?`
+       WHERE jid=? AND flow_path=?`
     ),
-    deleteSession: db.prepare('DELETE FROM sessions WHERE jid = ?'),
+    deleteSession: db.prepare('DELETE FROM sessions WHERE jid = ? AND flow_path = ?'),
     getActiveSessions: db.prepare(
-      'SELECT jid, block_index, variables, status, waiting_for FROM sessions WHERE status = ?'
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for
+       FROM sessions
+       WHERE status = ?`
+    ),
+    getActiveSessionsByFlowPath: db.prepare(
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for
+       FROM sessions
+       WHERE status = ? AND flow_path = ?`
+    ),
+    getActiveSessionsByBotType: db.prepare(
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for
+       FROM sessions
+       WHERE status = ? AND bot_type = ?`
     ),
     deleteActiveSessions: db.prepare('DELETE FROM sessions WHERE status = ?'),
+    deleteActiveSessionsByFlowPath: db.prepare('DELETE FROM sessions WHERE status = ? AND flow_path = ?'),
     getAuthState: db.prepare('SELECT value FROM auth_state WHERE key = ?'),
     setAuthState: db.prepare(
       `INSERT INTO auth_state (key, value) VALUES (?, ?)
@@ -258,51 +391,82 @@ export function writeToDisk() {
 
 // ─── Auxiliares de Sessão ──────────────────────────────────────────────────────────
 
-export function getSession(jid) {
-  const row = stmts.getSession.get(jid);
-  if (!row) return null;
-  return {
-    jid: row.jid,
-    blockIndex: row.block_index,
-    variables: JSON.parse(row.variables),
-    status: row.status,
-    waitingFor: row.waiting_for,
-  };
+export function getSession(jid, scope = null) {
+  const normalizedJid = String(jid ?? '').trim();
+  if (!normalizedJid) return null;
+
+  const { flowPath } = normalizeSessionScope(scope);
+  if (flowPath) {
+    const row = stmts.getSession.get(normalizedJid, flowPath);
+    return row ? mapSessionRow(row) : null;
+  }
+
+  const latest = stmts.getLatestSessionByJid.get(normalizedJid);
+  return latest ? mapSessionRow(latest) : null;
 }
 
-export function createSession(jid) {
-  stmts.createSession.run(jid, SESSION_STATUS.ACTIVE);
-  return getSession(jid);
+export function createSession(jid, scope = null) {
+  const normalizedJid = String(jid ?? '').trim();
+  if (!normalizedJid) return null;
+
+  const { flowPath, botType } = normalizeSessionScope(scope);
+  const resolvedBotType = botType ?? 'conversation';
+  stmts.createSession.run(normalizedJid, flowPath, resolvedBotType, SESSION_STATUS.ACTIVE);
+  return getSession(normalizedJid, { flowPath });
 }
 
-export function updateSession(jid, patch) {
-  const current = getSession(jid) ?? {
+export function updateSession(jid, patch = {}, scope = null) {
+  const normalizedJid = String(jid ?? '').trim();
+  if (!normalizedJid) return;
+
+  const { flowPath, botType } = normalizeSessionScope(scope);
+  const current = getSession(normalizedJid, { flowPath }) ?? {
+    jid: normalizedJid,
+    flowPath,
+    botType: botType ?? 'conversation',
     blockIndex: 0,
     variables: {},
     status: SESSION_STATUS.ACTIVE,
     waitingFor: null,
   };
+
   const blockIndex = patch.blockIndex ?? current.blockIndex;
-  const variables  = JSON.stringify(patch.variables ?? current.variables);
-  const status     = patch.status ?? current.status;
+  const variables = JSON.stringify(patch.variables ?? current.variables);
+  const status = patch.status ?? current.status;
   const waitingFor = patch.waitingFor !== undefined ? patch.waitingFor : current.waitingFor;
+  const resolvedBotType = String(patch.botType ?? botType ?? current.botType ?? 'conversation').toLowerCase() === 'command'
+    ? 'command'
+    : 'conversation';
 
-  stmts.updateSession.run(blockIndex, variables, status, waitingFor, jid);
+  stmts.updateSession.run(
+    resolvedBotType,
+    blockIndex,
+    variables,
+    status,
+    waitingFor,
+    normalizedJid,
+    flowPath
+  );
 }
 
-export function deleteSession(jid) {
-  stmts.deleteSession.run(jid);
+export function deleteSession(jid, scope = null) {
+  const normalizedJid = String(jid ?? '').trim();
+  if (!normalizedJid) return;
+  const { flowPath } = normalizeSessionScope(scope);
+  stmts.deleteSession.run(normalizedJid, flowPath);
 }
 
-export function getActiveSessions() {
-  const rows = stmts.getActiveSessions.all(SESSION_STATUS.ACTIVE);
-  return rows.map(row => ({
-    jid: row.jid,
-    blockIndex: row.block_index,
-    variables: JSON.parse(row.variables),
-    status: row.status,
-    waitingFor: row.waiting_for,
-  }));
+export function getActiveSessions(scope = null) {
+  const { flowPath, botType } = normalizeSessionScope(scope);
+  let rows = [];
+  if (flowPath) {
+    rows = stmts.getActiveSessionsByFlowPath.all(SESSION_STATUS.ACTIVE, flowPath);
+  } else if (botType) {
+    rows = stmts.getActiveSessionsByBotType.all(SESSION_STATUS.ACTIVE, botType);
+  } else {
+    rows = stmts.getActiveSessions.all(SESSION_STATUS.ACTIVE);
+  }
+  return rows.map(mapSessionRow);
 }
 
 function safeParseJson(text, fallback = {}) {

@@ -110,6 +110,15 @@ function normalizeRuntimeConfig(runtimeConfig = {}) {
   };
 }
 
+function normalizeConversationMode(mode) {
+  const normalized = String(mode ?? 'conversation').trim().toLowerCase();
+  return normalized === 'command' ? 'command' : 'conversation';
+}
+
+export function getFlowBotType(flowLike) {
+  return normalizeConversationMode(flowLike?.runtimeConfig?.conversationMode);
+}
+
 /**
  * Carrega e valida um arquivo de fluxo .tmb.
  * Retorna { blocks, blockMap, indexMap, branchMap, endIfMap, version, runtimeConfig }
@@ -179,6 +188,8 @@ export function loadFlow(flowPath) {
     }
   }
 
+  const runtimeConfig = normalizeRuntimeConfig(raw.flowRuntimeConfig);
+
   return {
     flowPath: resolved,
     blocks,
@@ -187,7 +198,62 @@ export function loadFlow(flowPath) {
     branchMap,
     endIfMap,
     version: raw.version,
-    runtimeConfig: normalizeRuntimeConfig(raw.flowRuntimeConfig),
+    runtimeConfig,
+    botType: normalizeConversationMode(runtimeConfig.conversationMode),
+  };
+}
+
+function normalizeFlowPathList(flowPaths = []) {
+  if (!Array.isArray(flowPaths)) return [];
+  const dedup = new Set();
+  const result = [];
+  for (const item of flowPaths) {
+    const value = String(item ?? '').trim();
+    if (!value) continue;
+    const resolved = path.resolve(value);
+    if (dedup.has(resolved)) continue;
+    dedup.add(resolved);
+    result.push(resolved);
+  }
+  return result;
+}
+
+export function validateBotTypeUniqueness(flows = []) {
+  const conversationFlows = flows.filter(flow => getFlowBotType(flow) === 'conversation');
+  if (conversationFlows.length > 1) {
+    const details = conversationFlows.map(flow => flow.flowPath).join(', ');
+    throw new Error(
+      `Configuracao invalida: apenas 1 fluxo de conversa pode ficar ativo. Encontrados ${conversationFlows.length}: ${details}`
+    );
+  }
+}
+
+export function loadFlows(flowPaths = []) {
+  const normalizedPaths = normalizeFlowPathList(flowPaths);
+  if (normalizedPaths.length === 0) {
+    throw new Error('Nenhum fluxo foi informado para carregamento.');
+  }
+
+  const flows = normalizedPaths.map(flowPath => loadFlow(flowPath));
+  validateBotTypeUniqueness(flows);
+
+  const byPath = new Map();
+  const byBotType = {
+    conversation: [],
+    command: [],
+  };
+
+  for (const flow of flows) {
+    byPath.set(flow.flowPath, flow);
+    byBotType[getFlowBotType(flow)].push(flow);
+  }
+
+  return {
+    all: flows,
+    byPath,
+    byBotType,
+    conversationFlow: byBotType.conversation[0] ?? null,
+    commandFlows: byBotType.command,
   };
 }
 

@@ -181,6 +181,69 @@ function normalizeFlowPath(value) {
   return String(value ?? '').trim();
 }
 
+function normalizeModeParam(value, fallback = 'conversation') {
+  const normalized = String(value ?? fallback).trim().toLowerCase();
+  return normalized === 'command' ? 'command' : 'conversation';
+}
+
+function toFlowPathArray(value) {
+  if (!Array.isArray(value)) return [];
+  const dedup = new Set();
+  const result = [];
+  for (const item of value) {
+    const flowPath = normalizeFlowPath(item);
+    if (!flowPath || dedup.has(flowPath)) continue;
+    dedup.add(flowPath);
+    result.push(flowPath);
+  }
+  return result;
+}
+
+function resolveFlowPathsForMode(runtimeInfo, mode) {
+  const byMode = runtimeInfo?.flowPathsByMode && typeof runtimeInfo.flowPathsByMode === 'object'
+    ? runtimeInfo.flowPathsByMode
+    : {};
+  const direct = toFlowPathArray(byMode?.[mode]);
+  if (direct.length > 0) return direct;
+
+  const fallbackSingle = normalizeFlowPath(runtimeInfo?.flowPath);
+  return fallbackSingle ? [fallbackSingle] : [];
+}
+
+function dedupeSortEvents(events = [], limit = 200) {
+  const byKey = new Map();
+  for (const event of events) {
+    const key = Number.isFinite(event?.id)
+      ? `id:${event.id}`
+      : `${Number(event?.occurredAt) || 0}:${event?.eventType || ''}:${event?.jid || ''}:${event?.messageText || ''}`;
+    const prev = byKey.get(key);
+    if (!prev || (Number(event?.id) || 0) > (Number(prev?.id) || 0)) {
+      byKey.set(key, event);
+    }
+  }
+
+  return [...byKey.values()]
+    .sort((a, b) => (Number(a?.occurredAt) || 0) - (Number(b?.occurredAt) || 0) || (Number(a?.id) || 0) - (Number(b?.id) || 0))
+    .slice(-Math.max(1, Math.min(5000, Number(limit) || 200)));
+}
+
+function listModeEvents({ runtimeInfo, mode, since = 0, limit = 500 }) {
+  const flowPaths = resolveFlowPathsForMode(runtimeInfo, mode);
+  if (flowPaths.length === 0) {
+    return since > 0
+      ? listConversationEventsSince(since, limit)
+      : listConversationEvents(limit);
+  }
+
+  const rows = flowPaths.flatMap(flowPath => (
+    since > 0
+      ? listConversationEventsSinceByFlowPath(flowPath, since, limit)
+      : listConversationEventsByFlowPath(flowPath, limit)
+  ));
+
+  return dedupeSortEvents(rows, limit);
+}
+
 function normalizeActor(value, fallback = 'dashboard-agent') {
   return String(value ?? '').trim() || fallback;
 }
@@ -463,12 +526,21 @@ export class DashboardServer {
 
       if (requestUrl.pathname === '/api/health') {
         const info = this.getRuntimeInfo();
+        const mode = normalizeModeParam(info.mode || 'conversation');
+        const availableModes = Array.isArray(info.availableModes)
+          ? info.availableModes.map(item => normalizeModeParam(item, mode))
+          : [mode];
         sendJson(res, 200, {
           status: 'ok',
           uptimeMs: Date.now() - this.startupTime,
-          mode: info.mode || 'conversation',
+          mode,
           flowFile: info.flowFile || 'unknown',
           flowPath: normalizeFlowPath(info.flowPath),
+          availableModes,
+          flowPathsByMode: {
+            conversation: resolveFlowPathsForMode(info, 'conversation'),
+            command: resolveFlowPathsForMode(info, 'command'),
+          },
         });
         return;
       }
@@ -525,6 +597,8 @@ export class DashboardServer {
 
             return {
               jid: session.jid,
+              flowPath: session.flowPath,
+              botType: session.botType,
               waitingFor: session.waitingFor,
               blockIndex: session.blockIndex,
               status: session.status,
@@ -544,6 +618,7 @@ export class DashboardServer {
 
       if (requestUrl.pathname === '/api/handoff/history') {
         const jid = String(requestUrl.searchParams.get('jid') ?? '').trim();
+        const flowPathFilter = String(requestUrl.searchParams.get('flowPath') ?? '').trim();
         const limit = Math.max(1, Math.min(1000, toInt(requestUrl.searchParams.get('limit'), 200)));
         const since = toInt(requestUrl.searchParams.get('since'), 0);
         if (!jid) {
@@ -551,7 +626,11 @@ export class DashboardServer {
           return;
         }
 
-        const activeSession = getActiveSessions().find(session => session.jid === jid);
+        const activeSession = getActiveSessions().find(session => {
+          if (session.jid !== jid) return false;
+          if (flowPathFilter && String(session.flowPath) !== flowPathFilter) return false;
+          return String(session.waitingFor || '').trim().toLowerCase() === 'human';
+        });
         const sessionStartedAt = Number(activeSession?.variables?.[INTERNAL_VAR.SESSION_STARTED_AT]) || 0;
         const sessionFloorSince = sessionStartedAt > 0 ? Math.max(0, sessionStartedAt - 1) : 0;
         const effectiveSince = Math.max(since, sessionFloorSince);
@@ -709,15 +788,19 @@ export class DashboardServer {
 
       if (requestUrl.pathname === '/api/stats') {
         const runtimeInfo = this.getRuntimeInfo();
-        const mode = requestUrl.searchParams.get('mode') || runtimeInfo.mode || 'conversation';
-        const flowPath = normalizeFlowPath(runtimeInfo.flowPath);
+        const mode = normalizeModeParam(requestUrl.searchParams.get('mode') || runtimeInfo.mode || 'conversation');
+        const flowPaths = resolveFlowPathsForMode(runtimeInfo, mode);
+        const flowPath = flowPaths.length === 1 ? flowPaths[0] : '';
         const { start, end } = getTodayBounds(new Date());
         
         // Base stats from db
         const baseStats = getConversationDashboardStats({ from: start, to: end, flowPath });
-        const todayEvents = flowPath
-          ? listConversationEventsSinceByFlowPath(flowPath, start, 10000)
-          : listConversationEventsSince(start, 10000);
+        const todayEvents = listModeEvents({
+          runtimeInfo,
+          mode,
+          since: start,
+          limit: 10000,
+        });
         
         const hourlyVolume = Array(24).fill(0);
         const userCounts = {};
@@ -846,16 +929,15 @@ export class DashboardServer {
 
       if (requestUrl.pathname === '/api/logs') {
         const runtimeInfo = this.getRuntimeInfo();
-        const flowPath = normalizeFlowPath(runtimeInfo.flowPath);
+        const mode = normalizeModeParam(requestUrl.searchParams.get('mode') || runtimeInfo.mode || 'conversation');
         const limit = Math.max(1, Math.min(500, toInt(requestUrl.searchParams.get('limit'), 150)));
         const since = toInt(requestUrl.searchParams.get('since'), 0);
-        const logs = flowPath
-          ? (since > 0
-              ? listConversationEventsSinceByFlowPath(flowPath, since, limit)
-              : listConversationEventsByFlowPath(flowPath, limit))
-          : (since > 0
-              ? listConversationEventsSince(since, limit)
-              : listConversationEvents(limit));
+        const logs = listModeEvents({
+          runtimeInfo,
+          mode,
+          since,
+          limit,
+        });
         sendJson(res, 200, { logs });
         return;
       }

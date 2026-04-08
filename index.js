@@ -6,9 +6,9 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 
-import { initDb, addConversationEvent, onConversationEvent } from './db/index.js';
+import { initDb, addConversationEvent, getSession, onConversationEvent } from './db/index.js';
 import { cleanupAuthSignalSessions, useSqliteAuthState } from './db/authState.js';
-import { loadFlow } from './engine/flowLoader.js';
+import { getFlowBotType, loadFlows } from './engine/flowLoader.js';
 import { parseMessage } from './engine/messageParser.js';
 import {
   handleIncoming,
@@ -36,7 +36,13 @@ import {
 
 let config;
 let logger;
-let currentFlow = null;
+let currentFlowRegistry = {
+  all: [],
+  byPath: new Map(),
+  byBotType: { conversation: [], command: [] },
+  conversationFlow: null,
+  commandFlows: [],
+};
 let currentSocket = null;
 let runtimeSetupPromise = null;
 let runtimeSetupDone = false;
@@ -44,7 +50,7 @@ let warnedMissingTestTargets = false;
 let reloadInProgress = false;
 let pendingReload = false;
 let reloadDebounceTimer = null;
-let flowWatcher = null;
+let flowWatchers = [];
 let terminalCommandInterface = null;
 let dashboardServer = null;
 let removeConversationEventListener = null;
@@ -190,14 +196,58 @@ function isDevelopmentMode(currentConfig) {
   return String(currentConfig?.runtimeMode ?? '').toLowerCase() === RUNTIME_MODE.DEVELOPMENT;
 }
 
-function currentFlowPathForLogs() {
-  return currentFlow?.flowPath ?? String(config?.flowPath ?? '');
+function getActiveFlows() {
+  return Array.isArray(currentFlowRegistry?.all) ? currentFlowRegistry.all : [];
+}
+
+function getConversationFlow() {
+  return currentFlowRegistry?.conversationFlow ?? null;
+}
+
+function getCommandFlows() {
+  return Array.isArray(currentFlowRegistry?.commandFlows) ? currentFlowRegistry.commandFlows : [];
+}
+
+function getDashboardFlow() {
+  const conversationFlow = getConversationFlow();
+  if (conversationFlow) return conversationFlow;
+  return getActiveFlows()[0] ?? null;
+}
+
+function currentPrimaryFlowPathForLogs() {
+  return getDashboardFlow()?.flowPath ?? String(config?.flowPath ?? '');
+}
+
+function resolveConfiguredFlowPaths(currentConfig) {
+  const selectedPaths = Array.isArray(currentConfig?.flowPaths) ? currentConfig.flowPaths : [];
+  const fallback = String(currentConfig?.flowPath ?? '').trim();
+  const unique = new Set();
+  const result = [];
+
+  for (const item of selectedPaths) {
+    const value = String(item ?? '').trim();
+    if (!value || unique.has(value)) continue;
+    unique.add(value);
+    result.push(value);
+  }
+
+  if (!result.length && fallback) {
+    result.push(fallback);
+  }
+
+  return result;
+}
+
+function loadFlowRegistryFromConfig(currentConfig) {
+  const flowPaths = resolveConfiguredFlowPaths(currentConfig);
+  return loadFlows(flowPaths);
 }
 
 function logConversationEvent({
   eventType = 'message',
   direction = 'system',
   jid = 'unknown',
+  flowPath = '',
   messageText = '',
   metadata = {},
 }) {
@@ -206,7 +256,7 @@ function logConversationEvent({
     eventType,
     direction,
     jid,
-    flowPath: currentFlowPathForLogs(),
+    flowPath: String(flowPath || '').trim() || currentPrimaryFlowPathForLogs(),
     messageText,
     metadata,
   });
@@ -362,7 +412,9 @@ function attachOutgoingMessageLogger(sock) {
   sock.sendMessage = async (jid, content, options) => {
     const safeOptions = options && typeof options === 'object' ? { ...options } : {};
     const skipConversationLog = safeOptions.__skipConversationLog === true;
+    const flowPath = String(safeOptions.__flowPath || '').trim();
     delete safeOptions.__skipConversationLog;
+    delete safeOptions.__flowPath;
 
     const text = extractOutgoingMessageText(content);
     const kind = extractOutgoingKind(content);
@@ -374,6 +426,7 @@ function attachOutgoingMessageLogger(sock) {
           eventType: 'message-outgoing',
           direction: 'outgoing',
           jid,
+          flowPath,
           messageText: text,
           metadata: { kind },
         });
@@ -385,6 +438,7 @@ function attachOutgoingMessageLogger(sock) {
           eventType: 'message-outgoing-error',
           direction: 'system',
           jid,
+          flowPath,
           messageText: text,
           metadata: {
             kind,
@@ -400,11 +454,28 @@ function attachOutgoingMessageLogger(sock) {
 }
 
 function normalizeRuntimeInfo() {
-  const flowFile = path.basename(String(config?.flowPath ?? ''));
+  const dashboardFlow = getDashboardFlow();
+  const flowFile = path.basename(String(dashboardFlow?.flowPath ?? config?.flowPath ?? ''));
   const runtimeMode = String(config?.runtimeMode ?? RUNTIME_MODE.PRODUCTION);
-  const mode = currentFlow?.runtimeConfig?.conversationMode === 'command' ? 'command' : 'conversation';
-  const flowPath = currentFlow?.flowPath ?? path.resolve(String(config?.flowPath ?? ''));
-  return { flowFile, mode, runtimeMode, flowPath };
+  const conversationFlow = getConversationFlow();
+  const commandFlows = getCommandFlows();
+  const availableModes = [
+    ...(conversationFlow ? ['conversation'] : []),
+    ...(commandFlows.length > 0 ? ['command'] : []),
+  ];
+  const mode = conversationFlow ? 'conversation' : 'command';
+  const flowPath = dashboardFlow?.flowPath ?? path.resolve(String(config?.flowPath ?? ''));
+  return {
+    flowFile,
+    mode,
+    runtimeMode,
+    flowPath,
+    flowPathsByMode: {
+      conversation: conversationFlow ? [conversationFlow.flowPath] : [],
+      command: commandFlows.map(flow => flow.flowPath),
+    },
+    availableModes,
+  };
 }
 
 async function startDashboardServer() {
@@ -418,14 +489,15 @@ async function startDashboardServer() {
     port: config.dashboardPort,
     getRuntimeInfo: () => ({
       ...normalizeRuntimeInfo(),
-      apis: currentFlow?.blocks
+      apis: getActiveFlows()
+        .flatMap(flow => flow.blocks || [])
         ?.filter(b => b.type === 'http-request')
         .map(b => ({
           name: extractApiHostFromTemplateUrl(b.config?.url),
           url: b.config?.url || 'Desconhecida',
         })) || []
     }),
-    getFlowBlocks: () => currentFlow?.blocks ?? [],
+    getFlowBlocks: () => getDashboardFlow()?.blocks ?? [],
     getContactName: (jid) => contactCache.get(jid)?.name || null,
     onReload: async () => await reloadFlow({ source: 'dashboard' }),
     onHumanSendMessage: async ({ jid, text, actor }) => {
@@ -491,7 +563,7 @@ async function startDashboardServer() {
     },
     onHumanResumeSession: async ({ jid, targetBlockIndex, targetBlockId, actor }) => {
       const sock = currentSocket;
-      const flow = currentFlow;
+      const flow = getDashboardFlow();
       if (!sock || !flow) {
         return { ok: false, error: 'runtime-not-ready' };
       }
@@ -522,7 +594,7 @@ async function startDashboardServer() {
       return result;
     },
     onHumanEndSession: async ({ jid, reason, actor }) => {
-      const flow = currentFlow;
+      const flow = getDashboardFlow();
       if (!flow) {
         return { ok: false, error: 'runtime-not-ready' };
       }
@@ -559,13 +631,15 @@ async function startDashboardServer() {
 }
 
 function stopFlowWatcher() {
-  if (!flowWatcher) return;
-  try {
-    flowWatcher.close();
-  } catch {
-    // ignore
+  if (!Array.isArray(flowWatchers) || flowWatchers.length === 0) return;
+  for (const watcher of flowWatchers) {
+    try {
+      watcher?.close?.();
+    } catch {
+      // ignore
+    }
   }
-  flowWatcher = null;
+  flowWatchers = [];
 }
 
 function scheduleFlowReload(source) {
@@ -581,24 +655,36 @@ function setupFlowWatcher() {
 
   if (!isDevelopmentMode(config)) return;
 
-  const absoluteFlowPath = path.resolve(config.flowPath);
-  const flowDir = path.dirname(absoluteFlowPath);
-  const flowFile = path.basename(absoluteFlowPath).toLowerCase();
+  const flowPaths = getActiveFlows().map(flow => path.resolve(flow.flowPath));
+  const byDirectory = new Map();
 
-  try {
-    flowWatcher = fs.watch(flowDir, { persistent: true }, (eventType, filename) => {
-      const normalizedFilename = String(filename ?? '').trim().toLowerCase();
-      if (normalizedFilename && normalizedFilename !== flowFile) return;
-      scheduleFlowReload(`watch:${eventType || 'change'}`);
-    });
+  for (const absoluteFlowPath of flowPaths) {
+    const flowDir = path.dirname(absoluteFlowPath);
+    const fileSet = byDirectory.get(flowDir) ?? new Set();
+    fileSet.add(path.basename(absoluteFlowPath).toLowerCase());
+    byDirectory.set(flowDir, fileSet);
+  }
 
-    flowWatcher.on('error', err => {
-      console.error('Falha no watcher de hot-reload:', err.message || err);
-    });
+  for (const [flowDir, fileSet] of byDirectory.entries()) {
+    try {
+      const watcher = fs.watch(flowDir, { persistent: true }, (eventType, filename) => {
+        const normalizedFilename = String(filename ?? '').trim().toLowerCase();
+        if (normalizedFilename && !fileSet.has(normalizedFilename)) return;
+        scheduleFlowReload(`watch:${eventType || 'change'}`);
+      });
 
-    console.log(`Hot-reload ativo (dev mode) para: ${absoluteFlowPath}`);
-  } catch (err) {
-    console.error('Nao foi possivel iniciar hot-reload no dev mode:', err.message || err);
+      watcher.on('error', err => {
+        console.error('Falha no watcher de hot-reload:', err.message || err);
+      });
+
+      flowWatchers.push(watcher);
+    } catch (err) {
+      console.error('Nao foi possivel iniciar hot-reload no dev mode:', err.message || err);
+    }
+  }
+
+  for (const flowPath of flowPaths) {
+    console.log(`Hot-reload ativo (dev mode) para: ${flowPath}`);
   }
 }
 
@@ -611,24 +697,29 @@ async function reloadFlow({ source = 'manual' } = {}) {
   reloadInProgress = true;
 
   try {
-    const nextFlow = loadFlow(config.flowPath);
-    const endedSessions = await resetActiveSessions('flow-reload', currentFlow ?? nextFlow);
+    const previousFlows = getActiveFlows();
+    let endedSessions = 0;
+    for (const flow of previousFlows) {
+      endedSessions += await resetActiveSessions('flow-reload', flow);
+    }
 
-    currentFlow = nextFlow;
+    const nextRegistry = loadFlowRegistryFromConfig(config);
+    currentFlowRegistry = nextRegistry;
     warnedMissingTestTargets = false;
 
     if (currentSocket) {
-      startSessionCleanup(currentSocket, currentFlow);
+      startSessionCleanup(currentSocket, getActiveFlows());
     }
 
     logConversationEvent({
       eventType: 'flow-reload',
       direction: 'system',
       jid: 'system',
+      flowPath: currentPrimaryFlowPathForLogs(),
       messageText: `Reload aplicado via ${source}`,
       metadata: {
         source,
-        flowPath: currentFlow.flowPath,
+        flowPaths: getActiveFlows().map(flow => flow.flowPath),
         endedSessions,
       },
     });
@@ -711,10 +802,15 @@ async function start() {
   cleanupSignalAuthState({ reason: 'startup', forceLog: true });
   startAuthStateMaintenance();
 
-  currentFlow = loadFlow(config.flowPath);
-  console.log(`Fluxo carregado - ${currentFlow.blocks.length} bloco(s) ativo(s)\n`);
-  currentFlow.blocks.forEach((b, i) => console.log(`   [${i}] ${b.type.padEnd(20)} id=${b.id}`));
-  console.log('');
+  currentFlowRegistry = loadFlowRegistryFromConfig(config);
+  const activeFlows = getActiveFlows();
+  console.log(`Fluxos carregados - ${activeFlows.length} ativo(s)\n`);
+  for (const flow of activeFlows) {
+    const flowLabel = `${path.basename(flow.flowPath)} [${getFlowBotType(flow)}]`;
+    console.log(`Fluxo: ${flowLabel} - ${flow.blocks.length} bloco(s) ativo(s)`);
+    flow.blocks.forEach((b, i) => console.log(`   [${i}] ${b.type.padEnd(20)} id=${b.id}`));
+    console.log('');
+  }
 
   await startDashboardServer();
   setupFlowWatcher();
@@ -787,7 +883,7 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
 
       if (!runtimeSetupDone && !runtimeSetupPromise) {
         runtimeSetupPromise = (async () => {
-          config = await configureRuntimeAccessSelectors(sock, currentFlow, config, contactCache);
+          config = await configureRuntimeAccessSelectors(sock, getDashboardFlow(), config, contactCache);
           saveUserConfig(config);
           runtimeSetupDone = true;
         })().catch(err => {
@@ -800,7 +896,7 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
         await runtimeSetupPromise;
       }
 
-      startSessionCleanup(sock, currentFlow);
+      startSessionCleanup(sock, getActiveFlows());
       initializeTerminalCommands();
 
       if (config.debugMode) {
@@ -828,8 +924,8 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
       }
     }
 
-    const flow = currentFlow;
-    if (!flow) return;
+    const activeFlows = getActiveFlows();
+    if (activeFlows.length === 0) return;
 
     for (const msg of messages) {
       const rawRemoteJid = toJidString(msg?.key?.remoteJid);
@@ -872,17 +968,8 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
       const { id, jid, text, listId, isGroup, messageKey, messageType, mediaMimeType, mediaFileName } = parsed;
       const actorJid = resolveIncomingActorJid(parsed);
 
-      const interactionScope = normalizeInteractionScope(flow);
-      const requiresGroupWhitelist = isGroupWhitelistScope(flow);
       const groupWhitelist = getGroupWhitelistJids(config);
       const allowedTestJids = getAllowedTestJids(config);
-
-      if (!shouldProcessByInteractionScope(isGroup, flow)) continue;
-
-      if (requiresGroupWhitelist && isGroup) {
-        if (groupWhitelist.size === 0) continue;
-        if (!groupWhitelist.has(jid)) continue;
-      }
 
       if (config.testMode) {
         if (allowedTestJids.size === 0) {
@@ -895,22 +982,59 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
         if (!allowedTestJids.has(jid)) continue;
       }
 
-      if (config.debugMode) {
-        console.log('Decision', {
-          id,
-          jid,
-          actorJid: actorJid || null,
-          textLength: String(text ?? '').length,
-          listId,
-          isGroup,
-          interactionScope,
-          requiresGroupWhitelist,
-          groupWhitelistCount: groupWhitelist.size,
-          testMode: config.testMode,
-          testJidsCount: allowedTestJids.size,
-          passesTestMode: !config.testMode || allowedTestJids.has(jid),
-        });
+      const incomingText = String(text ?? '').trim();
+      const hasCommandPrefix = incomingText.startsWith('/');
+      const dispatchFlows = [];
+
+      for (const flow of activeFlows) {
+        const interactionScope = normalizeInteractionScope(flow);
+        const requiresGroupWhitelist = isGroupWhitelistScope(flow);
+        if (!shouldProcessByInteractionScope(isGroup, flow)) {
+          continue;
+        }
+
+        if (requiresGroupWhitelist && isGroup) {
+          if (groupWhitelist.size === 0) continue;
+          if (!groupWhitelist.has(jid)) continue;
+        }
+
+        const scope = { flowPath: flow.flowPath, botType: getFlowBotType(flow) };
+        const existingSession = getSession(jid, scope);
+        const hasActiveSession = existingSession?.status === 'active';
+        const botType = getFlowBotType(flow);
+
+        if (botType === 'command') {
+          if (!hasActiveSession && !hasCommandPrefix) continue;
+          dispatchFlows.push(flow);
+          continue;
+        }
+
+        if (hasActiveSession || !hasCommandPrefix) {
+          dispatchFlows.push(flow);
+        }
+
+        if (config.debugMode) {
+          console.log('Decision', {
+            id,
+            jid,
+            flowPath: flow.flowPath,
+            botType,
+            actorJid: actorJid || null,
+            textLength: incomingText.length,
+            listId,
+            isGroup,
+            interactionScope,
+            requiresGroupWhitelist,
+            hasActiveSession,
+            groupWhitelistCount: groupWhitelist.size,
+            testMode: config.testMode,
+            testJidsCount: allowedTestJids.size,
+            passesTestMode: !config.testMode || allowedTestJids.has(jid),
+          });
+        }
       }
+
+      if (dispatchFlows.length === 0) continue;
 
       let incomingMedia = null;
       if (messageType === 'image') {
@@ -922,33 +1046,40 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
         });
       }
 
-      const incomingText = String(text ?? '').trim();
       const resolvedMessageText =
         incomingText ||
         (messageType === 'image' ? '[Imagem recebida]' : '');
 
-      logConversationEvent({
-        eventType: 'message-incoming',
-        direction: 'incoming',
-        jid: actorJid || jid,
-        messageText: resolvedMessageText,
-        metadata: {
-          id,
-          listId: listId ?? null,
-          isGroup,
-          actorJid: actorJid || null,
-          chatJid: jid,
-          kind: messageType || 'unknown',
-          mediaType: messageType === 'image' ? mediaMimeType || null : null,
-          mediaUrl: incomingMedia?.mediaUrl || null,
-          mediaId: incomingMedia?.mediaId || null,
-        },
-      });
+      for (const flow of dispatchFlows) {
+        logConversationEvent({
+          eventType: 'message-incoming',
+          direction: 'incoming',
+          jid: actorJid || jid,
+          flowPath: flow.flowPath,
+          messageText: resolvedMessageText,
+          metadata: {
+            id,
+            listId: listId ?? null,
+            isGroup,
+            actorJid: actorJid || null,
+            chatJid: jid,
+            kind: messageType || 'unknown',
+            mediaType: messageType === 'image' ? mediaMimeType || null : null,
+            mediaUrl: incomingMedia?.mediaUrl || null,
+            mediaId: incomingMedia?.mediaId || null,
+            routedFlowPath: flow.flowPath,
+            routedFlowBotType: getFlowBotType(flow),
+            routedFlowPaths: dispatchFlows.map(item => item.flowPath),
+          },
+        });
+      }
 
       console.log(`Mensagem de ${jid}: "${text}" ${listId ? `(listId: ${listId})` : ''} [ID msg: ${id || 'unknown'}]`);
 
       try {
-        await handleIncoming(sock, jid, text, listId, flow, id, messageKey);
+        await Promise.all(
+          dispatchFlows.map(flow => handleIncoming(sock, jid, text, listId, flow, id, messageKey))
+        );
       } catch (err) {
         console.error(`Erro no motor para ${jid}:`, err);
         logConversationEvent({
