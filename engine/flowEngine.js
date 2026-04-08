@@ -58,6 +58,98 @@ function getRuntimeConfig(flow) {
   return flow?.runtimeConfig ?? {};
 }
 
+export async function resumeSessionFromHumanHandoff({ sock, jid, flow, targetBlockIndex, actor = 'dashboard-agent' }) {
+  return executeWithLock(jid, async () => {
+    const session = getSession(jid);
+    if (!session) {
+      return { ok: false, error: 'session-not-found' };
+    }
+
+    const totalBlocks = Array.isArray(flow?.blocks) ? flow.blocks.length : 0;
+    const nextIndex = Number(targetBlockIndex);
+    if (!Number.isInteger(nextIndex) || nextIndex < 0 || nextIndex >= totalBlocks) {
+      return { ok: false, error: 'invalid-target-block-index' };
+    }
+
+    const nowTs = Date.now();
+    const previousHandoff = parseObjectVar(session.variables?.[INTERNAL_VAR.HUMAN_HANDOFF]);
+    const nextHandoff = {
+      ...previousHandoff,
+      active: false,
+      resumedAt: nowTs,
+      resumedBy: actor,
+      resumeTargetIndex: nextIndex,
+    };
+
+    updateSession(jid, {
+      blockIndex: nextIndex,
+      waitingFor: null,
+      variables: {
+        ...session.variables,
+        [INTERNAL_VAR.HUMAN_HANDOFF]: nextHandoff,
+        [INTERNAL_VAR.SESSION_LAST_ACTIVITY_AT]: nowTs,
+      },
+    });
+
+    addConversationEvent({
+      occurredAt: nowTs,
+      eventType: 'human-handoff-resumed',
+      direction: 'system',
+      jid,
+      flowPath: flow?.flowPath ?? '',
+      messageText: `Retomado no bloco ${nextIndex}`,
+      metadata: {
+        actor,
+        targetBlockIndex: nextIndex,
+      },
+    });
+
+    const refreshed = getSession(jid);
+    await runEngine(sock, jid, refreshed, flow, {
+      incoming: {
+        text: '',
+        listId: null,
+        msgId: null,
+        messageKey: null,
+        receivedAt: nowTs,
+      },
+    });
+
+    return {
+      ok: true,
+      session: getSession(jid),
+    };
+  });
+}
+
+export async function endSessionFromDashboard({ jid, flow, reason = 'human-agent-ended', actor = 'dashboard-agent' }) {
+  return executeWithLock(jid, async () => {
+    const session = getSession(jid);
+    if (!session) {
+      return { ok: false, error: 'session-not-found' };
+    }
+
+    const nowTs = Date.now();
+    const previousHandoff = parseObjectVar(session.variables?.[INTERNAL_VAR.HUMAN_HANDOFF]);
+    updateSession(jid, {
+      variables: {
+        ...session.variables,
+        [INTERNAL_VAR.HUMAN_HANDOFF]: {
+          ...previousHandoff,
+          active: false,
+          closedAt: nowTs,
+          closedBy: actor,
+          closeReason: reason,
+        },
+      },
+    });
+
+    const refreshed = getSession(jid);
+    endSession(jid, refreshed, nowTs, reason, flow);
+    return { ok: true, session: getSession(jid) };
+  });
+}
+
 function formatErrorForEvent(err) {
   if (!err) return 'Unknown error';
   if (err instanceof Error) {
@@ -133,6 +225,17 @@ function createSessionId(jid, nowTs) {
 
 function getSessionId(session) {
   return String(session?.variables?.[INTERNAL_VAR.SESSION_ID] ?? '').trim();
+}
+
+function parseObjectVar(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 function createOrResetSessionRuntimeState(jid, nowTs, flow) {
@@ -364,6 +467,10 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
     const limitsResolution = await enforceSessionLimits(sock, jid, session, flow, nowTs);
     if (limitsResolution.blocked) return;
     session = limitsResolution.session;
+
+    if (session.waitingFor === WAIT_TYPE.HUMAN) {
+      return;
+    }
 
     if (session.waitingFor === WAIT_TYPE.KEYWORD) {
       try {

@@ -16,6 +16,7 @@ export const WAIT_TYPE = {
   KEYWORD: 'keyword',
   LIST: 'list',
   MULTIPLE_CHOICE: 'multiple-choice',
+  HUMAN: 'human',
 };
 
 // ─── Tipos de Bloco Suportados ────────────────────────────────────────────────
@@ -23,6 +24,7 @@ export const BLOCK_TYPE = {
   INITIAL_MESSAGE: 'initial-message',
   SEND_TEXT: 'send-text',
   SEND_LIST: 'send-list',
+  REDIRECT_TO_HUMAN: 'redirect-to-human',
   CONDITION: 'condition',
   IF_CONDITION: 'if-condition',
   ELSE_IF: 'else-if',
@@ -100,6 +102,7 @@ export const INTERNAL_VAR = {
   SESSION_MESSAGE_COUNT: '__sessionMessageCount',
   SESSION_ENDED_AT: '__sessionEndedAt',
   SESSION_END_REASON: '__sessionEndReason',
+  HUMAN_HANDOFF: '__humanHandoff',
 };
 
 // ─── Limites do Engine ────────────────────────────────────────────────────────

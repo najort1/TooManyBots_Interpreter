@@ -4,17 +4,21 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { WebSocketServer } from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import {
+  getActiveSessions,
   getConversationDashboardStats,
   getConversationEndedByReasonCount,
   listConversationSessionStarts,
   listConversationSessionEndsByReason,
   listConversationEvents,
   listConversationEventsByFlowPath,
+  listConversationEventsByJid,
   listConversationEventsSince,
   listConversationEventsSinceByFlowPath,
+  listConversationEventsSinceByJid,
 } from '../db/index.js';
+import { INTERNAL_VAR } from '../config/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,8 +40,86 @@ function sendJson(res, statusCode, payload) {
   res.end(JSON.stringify(payload));
 }
 
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+
+  if (chunks.length === 0) return {};
+  const rawBody = Buffer.concat(chunks).toString('utf-8').trim();
+  if (!rawBody) return {};
+
+  try {
+    return JSON.parse(rawBody);
+  } catch {
+    throw new Error('Invalid JSON body');
+  }
+}
+
 function normalizeFlowPath(value) {
   return String(value ?? '').trim();
+}
+
+function normalizeActor(value, fallback = 'dashboard-agent') {
+  return String(value ?? '').trim() || fallback;
+}
+
+function parseObjectValue(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function getHumanHandoffFromSession(session) {
+  return parseObjectValue(session?.variables?.__humanHandoff);
+}
+
+function findLastMessageForSession(events = []) {
+  for (let i = 0; i < events.length; i++) {
+    const event = events[i];
+    const text = String(event?.messageText ?? '').trim();
+    if (!text) continue;
+    if (event?.eventType === 'message-incoming' || event?.eventType === 'message-outgoing' || event?.eventType === 'human-message-outgoing') {
+      return {
+        eventType: event.eventType,
+        occurredAt: Number(event.occurredAt) || 0,
+        text,
+      };
+    }
+  }
+
+  return { eventType: '', occurredAt: 0, text: '' };
+}
+
+function normalizeFlowBlocks(blocks = []) {
+  if (!Array.isArray(blocks)) return [];
+  return blocks
+    .map((block, index) => ({
+      index,
+      id: String(block?.id ?? '').trim(),
+      type: String(block?.type ?? '').trim(),
+      name: String(block?.name ?? '').trim(),
+    }))
+    .filter(block => block.id);
+}
+
+function resolveBlockIndex(targetBlockIndex, targetBlockId, flowBlocks = []) {
+  const byIndex = Number(targetBlockIndex);
+  if (Number.isInteger(byIndex) && byIndex >= 0 && byIndex < flowBlocks.length) {
+    return byIndex;
+  }
+
+  const targetId = String(targetBlockId ?? '').trim();
+  if (!targetId) return -1;
+
+  const matched = flowBlocks.find(block => block.id === targetId);
+  return matched ? matched.index : -1;
 }
 
 function pad2(value) {
@@ -204,12 +286,26 @@ function buildRecentErrors(events = []) {
 }
 
 export class DashboardServer {
-  constructor({ host = '127.0.0.1', port = 8787, getRuntimeInfo = () => ({}), getContactName = () => null, onReload = async () => {} } = {}) {
+  constructor({
+    host = '127.0.0.1',
+    port = 8787,
+    getRuntimeInfo = () => ({}),
+    getFlowBlocks = () => [],
+    getContactName = () => null,
+    onReload = async () => {},
+    onHumanSendMessage = async () => ({ ok: false, error: 'not-implemented' }),
+    onHumanResumeSession = async () => ({ ok: false, error: 'not-implemented' }),
+    onHumanEndSession = async () => ({ ok: false, error: 'not-implemented' }),
+  } = {}) {
     this.host = host;
     this.port = port;
     this.getRuntimeInfo = getRuntimeInfo;
+    this.getFlowBlocks = getFlowBlocks;
     this.getContactName = getContactName;
     this.onReload = onReload;
+    this.onHumanSendMessage = onHumanSendMessage;
+    this.onHumanResumeSession = onHumanResumeSession;
+    this.onHumanEndSession = onHumanEndSession;
     this.server = null;
     this.wss = null;
     this.startupTime = Date.now();
@@ -248,6 +344,142 @@ export class DashboardServer {
         } catch (error) {
           sendJson(res, 500, { error: error.message });
         }
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/handoff/blocks') {
+        const blocks = normalizeFlowBlocks(this.getFlowBlocks());
+        sendJson(res, 200, { blocks });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/handoff/sessions') {
+        const activeSessions = getActiveSessions();
+        const sessions = activeSessions
+          .map(session => {
+            const handoff = getHumanHandoffFromSession(session);
+            const waitingForHuman = String(session.waitingFor || '').trim().toLowerCase() === 'human';
+            const handoffActive = handoff.active === true;
+            if (!waitingForHuman && !handoffActive) return null;
+
+            const history = listConversationEventsByJid(session.jid, 120);
+            const lastMessage = findLastMessageForSession(history);
+
+            return {
+              jid: session.jid,
+              waitingFor: session.waitingFor,
+              blockIndex: session.blockIndex,
+              status: session.status,
+              queue: String(handoff.queue ?? '').trim() || 'default',
+              reason: String(handoff.reason ?? '').trim(),
+              requestedAt: Number(handoff.requestedAt) || 0,
+              lastMessage,
+              lastActivityAt: Number(handoff.updatedAt) || Number(lastMessage.occurredAt) || 0,
+            };
+          })
+          .filter(Boolean)
+          .sort((a, b) => (b.lastActivityAt || 0) - (a.lastActivityAt || 0));
+
+        sendJson(res, 200, { sessions });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/handoff/history') {
+        const jid = String(requestUrl.searchParams.get('jid') ?? '').trim();
+        const limit = Math.max(1, Math.min(1000, toInt(requestUrl.searchParams.get('limit'), 200)));
+        const since = toInt(requestUrl.searchParams.get('since'), 0);
+        if (!jid) {
+          sendJson(res, 400, { error: 'jid is required' });
+          return;
+        }
+
+        const activeSession = getActiveSessions().find(session => session.jid === jid);
+        const sessionStartedAt = Number(activeSession?.variables?.[INTERNAL_VAR.SESSION_STARTED_AT]) || 0;
+        const sessionFloorSince = sessionStartedAt > 0 ? Math.max(0, sessionStartedAt - 1) : 0;
+        const effectiveSince = Math.max(since, sessionFloorSince);
+
+        const logs = effectiveSince > 0
+          ? listConversationEventsSinceByJid(jid, effectiveSince, limit)
+          : listConversationEventsByJid(jid, limit);
+        sendJson(res, 200, { logs });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/handoff/send' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const jid = String(body?.jid ?? '').trim();
+        const text = String(body?.text ?? '').trim();
+        const actor = normalizeActor(body?.agentId);
+
+        if (!jid || !text) {
+          sendJson(res, 400, { error: 'jid and text are required' });
+          return;
+        }
+
+        const result = await this.onHumanSendMessage({ jid, text, actor });
+        if (!result?.ok) {
+          sendJson(res, 500, { error: result?.error || 'failed-to-send-human-message' });
+          return;
+        }
+
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/handoff/resume' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const jid = String(body?.jid ?? '').trim();
+        const targetBlockId = String(body?.targetBlockId ?? '').trim();
+        const actor = normalizeActor(body?.agentId);
+        if (!jid) {
+          sendJson(res, 400, { error: 'jid is required' });
+          return;
+        }
+
+        const flowBlocks = normalizeFlowBlocks(this.getFlowBlocks());
+        const targetBlockIndex = resolveBlockIndex(body?.targetBlockIndex, targetBlockId, flowBlocks);
+        if (targetBlockIndex < 0) {
+          sendJson(res, 400, { error: 'invalid targetBlockId/targetBlockIndex' });
+          return;
+        }
+
+        const result = await this.onHumanResumeSession({
+          jid,
+          targetBlockIndex,
+          targetBlockId: flowBlocks[targetBlockIndex]?.id || targetBlockId,
+          actor,
+        });
+
+        if (!result?.ok) {
+          sendJson(res, 500, { error: result?.error || 'failed-to-resume-session' });
+          return;
+        }
+
+        sendJson(res, 200, {
+          ok: true,
+          targetBlockIndex,
+          targetBlockId: flowBlocks[targetBlockIndex]?.id || targetBlockId,
+        });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/handoff/end' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const jid = String(body?.jid ?? '').trim();
+        const actor = normalizeActor(body?.agentId);
+        const reason = String(body?.reason ?? 'human-agent-ended').trim() || 'human-agent-ended';
+        if (!jid) {
+          sendJson(res, 400, { error: 'jid is required' });
+          return;
+        }
+
+        const result = await this.onHumanEndSession({ jid, reason, actor });
+        if (!result?.ok) {
+          sendJson(res, 500, { error: result?.error || 'failed-to-end-session' });
+          return;
+        }
+
+        sendJson(res, 200, { ok: true });
         return;
       }
 
@@ -450,7 +682,7 @@ export class DashboardServer {
     if (!this.wss) return;
     const body = JSON.stringify({ type: 'event', payload });
     for (const client of this.wss.clients) {
-      if (client.readyState === 1) {
+      if (client.readyState === WebSocket.OPEN) {
         client.send(body);
       }
     }

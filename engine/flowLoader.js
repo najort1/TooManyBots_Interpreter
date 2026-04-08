@@ -42,6 +42,48 @@ function toPositiveNumber(value, fallback = 0) {
   return parsed;
 }
 
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validateRedirectToHumanBlock(block, activeBlockIds = null) {
+  const cfg = block?.config;
+  if (!isPlainObject(cfg)) {
+    throw new Error(`Bloco ${block?.id ?? 'unknown'} (${BLOCK_TYPE.REDIRECT_TO_HUMAN}) requer "config" como objeto.`);
+  }
+
+  const stringFields = ['message', 'queue', 'reason', 'onClaimBlockId', 'onFinishBlockId', 'onTimeoutBlockId'];
+  for (const field of stringFields) {
+    if (cfg[field] !== undefined && typeof cfg[field] !== 'string') {
+      throw new Error(`Bloco ${block.id} (${BLOCK_TYPE.REDIRECT_TO_HUMAN}) requer "config.${field}" como string.`);
+    }
+  }
+
+  if (cfg.captureUntilClaimed !== undefined && typeof cfg.captureUntilClaimed !== 'boolean') {
+    throw new Error(`Bloco ${block.id} (${BLOCK_TYPE.REDIRECT_TO_HUMAN}) requer "config.captureUntilClaimed" como boolean.`);
+  }
+
+  if (cfg.timeoutMinutes !== undefined) {
+    const timeout = Number(cfg.timeoutMinutes);
+    if (!Number.isFinite(timeout) || timeout < 0) {
+      throw new Error(`Bloco ${block.id} (${BLOCK_TYPE.REDIRECT_TO_HUMAN}) requer "config.timeoutMinutes" >= 0.`);
+    }
+    if (timeout > 0 && !String(cfg.onTimeoutBlockId ?? '').trim()) {
+      throw new Error(`Bloco ${block.id} (${BLOCK_TYPE.REDIRECT_TO_HUMAN}) com timeoutMinutes > 0 requer "config.onTimeoutBlockId".`);
+    }
+  }
+
+  if (!activeBlockIds) return;
+
+  for (const field of ['onClaimBlockId', 'onFinishBlockId', 'onTimeoutBlockId']) {
+    const targetId = String(cfg[field] ?? '').trim();
+    if (!targetId) continue;
+    if (!activeBlockIds.has(targetId)) {
+      throw new Error(`Bloco ${block.id} (${BLOCK_TYPE.REDIRECT_TO_HUMAN}) referencia "${field}" invalido: ${targetId}`);
+    }
+  }
+}
+
 function normalizeRuntimeConfig(runtimeConfig = {}) {
   const endBehavior = runtimeConfig.endBehavior ?? {};
   const postEnd = runtimeConfig.postEnd ?? {};
@@ -72,7 +114,7 @@ function normalizeRuntimeConfig(runtimeConfig = {}) {
  * Carrega e valida um arquivo de fluxo .tmb.
  * Retorna { blocks, blockMap, indexMap, branchMap, endIfMap, version, runtimeConfig }
  *
- * branchMap: Map<number, number> — índice do bloco → índice do próximo branch (else-if, else, end-if)
+ * branchMap: Map<number, number> — índice do bloco → índice do próximo branch (else-if, else ou end-if)
  * endIfMap:  Map<number, number> — índice do bloco → índice do end-if correspondente
  */
 export function loadFlow(flowPath) {
@@ -129,6 +171,13 @@ export function loadFlow(flowPath) {
   const endIfMap  = new Map(); // blockIndex → endIf index
 
   buildJumpMaps(blocks, branchMap, endIfMap);
+
+  const activeBlockIds = new Set(blocks.map(block => String(block.id)));
+  for (const block of blocks) {
+    if (block.type === BLOCK_TYPE.REDIRECT_TO_HUMAN) {
+      validateRedirectToHumanBlock(block, activeBlockIds);
+    }
+  }
 
   return {
     flowPath: resolved,

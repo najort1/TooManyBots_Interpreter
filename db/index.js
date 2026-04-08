@@ -126,6 +126,13 @@ export async function initDb() {
        ORDER BY occurred_at DESC, id DESC
        LIMIT ?`
     ),
+    listConversationEventsByJid: db.prepare(
+      `SELECT id, occurred_at, event_type, direction, jid, flow_path, message_text, metadata
+       FROM conversation_events
+       WHERE jid = ?
+       ORDER BY occurred_at DESC, id DESC
+       LIMIT ?`
+    ),
     listConversationEventsSince: db.prepare(
       `SELECT id, occurred_at, event_type, direction, jid, flow_path, message_text, metadata
        FROM conversation_events
@@ -137,6 +144,13 @@ export async function initDb() {
       `SELECT id, occurred_at, event_type, direction, jid, flow_path, message_text, metadata
        FROM conversation_events
        WHERE flow_path = ? AND occurred_at > ?
+       ORDER BY occurred_at ASC, id ASC
+       LIMIT ?`
+    ),
+    listConversationEventsSinceByJid: db.prepare(
+      `SELECT id, occurred_at, event_type, direction, jid, flow_path, message_text, metadata
+       FROM conversation_events
+       WHERE jid = ? AND occurred_at > ?
        ORDER BY occurred_at ASC, id ASC
        LIMIT ?`
     ),
@@ -370,6 +384,14 @@ export function listConversationEventsByFlowPath(flowPath, limit = 200) {
   return rows.map(mapConversationEventRow);
 }
 
+export function listConversationEventsByJid(jid, limit = 200) {
+  const normalizedJid = String(jid ?? '').trim();
+  if (!normalizedJid) return [];
+  const normalizedLimit = Math.max(1, Math.min(1000, Number(limit) || 200));
+  const rows = stmts.listConversationEventsByJid.all(normalizedJid, normalizedLimit);
+  return rows.map(mapConversationEventRow);
+}
+
 export function listConversationEventsSince(sinceTimestamp, limit = 500) {
   const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 500));
   const since = Number(sinceTimestamp) || 0;
@@ -383,6 +405,15 @@ export function listConversationEventsSinceByFlowPath(flowPath, sinceTimestamp, 
   const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 500));
   const since = Number(sinceTimestamp) || 0;
   const rows = stmts.listConversationEventsSinceByFlowPath.all(normalizedFlowPath, since, normalizedLimit);
+  return rows.map(mapConversationEventRow);
+}
+
+export function listConversationEventsSinceByJid(jid, sinceTimestamp, limit = 500) {
+  const normalizedJid = String(jid ?? '').trim();
+  if (!normalizedJid) return [];
+  const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 500));
+  const since = Number(sinceTimestamp) || 0;
+  const rows = stmts.listConversationEventsSinceByJid.all(normalizedJid, since, normalizedLimit);
   return rows.map(mapConversationEventRow);
 }
 

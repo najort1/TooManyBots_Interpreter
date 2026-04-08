@@ -11,7 +11,13 @@ import { initDb, addConversationEvent, onConversationEvent, listConversationEven
 import { useSqliteAuthState } from './db/authState.js';
 import { loadFlow } from './engine/flowLoader.js';
 import { parseMessage } from './engine/messageParser.js';
-import { handleIncoming, startSessionCleanup, resetActiveSessions } from './engine/flowEngine.js';
+import {
+  handleIncoming,
+  startSessionCleanup,
+  resetActiveSessions,
+  resumeSessionFromHumanHandoff,
+  endSessionFromDashboard,
+} from './engine/flowEngine.js';
 import { getConfig, saveUserConfig, RUNTIME_MODE } from './config/index.js';
 import { DashboardServer } from './dashboard/server.js';
 
@@ -561,8 +567,77 @@ async function startDashboardServer() {
           url: b.config?.url || 'Desconhecida',
         })) || []
     }),
+    getFlowBlocks: () => currentFlow?.blocks ?? [],
     getContactName: (jid) => contactCache.get(jid)?.name || null,
     onReload: async () => await reloadFlow({ source: 'dashboard' }),
+    onHumanSendMessage: async ({ jid, text, actor }) => {
+      const sock = currentSocket;
+      if (!sock) {
+        return { ok: false, error: 'socket-not-ready' };
+      }
+
+      try {
+        await sock.sendMessage(jid, { text });
+        return { ok: true };
+      } catch (error) {
+        return { ok: false, error: String(error?.message || error || 'send-failed') };
+      }
+    },
+    onHumanResumeSession: async ({ jid, targetBlockIndex, targetBlockId, actor }) => {
+      const sock = currentSocket;
+      const flow = currentFlow;
+      if (!sock || !flow) {
+        return { ok: false, error: 'runtime-not-ready' };
+      }
+
+      const result = await resumeSessionFromHumanHandoff({
+        sock,
+        jid,
+        flow,
+        targetBlockIndex,
+        actor,
+      });
+
+      if (!result?.ok) return result;
+
+      logConversationEvent({
+        eventType: 'human-handoff-resume-request',
+        direction: 'system',
+        jid,
+        messageText: `Retomada solicitada para bloco ${targetBlockId || targetBlockIndex}`,
+        metadata: {
+          actor,
+          targetBlockId: targetBlockId || null,
+          targetBlockIndex,
+          source: 'dashboard-human-support',
+        },
+      });
+
+      return result;
+    },
+    onHumanEndSession: async ({ jid, reason, actor }) => {
+      const flow = currentFlow;
+      if (!flow) {
+        return { ok: false, error: 'runtime-not-ready' };
+      }
+
+      const result = await endSessionFromDashboard({ jid, flow, reason, actor });
+      if (!result?.ok) return result;
+
+      logConversationEvent({
+        eventType: 'human-handoff-ended',
+        direction: 'system',
+        jid,
+        messageText: 'Sessao encerrada manualmente pela equipe',
+        metadata: {
+          actor,
+          reason,
+          source: 'dashboard-human-support',
+        },
+      });
+
+      return result;
+    },
   });
 
   await dashboardServer.start();

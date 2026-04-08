@@ -153,6 +153,18 @@ function parseMaybeJson(value) {
   return value;
 }
 
+function getHumanHandoffState(session) {
+  const raw = session?.variables?.[INTERNAL_VAR.HUMAN_HANDOFF];
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw;
+
+  const parsed = parseMaybeJson(raw);
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed;
+  }
+
+  return {};
+}
+
 function escapePathSegment(segment) {
   return segment.replace(/\[(\d+)\]/g, '.$1');
 }
@@ -941,6 +953,76 @@ async function handleSetVariable({ block, session }) {
   };
 }
 
+async function handleRedirectToHuman({ block, session, sock, jid, flow }) {
+  const cfg = block.config ?? {};
+  const nowTs = Date.now();
+  const previous = getHumanHandoffState(session);
+  const alreadyActive = previous.active === true;
+
+  const queue = toText(interpolate(String(cfg.queue ?? previous.queue ?? 'default'), session.variables)) || 'default';
+  const reason = toText(interpolate(String(cfg.reason ?? previous.reason ?? ''), session.variables));
+  const targetOnClaim = toText(cfg.onClaimBlockId);
+  const targetOnFinish = toText(cfg.onFinishBlockId);
+  const targetOnTimeout = toText(cfg.onTimeoutBlockId);
+  const timeoutMinutes = Math.max(0, toNumber(cfg.timeoutMinutes, 0));
+
+  const messageTemplate = toText(cfg.message);
+  const shouldSendMessage = Boolean(messageTemplate) && !(alreadyActive && previous.messageSent === true);
+  if (shouldSendMessage) {
+    const text = interpolate(messageTemplate, session.variables);
+    if (text) {
+      await sendTextMessage(sock, jid, text);
+    }
+  }
+
+  const handoff = {
+    active: true,
+    requestedAt: Number(previous.requestedAt) > 0 ? Number(previous.requestedAt) : nowTs,
+    updatedAt: nowTs,
+    queue,
+    reason,
+    messageSent: previous.messageSent === true || shouldSendMessage,
+    captureUntilClaimed: cfg.captureUntilClaimed !== false,
+    onClaimBlockId: targetOnClaim || undefined,
+    onFinishBlockId: targetOnFinish || undefined,
+    onTimeoutBlockId: targetOnTimeout || undefined,
+    timeoutMinutes,
+  };
+
+  if (!alreadyActive) {
+    addConversationEvent({
+      occurredAt: nowTs,
+      eventType: 'human-handoff-requested',
+      direction: 'system',
+      jid,
+      flowPath: flow?.flowPath ?? '',
+      messageText: reason || 'Sessao transferida para atendimento humano',
+      metadata: {
+        blockId: toText(block?.id),
+        blockType: toText(block?.type),
+        queue,
+        reason,
+        timeoutMinutes,
+        onClaimBlockId: targetOnClaim || null,
+        onFinishBlockId: targetOnFinish || null,
+        onTimeoutBlockId: targetOnTimeout || null,
+      },
+    });
+  }
+
+  return {
+    nextBlockIndex: null,
+    sessionPatch: {
+      waitingFor: WAIT_TYPE.HUMAN,
+      variables: {
+        ...session.variables,
+        [INTERNAL_VAR.HUMAN_HANDOFF]: handoff,
+      },
+    },
+    done: false,
+  };
+}
+
 async function handleRedirect({ block, session, flow }) {
   const targetId = block.config.targetBlockId;
   if (!targetId) {
@@ -994,6 +1076,7 @@ export const HANDLERS = {
   [BLOCK_TYPE.INITIAL_MESSAGE]: handleInitialMessage,
   [BLOCK_TYPE.SEND_TEXT]: handleSendText,
   [BLOCK_TYPE.SEND_LIST]: handleSendList,
+  [BLOCK_TYPE.REDIRECT_TO_HUMAN]: handleRedirectToHuman,
   [BLOCK_TYPE.COMMAND_INPUT]: handleCommandInput,
   [BLOCK_TYPE.MULTIPLE_CHOICE]: handleMultipleChoice,
   [BLOCK_TYPE.HTTP_REQUEST]: handleHttpRequest,
