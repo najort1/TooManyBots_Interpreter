@@ -18,7 +18,7 @@ import {
   listConversationEventsSinceByFlowPath,
   listConversationEventsSinceByJid,
 } from '../db/index.js';
-import { INTERNAL_VAR } from '../config/constants.js';
+import { BROADCAST_LIMITS, INTERNAL_VAR } from '../config/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -485,6 +485,9 @@ export class DashboardServer {
     onHumanSendImage = async () => ({ ok: false, error: 'not-implemented' }),
     onHumanResumeSession = async () => ({ ok: false, error: 'not-implemented' }),
     onHumanEndSession = async () => ({ ok: false, error: 'not-implemented' }),
+    onBroadcastListContacts = async () => ({ contacts: [] }),
+    onBroadcastSend = async () => ({ ok: false, error: 'not-implemented' }),
+    logger = null,
   } = {}) {
     this.host = host;
     this.port = port;
@@ -496,6 +499,9 @@ export class DashboardServer {
     this.onHumanSendImage = onHumanSendImage;
     this.onHumanResumeSession = onHumanResumeSession;
     this.onHumanEndSession = onHumanEndSession;
+    this.onBroadcastListContacts = onBroadcastListContacts;
+    this.onBroadcastSend = onBroadcastSend;
+    this.logger = logger?.child ? logger.child({ module: 'dashboard-server' }) : logger;
     this.server = null;
     this.wss = null;
     this.startupTime = Date.now();
@@ -558,6 +564,59 @@ export class DashboardServer {
       if (requestUrl.pathname === '/api/handoff/blocks') {
         const blocks = normalizeFlowBlocks(this.getFlowBlocks());
         sendJson(res, 200, { blocks });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/broadcast/contacts') {
+        const limit = Math.max(
+          1,
+          Math.min(BROADCAST_LIMITS.CONTACT_LIST_MAX, toInt(requestUrl.searchParams.get('limit'), BROADCAST_LIMITS.CONTACT_SEARCH_MAX))
+        );
+        const search = String(requestUrl.searchParams.get('search') ?? '').trim();
+        const contacts = await this.onBroadcastListContacts({ search, limit });
+        sendJson(res, 200, { contacts: Array.isArray(contacts) ? contacts : [] });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/broadcast/send' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const actor = normalizeActor(body?.agentId);
+        const target = String(body?.target ?? 'all').trim().toLowerCase();
+        const selectedJids = Array.isArray(body?.jids) ? body.jids : [];
+        const text = String(body?.text ?? '').trim();
+        const declaredMimeType = String(body?.mimeType ?? '').trim();
+        const imageDataUrl = String(body?.imageDataUrl ?? '').trim();
+        const fileName = String(body?.fileName ?? '').trim();
+        if (target !== 'all' && target !== 'selected') {
+          sendJson(res, 400, { error: 'target must be all or selected' });
+          return;
+        }
+
+        const result = await this.onBroadcastSend({
+          actor,
+          target,
+          selectedJids,
+          message: {
+            text,
+            imageDataUrl: imageDataUrl || '',
+            fileName,
+            mimeType: declaredMimeType || '',
+          },
+        });
+
+        if (!result?.ok) {
+          sendJson(res, 500, { error: result?.error || 'failed-to-send-broadcast' });
+          return;
+        }
+
+        sendJson(res, 200, {
+          ok: true,
+          campaignId: result?.campaignId || 0,
+          attempted: result?.attempted || 0,
+          sent: result?.sent || 0,
+          failed: result?.failed || 0,
+          failures: Array.isArray(result?.failures) ? result.failures : [],
+        });
         return;
       }
 
@@ -944,6 +1003,18 @@ export class DashboardServer {
 
       sendJson(res, 404, { error: 'Not found' });
       } catch (error) {
+        this.logger?.error?.(
+          {
+            err: {
+              name: error?.name || 'Error',
+              message: error?.message || 'Internal server error',
+              stack: error?.stack || '',
+            },
+            method: req?.method || 'GET',
+            url: req?.url || '',
+          },
+          'Dashboard HTTP request failed'
+        );
         if (!res.headersSent) {
           sendJson(res, 500, { error: error?.message || 'Internal server error' });
         } else {

@@ -1,10 +1,12 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  fetchBroadcastContacts,
   fetchHandoffBlocks,
   fetchHandoffHistory,
   fetchHandoffSessions,
   fetchHealth,
   fetchLogs,
+  postBroadcastSend,
   fetchStats,
   postHandoffEnd,
   postHandoffImage,
@@ -16,6 +18,7 @@ import { isLikelyErrorMessage } from './lib/format';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
+import { BroadcastView } from './components/broadcast/BroadcastView';
 import { HandoffView } from './components/handoff/HandoffView';
 import { Modal } from './components/Modal';
 import { ToastCenter } from './components/feedback/ToastCenter';
@@ -25,6 +28,8 @@ import type {
   DashboardStats,
   DashboardView,
   EventLog,
+  BroadcastContact,
+  BroadcastSendResult,
   HandoffBlock,
   HandoffSession,
 } from './types';
@@ -165,6 +170,17 @@ function App() {
   const [busyResume, setBusyResume] = useState(false);
   const [busyEnd, setBusyEnd] = useState(false);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
+  const [broadcastContacts, setBroadcastContacts] = useState<BroadcastContact[]>([]);
+  const [broadcastSearch, setBroadcastSearch] = useState('');
+  const [broadcastRecipientMode, setBroadcastRecipientMode] = useState<'all' | 'selected'>('all');
+  const [selectedBroadcastJids, setSelectedBroadcastJids] = useState<string[]>([]);
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [broadcastImageDataUrl, setBroadcastImageDataUrl] = useState('');
+  const [broadcastImagePreviewUrl, setBroadcastImagePreviewUrl] = useState('');
+  const [broadcastImageFileName, setBroadcastImageFileName] = useState('');
+  const [busyBroadcastSend, setBusyBroadcastSend] = useState(false);
+  const [broadcastLoadingContacts, setBroadcastLoadingContacts] = useState(false);
+  const [broadcastLastResult, setBroadcastLastResult] = useState<BroadcastSendResult | null>(null);
 
   const modeQuery = useMemo(() => modeToQuery(mode), [mode]);
 
@@ -292,6 +308,16 @@ function App() {
     await refreshHandoffHistory(selected);
   }, [refreshHandoffHistory]);
 
+  const loadBroadcastContacts = useCallback(async (search = '') => {
+    setBroadcastLoadingContacts(true);
+    try {
+      const contacts = await fetchBroadcastContacts(search, search ? 200 : 500);
+      setBroadcastContacts(contacts);
+    } finally {
+      setBroadcastLoadingContacts(false);
+    }
+  }, []);
+
   const scheduleSoftRefresh = useCallback(() => {
     if (refreshTimeoutRef.current) {
       window.clearTimeout(refreshTimeoutRef.current);
@@ -340,6 +366,19 @@ function App() {
       toastTimers.clear();
     };
   }, [loadHealth, refreshHandoffQueue, refreshStats, showNotice]);
+
+  useEffect(() => {
+    if (view !== 'broadcast') return;
+    const timeout = window.setTimeout(() => {
+      void loadBroadcastContacts(broadcastSearch).catch(error => {
+        showNotice(`Falha ao carregar contatos para anuncio: ${String((error as Error)?.message || error)}`);
+      });
+    }, 220);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [broadcastSearch, loadBroadcastContacts, showNotice, view]);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -555,6 +594,85 @@ function App() {
     setConfirmEndOpen(true);
   }, []);
 
+  const handleToggleBroadcastRecipient = useCallback((jid: string) => {
+    setSelectedBroadcastJids(previous => {
+      if (previous.includes(jid)) {
+        return previous.filter(item => item !== jid);
+      }
+      return [...previous, jid];
+    });
+  }, []);
+
+  const handleSelectAllBroadcastVisible = useCallback(() => {
+    setSelectedBroadcastJids(previous => {
+      const merged = new Set(previous);
+      for (const contact of broadcastContacts) {
+        merged.add(contact.jid);
+      }
+      return [...merged];
+    });
+  }, [broadcastContacts]);
+
+  const handlePickBroadcastImage = useCallback(async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      showNotice('Selecione um arquivo de imagem valido para o anuncio.');
+      return;
+    }
+
+    try {
+      const dataUrl = await fileToDataUrl(file);
+      setBroadcastImageDataUrl(dataUrl);
+      setBroadcastImagePreviewUrl(dataUrl);
+      setBroadcastImageFileName(file.name);
+    } catch (error) {
+      showNotice(`Nao foi possivel ler a imagem: ${String((error as Error)?.message || error)}`);
+    }
+  }, [showNotice]);
+
+  const handleSendBroadcast = useCallback(async () => {
+    const hasText = broadcastMessage.trim().length > 0;
+    const hasImage = broadcastImageDataUrl.length > 0;
+    if (!hasText && !hasImage) {
+      showNotice('Informe texto ou imagem para enviar o anuncio.');
+      return;
+    }
+
+    if (broadcastRecipientMode === 'selected' && selectedBroadcastJids.length === 0) {
+      showNotice('Selecione ao menos um destinatario.');
+      return;
+    }
+
+    setBusyBroadcastSend(true);
+    try {
+      const result = await postBroadcastSend({
+        target: broadcastRecipientMode,
+        jids: selectedBroadcastJids,
+        text: broadcastMessage,
+        imageDataUrl: broadcastImageDataUrl || '',
+        fileName: broadcastImageFileName || '',
+      });
+      setBroadcastLastResult(result);
+      showNotice(`Campanha enviada: ${result.sent}/${result.attempted} entregas.`);
+      if (result.failed === 0) {
+        setBroadcastMessage('');
+        setBroadcastImageDataUrl('');
+        setBroadcastImagePreviewUrl('');
+        setBroadcastImageFileName('');
+      }
+    } catch (error) {
+      showNotice(`Falha ao enviar anuncio: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusyBroadcastSend(false);
+    }
+  }, [
+    broadcastImageDataUrl,
+    broadcastImageFileName,
+    broadcastMessage,
+    broadcastRecipientMode,
+    selectedBroadcastJids,
+    showNotice,
+  ]);
+
   return (
     <div className="flex min-h-screen">
       <Sidebar
@@ -611,6 +729,41 @@ function App() {
                 void handleResumeHandoff();
               }}
               onEnd={openEndSessionModal}
+            />
+          )}
+
+          {view === 'broadcast' && (
+            <BroadcastView
+              contacts={broadcastContacts}
+              loadingContacts={broadcastLoadingContacts}
+              recipientMode={broadcastRecipientMode}
+              selectedJids={selectedBroadcastJids}
+              search={broadcastSearch}
+              messageText={broadcastMessage}
+              imageFileName={broadcastImageFileName}
+              imagePreviewUrl={broadcastImagePreviewUrl}
+              busySend={busyBroadcastSend}
+              lastResult={broadcastLastResult}
+              onRecipientModeChange={setBroadcastRecipientMode}
+              onSearchChange={setBroadcastSearch}
+              onRefreshContacts={() => {
+                void loadBroadcastContacts(broadcastSearch);
+              }}
+              onToggleRecipient={handleToggleBroadcastRecipient}
+              onSelectAllVisible={handleSelectAllBroadcastVisible}
+              onClearSelection={() => setSelectedBroadcastJids([])}
+              onMessageChange={setBroadcastMessage}
+              onPickImage={file => {
+                void handlePickBroadcastImage(file);
+              }}
+              onClearImage={() => {
+                setBroadcastImageDataUrl('');
+                setBroadcastImagePreviewUrl('');
+                setBroadcastImageFileName('');
+              }}
+              onSend={() => {
+                void handleSendBroadcast();
+              }}
             />
           )}
 

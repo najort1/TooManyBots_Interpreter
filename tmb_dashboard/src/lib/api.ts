@@ -1,6 +1,8 @@
 import type {
   DashboardStats,
   EventLog,
+  BroadcastContact,
+  BroadcastSendResult,
   HandoffBlock,
   HandoffSession,
   RuntimeHealth,
@@ -127,5 +129,37 @@ export async function postHandoffEnd(jid: string): Promise<void> {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jid, reason: 'human-agent-ended', agentId: 'dashboard-agent' }),
+  });
+}
+
+export async function fetchBroadcastContacts(search = '', limit = 200): Promise<BroadcastContact[]> {
+  const params = new URLSearchParams({
+    search: String(search || ''),
+    limit: String(limit),
+  });
+  const data = await requestJson<{ contacts?: BroadcastContact[] }>(`/api/broadcast/contacts?${params.toString()}`);
+  return Array.isArray(data.contacts) ? data.contacts : [];
+}
+
+export async function postBroadcastSend(payload: {
+  target: 'all' | 'selected';
+  jids: string[];
+  text: string;
+  imageDataUrl?: string;
+  fileName?: string;
+  mimeType?: string;
+}): Promise<BroadcastSendResult> {
+  return requestJson<BroadcastSendResult>('/api/broadcast/send', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      target: payload.target,
+      jids: payload.jids,
+      text: payload.text,
+      imageDataUrl: String(payload.imageDataUrl || ''),
+      fileName: String(payload.fileName || ''),
+      mimeType: String(payload.mimeType || ''),
+      agentId: 'dashboard-agent',
+    }),
   });
 }

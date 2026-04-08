@@ -9,8 +9,39 @@
 /**
  * Envia uma mensagem de texto simples.
  */
-export async function sendTextMessage(sock, jid, text) {
-  await sock.sendMessage(jid, { text });
+export async function sendTextMessage(sock, jid, text, options = undefined) {
+  await sock.sendMessage(jid, { text }, options);
+}
+
+export async function sendImageMessage(sock, jid, { imageBuffer, caption = '', mimeType = '' }, options = undefined) {
+  const payload = {
+    image: imageBuffer,
+    caption: String(caption ?? '').trim() || undefined,
+  };
+  if (mimeType) {
+    payload.mimetype = mimeType;
+  }
+  await sock.sendMessage(jid, payload, options);
+}
+
+export async function sendBroadcastMessage(sock, jid, message, options = undefined) {
+  if (!message || typeof message !== 'object') {
+    throw new Error('Mensagem de broadcast invalida');
+  }
+
+  if (message.kind === 'image') {
+    if (!message.imageBuffer || !Buffer.isBuffer(message.imageBuffer)) {
+      throw new Error('Imagem de broadcast invalida');
+    }
+    await sendImageMessage(sock, jid, {
+      imageBuffer: message.imageBuffer,
+      caption: message.text || '',
+      mimeType: message.mimeType || '',
+    }, options);
+    return;
+  }
+
+  await sendTextMessage(sock, jid, String(message.text || ''), options);
 }
 
 /**

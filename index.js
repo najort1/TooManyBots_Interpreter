@@ -19,6 +19,9 @@ import {
 } from './engine/flowEngine.js';
 import { getConfig, saveUserConfig, RUNTIME_MODE } from './config/index.js';
 import { DashboardServer } from './dashboard/server.js';
+import { createBroadcastService } from './engine/broadcastService.js';
+import { buildBroadcastMessage } from './engine/broadcastMessageBuilder.js';
+import { sendImageMessage, sendTextMessage } from './engine/sender.js';
 import { configureRuntimeAccessSelectors } from './runtime/accessSelectors.js';
 import {
   getAllowedTestJids,
@@ -55,6 +58,7 @@ let terminalCommandInterface = null;
 let dashboardServer = null;
 let removeConversationEventListener = null;
 let authStateMaintenanceTimer = null;
+let broadcastService = null;
 const contactCache = new Map();
 const HANDOFF_MEDIA_DIR = path.resolve('./data/handoff-media');
 const ALLOWED_INCOMING_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
@@ -487,6 +491,7 @@ async function startDashboardServer() {
   dashboardServer = new DashboardServer({
     host: config.dashboardHost,
     port: config.dashboardPort,
+    logger,
     getRuntimeInfo: () => ({
       ...normalizeRuntimeInfo(),
       apis: getActiveFlows()
@@ -507,7 +512,7 @@ async function startDashboardServer() {
       }
 
       try {
-        await sock.sendMessage(jid, { text }, { __skipConversationLog: true });
+        await sendTextMessage(sock, jid, text, { __skipConversationLog: true });
         logConversationEvent({
           eventType: 'human-message-outgoing',
           direction: 'outgoing',
@@ -531,15 +536,11 @@ async function startDashboardServer() {
       }
 
       try {
-        await sock.sendMessage(
-          jid,
-          {
-            image: imageBuffer,
-            caption: String(caption || '').trim() || undefined,
-            mimetype: mimeType,
-          },
-          { __skipConversationLog: true }
-        );
+        await sendImageMessage(sock, jid, {
+          imageBuffer,
+          caption: String(caption || '').trim() || undefined,
+          mimeType: mimeType || '',
+        }, { __skipConversationLog: true });
 
         logConversationEvent({
           eventType: 'human-image-outgoing',
@@ -615,6 +616,70 @@ async function startDashboardServer() {
       });
 
       return result;
+    },
+    onBroadcastListContacts: async ({ search, limit }) => {
+      if (!broadcastService) {
+        return [];
+      }
+      return broadcastService.listContacts({ search, limit });
+    },
+    onBroadcastSend: async ({ actor, target, selectedJids, message }) => {
+      const sock = currentSocket;
+      if (!sock) {
+        return { ok: false, error: 'socket-not-ready' };
+      }
+      if (!broadcastService) {
+        return { ok: false, error: 'broadcast-service-not-ready' };
+      }
+
+      try {
+        const builtMessage = buildBroadcastMessage({
+          text: message?.text ?? '',
+          imageDataUrl: message?.imageDataUrl ?? '',
+          mimeType: message?.mimeType ?? '',
+          fileName: message?.fileName ?? '',
+        });
+
+        const result = await broadcastService.send({
+          sock,
+          actor,
+          target,
+          selectedJids,
+          message: builtMessage,
+        });
+
+        const sentSummaryText = `Campanha #${result.campaignId}: ${result.sent}/${result.attempted} envios`;
+        logConversationEvent({
+          eventType: 'broadcast-dispatch',
+          direction: 'system',
+          jid: 'system',
+          messageText: sentSummaryText,
+          metadata: {
+            actor,
+            target: result.target,
+            attempted: result.attempted,
+            sent: result.sent,
+            failed: result.failed,
+            campaignId: result.campaignId,
+          },
+        });
+
+        return { ok: true, ...result };
+      } catch (error) {
+        logger?.error?.(
+          {
+            err: {
+              name: error?.name || 'Error',
+              message: error?.message || 'broadcast-send-failed',
+              stack: error?.stack || '',
+            },
+            actor,
+            target,
+          },
+          'Broadcast send failed'
+        );
+        return { ok: false, error: String(error?.message || 'broadcast-send-failed') };
+      }
     },
   });
 
@@ -796,6 +861,7 @@ async function start() {
   installLibSignalNoiseFilter(suppressSignalNoise);
 
   logger = createRuntimeLogger(config);
+  broadcastService = createBroadcastService({ logger });
 
   await initDb();
   console.log('Banco de dados inicializado (better-sqlite3 + WAL)');

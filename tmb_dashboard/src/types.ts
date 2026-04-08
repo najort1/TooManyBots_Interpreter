@@ -1,6 +1,6 @@
 export type DashboardMode = 'CONVERSATION' | 'COMMAND';
 
-export type DashboardView = 'analytics' | 'handoff' | 'settings';
+export type DashboardView = 'analytics' | 'handoff' | 'broadcast' | 'settings';
 
 export interface RuntimeHealth {
   status: string;
@@ -117,4 +117,22 @@ export interface HandoffSession {
     text?: string;
   };
   lastActivityAt?: number;
+}
+
+export interface BroadcastContact {
+  jid: string;
+  lastInteractionAt: number;
+  hasActiveSession?: boolean;
+}
+
+export interface BroadcastSendResult {
+  ok: boolean;
+  campaignId: number;
+  attempted: number;
+  sent: number;
+  failed: number;
+  failures: Array<{
+    jid: string;
+    error: string;
+  }>;
 }

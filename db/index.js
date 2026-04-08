@@ -179,12 +179,38 @@ export async function initDb() {
       ended_at    INTEGER,
       end_reason  TEXT
     );
+    CREATE TABLE IF NOT EXISTS broadcast_campaigns (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at       INTEGER NOT NULL,
+      actor            TEXT    NOT NULL,
+      target_mode      TEXT    NOT NULL,
+      message_type     TEXT    NOT NULL,
+      message_text     TEXT,
+      media_mime_type  TEXT,
+      media_file_name  TEXT,
+      recipient_count  INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE TABLE IF NOT EXISTS broadcast_recipients (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      campaign_id    INTEGER NOT NULL,
+      jid            TEXT    NOT NULL,
+      send_status    TEXT    NOT NULL DEFAULT 'pending',
+      error_message  TEXT,
+      sent_at        INTEGER,
+      created_at     INTEGER NOT NULL,
+      updated_at     INTEGER NOT NULL,
+      UNIQUE(campaign_id, jid),
+      FOREIGN KEY (campaign_id) REFERENCES broadcast_campaigns(id) ON DELETE CASCADE
+    );
     CREATE INDEX IF NOT EXISTS idx_conversation_events_occurred_at ON conversation_events(occurred_at DESC);
     CREATE INDEX IF NOT EXISTS idx_conversation_events_jid ON conversation_events(jid);
     CREATE INDEX IF NOT EXISTS idx_conversation_events_jid_occurred_at ON conversation_events(jid, occurred_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_conversation_events_flow_path_occurred_at ON conversation_events(flow_path, occurred_at DESC, id DESC);
     CREATE INDEX IF NOT EXISTS idx_conversation_sessions_started_at ON conversation_sessions(started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_conversation_sessions_ended_at ON conversation_sessions(ended_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_broadcast_campaigns_created_at ON broadcast_campaigns(created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_campaign_status ON broadcast_recipients(campaign_id, send_status);
+    CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_jid_created ON broadcast_recipients(jid, created_at DESC);
   `);
 
   rebuildSessionsTableIfNeeded();
@@ -360,6 +386,44 @@ export async function initDb() {
       `SELECT ended_at
        FROM conversation_sessions
        WHERE ended_at >= ? AND ended_at < ? AND end_reason = ? AND flow_path = ?`
+    ),
+    listBroadcastContacts: db.prepare(
+      `SELECT
+         ce.jid AS jid,
+         MAX(ce.occurred_at) AS last_interaction_at
+       FROM conversation_events ce
+       WHERE ce.direction = 'incoming'
+         AND ce.jid LIKE '%@s.whatsapp.net'
+       GROUP BY ce.jid
+       ORDER BY last_interaction_at DESC
+       LIMIT ?`
+    ),
+    searchBroadcastContacts: db.prepare(
+      `SELECT
+         ce.jid AS jid,
+         MAX(ce.occurred_at) AS last_interaction_at
+       FROM conversation_events ce
+       WHERE ce.direction = 'incoming'
+         AND ce.jid LIKE '%@s.whatsapp.net'
+         AND ce.jid LIKE ?
+       GROUP BY ce.jid
+       ORDER BY last_interaction_at DESC
+       LIMIT ?`
+    ),
+    insertBroadcastCampaign: db.prepare(
+      `INSERT INTO broadcast_campaigns (
+        created_at, actor, target_mode, message_type, message_text, media_mime_type, media_file_name, recipient_count
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ),
+    insertBroadcastRecipient: db.prepare(
+      `INSERT OR IGNORE INTO broadcast_recipients (
+        campaign_id, jid, send_status, error_message, sent_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+    ),
+    updateBroadcastRecipientResult: db.prepare(
+      `UPDATE broadcast_recipients
+       SET send_status = ?, error_message = ?, sent_at = ?, updated_at = ?
+       WHERE campaign_id = ? AND jid = ?`
     ),
   };
 
@@ -686,6 +750,104 @@ export function listConversationSessionEndsByReason({ from, to, endReason, flowP
     : stmts.listEndedByReasonInRange.all(fromTs, toTs, reason);
 
   return rows.map(row => Number(row.ended_at) || 0).filter(Boolean);
+}
+
+function mapBroadcastContactRow(row) {
+  return {
+    jid: String(row?.jid || '').trim(),
+    lastInteractionAt: Number(row?.last_interaction_at) || 0,
+  };
+}
+
+export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
+  const normalizedLimit = Math.max(1, Math.min(5000, Number(limit) || 200));
+  const normalizedSearch = String(search ?? '').trim();
+  const rows = normalizedSearch
+    ? stmts.searchBroadcastContacts.all(`%${normalizedSearch}%`, normalizedLimit)
+    : stmts.listBroadcastContacts.all(normalizedLimit);
+
+  return rows
+    .map(mapBroadcastContactRow)
+    .filter(row => row.jid);
+}
+
+function normalizeRecipientList(recipients = []) {
+  if (!Array.isArray(recipients)) return [];
+  const seen = new Set();
+  const result = [];
+  for (const item of recipients) {
+    const jid = String(item ?? '').trim();
+    if (!jid || seen.has(jid)) continue;
+    seen.add(jid);
+    result.push(jid);
+  }
+  return result;
+}
+
+export function createBroadcastDispatch({
+  createdAt = Date.now(),
+  actor = 'dashboard-agent',
+  targetMode = 'all',
+  messageType = 'text',
+  messageText = '',
+  mediaMimeType = '',
+  mediaFileName = '',
+  recipients = [],
+} = {}) {
+  const normalizedRecipients = normalizeRecipientList(recipients);
+  const nowTs = Number(createdAt) || Date.now();
+  const insertTx = db.transaction(() => {
+    const info = stmts.insertBroadcastCampaign.run(
+      nowTs,
+      String(actor || 'dashboard-agent'),
+      String(targetMode || 'all'),
+      String(messageType || 'text'),
+      String(messageText || ''),
+      String(mediaMimeType || ''),
+      String(mediaFileName || ''),
+      normalizedRecipients.length
+    );
+    const campaignId = Number(info?.lastInsertRowid) || 0;
+
+    for (const jid of normalizedRecipients) {
+      stmts.insertBroadcastRecipient.run(
+        campaignId,
+        jid,
+        'pending',
+        '',
+        null,
+        nowTs,
+        nowTs
+      );
+    }
+
+    return { campaignId };
+  });
+
+  return insertTx();
+}
+
+export function markBroadcastRecipientResult({
+  campaignId,
+  jid,
+  status = 'failed',
+  errorMessage = '',
+  sentAt = Date.now(),
+} = {}) {
+  const normalizedCampaignId = Number(campaignId) || 0;
+  const normalizedJid = String(jid ?? '').trim();
+  if (!normalizedCampaignId || !normalizedJid) return;
+
+  const normalizedStatus = String(status ?? '').trim().toLowerCase() === 'sent' ? 'sent' : 'failed';
+  const nowTs = Date.now();
+  stmts.updateBroadcastRecipientResult.run(
+    normalizedStatus,
+    String(errorMessage || ''),
+    normalizedStatus === 'sent' ? (Number(sentAt) || nowTs) : null,
+    nowTs,
+    normalizedCampaignId,
+    normalizedJid
+  );
 }
 
 export function onConversationEvent(listener) {
