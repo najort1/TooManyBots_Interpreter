@@ -1,4 +1,4 @@
-﻿@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@500;600&display=swap');
 @import "tailwindcss";
 
 :root {
@@ -416,6 +416,17 @@ html.theme-transitioning [class*='shadow-'] {
     linear-gradient(180deg, #def1ff 0%, #93c8f4 58%, #89a2ba 58%, #5f7388 100%);
 }
 
+.broadcast-flight-stage::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(180deg, rgba(9, 26, 45, 0.02) 0%, rgba(9, 26, 45, 0.1) 100%),
+    radial-gradient(circle at 60% 70%, rgba(255, 255, 255, 0) 0%, rgba(12, 28, 45, 0.08) 85%);
+  pointer-events: none;
+  z-index: 0;
+}
+
 .broadcast-flight-orb {
   position: absolute;
   top: 14px;
@@ -427,7 +438,7 @@ html.theme-transitioning [class*='shadow-'] {
   box-shadow:
     0 0 0 6px rgba(255, 207, 107, 0.2),
     0 0 24px rgba(255, 189, 74, 0.4);
-  animation: broadcast-orb-glow 4.4s ease-in-out infinite;
+  animation: broadcast-orb-glow 6.8s ease-in-out infinite;
   z-index: 2;
 }
 
@@ -466,7 +477,7 @@ html.theme-transitioning [class*='shadow-'] {
     radial-gradient(28px 14px at 50% 58%, rgba(255, 255, 255, 0.83) 0%, rgba(255, 255, 255, 0) 100%),
     radial-gradient(34px 16px at 74% 54%, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0) 100%),
     radial-gradient(30px 14px at 96% 52%, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 100%);
-  animation: broadcast-cloud-sway 29s ease-in-out infinite alternate;
+  animation: broadcast-cloud-sway 34s ease-in-out infinite alternate;
   z-index: 1;
 }
 
@@ -479,7 +490,7 @@ html.theme-transitioning [class*='shadow-'] {
     radial-gradient(42px 19px at 38% 50%, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0) 100%),
     radial-gradient(38px 18px at 62% 57%, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0) 100%),
     radial-gradient(40px 19px at 86% 54%, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0) 100%);
-  animation: broadcast-cloud-sway 18s ease-in-out infinite alternate;
+  animation: broadcast-cloud-sway 24s ease-in-out infinite alternate;
   animation-delay: -4.2s;
   z-index: 1;
 }
@@ -513,49 +524,56 @@ html.theme-transitioning [class*='shadow-'] {
 
 .broadcast-flight-plane-anchor {
   position: absolute;
-  left: 0;
-  top: 0;
-  width: 74px;
+  left: 9%;
+  top: 83%;
+  width: 54px;
   height: 30px;
-  offset-path: path("M 20 118 C 94 118 164 112 228 86 C 285 64 356 14 430 -64");
-  offset-rotate: auto 0deg;
-  offset-distance: 0%;
   z-index: 4;
-  will-change: transform, opacity, offset-distance;
-  transition:
-    offset-distance 380ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 340ms ease;
+  pointer-events: none;
+  will-change: left, top, transform, opacity;
+}
+
+.broadcast-flight-plane-anchor.is-returning {
+  opacity: 1;
 }
 
 .broadcast-flight-trail {
   position: absolute;
-  left: -92px;
+  left: -84px;
   top: 52%;
-  width: 90px;
-  height: 3px;
+  width: 80px;
+  height: 3.2px;
   border-radius: 999px;
   transform: translateY(-50%);
   background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(229, 243, 255, 0.92) 100%);
-  filter: blur(0.35px);
+  filter: blur(0.45px);
   pointer-events: none;
 }
 
+.broadcast-flight-plane-anchor.is-returning .broadcast-flight-trail {
+  opacity: 0.4;
+}
+
 .broadcast-flight-plane-sprite {
-  width: 74px;
+  width: 54px;
   height: 30px;
+  aspect-ratio: 64 / 36;
   display: block;
-  transform-origin: 20% 50%;
-  filter: drop-shadow(0 4px 10px rgba(16, 45, 79, 0.32));
+  transform-origin: 17% 50%;
+  filter: drop-shadow(0 6px 12px rgba(16, 45, 79, 0.34));
   will-change: transform;
 }
 
+.broadcast-flight-plane-anchor.is-returning .broadcast-flight-plane-sprite {
+  animation: none;
+}
+
 .broadcast-flight-scene.is-sending .broadcast-flight-plane-sprite {
-  animation: broadcast-plane-bank 1.9s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+  animation: broadcast-plane-bank 2.85s cubic-bezier(0.32, 0, 0.22, 1) infinite;
 }
 
 .broadcast-flight-scene.is-sending .broadcast-flight-trail {
-  animation: broadcast-trail-fade 1.3s ease-in-out infinite;
+  animation: broadcast-trail-fade 1.9s ease-in-out infinite;
 }
 
 .broadcast-flight-scene.is-complete .broadcast-flight-plane-anchor {
@@ -563,7 +581,12 @@ html.theme-transitioning [class*='shadow-'] {
 }
 
 .broadcast-flight-scene.is-sending .broadcast-flight-runway-strip {
-  animation: broadcast-runway-strip 520ms linear infinite;
+  animation: broadcast-runway-strip 680ms linear infinite;
+}
+
+/* Return orbit glow on the orb */
+.broadcast-flight-scene.is-returning .broadcast-flight-orb {
+  animation: broadcast-orb-return-pulse 1.2s ease-in-out infinite;
 }
 
 .broadcast-flight-pill {
@@ -593,6 +616,12 @@ html.theme-dark .broadcast-flight-stage {
   background:
     radial-gradient(circle at 76% 14%, rgba(226, 232, 240, 0.26) 0%, rgba(226, 232, 240, 0) 33%),
     linear-gradient(180deg, #112f51 0%, #1a4a78 58%, #43586f 58%, #1f2d3f 100%);
+}
+
+html.theme-dark .broadcast-flight-stage::after {
+  background:
+    linear-gradient(180deg, rgba(2, 8, 17, 0.08) 0%, rgba(2, 8, 17, 0.2) 100%),
+    radial-gradient(circle at 62% 72%, rgba(0, 0, 0, 0) 0%, rgba(2, 8, 17, 0.22) 88%);
 }
 
 html.theme-dark .broadcast-flight-orb {
@@ -637,7 +666,7 @@ html.theme-dark .broadcast-flight-pill strong {
 }
 
 html.theme-dark .broadcast-flight-plane-sprite {
-  filter: drop-shadow(0 4px 10px rgba(2, 6, 23, 0.48));
+  filter: drop-shadow(0 6px 12px rgba(2, 6, 23, 0.52));
 }
 
 @keyframes broadcast-runway-strip {
@@ -663,43 +692,61 @@ html.theme-dark .broadcast-flight-plane-sprite {
     transform: scale(1);
   }
   to {
-    transform: scale(1.05);
+    transform: scale(1.055);
+  }
+}
+
+@keyframes broadcast-orb-return-pulse {
+  0% {
+    transform: scale(1);
+    box-shadow:
+      0 0 0 6px rgba(255, 207, 107, 0.2),
+      0 0 24px rgba(255, 189, 74, 0.4);
+  }
+  50% {
+    transform: scale(1.12);
+    box-shadow:
+      0 0 0 10px rgba(255, 207, 107, 0.3),
+      0 0 38px rgba(255, 189, 74, 0.6);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow:
+      0 0 0 6px rgba(255, 207, 107, 0.2),
+      0 0 24px rgba(255, 189, 74, 0.4);
   }
 }
 
 @keyframes broadcast-plane-bank {
   0% {
-    transform: translateY(0) rotate(-2.2deg);
+    transform: translateY(0.2px) rotate(-2.8deg);
   }
-  30% {
-    transform: translateY(-0.6px) rotate(1.6deg);
+  24% {
+    transform: translateY(-0.9px) rotate(1.5deg);
   }
-  60% {
-    transform: translateY(0.7px) rotate(-1.4deg);
+  56% {
+    transform: translateY(0.8px) rotate(-2deg);
+  }
+  78% {
+    transform: translateY(-0.5px) rotate(1.2deg);
   }
   100% {
-    transform: translateY(0) rotate(2deg);
+    transform: translateY(0.15px) rotate(2.4deg);
   }
 }
 
 @keyframes broadcast-trail-fade {
   0% {
-    opacity: 0.32;
-    transform: translateY(-50%) scaleX(0.94);
+    opacity: 0.26;
+    transform: translateY(-50%) scaleX(0.93);
   }
   50% {
-    opacity: 0.68;
-    transform: translateY(-50%) scaleX(1.04);
+    opacity: 0.66;
+    transform: translateY(-50%) scaleX(1.05);
   }
   100% {
-    opacity: 0.36;
-    transform: translateY(-50%) scaleX(0.96);
-  }
-}
-
-@media (max-width: 840px) {
-  .broadcast-flight-plane-anchor {
-    offset-path: path("M 16 118 C 84 118 150 114 214 90 C 266 70 326 28 386 -50");
+    opacity: 0.28;
+    transform: translateY(-50%) scaleX(0.95);
   }
 }
 

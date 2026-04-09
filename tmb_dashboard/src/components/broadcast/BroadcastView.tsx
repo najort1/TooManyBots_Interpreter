@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { fmtTime, formatJidPhone } from '../../lib/format';
 import type { BroadcastContact, BroadcastSendProgress, BroadcastSendResult } from '../../types';
 
@@ -29,6 +29,27 @@ interface BroadcastViewProps {
 const panel = 'rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]';
 const buttonBase =
   'inline-flex h-9 items-center justify-center rounded-full border px-3 text-[0.78rem] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60';
+
+function clamp01(value: number): number {
+  if (value <= 0) return 0;
+  if (value >= 1) return 1;
+  return value;
+}
+
+function cubicPoint(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const omt = 1 - t;
+  return omt * omt * omt * p0 + 3 * omt * omt * t * p1 + 3 * omt * t * t * p2 + t * t * t * p3;
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+function easeInOutCubic(value: number): number {
+  const t = clamp01(value);
+  if (t < 0.5) return 4 * t * t * t;
+  return 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
 
 export function BroadcastView({
   contacts,
@@ -67,14 +88,194 @@ export function BroadcastView({
   const progressStatus = sendProgress?.status || 'idle';
   const progressSending = busySend || progressStatus === 'sending' || progressStatus === 'started';
   const progressCompleted = progressStatus === 'completed' && progressAttempted > 0;
-  const progressRatio = progressPercent / 100;
-  const runwayRatio = Math.min(1, progressRatio / 0.24);
-  const climbRatio = progressRatio <= 0.24 ? 0 : (progressRatio - 0.24) / 0.76;
-  const planeDistance = progressRatio <= 0.24
-    ? runwayRatio * 26
-    : 26 + Math.pow(climbRatio, 1.22) * 88;
-  const planeScale = progressRatio <= 0.24 ? 1 : Math.max(0.7, 1 - climbRatio * 0.3);
-  const trailOpacity = progressCompleted ? 0 : Math.max(0, Math.min(0.72, progressRatio * 0.9));
+  const currentCampaignId = Math.max(0, Number(sendProgress?.campaignId || 0));
+  const progressTargetRatio = clamp01(progressPercent / 100);
+  const progressRafRef = useRef<number | null>(null);
+  const progressTargetRef = useRef(0);
+  const progressSendingRef = useRef(progressSending);
+  const [visualProgressRatio, setVisualProgressRatio] = useState(0);
+  const visualProgressRatioRef = useRef(0);
+  const returnRafRef = useRef<number | null>(null);
+  const [returnProgressRatio, setReturnProgressRatio] = useState(0);
+  const [returningCampaignId, setReturningCampaignId] = useState<number | null>(null);
+  const [returnedCampaignId, setReturnedCampaignId] = useState<number | null>(null);
+  const showReturnFlight = returningCampaignId != null && returningCampaignId > 0 && returningCampaignId === currentCampaignId;
+  const hasReturnedForCurrentCampaign =
+    progressCompleted && currentCampaignId > 0 && returnedCampaignId === currentCampaignId;
+  const outboundSettling = progressCompleted && visualProgressRatio < 0.995;
+  const showOutboundPlane = progressSending || outboundSettling;
+  const showParkedPlane =
+    !showOutboundPlane &&
+    !showReturnFlight &&
+    (!progressCompleted || currentCampaignId <= 0 || hasReturnedForCurrentCampaign);
+
+  const runwayStartX = 9;
+  const runwayStartY = 83;
+  const skyTargetX = 87;
+  const skyTargetY = 18;
+  const orbCenterX = 84;
+  const orbCenterY = 17;
+  const orbRadius = 16;
+
+  const outboundX = runwayStartX + (skyTargetX - runwayStartX) * visualProgressRatio;
+  const outboundY = runwayStartY + (skyTargetY - runwayStartY) * visualProgressRatio;
+  const outboundRotate = -2 - visualProgressRatio * 25;
+  const outboundScale = 1 - visualProgressRatio * 0.26;
+  const outboundTrailOpacity = showOutboundPlane
+    ? Math.max(0.18, Math.min(0.68, visualProgressRatio * 0.9))
+    : 0;
+
+  // Return flight: 3 phases — orbit around orb, then descend to runway
+  const returnT = clamp01(returnProgressRatio);
+  const orbitPhaseEnd = 0.55;
+  const descentPhaseStart = 0.50;
+
+  let returnX: number;
+  let returnY: number;
+  let returnRotate: number;
+  let returnScale: number;
+  let returnTrailOpacity: number;
+
+  if (returnT <= orbitPhaseEnd) {
+    // Phase 1: Full orbit around the orb (moon/sun)
+    const orbitT = clamp01(returnT / orbitPhaseEnd);
+    const easedOrbitT = easeInOutCubic(orbitT);
+    // Start from the arrival point (skyTargetX, skyTargetY) and orbit 360° around the orb
+    const startAngle = Math.atan2(skyTargetY - orbCenterY, skyTargetX - orbCenterX);
+    const angle = startAngle + easedOrbitT * Math.PI * 2;
+    // Radius shrinks slightly at the far side for perspective depth
+    const dynamicRadius = orbRadius * (1 - 0.12 * Math.sin(easedOrbitT * Math.PI));
+    returnX = orbCenterX + Math.cos(angle) * dynamicRadius * 1.15;
+    returnY = orbCenterY + Math.sin(angle) * dynamicRadius * 0.85;
+    // Point the plane tangent to the orbit
+    const tangentAngle = angle + Math.PI / 2;
+    returnRotate = (tangentAngle * 180) / Math.PI;
+    returnScale = 0.62 + 0.12 * Math.sin(easedOrbitT * Math.PI);
+    returnTrailOpacity = 0.5 + 0.2 * Math.sin(easedOrbitT * Math.PI);
+  } else {
+    // Phase 2: Smooth curve descent from near orb orbit-end back to runway
+    const descentT = clamp01((returnT - descentPhaseStart) / (1 - descentPhaseStart));
+    const easedDescentT = easeInOutCubic(descentT);
+    // Start position at end of orbit (same as skyTarget)
+    const descentStartX = skyTargetX;
+    const descentStartY = skyTargetY;
+    // Cubic Bézier descent to runway with a wide arc
+    returnX = cubicPoint(descentStartX, 72, 38, runwayStartX, easedDescentT);
+    returnY = cubicPoint(descentStartY, 10, 52, runwayStartY, easedDescentT);
+    // Smooth rotation from flight angle to level landing
+    returnRotate = lerp(-20, 2, easedDescentT) + Math.sin(easedDescentT * Math.PI) * 6;
+    returnScale = 0.68 + easedDescentT * 0.32;
+    returnTrailOpacity = 0.55 - easedDescentT * 0.35;
+  }
+
+  const renderPlaneSprite = () => (
+    <svg
+      className="broadcast-flight-plane-sprite"
+      viewBox="0 0 64 36"
+      role="presentation"
+      focusable="false"
+    >
+      {/* Main body — crisp triangular fuselage */}
+      <path d="M2 19L58 4L42 32L30 22L2 19Z" fill="#fdfefe" />
+      {/* Shaded wing underside */}
+      <path d="M58 4L42 32L38 18L58 4Z" fill="#deebf8" />
+      {/* Tail fold shadow */}
+      <path d="M30 22L22 25L2 19L30 22Z" fill="#d0e0f2" />
+      {/* Center fold crease */}
+      <path d="M58 4L30 22" stroke="#8da6c3" strokeWidth="1.2" strokeLinecap="round" />
+      {/* Outline */}
+      <path d="M2 19L58 4L42 32L30 22L2 19Z" fill="none" stroke="#6a86a6" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+
+  useEffect(() => {
+    progressSendingRef.current = progressSending;
+  }, [progressSending]);
+
+  useEffect(() => {
+    progressTargetRef.current = progressTargetRatio;
+    if (progressRafRef.current != null) return;
+
+    const tick = () => {
+      const current = visualProgressRatioRef.current;
+      const target = progressTargetRef.current;
+      const diff = target - current;
+      let next = current;
+
+      if (Math.abs(diff) < 0.0015) {
+        next = target;
+      } else {
+        next = clamp01(current + diff * 0.1 + Math.sign(diff) * 0.0015);
+      }
+
+      if (Math.abs(next - visualProgressRatioRef.current) > 0.0004) {
+        visualProgressRatioRef.current = next;
+        setVisualProgressRatio(next);
+      }
+
+      if (progressSendingRef.current || Math.abs(target - next) > 0.0015) {
+        progressRafRef.current = window.requestAnimationFrame(tick);
+      } else {
+        progressRafRef.current = null;
+      }
+    };
+
+    progressRafRef.current = window.requestAnimationFrame(tick);
+  }, [progressTargetRatio]);
+
+  useEffect(() => {
+    if (showOutboundPlane) {
+      if (returnRafRef.current) {
+        window.cancelAnimationFrame(returnRafRef.current);
+        returnRafRef.current = null;
+      }
+      setReturningCampaignId(null);
+      setReturnProgressRatio(0);
+      return;
+    }
+
+    if (!progressCompleted || currentCampaignId <= 0) return;
+    if (visualProgressRatio < 0.995) return;
+    if (returnedCampaignId === currentCampaignId) return;
+    if (returningCampaignId === currentCampaignId) return;
+
+    setReturningCampaignId(currentCampaignId);
+    setReturnProgressRatio(0);
+    const startedAt = performance.now();
+    const durationMs = 3600;
+    const animateReturn = (now: number) => {
+      const raw = clamp01((now - startedAt) / durationMs);
+      const eased = easeInOutCubic(raw);
+      setReturnProgressRatio(eased);
+      if (raw < 1) {
+        returnRafRef.current = window.requestAnimationFrame(animateReturn);
+        return;
+      }
+      returnRafRef.current = null;
+      setReturningCampaignId(null);
+      setReturnedCampaignId(currentCampaignId);
+      setReturnProgressRatio(0);
+    };
+    returnRafRef.current = window.requestAnimationFrame(animateReturn);
+  }, [
+    currentCampaignId,
+    progressCompleted,
+    returnedCampaignId,
+    returningCampaignId,
+    showOutboundPlane,
+    visualProgressRatio,
+  ]);
+
+  useEffect(() => () => {
+    if (progressRafRef.current) {
+      window.cancelAnimationFrame(progressRafRef.current);
+      progressRafRef.current = null;
+    }
+    if (returnRafRef.current) {
+      window.cancelAnimationFrame(returnRafRef.current);
+      returnRafRef.current = null;
+    }
+  }, []);
 
   return (
     <section className="mx-auto grid max-w-[1560px] grid-cols-1 gap-4 xl:grid-cols-[minmax(320px,460px)_1fr]">
@@ -198,6 +399,7 @@ export function BroadcastView({
             'broadcast-flight-scene',
             progressSending ? 'is-sending' : '',
             progressCompleted ? 'is-complete' : '',
+            showReturnFlight ? 'is-returning' : '',
           ].join(' ')}
           aria-live="polite"
         >
@@ -210,40 +412,40 @@ export function BroadcastView({
             <div className="broadcast-flight-cloud-layer layer-front" aria-hidden="true" />
             <div className="broadcast-flight-runway" aria-hidden="true" />
             <div className="broadcast-flight-runway-strip" aria-hidden="true" />
-            <div
-              className="broadcast-flight-plane-anchor"
-              style={{
-                offsetDistance: `${planeDistance}%`,
-                transform: `scale(${planeScale})`,
-                opacity: progressCompleted ? 0 : 1,
-              }}
-              aria-hidden="true"
-            >
-              <span
-                className="broadcast-flight-trail"
+            {showOutboundPlane || showParkedPlane ? (
+              <div
+                className="broadcast-flight-plane-anchor"
                 style={{
-                  opacity: trailOpacity,
+                  left: `${showParkedPlane ? runwayStartX : outboundX}%`,
+                  top: `${showParkedPlane ? runwayStartY : outboundY}%`,
+                  transform: `translate(-50%, -50%) rotate(${showParkedPlane ? 0 : outboundRotate}deg) scale(${showParkedPlane ? 1 : outboundScale})`,
+                  opacity: 1,
                 }}
-              />
-              <svg
-                className="broadcast-flight-plane-sprite"
-                viewBox="0 0 128 52"
-                role="presentation"
-                focusable="false"
+                aria-hidden="true"
               >
-                <path d="M4 27L123 4L72 47L54 31L32 36L45 26L4 27Z" fill="#f8fbff" />
-                <path d="M123 4L72 47L67 28L123 4Z" fill="#d7e4f4" />
-                <path d="M45 26L54 31L32 36L45 26Z" fill="#c1d3ea" />
-                <path d="M4 27L123 4L68 23L45 26L4 27Z" fill="#ffffff" opacity="0.9" />
-                <path
-                  d="M4 27L123 4L72 47L54 31L32 36L45 26L4 27Z"
-                  fill="none"
-                  stroke="#6c88aa"
-                  strokeWidth="2"
-                  strokeLinejoin="round"
+                <span
+                  className="broadcast-flight-trail"
+                  style={{
+                    opacity: showParkedPlane ? 0 : outboundTrailOpacity,
+                  }}
                 />
-              </svg>
-            </div>
+                {renderPlaneSprite()}
+              </div>
+            ) : null}
+            {showReturnFlight ? (
+              <div
+                className="broadcast-flight-plane-anchor is-returning"
+                style={{
+                  left: `${returnX}%`,
+                  top: `${returnY}%`,
+                  transform: `translate(-50%, -50%) rotate(${returnRotate}deg) scale(${returnScale})`,
+                }}
+                aria-hidden="true"
+              >
+                <span className="broadcast-flight-trail" style={{ opacity: returnTrailOpacity }} />
+                {renderPlaneSprite()}
+              </div>
+            ) : null}
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
             <p className="broadcast-flight-pill">
