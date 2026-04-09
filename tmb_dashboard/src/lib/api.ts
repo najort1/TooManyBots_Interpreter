@@ -1,6 +1,11 @@
 import type {
   DashboardStats,
   EventLog,
+  RuntimeSettings,
+  DatabaseInfo,
+  SessionFlowConfigItem,
+  SessionOverview,
+  ActiveSessionManagementItem,
   BroadcastContact,
   BroadcastSendResult,
   HandoffBlock,
@@ -161,5 +166,78 @@ export async function postBroadcastSend(payload: {
       mimeType: String(payload.mimeType || ''),
       agentId: 'dashboard-agent',
     }),
+  });
+}
+
+export async function fetchRuntimeSettings(): Promise<RuntimeSettings> {
+  return requestJson<RuntimeSettings>('/api/settings');
+}
+
+export async function postRuntimeSettings(input: { autoReloadFlows: boolean }): Promise<RuntimeSettings> {
+  return requestJson<RuntimeSettings>('/api/settings', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ autoReloadFlows: input.autoReloadFlows }),
+  });
+}
+
+export async function postClearRuntimeCache(): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>('/api/settings/cache/clear', {
+    method: 'POST',
+  });
+}
+
+export async function fetchDatabaseInfo(): Promise<DatabaseInfo> {
+  return requestJson<DatabaseInfo>('/api/settings/db');
+}
+
+export async function fetchSessionOverview(): Promise<SessionOverview> {
+  return requestJson<SessionOverview>('/api/sessions/overview');
+}
+
+export async function fetchSessionFlows(): Promise<SessionFlowConfigItem[]> {
+  const data = await requestJson<{ flows?: SessionFlowConfigItem[] }>('/api/sessions/flows');
+  return Array.isArray(data.flows) ? data.flows : [];
+}
+
+export async function fetchActiveSessionsForManagement(search = '', limit = 200): Promise<ActiveSessionManagementItem[]> {
+  const params = new URLSearchParams({
+    search: String(search || ''),
+    limit: String(limit),
+  });
+  const data = await requestJson<{ sessions?: ActiveSessionManagementItem[] }>(`/api/sessions/active?${params.toString()}`);
+  return Array.isArray(data.sessions) ? data.sessions : [];
+}
+
+export async function postClearAllActiveSessions(): Promise<{ ok: boolean; removed: number }> {
+  return requestJson<{ ok: boolean; removed: number }>('/api/sessions/clear-all', {
+    method: 'POST',
+  });
+}
+
+export async function postClearFlowSessions(flowPath: string): Promise<{ ok: boolean; removed: number }> {
+  return requestJson<{ ok: boolean; removed: number }>('/api/sessions/clear-flow', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flowPath }),
+  });
+}
+
+export async function postResetSessionByJid(jid: string): Promise<{ ok: boolean; removed: number }> {
+  return requestJson<{ ok: boolean; removed: number }>('/api/sessions/reset-jid', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jid }),
+  });
+}
+
+export async function postUpdateFlowSessionTimeout(
+  flowPath: string,
+  sessionTimeoutMinutes: number
+): Promise<{ ok: boolean; flowPath: string; sessionTimeoutMinutes: number }> {
+  return requestJson<{ ok: boolean; flowPath: string; sessionTimeoutMinutes: number }>('/api/sessions/timeout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ flowPath, sessionTimeoutMinutes }),
   });
 }

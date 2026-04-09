@@ -11,6 +11,7 @@ const navItems: Array<{ id: DashboardView; label: string; iconClass: string }> =
   { id: 'analytics', label: 'Dashboard', iconClass: 'fa-solid fa-chart-pie' },
   { id: 'handoff', label: 'Atendimento Humano', iconClass: 'fa-solid fa-headset' },
   { id: 'broadcast', label: 'Anuncios em Massa', iconClass: 'fa-solid fa-bullhorn' },
+  { id: 'sessions', label: 'Gestao de Sessoes', iconClass: 'fa-solid fa-layer-group' },
   { id: 'settings', label: 'Configuracoes', iconClass: 'fa-solid fa-sliders' },
 ];
 

@@ -1,18 +1,29 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  fetchActiveSessionsForManagement,
   fetchBroadcastContacts,
+  fetchDatabaseInfo,
   fetchHandoffBlocks,
   fetchHandoffHistory,
   fetchHandoffSessions,
   fetchHealth,
   fetchLogs,
+  fetchRuntimeSettings,
+  fetchSessionFlows,
+  fetchSessionOverview,
+  postClearAllActiveSessions,
+  postClearFlowSessions,
+  postClearRuntimeCache,
   postBroadcastSend,
+  postResetSessionByJid,
+  postRuntimeSettings,
   fetchStats,
   postHandoffEnd,
   postHandoffImage,
   postHandoffMessage,
   postHandoffResume,
   postReloadFlow,
+  postUpdateFlowSessionTimeout,
 } from './lib/api';
 import { isLikelyErrorMessage } from './lib/format';
 import { Sidebar } from './components/layout/Sidebar';
@@ -20,6 +31,8 @@ import { TopBar } from './components/layout/TopBar';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { BroadcastView } from './components/broadcast/BroadcastView';
 import { HandoffView } from './components/handoff/HandoffView';
+import { SessionManagementView } from './components/sessions/SessionManagementView';
+import { SettingsView } from './components/settings/SettingsView';
 import { Modal } from './components/Modal';
 import { ToastCenter } from './components/feedback/ToastCenter';
 import type { ToastItem, ToastTone } from './components/feedback/ToastCenter';
@@ -27,11 +40,15 @@ import type {
   DashboardMode,
   DashboardStats,
   DashboardView,
+  DatabaseInfo,
   EventLog,
   BroadcastContact,
   BroadcastSendResult,
   HandoffBlock,
   HandoffSession,
+  ActiveSessionManagementItem,
+  SessionFlowConfigItem,
+  SessionOverview,
 } from './types';
 
 const WS_REFRESH_EVENT_TYPES = new Set([
@@ -181,6 +198,24 @@ function App() {
   const [busyBroadcastSend, setBusyBroadcastSend] = useState(false);
   const [broadcastLoadingContacts, setBroadcastLoadingContacts] = useState(false);
   const [broadcastLastResult, setBroadcastLastResult] = useState<BroadcastSendResult | null>(null);
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const stored = String(window.localStorage.getItem('tmb_theme') || '').trim().toLowerCase();
+    return stored === 'dark' ? 'dark' : 'light';
+  });
+  const [autoReloadFlows, setAutoReloadFlows] = useState(true);
+  const [dbInfo, setDbInfo] = useState<DatabaseInfo | null>(null);
+  const [busySaveSettings, setBusySaveSettings] = useState(false);
+  const [busyClearRuntimeCache, setBusyClearRuntimeCache] = useState(false);
+  const [busyRefreshDbInfo, setBusyRefreshDbInfo] = useState(false);
+  const [sessionOverview, setSessionOverview] = useState<SessionOverview | null>(null);
+  const [sessionFlows, setSessionFlows] = useState<SessionFlowConfigItem[]>([]);
+  const [activeManagementSessions, setActiveManagementSessions] = useState<ActiveSessionManagementItem[]>([]);
+  const [sessionSearch, setSessionSearch] = useState('');
+  const [sessionSelectedFlowPath, setSessionSelectedFlowPath] = useState('');
+  const [sessionTimeoutInputMinutes, setSessionTimeoutInputMinutes] = useState('');
+  const [sessionResetJidInput, setSessionResetJidInput] = useState('');
+  const [busySessionRefresh, setBusySessionRefresh] = useState(false);
+  const [busySessionAction, setBusySessionAction] = useState(false);
 
   const modeQuery = useMemo(() => modeToQuery(mode), [mode]);
 
@@ -189,6 +224,7 @@ function App() {
   const logsRef = useRef(logs);
   const selectedJidRef = useRef(selectedHandoffJid);
   const handoffSessionsRef = useRef(handoffSessions);
+  const viewRef = useRef(view);
   const refreshTimeoutRef = useRef<number | null>(null);
   const toastTimersRef = useRef<Map<string, number>>(new Map());
   const lastCustomerToastByJidRef = useRef<Map<string, number>>(new Map());
@@ -212,6 +248,16 @@ function App() {
   useEffect(() => {
     handoffSessionsRef.current = handoffSessions;
   }, [handoffSessions]);
+
+  useEffect(() => {
+    viewRef.current = view;
+  }, [view]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.classList.toggle('theme-dark', theme === 'dark');
+    window.localStorage.setItem('tmb_theme', theme);
+  }, [theme]);
 
   const dismissToast = useCallback((id: string) => {
     setToasts(previous => previous.filter(item => item.id !== id));
@@ -274,6 +320,21 @@ function App() {
     setUptimeMs(Number(health.uptimeMs || 0));
   }, []);
 
+  const loadRuntimeSettings = useCallback(async () => {
+    const settings = await fetchRuntimeSettings();
+    setAutoReloadFlows(settings.autoReloadFlows !== false);
+  }, []);
+
+  const loadDbInfo = useCallback(async () => {
+    setBusyRefreshDbInfo(true);
+    try {
+      const info = await fetchDatabaseInfo();
+      setDbInfo(info);
+    } finally {
+      setBusyRefreshDbInfo(false);
+    }
+  }, []);
+
   const refreshStats = useCallback(async () => {
     const nextStats = await fetchStats(modeQuery);
     setStats(nextStats);
@@ -318,6 +379,37 @@ function App() {
     }
   }, []);
 
+  const loadSessionOverviewAndFlows = useCallback(async () => {
+    const [overview, flows] = await Promise.all([fetchSessionOverview(), fetchSessionFlows()]);
+    setSessionOverview(overview);
+    setSessionFlows(flows);
+    setSessionSelectedFlowPath(previous => {
+      if (previous && flows.some(flow => flow.flowPath === previous)) {
+        return previous;
+      }
+      return flows[0]?.flowPath || '';
+    });
+    setSessionTimeoutInputMinutes(previous => {
+      if (previous.trim()) return previous;
+      const currentFlow = flows.find(flow => flow.flowPath === sessionSelectedFlowPath) || flows[0];
+      return currentFlow ? String(currentFlow.sessionTimeoutMinutes) : '';
+    });
+  }, [sessionSelectedFlowPath]);
+
+  const loadSessionActiveSessions = useCallback(async (search = '') => {
+    const sessions = await fetchActiveSessionsForManagement(search, 350);
+    setActiveManagementSessions(sessions);
+  }, []);
+
+  const refreshSessionManagement = useCallback(async (search = sessionSearch) => {
+    setBusySessionRefresh(true);
+    try {
+      await Promise.all([loadSessionOverviewAndFlows(), loadSessionActiveSessions(search)]);
+    } finally {
+      setBusySessionRefresh(false);
+    }
+  }, [loadSessionActiveSessions, loadSessionOverviewAndFlows, sessionSearch]);
+
   const scheduleSoftRefresh = useCallback(() => {
     if (refreshTimeoutRef.current) {
       window.clearTimeout(refreshTimeoutRef.current);
@@ -335,8 +427,12 @@ function App() {
     const bootstrap = async () => {
       try {
         await loadHealth();
+        await loadRuntimeSettings();
         const blocks = await fetchHandoffBlocks();
         if (!cancelled) setHandoffBlocks(blocks);
+        if (!cancelled) {
+          await loadDbInfo();
+        }
         if (!cancelled) {
           await Promise.all([refreshStats(), refreshHandoffQueue()]);
         }
@@ -353,6 +449,9 @@ function App() {
       void loadHealth().catch(() => {});
       void refreshStats().catch(() => {});
       void refreshHandoffQueue().catch(() => {});
+      if (viewRef.current === 'sessions') {
+        void refreshSessionManagement().catch(() => {});
+      }
     }, 30000);
 
     const toastTimers = toastTimersRef.current;
@@ -365,7 +464,7 @@ function App() {
       }
       toastTimers.clear();
     };
-  }, [loadHealth, refreshHandoffQueue, refreshStats, showNotice]);
+  }, [loadDbInfo, loadHealth, loadRuntimeSettings, refreshHandoffQueue, refreshSessionManagement, refreshStats, showNotice]);
 
   useEffect(() => {
     if (view !== 'broadcast') return;
@@ -379,6 +478,32 @@ function App() {
       window.clearTimeout(timeout);
     };
   }, [broadcastSearch, loadBroadcastContacts, showNotice, view]);
+
+  useEffect(() => {
+    if (view !== 'settings') return;
+    void loadDbInfo().catch(error => {
+      showNotice(`Falha ao carregar informacoes do DB: ${String((error as Error)?.message || error)}`);
+    });
+  }, [loadDbInfo, showNotice, view]);
+
+  useEffect(() => {
+    if (view !== 'sessions') return;
+    void refreshSessionManagement().catch(error => {
+      showNotice(`Falha ao carregar dados de sessoes: ${String((error as Error)?.message || error)}`);
+    });
+  }, [refreshSessionManagement, showNotice, view]);
+
+  useEffect(() => {
+    if (view !== 'sessions') return;
+    const timeout = window.setTimeout(() => {
+      void loadSessionActiveSessions(sessionSearch).catch(error => {
+        showNotice(`Falha ao buscar sessoes ativas: ${String((error as Error)?.message || error)}`);
+      });
+    }, 240);
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [loadSessionActiveSessions, sessionSearch, showNotice, view]);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -673,6 +798,118 @@ function App() {
     showNotice,
   ]);
 
+  const handleToggleAutoReload = useCallback(async (value: boolean) => {
+    setBusySaveSettings(true);
+    try {
+      const updated = await postRuntimeSettings({ autoReloadFlows: value });
+      setAutoReloadFlows(updated.autoReloadFlows !== false);
+      showNotice(`Auto-reload ${updated.autoReloadFlows ? 'habilitado' : 'desabilitado'} com sucesso.`);
+    } catch (error) {
+      showNotice(`Falha ao atualizar auto-reload: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusySaveSettings(false);
+    }
+  }, [showNotice]);
+
+  const handleClearRuntimeCache = useCallback(async () => {
+    setBusyClearRuntimeCache(true);
+    try {
+      await postClearRuntimeCache();
+      showNotice('Cache runtime limpo com sucesso.');
+    } catch (error) {
+      showNotice(`Falha ao limpar cache runtime: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusyClearRuntimeCache(false);
+    }
+  }, [showNotice]);
+
+  const handleSelectSessionFlow = useCallback((flowPath: string) => {
+    setSessionSelectedFlowPath(flowPath);
+    const flow = sessionFlows.find(item => item.flowPath === flowPath);
+    setSessionTimeoutInputMinutes(flow ? String(flow.sessionTimeoutMinutes) : '');
+  }, [sessionFlows]);
+
+  const handleClearAllSessions = useCallback(async () => {
+    setBusySessionAction(true);
+    try {
+      const result = await postClearAllActiveSessions();
+      showNotice(`Sessoes ativas removidas: ${result.removed}.`);
+      await refreshSessionManagement();
+    } catch (error) {
+      showNotice(`Falha ao limpar sessoes ativas: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusySessionAction(false);
+    }
+  }, [refreshSessionManagement, showNotice]);
+
+  const handleClearSessionsByFlow = useCallback(async () => {
+    const flowPath = sessionSelectedFlowPath.trim();
+    if (!flowPath) {
+      showNotice('Selecione um flow para limpar sessoes.');
+      return;
+    }
+    setBusySessionAction(true);
+    try {
+      const result = await postClearFlowSessions(flowPath);
+      showNotice(`Sessoes removidas do flow selecionado: ${result.removed}.`);
+      await refreshSessionManagement();
+    } catch (error) {
+      showNotice(`Falha ao limpar sessoes do flow: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusySessionAction(false);
+    }
+  }, [refreshSessionManagement, sessionSelectedFlowPath, showNotice]);
+
+  const handleResetSessionByJid = useCallback(async () => {
+    const jid = sessionResetJidInput.trim();
+    if (!jid) {
+      showNotice('Informe um JID valido.');
+      return;
+    }
+    setBusySessionAction(true);
+    try {
+      const result = await postResetSessionByJid(jid);
+      showNotice(`Sessoes removidas para o JID informado: ${result.removed}.`);
+      setSessionResetJidInput('');
+      await refreshSessionManagement();
+    } catch (error) {
+      showNotice(`Falha ao resetar sessao por JID: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusySessionAction(false);
+    }
+  }, [refreshSessionManagement, sessionResetJidInput, showNotice]);
+
+  const handleUpdateSessionTimeout = useCallback(async () => {
+    const flowPath = sessionSelectedFlowPath.trim();
+    if (!flowPath) {
+      showNotice('Selecione um flow para atualizar timeout.');
+      return;
+    }
+    const timeoutValue = Number(sessionTimeoutInputMinutes);
+    if (!Number.isFinite(timeoutValue) || timeoutValue < 0) {
+      showNotice('Informe um timeout valido (>= 0).');
+      return;
+    }
+    setBusySessionAction(true);
+    try {
+      const result = await postUpdateFlowSessionTimeout(flowPath, Math.floor(timeoutValue));
+      setSessionFlows(previous =>
+        previous.map(flow =>
+          flow.flowPath === result.flowPath
+            ? { ...flow, sessionTimeoutMinutes: result.sessionTimeoutMinutes }
+            : flow
+        )
+      );
+      setSessionTimeoutInputMinutes(String(result.sessionTimeoutMinutes));
+      showNotice(`Timeout atualizado para ${result.sessionTimeoutMinutes} min em ${result.flowPath}.`);
+      await refreshSessionManagement();
+    } catch (error) {
+      showNotice(`Falha ao atualizar timeout do flow: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusySessionAction(false);
+    }
+  }, [refreshSessionManagement, sessionSelectedFlowPath, sessionTimeoutInputMinutes, showNotice]);
+
   return (
     <div className="flex min-h-screen">
       <Sidebar
@@ -767,17 +1004,60 @@ function App() {
             />
           )}
 
+          {view === 'sessions' && (
+            <SessionManagementView
+              overview={sessionOverview}
+              activeSessions={activeManagementSessions}
+              flows={sessionFlows}
+              search={sessionSearch}
+              selectedFlowPath={sessionSelectedFlowPath}
+              timeoutInputMinutes={sessionTimeoutInputMinutes}
+              resetJidInput={sessionResetJidInput}
+              busyRefresh={busySessionRefresh}
+              busyAction={busySessionAction}
+              onSearchChange={setSessionSearch}
+              onRefresh={() => {
+                void refreshSessionManagement();
+              }}
+              onClearAll={() => {
+                void handleClearAllSessions();
+              }}
+              onClearFlow={() => {
+                void handleClearSessionsByFlow();
+              }}
+              onResetJidInputChange={setSessionResetJidInput}
+              onResetByJid={() => {
+                void handleResetSessionByJid();
+              }}
+              onSelectFlowPath={handleSelectSessionFlow}
+              onTimeoutInputChange={setSessionTimeoutInputMinutes}
+              onUpdateTimeout={() => {
+                void handleUpdateSessionTimeout();
+              }}
+            />
+          )}
+
           {view === 'settings' && (
-            <section className="mx-auto max-w-[1560px]">
-              <article className="rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]">
-                <header className="mb-3">
-                  <h3 className="text-base font-extrabold">Configurações</h3>
-                </header>
-                <p className="m-0 text-[0.95rem] leading-[1.6] text-slate-500">
-                  Esta área está pronta para receber controles avançados de runtime, alertas e preferências da equipe.
-                </p>
-              </article>
-            </section>
+            <SettingsView
+              autoReloadFlows={autoReloadFlows}
+              theme={theme}
+              dbInfo={dbInfo}
+              busySaveSettings={busySaveSettings}
+              busyClearCache={busyClearRuntimeCache}
+              busyRefreshDb={busyRefreshDbInfo}
+              onToggleAutoReload={value => {
+                void handleToggleAutoReload(value);
+              }}
+              onToggleTheme={setTheme}
+              onClearCache={() => {
+                void handleClearRuntimeCache();
+              }}
+              onRefreshDbInfo={() => {
+                void loadDbInfo().catch(error => {
+                  showNotice(`Falha ao atualizar informacoes do DB: ${String((error as Error)?.message || error)}`);
+                });
+              }}
+            />
           )}
         </main>
       </div>

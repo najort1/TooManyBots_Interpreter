@@ -87,6 +87,10 @@ async function executeWithLock(jid, flow, task) {
 
 const PROCESSED_IDS = new LRUCache(ENGINE_LIMITS.PROCESSED_IDS_MAX, ENGINE_LIMITS.PROCESSED_IDS_TTL_MS);
 
+export function clearEngineRuntimeCaches() {
+  PROCESSED_IDS.clear();
+}
+
 function getRuntimeConfig(flow) {
   return flow?.runtimeConfig ?? {};
 }

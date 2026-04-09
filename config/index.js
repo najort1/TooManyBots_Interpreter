@@ -26,6 +26,8 @@ export const config = {
   flowPath: './bots/flow.tmb',
   flowPaths: ['./bots/flow.tmb'],
   runtimeMode: RUNTIME_MODE.PRODUCTION,
+  autoReloadFlows: true,
+  flowSessionTimeoutOverrides: {},
   testTargetMode: 'contacts-and-groups',
   testJid: '',
   testJids: [],
@@ -84,6 +86,19 @@ function normalizeFlowPaths(input) {
   return result;
 }
 
+function normalizeTimeoutOverrides(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const result = {};
+  for (const [key, value] of Object.entries(input)) {
+    const normalizedKey = String(key ?? '').trim();
+    const normalizedValue = Number(value);
+    if (!normalizedKey) continue;
+    if (!Number.isFinite(normalizedValue) || normalizedValue < 0) continue;
+    result[normalizedKey] = Math.floor(normalizedValue);
+  }
+  return result;
+}
+
 function normalizeConfigShape(input) {
   const normalized = { ...input };
 
@@ -107,6 +122,8 @@ function normalizeConfigShape(input) {
   }
 
   normalized.flowPath = normalized.flowPaths[0] || config.flowPath;
+  normalized.autoReloadFlows = normalized.autoReloadFlows !== false;
+  normalized.flowSessionTimeoutOverrides = normalizeTimeoutOverrides(normalized.flowSessionTimeoutOverrides);
 
   normalized.testTargetMode = String(normalized.testTargetMode ?? config.testTargetMode).trim() || config.testTargetMode;
   normalized.testJid = String(normalized.testJid ?? '').trim();
@@ -141,6 +158,8 @@ function sanitizeConfigForSave(input) {
     flowPath: normalized.flowPath,
     flowPaths: normalized.flowPaths,
     runtimeMode: normalized.runtimeMode,
+    autoReloadFlows: normalized.autoReloadFlows,
+    flowSessionTimeoutOverrides: normalized.flowSessionTimeoutOverrides,
     testTargetMode: normalized.testTargetMode,
     testJid: normalized.testJid,
     testJids: normalized.testJids,

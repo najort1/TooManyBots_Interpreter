@@ -1,6 +1,6 @@
 export type DashboardMode = 'CONVERSATION' | 'COMMAND';
 
-export type DashboardView = 'analytics' | 'handoff' | 'broadcast' | 'settings';
+export type DashboardView = 'analytics' | 'handoff' | 'broadcast' | 'sessions' | 'settings';
 
 export interface RuntimeHealth {
   status: string;
@@ -135,4 +135,52 @@ export interface BroadcastSendResult {
     jid: string;
     error: string;
   }>;
+}
+
+export interface RuntimeSettings {
+  autoReloadFlows: boolean;
+  runtimeMode?: string;
+}
+
+export interface DatabaseInfo {
+  path: string;
+  journalMode: string;
+  synchronous: string;
+  fileSizeBytes: number;
+  walSizeBytes: number;
+  shmSizeBytes: number;
+  sessionsTotal: number;
+  sessionsActive: number;
+  conversationEventsTotal: number;
+  conversationSessionsTotal: number;
+  broadcastCampaignsTotal: number;
+  broadcastRecipientsTotal: number;
+}
+
+export interface SessionFlowConfigItem {
+  flowPath: string;
+  botType: string;
+  sessionTimeoutMinutes: number;
+}
+
+export interface SessionOverview {
+  activeSessions: number;
+  handoffSessions: number;
+  averageSessionDurationMs: number;
+  byFlow: Array<{
+    flowPath: string;
+    activeCount: number;
+  }>;
+}
+
+export interface ActiveSessionManagementItem {
+  jid: string;
+  flowPath: string;
+  botType: string;
+  waitingFor?: string | null;
+  blockIndex: number;
+  startedAt: number;
+  lastActivityAt: number;
+  durationMs: number;
+  handoffActive: boolean;
 }

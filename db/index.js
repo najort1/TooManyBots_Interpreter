@@ -425,6 +425,12 @@ export async function initDb() {
        SET send_status = ?, error_message = ?, sent_at = ?, updated_at = ?
        WHERE campaign_id = ? AND jid = ?`
     ),
+    countSessionsTotal: db.prepare('SELECT COUNT(*) AS total FROM sessions'),
+    countSessionsActiveTotal: db.prepare('SELECT COUNT(*) AS total FROM sessions WHERE status = ?'),
+    countConversationEventsTotal: db.prepare('SELECT COUNT(*) AS total FROM conversation_events'),
+    countConversationSessionsTotal: db.prepare('SELECT COUNT(*) AS total FROM conversation_sessions'),
+    countBroadcastCampaignsTotal: db.prepare('SELECT COUNT(*) AS total FROM broadcast_campaigns'),
+    countBroadcastRecipientsTotal: db.prepare('SELECT COUNT(*) AS total FROM broadcast_recipients'),
   };
 
   return db;
@@ -681,6 +687,14 @@ export function clearActiveSessions() {
   return active;
 }
 
+export function clearActiveSessionsByFlowPath(flowPath) {
+  const normalizedFlowPath = String(flowPath ?? '').trim();
+  if (!normalizedFlowPath) return [];
+  const active = getActiveSessions({ flowPath: normalizedFlowPath });
+  stmts.deleteActiveSessionsByFlowPath.run(SESSION_STATUS.ACTIVE, normalizedFlowPath);
+  return active;
+}
+
 export function getConversationDashboardStats({ from, to, flowPath = '' }) {
   const fromTs = Number(from) || 0;
   const toTs = Number(to) || Date.now();
@@ -848,6 +862,34 @@ export function markBroadcastRecipientResult({
     normalizedCampaignId,
     normalizedJid
   );
+}
+
+function fileSizeOrZero(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return 0;
+    return Number(fs.statSync(filePath).size) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+export function getDatabaseInfo() {
+  const journalMode = String(db.pragma('journal_mode', { simple: true }) || '').toLowerCase();
+  const synchronous = String(db.pragma('synchronous', { simple: true }) || '');
+  return {
+    path: DB_PATH,
+    journalMode,
+    synchronous,
+    fileSizeBytes: fileSizeOrZero(DB_PATH),
+    walSizeBytes: fileSizeOrZero(`${DB_PATH}-wal`),
+    shmSizeBytes: fileSizeOrZero(`${DB_PATH}-shm`),
+    sessionsTotal: Number(stmts.countSessionsTotal.get()?.total ?? 0) || 0,
+    sessionsActive: Number(stmts.countSessionsActiveTotal.get(SESSION_STATUS.ACTIVE)?.total ?? 0) || 0,
+    conversationEventsTotal: Number(stmts.countConversationEventsTotal.get()?.total ?? 0) || 0,
+    conversationSessionsTotal: Number(stmts.countConversationSessionsTotal.get()?.total ?? 0) || 0,
+    broadcastCampaignsTotal: Number(stmts.countBroadcastCampaignsTotal.get()?.total ?? 0) || 0,
+    broadcastRecipientsTotal: Number(stmts.countBroadcastRecipientsTotal.get()?.total ?? 0) || 0,
+  };
 }
 
 export function onConversationEvent(listener) {

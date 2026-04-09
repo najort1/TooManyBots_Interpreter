@@ -276,13 +276,17 @@ export function AnalyticsView({
               <p className="py-4 text-center text-sm text-slate-500">Aguardando mensagens...</p>
             ) : mode === 'CONVERSATION' ? (
               logs.map((log, index) => {
-                const isOutgoing = log.direction === 'outgoing';
+                const eventType = String(log.eventType || '').toLowerCase();
+                const isOutgoing =
+                  log.direction === 'outgoing' ||
+                  eventType.includes('outgoing') ||
+                  eventType.startsWith('human-');
                 const label = isOutgoing ? 'Bot/Atendente' : 'Usuario';
                 const text = log.messageText || '[Evento de sistema]';
                 return (
                   <div
                     key={`${log.occurredAt}-${index}`}
-                    className={`mb-1 grid grid-cols-[68px_1fr] gap-2 rounded-[10px] p-2 ${isOutgoing ? 'bg-[#e2e8f0]' : ''}`}
+                    className={`mb-1 grid grid-cols-[68px_1fr] gap-2 rounded-[10px] p-2 ${isOutgoing ? 'bg-[#e2e8f0]' : 'bg-white'}`}
                   >
                     <time className="text-xs text-slate-500">{fmtTime(log.occurredAt)}</time>
                     <p className="text-[0.84rem] leading-[1.45]">

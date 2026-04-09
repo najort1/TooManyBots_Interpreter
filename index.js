@@ -6,7 +6,17 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 
-import { initDb, addConversationEvent, getSession, onConversationEvent } from './db/index.js';
+import {
+  initDb,
+  addConversationEvent,
+  getSession,
+  getActiveSessions,
+  deleteSession,
+  onConversationEvent,
+  getDatabaseInfo,
+  clearActiveSessions,
+  clearActiveSessionsByFlowPath,
+} from './db/index.js';
 import { cleanupAuthSignalSessions, useSqliteAuthState } from './db/authState.js';
 import { getFlowBotType, loadFlows } from './engine/flowLoader.js';
 import { parseMessage } from './engine/messageParser.js';
@@ -16,6 +26,7 @@ import {
   resetActiveSessions,
   resumeSessionFromHumanHandoff,
   endSessionFromDashboard,
+  clearEngineRuntimeCaches,
 } from './engine/flowEngine.js';
 import { getConfig, saveUserConfig, RUNTIME_MODE } from './config/index.js';
 import { DashboardServer } from './dashboard/server.js';
@@ -245,6 +256,131 @@ function resolveConfiguredFlowPaths(currentConfig) {
 function loadFlowRegistryFromConfig(currentConfig) {
   const flowPaths = resolveConfiguredFlowPaths(currentConfig);
   return loadFlows(flowPaths);
+}
+
+function normalizeTimeoutMinutes(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+}
+
+function applyFlowSessionTimeoutOverrides(registry, currentConfig) {
+  if (!registry || !Array.isArray(registry.all)) return registry;
+  const overrides = currentConfig?.flowSessionTimeoutOverrides && typeof currentConfig.flowSessionTimeoutOverrides === 'object'
+    ? currentConfig.flowSessionTimeoutOverrides
+    : {};
+
+  for (const flow of registry.all) {
+    const flowPath = String(flow?.flowPath ?? '').trim();
+    if (!flowPath) continue;
+    const override = normalizeTimeoutMinutes(overrides[flowPath]);
+    if (override == null) continue;
+    if (!flow.runtimeConfig || typeof flow.runtimeConfig !== 'object') {
+      flow.runtimeConfig = {};
+    }
+    if (!flow.runtimeConfig.sessionLimits || typeof flow.runtimeConfig.sessionLimits !== 'object') {
+      flow.runtimeConfig.sessionLimits = {};
+    }
+    flow.runtimeConfig.sessionLimits.sessionTimeoutMinutes = override;
+  }
+
+  return registry;
+}
+
+function getFlowSessionTimeoutMinutes(flow) {
+  const value = Number(flow?.runtimeConfig?.sessionLimits?.sessionTimeoutMinutes);
+  if (!Number.isFinite(value) || value < 0) return 0;
+  return Math.floor(value);
+}
+
+function parseHumanHandoff(value) {
+  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function buildSessionManagementOverview() {
+  const activeSessions = getActiveSessions();
+  const nowTs = Date.now();
+
+  let handoffSessions = 0;
+  let durationTotal = 0;
+  let durationCount = 0;
+
+  const flowCounts = new Map();
+  for (const session of activeSessions) {
+    const waitingForHuman = String(session?.waitingFor || '').trim().toLowerCase() === 'human';
+    const handoff = parseHumanHandoff(session?.variables?.__humanHandoff);
+    if (waitingForHuman || handoff.active === true) {
+      handoffSessions += 1;
+    }
+
+    const startedAt = Number(session?.variables?.__sessionStartedAt) || 0;
+    if (startedAt > 0 && startedAt <= nowTs) {
+      durationTotal += nowTs - startedAt;
+      durationCount += 1;
+    }
+
+    const flowPath = String(session?.flowPath || '').trim() || '(sem-flow)';
+    flowCounts.set(flowPath, (flowCounts.get(flowPath) || 0) + 1);
+  }
+
+  const averageSessionDurationMs = durationCount > 0 ? Math.round(durationTotal / durationCount) : 0;
+  return {
+    activeSessions: activeSessions.length,
+    handoffSessions,
+    averageSessionDurationMs,
+    byFlow: [...flowCounts.entries()]
+      .map(([flowPath, activeCount]) => ({ flowPath, activeCount }))
+      .sort((a, b) => b.activeCount - a.activeCount),
+  };
+}
+
+function listSessionManagementFlows() {
+  return getActiveFlows().map(flow => ({
+    flowPath: flow.flowPath,
+    botType: getFlowBotType(flow),
+    sessionTimeoutMinutes: getFlowSessionTimeoutMinutes(flow),
+  }));
+}
+
+function listActiveSessionsForManagement({ search = '', limit = 200 } = {}) {
+  const normalizedSearch = String(search ?? '').trim().toLowerCase();
+  const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 200));
+  const nowTs = Date.now();
+
+  const rows = getActiveSessions()
+    .filter(session => {
+      if (!normalizedSearch) return true;
+      const jid = String(session?.jid || '').toLowerCase();
+      const flowPath = String(session?.flowPath || '').toLowerCase();
+      return jid.includes(normalizedSearch) || flowPath.includes(normalizedSearch);
+    })
+    .slice(0, normalizedLimit)
+    .map(session => {
+      const startedAt = Number(session?.variables?.__sessionStartedAt) || 0;
+      const lastActivityAt = Number(session?.variables?.__sessionLastActivityAt) || 0;
+      const handoff = parseHumanHandoff(session?.variables?.__humanHandoff);
+      const waitingForHuman = String(session?.waitingFor || '').trim().toLowerCase() === 'human';
+      return {
+        jid: session.jid,
+        flowPath: session.flowPath,
+        botType: session.botType,
+        waitingFor: session.waitingFor,
+        blockIndex: session.blockIndex,
+        startedAt,
+        lastActivityAt,
+        durationMs: startedAt > 0 && startedAt <= nowTs ? nowTs - startedAt : 0,
+        handoffActive: waitingForHuman || handoff.active === true,
+      };
+    });
+
+  return rows;
 }
 
 function logConversationEvent({
@@ -681,6 +817,135 @@ async function startDashboardServer() {
         return { ok: false, error: String(error?.message || 'broadcast-send-failed') };
       }
     },
+    onGetSettings: async () => ({
+      autoReloadFlows: config.autoReloadFlows !== false,
+      runtimeMode: String(config.runtimeMode || ''),
+    }),
+    onUpdateSettings: async ({ autoReloadFlows }) => {
+      if (typeof autoReloadFlows !== 'boolean') {
+        return { ok: false, error: 'autoReloadFlows must be boolean' };
+      }
+
+      config = {
+        ...config,
+        autoReloadFlows,
+      };
+      saveUserConfig(config);
+      setupFlowWatcher();
+      logger?.info?.({ autoReloadFlows }, 'Settings updated');
+
+      return {
+        ok: true,
+        autoReloadFlows: config.autoReloadFlows !== false,
+      };
+    },
+    onClearRuntimeCache: async () => {
+      try {
+        clearEngineRuntimeCaches();
+        contactCache.clear();
+        logger?.info?.('Runtime caches cleared from dashboard settings');
+        return { ok: true };
+      } catch (error) {
+        logger?.error?.(
+          {
+            err: {
+              name: error?.name || 'Error',
+              message: error?.message || 'clear-runtime-cache-failed',
+              stack: error?.stack || '',
+            },
+          },
+          'Failed to clear runtime cache'
+        );
+        return { ok: false, error: String(error?.message || 'clear-runtime-cache-failed') };
+      }
+    },
+    onGetDbInfo: async () => getDatabaseInfo(),
+    onGetSessionManagementOverview: async () => buildSessionManagementOverview(),
+    onListSessionManagementFlows: async () => listSessionManagementFlows(),
+    onListActiveSessionsForManagement: async ({ search, limit }) => (
+      listActiveSessionsForManagement({ search, limit })
+    ),
+    onClearActiveSessionsAll: async () => {
+      try {
+        const removed = clearActiveSessions();
+        logger?.info?.({ removed: removed.length }, 'Cleared all active sessions');
+        return { ok: true, removed: removed.length };
+      } catch (error) {
+        return { ok: false, error: String(error?.message || 'failed-to-clear-active-sessions') };
+      }
+    },
+    onClearActiveSessionsByFlow: async ({ flowPath }) => {
+      const normalizedFlowPath = String(flowPath ?? '').trim();
+      if (!normalizedFlowPath) {
+        return { ok: false, error: 'flowPath is required' };
+      }
+      try {
+        const removed = clearActiveSessionsByFlowPath(normalizedFlowPath);
+        logger?.info?.({ flowPath: normalizedFlowPath, removed: removed.length }, 'Cleared active sessions by flow');
+        return { ok: true, removed: removed.length };
+      } catch (error) {
+        return { ok: false, error: String(error?.message || 'failed-to-clear-flow-sessions') };
+      }
+    },
+    onResetSessionsByJid: async ({ jid }) => {
+      const normalizedJid = String(jid ?? '').trim();
+      if (!normalizedJid) {
+        return { ok: false, error: 'jid is required' };
+      }
+
+      try {
+        const active = getActiveSessions().filter(session => String(session?.jid || '').trim() === normalizedJid);
+        for (const session of active) {
+          deleteSession(normalizedJid, {
+            flowPath: session.flowPath,
+            botType: session.botType,
+          });
+        }
+        logger?.info?.({ jid: normalizedJid, removed: active.length }, 'Reset sessions by JID');
+        return { ok: true, removed: active.length };
+      } catch (error) {
+        return { ok: false, error: String(error?.message || 'failed-to-reset-session-by-jid') };
+      }
+    },
+    onUpdateFlowSessionTimeout: async ({ flowPath, sessionTimeoutMinutes }) => {
+      const normalizedFlowPath = String(flowPath ?? '').trim();
+      const normalizedTimeout = normalizeTimeoutMinutes(sessionTimeoutMinutes);
+      if (!normalizedFlowPath) {
+        return { ok: false, error: 'flowPath is required' };
+      }
+      if (normalizedTimeout == null) {
+        return { ok: false, error: 'sessionTimeoutMinutes must be >= 0' };
+      }
+
+      const flow = getActiveFlows().find(item => String(item.flowPath) === normalizedFlowPath);
+      if (!flow) {
+        return { ok: false, error: 'flow-not-found' };
+      }
+
+      if (!flow.runtimeConfig || typeof flow.runtimeConfig !== 'object') {
+        flow.runtimeConfig = {};
+      }
+      if (!flow.runtimeConfig.sessionLimits || typeof flow.runtimeConfig.sessionLimits !== 'object') {
+        flow.runtimeConfig.sessionLimits = {};
+      }
+      flow.runtimeConfig.sessionLimits.sessionTimeoutMinutes = normalizedTimeout;
+
+      config = {
+        ...config,
+        flowSessionTimeoutOverrides: {
+          ...(config.flowSessionTimeoutOverrides || {}),
+          [normalizedFlowPath]: normalizedTimeout,
+        },
+      };
+      saveUserConfig(config);
+      logger?.info?.({ flowPath: normalizedFlowPath, sessionTimeoutMinutes: normalizedTimeout }, 'Updated flow timeout');
+
+      return {
+        ok: true,
+        flowPath: normalizedFlowPath,
+        sessionTimeoutMinutes: normalizedTimeout,
+      };
+    },
   });
 
   await dashboardServer.start();
@@ -718,7 +983,7 @@ function setupFlowWatcher() {
   stopFlowWatcher();
   clearTimeout(reloadDebounceTimer);
 
-  if (!isDevelopmentMode(config)) return;
+  if (!isDevelopmentMode(config) || config.autoReloadFlows === false) return;
 
   const flowPaths = getActiveFlows().map(flow => path.resolve(flow.flowPath));
   const byDirectory = new Map();
@@ -769,7 +1034,7 @@ async function reloadFlow({ source = 'manual' } = {}) {
     }
 
     const nextRegistry = loadFlowRegistryFromConfig(config);
-    currentFlowRegistry = nextRegistry;
+    currentFlowRegistry = applyFlowSessionTimeoutOverrides(nextRegistry, config);
     warnedMissingTestTargets = false;
 
     if (currentSocket) {
@@ -868,7 +1133,7 @@ async function start() {
   cleanupSignalAuthState({ reason: 'startup', forceLog: true });
   startAuthStateMaintenance();
 
-  currentFlowRegistry = loadFlowRegistryFromConfig(config);
+  currentFlowRegistry = applyFlowSessionTimeoutOverrides(loadFlowRegistryFromConfig(config), config);
   const activeFlows = getActiveFlows();
   console.log(`Fluxos carregados - ${activeFlows.length} ativo(s)\n`);
   for (const flow of activeFlows) {

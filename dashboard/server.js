@@ -487,6 +487,17 @@ export class DashboardServer {
     onHumanEndSession = async () => ({ ok: false, error: 'not-implemented' }),
     onBroadcastListContacts = async () => ({ contacts: [] }),
     onBroadcastSend = async () => ({ ok: false, error: 'not-implemented' }),
+    onGetSettings = async () => ({ autoReloadFlows: true }),
+    onUpdateSettings = async () => ({ ok: false, error: 'not-implemented' }),
+    onClearRuntimeCache = async () => ({ ok: false, error: 'not-implemented' }),
+    onGetDbInfo = async () => ({}),
+    onGetSessionManagementOverview = async () => ({}),
+    onListSessionManagementFlows = async () => [],
+    onListActiveSessionsForManagement = async () => [],
+    onClearActiveSessionsAll = async () => ({ ok: false, error: 'not-implemented' }),
+    onClearActiveSessionsByFlow = async () => ({ ok: false, error: 'not-implemented' }),
+    onResetSessionsByJid = async () => ({ ok: false, error: 'not-implemented' }),
+    onUpdateFlowSessionTimeout = async () => ({ ok: false, error: 'not-implemented' }),
     logger = null,
   } = {}) {
     this.host = host;
@@ -501,6 +512,17 @@ export class DashboardServer {
     this.onHumanEndSession = onHumanEndSession;
     this.onBroadcastListContacts = onBroadcastListContacts;
     this.onBroadcastSend = onBroadcastSend;
+    this.onGetSettings = onGetSettings;
+    this.onUpdateSettings = onUpdateSettings;
+    this.onClearRuntimeCache = onClearRuntimeCache;
+    this.onGetDbInfo = onGetDbInfo;
+    this.onGetSessionManagementOverview = onGetSessionManagementOverview;
+    this.onListSessionManagementFlows = onListSessionManagementFlows;
+    this.onListActiveSessionsForManagement = onListActiveSessionsForManagement;
+    this.onClearActiveSessionsAll = onClearActiveSessionsAll;
+    this.onClearActiveSessionsByFlow = onClearActiveSessionsByFlow;
+    this.onResetSessionsByJid = onResetSessionsByJid;
+    this.onUpdateFlowSessionTimeout = onUpdateFlowSessionTimeout;
     this.logger = logger?.child ? logger.child({ module: 'dashboard-server' }) : logger;
     this.server = null;
     this.wss = null;
@@ -564,6 +586,127 @@ export class DashboardServer {
       if (requestUrl.pathname === '/api/handoff/blocks') {
         const blocks = normalizeFlowBlocks(this.getFlowBlocks());
         sendJson(res, 200, { blocks });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/settings' && req.method === 'GET') {
+        const settings = await this.onGetSettings();
+        sendJson(res, 200, settings || {});
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/settings' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const result = await this.onUpdateSettings({
+          autoReloadFlows: body?.autoReloadFlows,
+        });
+        if (!result?.ok) {
+          sendJson(res, 400, { error: result?.error || 'failed-to-update-settings' });
+          return;
+        }
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/settings/cache/clear' && req.method === 'POST') {
+        const result = await this.onClearRuntimeCache();
+        if (!result?.ok) {
+          sendJson(res, 500, { error: result?.error || 'failed-to-clear-cache' });
+          return;
+        }
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/settings/db' && req.method === 'GET') {
+        const info = await this.onGetDbInfo();
+        sendJson(res, 200, info || {});
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/sessions/overview' && req.method === 'GET') {
+        const overview = await this.onGetSessionManagementOverview();
+        sendJson(res, 200, overview || {});
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/sessions/flows' && req.method === 'GET') {
+        const flows = await this.onListSessionManagementFlows();
+        sendJson(res, 200, { flows: Array.isArray(flows) ? flows : [] });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/sessions/active' && req.method === 'GET') {
+        const search = String(requestUrl.searchParams.get('search') ?? '').trim();
+        const limit = Math.max(1, Math.min(2000, toInt(requestUrl.searchParams.get('limit'), 200)));
+        const sessions = await this.onListActiveSessionsForManagement({ search, limit });
+        sendJson(res, 200, { sessions: Array.isArray(sessions) ? sessions : [] });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/sessions/clear-all' && req.method === 'POST') {
+        const result = await this.onClearActiveSessionsAll();
+        if (!result?.ok) {
+          sendJson(res, 500, { error: result?.error || 'failed-to-clear-active-sessions' });
+          return;
+        }
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/sessions/clear-flow' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const flowPath = String(body?.flowPath ?? '').trim();
+        if (!flowPath) {
+          sendJson(res, 400, { error: 'flowPath is required' });
+          return;
+        }
+        const result = await this.onClearActiveSessionsByFlow({ flowPath });
+        if (!result?.ok) {
+          sendJson(res, 500, { error: result?.error || 'failed-to-clear-flow-sessions' });
+          return;
+        }
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/sessions/reset-jid' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const jid = String(body?.jid ?? '').trim();
+        if (!jid) {
+          sendJson(res, 400, { error: 'jid is required' });
+          return;
+        }
+        const result = await this.onResetSessionsByJid({ jid });
+        if (!result?.ok) {
+          sendJson(res, 500, { error: result?.error || 'failed-to-reset-session-by-jid' });
+          return;
+        }
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/sessions/timeout' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const flowPath = String(body?.flowPath ?? '').trim();
+        const sessionTimeoutMinutes = toInt(body?.sessionTimeoutMinutes, -1);
+        if (!flowPath) {
+          sendJson(res, 400, { error: 'flowPath is required' });
+          return;
+        }
+        if (sessionTimeoutMinutes < 0) {
+          sendJson(res, 400, { error: 'sessionTimeoutMinutes must be >= 0' });
+          return;
+        }
+        const result = await this.onUpdateFlowSessionTimeout({
+          flowPath,
+          sessionTimeoutMinutes,
+        });
+        if (!result?.ok) {
+          sendJson(res, 500, { error: result?.error || 'failed-to-update-flow-timeout' });
+          return;
+        }
+        sendJson(res, 200, result);
         return;
       }
 

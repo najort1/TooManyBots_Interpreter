@@ -75,6 +75,10 @@ export class LRUCache {
   get size() {
     return this._map.size;
   }
+
+  clear() {
+    this._map.clear();
+  }
 }
 
 /**
