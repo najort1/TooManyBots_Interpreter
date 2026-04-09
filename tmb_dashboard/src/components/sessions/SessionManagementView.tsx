@@ -90,6 +90,7 @@ export function SessionManagementView({
                   onClick={onClearAll}
                   disabled={busyAction}
                 >
+                  <i className="fa-solid fa-triangle-exclamation" aria-hidden="true" />
                   Limpar todas as sessoes ativas
                 </button>
                 <button
@@ -98,6 +99,7 @@ export function SessionManagementView({
                   onClick={onClearFlow}
                   disabled={busyAction || !selectedFlowPath}
                 >
+                  <i className="fa-solid fa-broom" aria-hidden="true" />
                   Limpar sessoes do flow selecionado
                 </button>
               </div>

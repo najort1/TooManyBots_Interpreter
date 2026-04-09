@@ -1,7 +1,7 @@
 export const panelClass = 'rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]';
 
 export const buttonBaseClass =
-  'inline-flex h-9 items-center justify-center gap-1 rounded-xl border px-3 text-[0.78rem] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60';
+  'inline-flex h-9 items-center justify-center gap-1.5 rounded-xl border px-3 text-[0.78rem] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60';
 
 export const iconButtonClass = 'w-9 p-0';
 

@@ -514,6 +514,7 @@ export function BroadcastView({
             onClick={onClearImage}
             disabled={!imageFileName}
           >
+            <i className="fa-regular fa-trash-can" aria-hidden="true" />
             Remover imagem
           </button>
           <button
