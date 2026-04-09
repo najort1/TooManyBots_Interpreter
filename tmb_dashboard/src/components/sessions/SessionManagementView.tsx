@@ -2,6 +2,7 @@
 import { buttonBaseClass, inputBaseClass, panelClass, timelineItemClass } from '../../lib/uiTokens';
 import type { ActiveSessionManagementItem, SessionFlowConfigItem, SessionOverview } from '../../types';
 import { EmptyStateMascot } from '../feedback/EmptyStateMascot';
+import { KpiCard } from '../KpiCard';
 
 interface SessionManagementViewProps {
   overview: SessionOverview | null;
@@ -51,18 +52,25 @@ export function SessionManagementView({
   return (
     <section className="mx-auto max-w-[1560px] space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <article className={panelClass}>
-          <p className="text-[0.78rem] uppercase tracking-[0.06em] text-slate-500">Sessoes Ativas</p>
-          <p className="mt-1 text-[1.8rem] font-extrabold">{overview?.activeSessions ?? 0}</p>
-        </article>
-        <article className={panelClass}>
-          <p className="text-[0.78rem] uppercase tracking-[0.06em] text-slate-500">Sessoes em Handoff</p>
-          <p className="mt-1 text-[1.8rem] font-extrabold">{overview?.handoffSessions ?? 0}</p>
-        </article>
-        <article className={panelClass}>
-          <p className="text-[0.78rem] uppercase tracking-[0.06em] text-slate-500">Tempo Medio de Sessao</p>
-          <p className="mt-1 text-[1.8rem] font-extrabold">{fmtDuration(overview?.averageSessionDurationMs ?? 0)}</p>
-        </article>
+        <KpiCard
+          title="Sessoes Ativas"
+          value={overview?.activeSessions ?? 0}
+          icon="fa-solid fa-users"
+          color="blue"
+        />
+        <KpiCard
+          title="Sessoes em Handoff"
+          value={overview?.handoffSessions ?? 0}
+          icon="fa-solid fa-headset"
+          color="amber"
+        />
+        <KpiCard
+          title="Tempo Medio de Sessao"
+          value={overview?.averageSessionDurationMs ?? 0}
+          icon="fa-regular fa-clock"
+          color="emerald"
+          formatValue={val => fmtDuration(val)}
+        />
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.15fr_1fr]">

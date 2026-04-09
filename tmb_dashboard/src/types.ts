@@ -1,6 +1,6 @@
 export type DashboardMode = 'CONVERSATION' | 'COMMAND';
 
-export type DashboardView = 'analytics' | 'handoff' | 'broadcast' | 'sessions' | 'settings';
+export type DashboardView = 'analytics' | 'handoff' | 'broadcast' | 'sessions' | 'settings' | 'flows';
 
 export interface RuntimeHealth {
   status: string;
@@ -208,4 +208,14 @@ export interface ActiveSessionManagementItem {
   lastActivityAt: number;
   durationMs: number;
   handoffActive: boolean;
+}
+
+export interface BotInfo {
+  fileName: string;
+  flowPath: string;
+  botType: string;
+  totalBlocks: number;
+  syntaxValid: boolean;
+  syntaxError: string | null;
+  status: 'active' | 'inactive' | 'error';
 }

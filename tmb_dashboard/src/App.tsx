@@ -1,4 +1,4 @@
-﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchActiveSessionsForManagement,
   fetchBroadcastContacts,
@@ -31,6 +31,7 @@ import { AnalyticsView } from './components/analytics/AnalyticsView';
 import { BroadcastView } from './components/broadcast/BroadcastView';
 import { HandoffView } from './components/handoff/HandoffView';
 import { SessionManagementView } from './components/sessions/SessionManagementView';
+import { FlowsView } from './components/flows/FlowsView';
 import { SettingsView } from './components/settings/SettingsView';
 import { Modal } from './components/Modal';
 import { ToastCenter } from './components/feedback/ToastCenter';
@@ -1337,6 +1338,12 @@ function App() {
               onUpdateTimeout={() => {
                 void handleUpdateSessionTimeout();
               }}
+            />
+          )}
+
+          {renderedView === 'flows' && (
+            <FlowsView 
+              onShowNotice={showNotice}
             />
           )}
 

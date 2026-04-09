@@ -1,4 +1,4 @@
-﻿import http from 'node:http';
+import http from 'node:http';
 import { URL } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -19,6 +19,7 @@ import {
   listConversationEventsSinceByFlowPath,
   listConversationEventsSinceByJid,
 } from '../db/index.js';
+import { loadFlow, getFlowBotType } from '../engine/flowLoader.js';
 import { BROADCAST_LIMITS, INTERNAL_VAR } from '../config/constants.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -587,6 +588,52 @@ export class DashboardServer {
       if (requestUrl.pathname === '/api/handoff/blocks') {
         const blocks = normalizeFlowBlocks(this.getFlowBlocks());
         sendJson(res, 200, { blocks });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/bots' && req.method === 'GET') {
+        try {
+          const botsDir = path.resolve(__dirname, '..', 'bots');
+          const tmbFiles = fs.existsSync(botsDir) ? fs.readdirSync(botsDir).filter(f => f.endsWith('.tmb')) : [];
+          const activeFlowsInfo = this.getRuntimeInfo();
+          
+          const bots = tmbFiles.map(file => {
+            const flowPath = path.join(botsDir, file);
+            let botType = 'unknown';
+            let totalBlocks = 0;
+            let syntaxError = null;
+            let isActive = false;
+
+            // Check if active
+            const allActivePaths = [
+              ...(activeFlowsInfo?.flowPathsByMode?.conversation || []),
+              ...(activeFlowsInfo?.flowPathsByMode?.command || [])
+            ].map(p => path.resolve(p));
+            isActive = allActivePaths.includes(path.resolve(flowPath));
+
+            try {
+              const parsed = loadFlow(flowPath);
+              botType = String(parsed.botType || getFlowBotType(parsed));
+              totalBlocks = Array.isArray(parsed.blocks) ? parsed.blocks.length : 0;
+            } catch (err) {
+              syntaxError = err.message || 'Erro de sintaxe';
+            }
+
+            return {
+              fileName: file,
+              flowPath: flowPath,
+              botType: botType,
+              totalBlocks: totalBlocks,
+              syntaxValid: !syntaxError,
+              syntaxError: syntaxError,
+              status: syntaxError ? 'error' : (isActive ? 'active' : 'inactive')
+            };
+          });
+
+          sendJson(res, 200, { bots });
+        } catch (error) {
+          sendJson(res, 500, { error: 'Failed to list bots: ' + String(error.message) });
+        }
         return;
       }
 

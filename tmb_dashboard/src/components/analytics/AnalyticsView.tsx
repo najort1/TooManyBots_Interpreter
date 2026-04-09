@@ -1,9 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useMemo } from 'react';
 import type { ChartConfiguration } from 'chart.js';
 import { ChartCanvas } from '../charts/ChartCanvas';
 import { fmtDuration, fmtTime, isLikelyErrorMessage } from '../../lib/format';
 import { buttonBaseClass, panelClass } from '../../lib/uiTokens';
 import type { DashboardMode, DashboardStats, EventLog } from '../../types';
+import { KpiCard } from '../KpiCard';
 
 interface AnalyticsViewProps {
   mode: DashboardMode;
@@ -169,83 +170,6 @@ function PanelTitle({ icon, text }: { icon: string; text: string }) {
   );
 }
 
-function useCountUp(target: number, durationMs = 420): number {
-  const [displayValue, setDisplayValue] = useState(target);
-  const previousValueRef = useRef(target);
-  const prefersReducedMotion = useMemo(
-    () => (typeof window !== 'undefined' && window.matchMedia
-      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      : false),
-    []
-  );
-
-  useEffect(() => {
-    const startValue = previousValueRef.current;
-    const endValue = Number.isFinite(target) ? target : 0;
-    previousValueRef.current = endValue;
-
-    if (prefersReducedMotion) {
-      setDisplayValue(endValue);
-      return;
-    }
-
-    const delta = endValue - startValue;
-    if (Math.abs(delta) < 0.001) {
-      setDisplayValue(endValue);
-      return;
-    }
-
-    let rafId = 0;
-    const startAt = performance.now();
-    const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
-
-    const tick = (now: number) => {
-      const progress = Math.min((now - startAt) / durationMs, 1);
-      const nextValue = startValue + (delta * easeOut(progress));
-      setDisplayValue(nextValue);
-      if (progress < 1) {
-        rafId = window.requestAnimationFrame(tick);
-      }
-    };
-
-    rafId = window.requestAnimationFrame(tick);
-    return () => {
-      window.cancelAnimationFrame(rafId);
-    };
-  }, [durationMs, prefersReducedMotion, target]);
-
-  return displayValue;
-}
-
-function KpiCard({
-  title,
-  value,
-  icon,
-  valueClass = '',
-  formatValue,
-}: {
-  title: string;
-  value: number;
-  icon: string;
-  valueClass?: string;
-  formatValue?: (value: number) => string;
-}) {
-  const animatedValue = useCountUp(Number(value) || 0);
-  const renderedValue = formatValue
-    ? formatValue(animatedValue)
-    : `${Math.max(0, Math.round(animatedValue))}`;
-
-  return (
-    <article className="rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]">
-      <p className="inline-flex items-center gap-2 text-[0.78rem] uppercase tracking-[0.06em] text-slate-500">
-        <i className={`${icon} text-[0.78rem] text-[#2b5ea5]`} aria-hidden="true" />
-        <span>{title}</span>
-      </p>
-      <p className={`mt-1 text-[1.78rem] font-extrabold ${valueClass}`.trim()}>{renderedValue}</p>
-    </article>
-  );
-}
-
 export function AnalyticsView({
   mode,
   stats,
@@ -290,41 +214,43 @@ export function AnalyticsView({
               title="Taxa de Conclusao Total"
               value={Number((safeStats.completionRateTotal ?? 0) * 100)}
               icon="fa-regular fa-circle-check"
-              valueClass="text-[#0f766e]"
+              color="emerald"
               formatValue={value => `${value.toFixed(1)}%`}
             />
             <KpiCard
               title="Abandono Total"
               value={Number((safeStats.abandonmentRateTotal ?? safeStats.abandonmentRate ?? 0) * 100)}
               icon="fa-solid fa-person-walking-arrow-right"
-              valueClass="text-[#c62828]"
+              color="red"
               formatValue={value => `${value.toFixed(1)}%`}
             />
             <KpiCard
               title="Tempo Medio Total"
               value={Number(avgDurationTotal)}
               icon="fa-regular fa-clock"
+              color="blue"
               formatValue={value => fmtDuration(Math.max(0, Math.round(value)))}
             />
-            <KpiCard title="Total de Sessoes" value={safeStats.totalSessions ?? 0} icon="fa-solid fa-layer-group" valueClass="text-[#0f766e]" />
+            <KpiCard title="Total de Sessoes" value={safeStats.totalSessions ?? 0} icon="fa-solid fa-layer-group" color="emerald" />
           </>
         ) : (
           <>
-            <KpiCard title="Execucoes Hoje" value={safeStats.totalExecutions ?? 0} icon="fa-solid fa-bolt" />
+            <KpiCard title="Execucoes Hoje" value={safeStats.totalExecutions ?? 0} icon="fa-solid fa-bolt" color="blue" />
             <KpiCard
               title="Latencia Media"
               value={Number(safeStats.avgLatencyMs ?? 0)}
               icon="fa-solid fa-gauge-high"
+              color="amber"
               formatValue={value => `${Math.max(0, Math.round(value))}ms`}
             />
             <KpiCard
               title="Sucesso"
               value={Number((safeStats.successRate ?? 0) * 100)}
               icon="fa-regular fa-circle-check"
-              valueClass="text-[#0f766e]"
+              color="emerald"
               formatValue={value => `${value.toFixed(1)}%`}
             />
-            <KpiCard title="Pico / Hora" value={safeStats.peakPerHour ?? 0} icon="fa-solid fa-chart-line" />
+            <KpiCard title="Pico / Hora" value={safeStats.peakPerHour ?? 0} icon="fa-solid fa-chart-line" color="purple" />
           </>
         )}
       </div>

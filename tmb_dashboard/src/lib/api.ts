@@ -11,6 +11,7 @@ import type {
   HandoffBlock,
   HandoffSession,
   RuntimeHealth,
+  BotInfo,
 } from '../types';
 
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').trim();
@@ -67,6 +68,11 @@ export async function fetchHealth(): Promise<RuntimeHealth> {
 
 export async function postReloadFlow(): Promise<void> {
   await requestJson('/api/reload', { method: 'POST' });
+}
+
+export async function fetchBots(): Promise<BotInfo[]> {
+  const data = await requestJson<{ bots?: BotInfo[] }>('/api/bots');
+  return Array.isArray(data.bots) ? data.bots : [];
 }
 
 export async function fetchStats(mode: 'conversation' | 'command'): Promise<DashboardStats> {
