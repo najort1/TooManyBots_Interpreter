@@ -43,6 +43,7 @@ import type {
   EventLog,
   BroadcastContact,
   BroadcastSendResult,
+  BroadcastSendProgress,
   HandoffBlock,
   HandoffSession,
   ActiveSessionManagementItem,
@@ -61,6 +62,7 @@ const WS_REFRESH_EVENT_TYPES = new Set([
   'human-message-outgoing',
   'human-image-outgoing',
 ]);
+const TRANSIENT_WS_EVENT_TYPES = new Set(['broadcast-send-progress']);
 
 function toDashboardMode(mode: string): DashboardMode {
   return String(mode).toLowerCase() === 'command' ? 'COMMAND' : 'CONVERSATION';
@@ -160,6 +162,53 @@ function mapMessageToTone(message: string): ToastTone {
   return 'info';
 }
 
+function readMetadataNumber(log: EventLog, key: string, fallback = 0): number {
+  const metadata = log.metadata;
+  if (!metadata || typeof metadata !== 'object') return fallback;
+  const raw = (metadata as Record<string, unknown>)[key];
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function toBroadcastProgress(log: EventLog): BroadcastSendProgress | null {
+  if (String(log.eventType || '').trim().toLowerCase() !== 'broadcast-send-progress') {
+    return null;
+  }
+
+  const attempted = Math.max(0, readMetadataNumber(log, 'attempted', 0));
+  const sent = Math.max(0, readMetadataNumber(log, 'sent', 0));
+  const failed = Math.max(0, readMetadataNumber(log, 'failed', 0));
+  const processed = Math.max(0, Math.min(attempted, readMetadataNumber(log, 'processed', sent + failed)));
+  const remaining = Math.max(0, readMetadataNumber(log, 'remaining', attempted - processed));
+  const percent = attempted > 0
+    ? Math.max(0, Math.min(100, readMetadataNumber(log, 'percent', Math.round((processed / attempted) * 100))))
+    : 0;
+  const statusRaw = readMetadataText(log, 'status').toLowerCase();
+  const status: BroadcastSendProgress['status'] =
+    statusRaw === 'completed'
+      ? 'completed'
+      : (statusRaw === 'started' ? 'started' : 'sending');
+  const recipientStatusRaw = readMetadataText(log, 'recipientStatus').toLowerCase();
+  const recipientStatus: BroadcastSendProgress['recipientStatus'] =
+    recipientStatusRaw === 'failed'
+      ? 'failed'
+      : (recipientStatusRaw === 'sent' ? 'sent' : '');
+  const jid = String(log.jid || '').trim();
+
+  return {
+    campaignId: Math.max(0, readMetadataNumber(log, 'campaignId', 0)),
+    attempted,
+    processed,
+    sent,
+    failed,
+    remaining,
+    percent,
+    status,
+    recipientStatus,
+    jid: jid || '',
+  };
+}
+
 function App() {
   const [view, setView] = useState<DashboardView>('analytics');
   const [renderedView, setRenderedView] = useState<DashboardView>('analytics');
@@ -199,6 +248,7 @@ function App() {
   const [busyBroadcastSend, setBusyBroadcastSend] = useState(false);
   const [broadcastLoadingContacts, setBroadcastLoadingContacts] = useState(false);
   const [broadcastLastResult, setBroadcastLastResult] = useState<BroadcastSendResult | null>(null);
+  const [broadcastProgress, setBroadcastProgress] = useState<BroadcastSendProgress | null>(null);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const stored = String(window.localStorage.getItem('tmb_theme') || '').trim().toLowerCase();
     return stored === 'dark' ? 'dark' : 'light';
@@ -232,6 +282,8 @@ function App() {
   const selectedJidRef = useRef(selectedHandoffJid);
   const handoffSessionsRef = useRef(handoffSessions);
   const viewRef = useRef(view);
+  const busyBroadcastSendRef = useRef(busyBroadcastSend);
+  const activeBroadcastCampaignIdRef = useRef<number | null>(null);
   const refreshTimeoutRef = useRef<number | null>(null);
   const toastTimersRef = useRef<Map<string, number>>(new Map());
   const lastCustomerToastByJidRef = useRef<Map<string, number>>(new Map());
@@ -259,6 +311,10 @@ function App() {
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+
+  useEffect(() => {
+    busyBroadcastSendRef.current = busyBroadcastSend;
+  }, [busyBroadcastSend]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -556,30 +612,50 @@ function App() {
           if (incoming.type !== 'event' || !incoming.payload) return;
 
           const payload = incoming.payload;
-          const currentModeQuery = modeToQuery(mode);
-          const activeModeFlowPaths = flowPathsByModeRef.current[currentModeQuery] || [];
-          if (activeModeFlowPaths.length > 0) {
-            const payloadFlowPath = String(payload.flowPath || '');
-            if (!payloadFlowPath || !activeModeFlowPaths.includes(payloadFlowPath)) {
+          const eventType = String(payload.eventType || '');
+          const isTransientEvent = TRANSIENT_WS_EVENT_TYPES.has(eventType);
+          const isBroadcastProgressEvent = eventType === 'broadcast-send-progress';
+          if (!isBroadcastProgressEvent) {
+            const currentModeQuery = modeToQuery(mode);
+            const activeModeFlowPaths = flowPathsByModeRef.current[currentModeQuery] || [];
+            if (activeModeFlowPaths.length > 0) {
+              const payloadFlowPath = String(payload.flowPath || '');
+              if (!payloadFlowPath || !activeModeFlowPaths.includes(payloadFlowPath)) {
+                return;
+              }
+            } else if (flowPathRef.current && payload.flowPath && payload.flowPath !== flowPathRef.current) {
               return;
             }
-          } else if (flowPathRef.current && payload.flowPath && payload.flowPath !== flowPathRef.current) {
-            return;
           }
 
-          setLogs(previous => trimLogs(sortHistory([...previous, payload])));
-
-          if (selectedJidRef.current && payload.jid === selectedJidRef.current) {
-            setSelectedHandoffHistory(previous => trimLogs(sortHistory([...previous, payload]), 300));
+          if (isBroadcastProgressEvent) {
+            const progress = toBroadcastProgress(payload);
+            if (progress) {
+              const trackedCampaignId = activeBroadcastCampaignIdRef.current;
+              const campaignMatches = trackedCampaignId != null && trackedCampaignId > 0 && trackedCampaignId === progress.campaignId;
+              if (busyBroadcastSendRef.current || campaignMatches) {
+                if ((trackedCampaignId == null || trackedCampaignId <= 0) && progress.campaignId > 0) {
+                  activeBroadcastCampaignIdRef.current = progress.campaignId;
+                }
+                setBroadcastProgress(progress);
+              }
+            }
           }
 
-          const eventType = String(payload.eventType || '');
+          if (!isTransientEvent) {
+            setLogs(previous => trimLogs(sortHistory([...previous, payload])));
+
+            if (selectedJidRef.current && payload.jid === selectedJidRef.current) {
+              setSelectedHandoffHistory(previous => trimLogs(sortHistory([...previous, payload]), 300));
+            }
+          }
+
           const chatJidFromMetadata = readMetadataText(payload, 'chatJid');
           const sessionJid = String(chatJidFromMetadata || payload.jid || '').trim();
           const outgoingErrorByText =
             eventType === 'message-outgoing' && isLikelyErrorMessage(String(payload.messageText || ''));
           const shouldRefresh =
-            WS_REFRESH_EVENT_TYPES.has(eventType) || outgoingErrorByText || eventType.includes('human-handoff');
+            !isTransientEvent && (WS_REFRESH_EVENT_TYPES.has(eventType) || outgoingErrorByText || eventType.includes('human-handoff'));
 
           if (eventType === 'human-handoff-requested') {
             pushToast(
@@ -794,6 +870,26 @@ function App() {
       return;
     }
 
+    const estimatedAttempted = Math.max(
+      0,
+      broadcastRecipientMode === 'all' ? broadcastContacts.length : selectedBroadcastJids.length
+    );
+
+    activeBroadcastCampaignIdRef.current = null;
+    setBroadcastProgress({
+      campaignId: 0,
+      attempted: estimatedAttempted,
+      processed: 0,
+      sent: 0,
+      failed: 0,
+      remaining: estimatedAttempted,
+      percent: 0,
+      status: 'started',
+      recipientStatus: '',
+      jid: '',
+    });
+    setBroadcastLastResult(null);
+    busyBroadcastSendRef.current = true;
     setBusyBroadcastSend(true);
     try {
       const result = await postBroadcastSend({
@@ -803,7 +899,20 @@ function App() {
         imageDataUrl: broadcastImageDataUrl || '',
         fileName: broadcastImageFileName || '',
       });
+      activeBroadcastCampaignIdRef.current = result.campaignId || null;
       setBroadcastLastResult(result);
+      setBroadcastProgress({
+        campaignId: result.campaignId,
+        attempted: result.attempted,
+        processed: result.attempted,
+        sent: result.sent,
+        failed: result.failed,
+        remaining: 0,
+        percent: result.attempted > 0 ? 100 : 0,
+        status: 'completed',
+        recipientStatus: '',
+        jid: '',
+      });
       showNotice(`Campanha enviada: ${result.sent}/${result.attempted} entregas.`);
       if (result.failed === 0) {
         setBroadcastMessage('');
@@ -812,11 +921,15 @@ function App() {
         setBroadcastImageFileName('');
       }
     } catch (error) {
+      activeBroadcastCampaignIdRef.current = null;
+      setBroadcastProgress(null);
       showNotice(`Falha ao enviar anuncio: ${String((error as Error)?.message || error)}`);
     } finally {
+      busyBroadcastSendRef.current = false;
       setBusyBroadcastSend(false);
     }
   }, [
+    broadcastContacts.length,
     broadcastImageDataUrl,
     broadcastImageFileName,
     broadcastMessage,
@@ -1013,6 +1126,7 @@ function App() {
               imagePreviewUrl={broadcastImagePreviewUrl}
               busySend={busyBroadcastSend}
               lastResult={broadcastLastResult}
+              sendProgress={broadcastProgress}
               onRecipientModeChange={setBroadcastRecipientMode}
               onSearchChange={setBroadcastSearch}
               onRefreshContacts={() => {

@@ -137,6 +137,19 @@ export interface BroadcastSendResult {
   }>;
 }
 
+export interface BroadcastSendProgress {
+  campaignId: number;
+  attempted: number;
+  processed: number;
+  sent: number;
+  failed: number;
+  remaining: number;
+  percent: number;
+  status: 'started' | 'sending' | 'completed';
+  recipientStatus?: 'sent' | 'failed' | '';
+  jid?: string;
+}
+
 export interface RuntimeSettings {
   autoReloadFlows: boolean;
   runtimeMode?: string;

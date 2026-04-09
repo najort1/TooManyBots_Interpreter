@@ -402,6 +402,56 @@ function logConversationEvent({
   });
 }
 
+function emitDashboardBroadcastProgress({
+  actor = 'dashboard-agent',
+  target = 'all',
+  campaignId = 0,
+  attempted = 0,
+  processed = 0,
+  sent = 0,
+  failed = 0,
+  remaining = 0,
+  percent = 0,
+  status = 'sending',
+  jid = '',
+  recipientStatus = '',
+  error = '',
+} = {}) {
+  if (!dashboardServer) return;
+
+  const attemptedSafe = Math.max(0, Number(attempted) || 0);
+  const processedSafe = Math.max(0, Math.min(attemptedSafe, Number(processed) || 0));
+  const sentSafe = Math.max(0, Number(sent) || 0);
+  const failedSafe = Math.max(0, Number(failed) || 0);
+  const remainingSafe = Math.max(0, Number(remaining) || 0);
+  const percentSafe = Math.max(0, Math.min(100, Number(percent) || 0));
+  const statusSafe = String(status || 'sending');
+
+  dashboardServer.broadcast({
+    occurredAt: Date.now(),
+    eventType: 'broadcast-send-progress',
+    direction: 'system',
+    jid: String(jid || 'system'),
+    flowPath: currentPrimaryFlowPathForLogs(),
+    messageText: `Broadcast ${sentSafe}/${attemptedSafe}`,
+    metadata: {
+      source: 'dashboard-broadcast',
+      actor: String(actor || 'dashboard-agent'),
+      target: String(target || 'all'),
+      campaignId: Number(campaignId) || 0,
+      attempted: attemptedSafe,
+      processed: processedSafe,
+      sent: sentSafe,
+      failed: failedSafe,
+      remaining: remainingSafe,
+      percent: percentSafe,
+      status: statusSafe,
+      recipientStatus: String(recipientStatus || ''),
+      error: String(error || ''),
+    },
+  });
+}
+
 function extractOutgoingMessageText(content) {
   if (!content || typeof content !== 'object') return '';
   if (typeof content.text === 'string' && content.text.trim()) return content.text;
@@ -782,6 +832,13 @@ async function startDashboardServer() {
           target,
           selectedJids,
           message: builtMessage,
+          onProgress: (progress) => {
+            emitDashboardBroadcastProgress({
+              actor,
+              target,
+              ...progress,
+            });
+          },
         });
 
         const sentSummaryText = `Campanha #${result.campaignId}: ${result.sent}/${result.attempted} envios`;

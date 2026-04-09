@@ -18,6 +18,33 @@ function safeErrorMessage(error) {
   return String(error ?? 'Unknown error');
 }
 
+function buildProgressSnapshot(result, {
+  status = 'sending',
+  jid = '',
+  recipientStatus = '',
+  error = '',
+} = {}) {
+  const attempted = Math.max(0, Number(result?.attempted) || 0);
+  const sent = Math.max(0, Number(result?.sent) || 0);
+  const failed = Math.max(0, Number(result?.failed) || 0);
+  const processed = Math.max(0, Math.min(attempted, sent + failed));
+  const remaining = Math.max(0, attempted - processed);
+  const percent = attempted > 0 ? Math.min(100, Math.round((processed / attempted) * 100)) : 0;
+  return {
+    campaignId: Number(result?.campaignId) || 0,
+    attempted,
+    processed,
+    sent,
+    failed,
+    remaining,
+    percent,
+    status: String(status || 'sending'),
+    jid: String(jid || ''),
+    recipientStatus: String(recipientStatus || ''),
+    error: String(error || ''),
+  };
+}
+
 export function createBroadcastService({ logger }) {
   const log = logger?.child ? logger.child({ module: 'broadcast-service' }) : logger;
   const activeLookup = createActiveSessionLookup();
@@ -35,7 +62,7 @@ export function createBroadcastService({ logger }) {
       }));
     },
 
-    async send({ sock, actor = 'dashboard-agent', target = 'all', selectedJids = [], message }) {
+    async send({ sock, actor = 'dashboard-agent', target = 'all', selectedJids = [], message, onProgress = null }) {
       const allContacts = listBroadcastContacts({
         search: '',
         limit: BROADCAST_LIMITS.CONTACT_LIST_MAX,
@@ -69,7 +96,22 @@ export function createBroadcastService({ logger }) {
         failures: [],
       };
 
+      const emitProgress = (payload) => {
+        if (typeof onProgress !== 'function') return;
+        try {
+          onProgress(payload);
+        } catch (error) {
+          const errorText = safeErrorMessage(error);
+          log?.warn?.({ campaignId: result.campaignId, error: errorText }, 'Broadcast progress callback failed');
+        }
+      };
+
+      emitProgress(buildProgressSnapshot(result, { status: 'started' }));
+
       for (const jid of selection.recipients) {
+        let recipientStatus = 'sent';
+        let recipientError = '';
+
         try {
           await sendBroadcastMessage(sock, jid, message);
           markBroadcastRecipientResult({
@@ -80,7 +122,9 @@ export function createBroadcastService({ logger }) {
           });
           result.sent += 1;
         } catch (error) {
+          recipientStatus = 'failed';
           const errorText = safeErrorMessage(error);
+          recipientError = errorText;
           markBroadcastRecipientResult({
             campaignId: campaign.campaignId,
             jid,
@@ -92,10 +136,19 @@ export function createBroadcastService({ logger }) {
           log?.warn?.({ campaignId: campaign.campaignId, jid, error: errorText }, 'Broadcast recipient failed');
         }
 
+        emitProgress(buildProgressSnapshot(result, {
+          status: 'sending',
+          jid,
+          recipientStatus,
+          error: recipientError,
+        }));
+
         if (BROADCAST_LIMITS.SEND_DELAY_MS > 0) {
           await delay(BROADCAST_LIMITS.SEND_DELAY_MS);
         }
       }
+
+      emitProgress(buildProgressSnapshot(result, { status: 'completed' }));
 
       return result;
     },

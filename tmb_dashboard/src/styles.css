@@ -381,12 +381,348 @@ html.theme-transitioning [class*='shadow-'] {
   }
 }
 
+.broadcast-flight-scene {
+  margin-bottom: 14px;
+  border: 1px solid #dce6f3;
+  border-radius: 14px;
+  padding: 12px;
+  background: linear-gradient(180deg, #f9fbff 0%, #eef5ff 100%);
+}
+
+.broadcast-flight-progress {
+  height: 7px;
+  border-radius: 999px;
+  background: #dde8f8;
+  overflow: hidden;
+}
+
+.broadcast-flight-progress > span {
+  display: block;
+  width: 0%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #1e63c9 0%, #22a7f0 100%);
+  transition: width 340ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.broadcast-flight-stage {
+  position: relative;
+  margin-top: 9px;
+  height: 142px;
+  border-radius: 12px;
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 84% 10%, rgba(255, 255, 255, 0.78) 0%, rgba(255, 255, 255, 0) 29%),
+    linear-gradient(180deg, #def1ff 0%, #93c8f4 58%, #89a2ba 58%, #5f7388 100%);
+}
+
+.broadcast-flight-orb {
+  position: absolute;
+  top: 14px;
+  right: 22px;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: radial-gradient(circle at 28% 30%, #fff9cf 0%, #ffe08a 45%, #ffc14f 100%);
+  box-shadow:
+    0 0 0 6px rgba(255, 207, 107, 0.2),
+    0 0 24px rgba(255, 189, 74, 0.4);
+  animation: broadcast-orb-glow 4.4s ease-in-out infinite;
+  z-index: 2;
+}
+
+.broadcast-flight-orb::before,
+.broadcast-flight-orb::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+
+.broadcast-flight-orb::before {
+  box-shadow:
+    -20px -6px 0 -17px rgba(255, 220, 124, 0.95),
+    16px 7px 0 -16px rgba(255, 220, 124, 0.85),
+    0 20px 0 -17px rgba(255, 220, 124, 0.9),
+    0 -20px 0 -17px rgba(255, 220, 124, 0.75);
+}
+
+.broadcast-flight-cloud-layer {
+  position: absolute;
+  left: -60%;
+  width: 220%;
+  border-radius: 999px;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.broadcast-flight-cloud-layer.layer-back {
+  top: 18px;
+  height: 28px;
+  opacity: 0.38;
+  background:
+    radial-gradient(30px 14px at 6% 60%, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0) 100%),
+    radial-gradient(32px 16px at 28% 50%, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 100%),
+    radial-gradient(28px 14px at 50% 58%, rgba(255, 255, 255, 0.83) 0%, rgba(255, 255, 255, 0) 100%),
+    radial-gradient(34px 16px at 74% 54%, rgba(255, 255, 255, 0.88) 0%, rgba(255, 255, 255, 0) 100%),
+    radial-gradient(30px 14px at 96% 52%, rgba(255, 255, 255, 0.85) 0%, rgba(255, 255, 255, 0) 100%);
+  animation: broadcast-cloud-sway 29s ease-in-out infinite alternate;
+  z-index: 1;
+}
+
+.broadcast-flight-cloud-layer.layer-front {
+  top: 44px;
+  height: 34px;
+  opacity: 0.58;
+  background:
+    radial-gradient(36px 18px at 14% 56%, rgba(255, 255, 255, 0.96) 0%, rgba(255, 255, 255, 0) 100%),
+    radial-gradient(42px 19px at 38% 50%, rgba(255, 255, 255, 0.9) 0%, rgba(255, 255, 255, 0) 100%),
+    radial-gradient(38px 18px at 62% 57%, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0) 100%),
+    radial-gradient(40px 19px at 86% 54%, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0) 100%);
+  animation: broadcast-cloud-sway 18s ease-in-out infinite alternate;
+  animation-delay: -4.2s;
+  z-index: 1;
+}
+
+.broadcast-flight-runway {
+  position: absolute;
+  left: -8%;
+  right: -8%;
+  bottom: 0;
+  height: 44px;
+  transform: perspective(460px) rotateX(34deg);
+  transform-origin: bottom;
+  background: linear-gradient(180deg, #6f829a 0%, #4f6074 100%);
+}
+
+.broadcast-flight-runway-strip {
+  position: absolute;
+  left: 10%;
+  right: 10%;
+  bottom: 13px;
+  height: 4px;
+  border-radius: 999px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.9) 0 16px,
+      rgba(255, 255, 255, 0.2) 16px 31px
+    );
+  transform: perspective(460px) rotateX(46deg);
+}
+
+.broadcast-flight-plane-anchor {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 74px;
+  height: 30px;
+  offset-path: path("M 20 118 C 94 118 164 112 228 86 C 285 64 356 14 430 -64");
+  offset-rotate: auto 0deg;
+  offset-distance: 0%;
+  z-index: 4;
+  will-change: transform, opacity, offset-distance;
+  transition:
+    offset-distance 380ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 340ms ease;
+}
+
+.broadcast-flight-trail {
+  position: absolute;
+  left: -92px;
+  top: 52%;
+  width: 90px;
+  height: 3px;
+  border-radius: 999px;
+  transform: translateY(-50%);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0) 0%, rgba(229, 243, 255, 0.92) 100%);
+  filter: blur(0.35px);
+  pointer-events: none;
+}
+
+.broadcast-flight-plane-sprite {
+  width: 74px;
+  height: 30px;
+  display: block;
+  transform-origin: 20% 50%;
+  filter: drop-shadow(0 4px 10px rgba(16, 45, 79, 0.32));
+  will-change: transform;
+}
+
+.broadcast-flight-scene.is-sending .broadcast-flight-plane-sprite {
+  animation: broadcast-plane-bank 1.9s cubic-bezier(0.45, 0, 0.55, 1) infinite;
+}
+
+.broadcast-flight-scene.is-sending .broadcast-flight-trail {
+  animation: broadcast-trail-fade 1.3s ease-in-out infinite;
+}
+
+.broadcast-flight-scene.is-complete .broadcast-flight-plane-anchor {
+  pointer-events: none;
+}
+
+.broadcast-flight-scene.is-sending .broadcast-flight-runway-strip {
+  animation: broadcast-runway-strip 520ms linear infinite;
+}
+
+.broadcast-flight-pill {
+  margin: 0;
+  border: 1px solid #cfe0f4;
+  border-radius: 10px;
+  padding: 8px 10px;
+  text-align: center;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #244163;
+  background: rgba(255, 255, 255, 0.8);
+}
+
+.broadcast-flight-pill strong {
+  margin-right: 4px;
+  font-size: 1rem;
+  color: #123964;
+}
+
+html.theme-dark .broadcast-flight-scene {
+  border-color: #334155;
+  background: linear-gradient(180deg, #0f1b30 0%, #16253c 100%);
+}
+
+html.theme-dark .broadcast-flight-stage {
+  background:
+    radial-gradient(circle at 76% 14%, rgba(226, 232, 240, 0.26) 0%, rgba(226, 232, 240, 0) 33%),
+    linear-gradient(180deg, #112f51 0%, #1a4a78 58%, #43586f 58%, #1f2d3f 100%);
+}
+
+html.theme-dark .broadcast-flight-orb {
+  background: radial-gradient(circle at 30% 30%, #f8fafc 0%, #dbe7f5 48%, #9fb6d0 100%);
+  box-shadow:
+    0 0 0 5px rgba(203, 213, 225, 0.16),
+    0 0 20px rgba(148, 163, 184, 0.28);
+}
+
+html.theme-dark .broadcast-flight-orb::before {
+  box-shadow: none;
+}
+
+html.theme-dark .broadcast-flight-orb::after {
+  inset: 0;
+  background:
+    radial-gradient(circle at 34% 38%, rgba(148, 163, 184, 0.45) 0 14%, rgba(148, 163, 184, 0) 16%),
+    radial-gradient(circle at 62% 58%, rgba(148, 163, 184, 0.4) 0 12%, rgba(148, 163, 184, 0) 14%),
+    radial-gradient(circle at 64% 26%, rgba(148, 163, 184, 0.32) 0 10%, rgba(148, 163, 184, 0) 12%);
+}
+
+html.theme-dark .broadcast-flight-cloud-layer.layer-back {
+  opacity: 0.2;
+}
+
+html.theme-dark .broadcast-flight-cloud-layer.layer-front {
+  opacity: 0.28;
+}
+
+html.theme-dark .broadcast-flight-progress {
+  background: #253a58;
+}
+
+html.theme-dark .broadcast-flight-pill {
+  border-color: #334155;
+  background: rgba(15, 23, 42, 0.78);
+  color: #bfdbfe;
+}
+
+html.theme-dark .broadcast-flight-pill strong {
+  color: #dbeafe;
+}
+
+html.theme-dark .broadcast-flight-plane-sprite {
+  filter: drop-shadow(0 4px 10px rgba(2, 6, 23, 0.48));
+}
+
+@keyframes broadcast-runway-strip {
+  from {
+    background-position: 0 0;
+  }
+  to {
+    background-position: 36px 0;
+  }
+}
+
+@keyframes broadcast-cloud-sway {
+  from {
+    transform: translate3d(-7%, 0, 0);
+  }
+  to {
+    transform: translate3d(7%, 0, 0);
+  }
+}
+
+@keyframes broadcast-orb-glow {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes broadcast-plane-bank {
+  0% {
+    transform: translateY(0) rotate(-2.2deg);
+  }
+  30% {
+    transform: translateY(-0.6px) rotate(1.6deg);
+  }
+  60% {
+    transform: translateY(0.7px) rotate(-1.4deg);
+  }
+  100% {
+    transform: translateY(0) rotate(2deg);
+  }
+}
+
+@keyframes broadcast-trail-fade {
+  0% {
+    opacity: 0.32;
+    transform: translateY(-50%) scaleX(0.94);
+  }
+  50% {
+    opacity: 0.68;
+    transform: translateY(-50%) scaleX(1.04);
+  }
+  100% {
+    opacity: 0.36;
+    transform: translateY(-50%) scaleX(0.96);
+  }
+}
+
+@media (max-width: 840px) {
+  .broadcast-flight-plane-anchor {
+    offset-path: path("M 16 118 C 84 118 150 114 214 90 C 266 70 326 28 386 -50");
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .toast-enter,
   .toast-exit,
   .view-stage-enter,
   .view-stage-exit {
     animation: none !important;
+  }
+
+  .broadcast-flight-scene.is-sending .broadcast-flight-runway-strip,
+  .broadcast-flight-scene.is-sending .broadcast-flight-plane-sprite,
+  .broadcast-flight-scene.is-sending .broadcast-flight-trail,
+  .broadcast-flight-cloud-layer,
+  .broadcast-flight-orb {
+    animation: none !important;
+  }
+
+  .broadcast-flight-plane-anchor,
+  .broadcast-flight-plane-sprite,
+  .broadcast-flight-progress > span {
+    transition: none !important;
   }
 
   html.theme-transitioning,

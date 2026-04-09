@@ -1,6 +1,6 @@
 import { useMemo, useRef } from 'react';
 import { fmtTime, formatJidPhone } from '../../lib/format';
-import type { BroadcastContact, BroadcastSendResult } from '../../types';
+import type { BroadcastContact, BroadcastSendProgress, BroadcastSendResult } from '../../types';
 
 interface BroadcastViewProps {
   contacts: BroadcastContact[];
@@ -13,6 +13,7 @@ interface BroadcastViewProps {
   imagePreviewUrl: string;
   busySend: boolean;
   lastResult: BroadcastSendResult | null;
+  sendProgress: BroadcastSendProgress | null;
   onRecipientModeChange: (value: 'all' | 'selected') => void;
   onSearchChange: (value: string) => void;
   onRefreshContacts: () => void;
@@ -40,6 +41,7 @@ export function BroadcastView({
   imagePreviewUrl,
   busySend,
   lastResult,
+  sendProgress,
   onRecipientModeChange,
   onSearchChange,
   onRefreshContacts,
@@ -54,6 +56,25 @@ export function BroadcastView({
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const selected = useMemo(() => new Set(selectedJids), [selectedJids]);
   const recipientsCount = recipientMode === 'all' ? contacts.length : selectedJids.length;
+  const progressAttempted = Math.max(0, Number(sendProgress?.attempted || recipientsCount));
+  const progressSent = Math.max(0, Number(sendProgress?.sent || 0));
+  const progressRemaining = Math.max(
+    0,
+    Number(sendProgress?.remaining ?? Math.max(0, progressAttempted - progressSent))
+  );
+  const progressFailed = Math.max(0, Number(sendProgress?.failed || 0));
+  const progressPercent = Math.max(0, Math.min(100, Number(sendProgress?.percent || 0)));
+  const progressStatus = sendProgress?.status || 'idle';
+  const progressSending = busySend || progressStatus === 'sending' || progressStatus === 'started';
+  const progressCompleted = progressStatus === 'completed' && progressAttempted > 0;
+  const progressRatio = progressPercent / 100;
+  const runwayRatio = Math.min(1, progressRatio / 0.24);
+  const climbRatio = progressRatio <= 0.24 ? 0 : (progressRatio - 0.24) / 0.76;
+  const planeDistance = progressRatio <= 0.24
+    ? runwayRatio * 26
+    : 26 + Math.pow(climbRatio, 1.22) * 88;
+  const planeScale = progressRatio <= 0.24 ? 1 : Math.max(0.7, 1 - climbRatio * 0.3);
+  const trailOpacity = progressCompleted ? 0 : Math.max(0, Math.min(0.72, progressRatio * 0.9));
 
   return (
     <section className="mx-auto grid max-w-[1560px] grid-cols-1 gap-4 xl:grid-cols-[minmax(320px,460px)_1fr]">
@@ -171,6 +192,71 @@ export function BroadcastView({
             </small>
           ) : null}
         </header>
+
+        <section
+          className={[
+            'broadcast-flight-scene',
+            progressSending ? 'is-sending' : '',
+            progressCompleted ? 'is-complete' : '',
+          ].join(' ')}
+          aria-live="polite"
+        >
+          <div className="broadcast-flight-progress">
+            <span style={{ width: `${progressPercent}%` }} />
+          </div>
+          <div className="broadcast-flight-stage">
+            <div className="broadcast-flight-orb" aria-hidden="true" />
+            <div className="broadcast-flight-cloud-layer layer-back" aria-hidden="true" />
+            <div className="broadcast-flight-cloud-layer layer-front" aria-hidden="true" />
+            <div className="broadcast-flight-runway" aria-hidden="true" />
+            <div className="broadcast-flight-runway-strip" aria-hidden="true" />
+            <div
+              className="broadcast-flight-plane-anchor"
+              style={{
+                offsetDistance: `${planeDistance}%`,
+                transform: `scale(${planeScale})`,
+                opacity: progressCompleted ? 0 : 1,
+              }}
+              aria-hidden="true"
+            >
+              <span
+                className="broadcast-flight-trail"
+                style={{
+                  opacity: trailOpacity,
+                }}
+              />
+              <svg
+                className="broadcast-flight-plane-sprite"
+                viewBox="0 0 128 52"
+                role="presentation"
+                focusable="false"
+              >
+                <path d="M4 27L123 4L72 47L54 31L32 36L45 26L4 27Z" fill="#f8fbff" />
+                <path d="M123 4L72 47L67 28L123 4Z" fill="#d7e4f4" />
+                <path d="M45 26L54 31L32 36L45 26Z" fill="#c1d3ea" />
+                <path d="M4 27L123 4L68 23L45 26L4 27Z" fill="#ffffff" opacity="0.9" />
+                <path
+                  d="M4 27L123 4L72 47L54 31L32 36L45 26L4 27Z"
+                  fill="none"
+                  stroke="#6c88aa"
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+            <p className="broadcast-flight-pill">
+              <strong>{progressSent}</strong> enviados
+            </p>
+            <p className="broadcast-flight-pill">
+              <strong>{progressRemaining}</strong> faltando
+            </p>
+            <p className="broadcast-flight-pill col-span-2 sm:col-span-1">
+              <strong>{progressFailed}</strong> falhas
+            </p>
+          </div>
+        </section>
 
         <label className="mb-2 block text-xs font-bold uppercase tracking-[0.06em] text-slate-500" htmlFor="broadcast-message">
           Mensagem
