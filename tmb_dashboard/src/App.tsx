@@ -22,7 +22,6 @@ import {
   postHandoffImage,
   postHandoffMessage,
   postHandoffResume,
-  postReloadFlow,
   postUpdateFlowSessionTimeout,
 } from './lib/api';
 import { isLikelyErrorMessage } from './lib/format';
@@ -163,6 +162,8 @@ function mapMessageToTone(message: string): ToastTone {
 
 function App() {
   const [view, setView] = useState<DashboardView>('analytics');
+  const [renderedView, setRenderedView] = useState<DashboardView>('analytics');
+  const [viewTransition, setViewTransition] = useState<'idle' | 'enter' | 'exit'>('idle');
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [mode, setMode] = useState<DashboardMode>('CONVERSATION');
   const [availableModes, setAvailableModes] = useState<DashboardMode[]>(['CONVERSATION']);
@@ -218,6 +219,12 @@ function App() {
   const [busySessionAction, setBusySessionAction] = useState(false);
 
   const modeQuery = useMemo(() => modeToQuery(mode), [mode]);
+  const prefersReducedMotion = useMemo(
+    () => (typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false),
+    []
+  );
 
   const flowPathRef = useRef(flowPath);
   const flowPathsByModeRef = useRef(flowPathsByMode);
@@ -257,7 +264,37 @@ function App() {
     const root = document.documentElement;
     root.classList.toggle('theme-dark', theme === 'dark');
     window.localStorage.setItem('tmb_theme', theme);
-  }, [theme]);
+    if (!prefersReducedMotion) {
+      root.classList.add('theme-transitioning');
+      const timer = window.setTimeout(() => {
+        root.classList.remove('theme-transitioning');
+      }, 420);
+      return () => {
+        window.clearTimeout(timer);
+        root.classList.remove('theme-transitioning');
+      };
+    }
+  }, [prefersReducedMotion, theme]);
+
+  useEffect(() => {
+    if (view === renderedView) return;
+    if (prefersReducedMotion) {
+      setRenderedView(view);
+      setViewTransition('idle');
+      return;
+    }
+
+    setViewTransition('exit');
+    const switchTimer = window.setTimeout(() => {
+      setRenderedView(view);
+      setViewTransition('enter');
+      window.requestAnimationFrame(() => setViewTransition('idle'));
+    }, 180);
+
+    return () => {
+      window.clearTimeout(switchTimer);
+    };
+  }, [prefersReducedMotion, renderedView, view]);
 
   const dismissToast = useCallback((id: string) => {
     setToasts(previous => previous.filter(item => item.id !== id));
@@ -605,16 +642,6 @@ function App() {
     };
   }, [mode, pushToast, refreshHandoffQueue, scheduleSoftRefresh]);
 
-  const handleReload = useCallback(async () => {
-    try {
-      await postReloadFlow();
-      showNotice('Flow recarregado com sucesso.');
-      await Promise.all([loadHealth(), refreshStats(), refreshHandoffQueue()]);
-    } catch (error) {
-      showNotice(`Falha ao recarregar flow: ${String((error as Error)?.message || error)}`);
-    }
-  }, [loadHealth, refreshHandoffQueue, refreshStats, showNotice]);
-
   const handleSelectHandoffSession = useCallback(async (jid: string) => {
     setSelectedHandoffJid(jid);
     setResumeBlockId('');
@@ -925,15 +952,20 @@ function App() {
           onModeChange={setMode}
           botName={botName}
           uptimeMs={uptimeMs}
-          onReload={handleReload}
-          onOpenSettings={() => setView('settings')}
           onOpenSidebar={() => setSidebarOpen(true)}
         />
 
         <ToastCenter items={toasts} onDismiss={dismissToast} />
 
-        <main className="flex-1 overflow-auto p-3 sm:p-5">
-          {view === 'analytics' && (
+        <main
+          className={[
+            'flex-1 overflow-auto p-3 sm:p-5',
+            'view-stage',
+            viewTransition === 'enter' ? 'view-stage-enter' : '',
+            viewTransition === 'exit' ? 'view-stage-exit' : '',
+          ].join(' ')}
+        >
+          {renderedView === 'analytics' && (
             <AnalyticsView
               mode={mode}
               stats={stats}
@@ -942,7 +974,7 @@ function App() {
             />
           )}
 
-          {view === 'handoff' && (
+          {renderedView === 'handoff' && (
             <HandoffView
               sessions={handoffSessions}
               blocks={handoffBlocks}
@@ -969,7 +1001,7 @@ function App() {
             />
           )}
 
-          {view === 'broadcast' && (
+          {renderedView === 'broadcast' && (
             <BroadcastView
               contacts={broadcastContacts}
               loadingContacts={broadcastLoadingContacts}
@@ -1004,7 +1036,7 @@ function App() {
             />
           )}
 
-          {view === 'sessions' && (
+          {renderedView === 'sessions' && (
             <SessionManagementView
               overview={sessionOverview}
               activeSessions={activeManagementSessions}
@@ -1037,7 +1069,7 @@ function App() {
             />
           )}
 
-          {view === 'settings' && (
+          {renderedView === 'settings' && (
             <SettingsView
               autoReloadFlows={autoReloadFlows}
               theme={theme}

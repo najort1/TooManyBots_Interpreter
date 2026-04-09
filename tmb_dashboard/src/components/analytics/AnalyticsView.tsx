@@ -1,4 +1,4 @@
-﻿import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChartConfiguration } from 'chart.js';
 import { ChartCanvas } from '../charts/ChartCanvas';
 import { fmtDuration, fmtTime, isLikelyErrorMessage } from '../../lib/format';
@@ -11,7 +11,35 @@ interface AnalyticsViewProps {
   onExport: () => void;
 }
 
-function getPrimaryChartConfig(mode: DashboardMode, stats: DashboardStats): ChartConfiguration {
+function buildChartMotionOptions(prefersReducedMotion: boolean) {
+  if (prefersReducedMotion) {
+    return { animation: false as const };
+  }
+
+  return {
+    animation: {
+      duration: 460,
+      easing: 'easeOutCubic' as const,
+    },
+    transitions: {
+      active: {
+        animation: {
+          duration: 320,
+          easing: 'easeOutQuart' as const,
+        },
+      },
+      show: {
+        animations: {
+          x: { from: 0, duration: 420, easing: 'easeOutCubic' as const },
+          y: { from: 0, duration: 420, easing: 'easeOutCubic' as const },
+        },
+      },
+    },
+  };
+}
+
+function getPrimaryChartConfig(mode: DashboardMode, stats: DashboardStats, prefersReducedMotion: boolean): ChartConfiguration {
+  const motionOptions = buildChartMotionOptions(prefersReducedMotion);
   if (mode === 'CONVERSATION') {
     const funnel = stats.funnel ?? [{ step: 'start', label: 'Inicio', count: stats.conversationsStarted ?? 0 }];
     return {
@@ -31,10 +59,11 @@ function getPrimaryChartConfig(mode: DashboardMode, stats: DashboardStats): Char
         indexAxis: 'y',
         responsive: true,
         maintainAspectRatio: false,
+        ...motionOptions,
         plugins: { legend: { display: false } },
         scales: { x: { beginAtZero: true } },
       },
-    } as ChartConfiguration;
+    } as unknown as ChartConfiguration;
   }
 
   const commandSlices = stats.commands ?? [];
@@ -55,6 +84,7 @@ function getPrimaryChartConfig(mode: DashboardMode, stats: DashboardStats): Char
       responsive: true,
       maintainAspectRatio: false,
       cutout: '62%',
+      ...motionOptions,
       plugins: {
         legend: {
           position: 'right',
@@ -62,10 +92,11 @@ function getPrimaryChartConfig(mode: DashboardMode, stats: DashboardStats): Char
         },
       },
     },
-  } as ChartConfiguration;
+  } as unknown as ChartConfiguration;
 }
 
-function getVolumeChartConfig(mode: DashboardMode, stats: DashboardStats): ChartConfiguration<'line'> {
+function getVolumeChartConfig(mode: DashboardMode, stats: DashboardStats, prefersReducedMotion: boolean): ChartConfiguration<'line'> {
+  const motionOptions = buildChartMotionOptions(prefersReducedMotion);
   const labels = Array.from({ length: 24 }, (_, index) => `${index}h`);
   const hourlyVolume = stats.hourlyVolume ?? Array(24).fill(0);
   const isConversation = mode === 'CONVERSATION';
@@ -90,6 +121,7 @@ function getVolumeChartConfig(mode: DashboardMode, stats: DashboardStats): Chart
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      ...motionOptions,
       plugins: { legend: { display: false } },
       scales: {
         x: { grid: { display: false } },
@@ -99,7 +131,8 @@ function getVolumeChartConfig(mode: DashboardMode, stats: DashboardStats): Chart
   };
 }
 
-function getBottomChartConfig(stats: DashboardStats): ChartConfiguration<'bar'> {
+function getBottomChartConfig(stats: DashboardStats, prefersReducedMotion: boolean): ChartConfiguration<'bar'> {
+  const motionOptions = buildChartMotionOptions(prefersReducedMotion);
   const trend = stats.weeklyTrend ?? [];
   const labels = trend.length ? trend.map(item => item.date) : ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'];
   const started = trend.length ? trend.map(item => item.started) : [0, 0, 0, 0, 0, 0, 0];
@@ -117,6 +150,7 @@ function getBottomChartConfig(stats: DashboardStats): ChartConfiguration<'bar'> 
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      ...motionOptions,
       scales: {
         x: { stacked: true },
         y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } },
@@ -134,14 +168,79 @@ function PanelTitle({ icon, text }: { icon: string; text: string }) {
   );
 }
 
-function KpiCard({ title, value, icon, valueClass = '' }: { title: string; value: string | number; icon: string; valueClass?: string }) {
+function useCountUp(target: number, durationMs = 420): number {
+  const [displayValue, setDisplayValue] = useState(target);
+  const previousValueRef = useRef(target);
+  const prefersReducedMotion = useMemo(
+    () => (typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false),
+    []
+  );
+
+  useEffect(() => {
+    const startValue = previousValueRef.current;
+    const endValue = Number.isFinite(target) ? target : 0;
+    previousValueRef.current = endValue;
+
+    if (prefersReducedMotion) {
+      setDisplayValue(endValue);
+      return;
+    }
+
+    const delta = endValue - startValue;
+    if (Math.abs(delta) < 0.001) {
+      setDisplayValue(endValue);
+      return;
+    }
+
+    let rafId = 0;
+    const startAt = performance.now();
+    const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
+
+    const tick = (now: number) => {
+      const progress = Math.min((now - startAt) / durationMs, 1);
+      const nextValue = startValue + (delta * easeOut(progress));
+      setDisplayValue(nextValue);
+      if (progress < 1) {
+        rafId = window.requestAnimationFrame(tick);
+      }
+    };
+
+    rafId = window.requestAnimationFrame(tick);
+    return () => {
+      window.cancelAnimationFrame(rafId);
+    };
+  }, [durationMs, prefersReducedMotion, target]);
+
+  return displayValue;
+}
+
+function KpiCard({
+  title,
+  value,
+  icon,
+  valueClass = '',
+  formatValue,
+}: {
+  title: string;
+  value: number;
+  icon: string;
+  valueClass?: string;
+  formatValue?: (value: number) => string;
+}) {
+  const animatedValue = useCountUp(Number(value) || 0);
+  const renderedValue = formatValue
+    ? formatValue(animatedValue)
+    : `${Math.max(0, Math.round(animatedValue))}`;
+
   return (
     <article className="rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]">
       <p className="inline-flex items-center gap-2 text-[0.78rem] uppercase tracking-[0.06em] text-slate-500">
         <i className={`${icon} text-[0.78rem] text-[#2b5ea5]`} aria-hidden="true" />
         <span>{title}</span>
       </p>
-      <p className={`mt-1 text-[1.78rem] font-extrabold ${valueClass}`.trim()}>{value}</p>
+      <p className={`mt-1 text-[1.78rem] font-extrabold ${valueClass}`.trim()}>{renderedValue}</p>
     </article>
   );
 }
@@ -154,10 +253,25 @@ export function AnalyticsView({
   logs,
   onExport,
 }: AnalyticsViewProps) {
+  const prefersReducedMotion = useMemo(
+    () => (typeof window !== 'undefined' && window.matchMedia
+      ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false),
+    []
+  );
   const safeStats = useMemo(() => stats ?? {}, [stats]);
-  const primaryChartConfig = useMemo(() => getPrimaryChartConfig(mode, safeStats), [mode, safeStats]);
-  const volumeChartConfig = useMemo(() => getVolumeChartConfig(mode, safeStats), [mode, safeStats]);
-  const bottomChartConfig = useMemo(() => getBottomChartConfig(safeStats), [safeStats]);
+  const primaryChartConfig = useMemo(
+    () => getPrimaryChartConfig(mode, safeStats, prefersReducedMotion),
+    [mode, prefersReducedMotion, safeStats]
+  );
+  const volumeChartConfig = useMemo(
+    () => getVolumeChartConfig(mode, safeStats, prefersReducedMotion),
+    [mode, prefersReducedMotion, safeStats]
+  );
+  const bottomChartConfig = useMemo(
+    () => getBottomChartConfig(safeStats, prefersReducedMotion),
+    [prefersReducedMotion, safeStats]
+  );
 
   const avgDuration = safeStats.avgDurationMs ?? safeStats.averageDurationMs ?? 0;
   const completed = Number(safeStats.completedSessions ?? 0);
@@ -175,22 +289,34 @@ export function AnalyticsView({
             <KpiCard title="Conversas Hoje" value={safeStats.conversationsStarted ?? 0} icon="fa-regular fa-comments" />
             <KpiCard
               title="Abandono"
-              value={`${((safeStats.abandonmentRate ?? 0) * 100).toFixed(1)}%`}
+              value={Number((safeStats.abandonmentRate ?? 0) * 100)}
               icon="fa-solid fa-person-walking-arrow-right"
               valueClass="text-[#c62828]"
+              formatValue={value => `${value.toFixed(1)}%`}
             />
-            <KpiCard title="Tempo Medio" value={fmtDuration(avgDuration)} icon="fa-regular fa-clock" />
+            <KpiCard
+              title="Tempo Medio"
+              value={Number(avgDuration)}
+              icon="fa-regular fa-clock"
+              formatValue={value => fmtDuration(Math.max(0, Math.round(value)))}
+            />
             <KpiCard title="Sessoes Ativas" value={safeStats.activeSessions ?? 0} icon="fa-solid fa-signal" valueClass="text-[#0f766e]" />
           </>
         ) : (
           <>
             <KpiCard title="Execucoes Hoje" value={safeStats.totalExecutions ?? 0} icon="fa-solid fa-bolt" />
-            <KpiCard title="Latencia Media" value={`${safeStats.avgLatencyMs ?? 0}ms`} icon="fa-solid fa-gauge-high" />
+            <KpiCard
+              title="Latencia Media"
+              value={Number(safeStats.avgLatencyMs ?? 0)}
+              icon="fa-solid fa-gauge-high"
+              formatValue={value => `${Math.max(0, Math.round(value))}ms`}
+            />
             <KpiCard
               title="Sucesso"
-              value={`${((safeStats.successRate ?? 0) * 100).toFixed(1)}%`}
+              value={Number((safeStats.successRate ?? 0) * 100)}
               icon="fa-regular fa-circle-check"
               valueClass="text-[#0f766e]"
+              formatValue={value => `${value.toFixed(1)}%`}
             />
             <KpiCard title="Pico / Hora" value={safeStats.peakPerHour ?? 0} icon="fa-solid fa-chart-line" />
           </>
@@ -391,7 +517,7 @@ export function AnalyticsView({
                     <div key={`${item.name}-${index}`} className="flex items-start justify-between gap-3 border-b border-[#ebf1f8] py-2 last:border-b-0">
                       <div>
                         <strong className="block text-[0.85rem]">{item.name}</strong>
-                        <p className="mt-1 text-[0.76rem] text-slate-500">{item.avgLatencyMs}ms · {(item.uptime * 100).toFixed(0)}% uptime</p>
+                        <p className="mt-1 text-[0.76rem] text-slate-500">{item.avgLatencyMs}ms � {(item.uptime * 100).toFixed(0)}% uptime</p>
                       </div>
                       <span className={item.status === 'healthy' ? 'font-bold text-[#0f766e]' : 'font-bold text-[#c62828]'}>
                         {item.status === 'healthy' ? 'OK' : 'ALERTA'}
@@ -407,3 +533,5 @@ export function AnalyticsView({
     </section>
   );
 }
+
+

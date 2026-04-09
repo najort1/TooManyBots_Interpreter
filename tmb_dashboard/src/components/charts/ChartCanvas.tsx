@@ -34,14 +34,28 @@ export function ChartCanvas({
     const context = canvas.getContext('2d');
     if (!context) return;
 
-    const nextConfig = cloneConfig(config);
-    chartRef.current?.destroy();
-    chartRef.current = new Chart(context, nextConfig);
+    if (!chartRef.current) {
+      chartRef.current = new Chart(context, cloneConfig(config));
+    }
 
     return () => {
       chartRef.current?.destroy();
       chartRef.current = null;
     };
+  }, []);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    const nextConfig = cloneConfig(config);
+    const nextType = (nextConfig as { type?: string }).type;
+    if (nextType) {
+      (chart.config as { type?: string }).type = nextType;
+    }
+    chart.data = nextConfig.data;
+    chart.options = nextConfig.options ?? {};
+    chart.update();
   }, [config]);
 
   return (

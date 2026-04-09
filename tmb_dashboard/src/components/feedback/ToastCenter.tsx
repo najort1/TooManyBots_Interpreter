@@ -1,4 +1,6 @@
-﻿export type ToastTone = 'info' | 'success' | 'warning' | 'danger';
+import { useEffect, useRef, useState } from 'react';
+
+export type ToastTone = 'info' | 'success' | 'warning' | 'danger';
 
 export interface ToastItem {
   id: string;
@@ -11,6 +13,8 @@ interface ToastCenterProps {
   items: ToastItem[];
   onDismiss: (id: string) => void;
 }
+
+type RenderedToast = ToastItem & { phase: 'enter' | 'idle' | 'exit' };
 
 function toneIcon(tone: ToastTone): string {
   if (tone === 'success') return 'fa-regular fa-circle-check';
@@ -27,16 +31,70 @@ function toneClass(tone: ToastTone): string {
 }
 
 export function ToastCenter({ items, onDismiss }: ToastCenterProps) {
+  const [rendered, setRendered] = useState<RenderedToast[]>([]);
+  const enterTimersRef = useRef<Map<string, number>>(new Map());
+  const removeTimersRef = useRef<Map<string, number>>(new Map());
+
+  useEffect(() => {
+    const nextIds = new Set(items.map(item => item.id));
+
+    setRendered(previous => {
+      const next = [...previous];
+      const byId = new Map(next.map(item => [item.id, item]));
+
+      for (const toast of items) {
+        const existing = byId.get(toast.id);
+        if (!existing) {
+          next.push({ ...toast, phase: 'enter' });
+          const timer = window.setTimeout(() => {
+            setRendered(curr => curr.map(item => (item.id === toast.id ? { ...item, phase: 'idle' } : item)));
+            enterTimersRef.current.delete(toast.id);
+          }, 360);
+          enterTimersRef.current.set(toast.id, timer);
+          continue;
+        }
+
+        existing.title = toast.title;
+        existing.message = toast.message;
+        existing.tone = toast.tone;
+      }
+
+      return next.map(item => {
+        if (!nextIds.has(item.id) && item.phase !== 'exit') {
+          const timer = window.setTimeout(() => {
+            setRendered(curr => curr.filter(entry => entry.id !== item.id));
+            removeTimersRef.current.delete(item.id);
+          }, 260);
+          removeTimersRef.current.set(item.id, timer);
+          return { ...item, phase: 'exit' };
+        }
+        return item;
+      });
+    });
+  }, [items]);
+
+  useEffect(() => () => {
+    enterTimersRef.current.forEach(timer => window.clearTimeout(timer));
+    removeTimersRef.current.forEach(timer => window.clearTimeout(timer));
+    enterTimersRef.current.clear();
+    removeTimersRef.current.clear();
+  }, []);
+
   return (
     <aside
       className="pointer-events-none fixed right-4 top-[84px] z-[70] flex w-[min(360px,calc(100vw-24px))] flex-col gap-2 max-sm:left-2 max-sm:right-2 max-sm:top-[68px] max-sm:w-auto"
       aria-live="polite"
       aria-atomic="false"
     >
-      {items.map(item => (
+      {rendered.map(item => (
         <article
           key={item.id}
-          className="pointer-events-auto grid grid-cols-[auto_1fr_auto] items-start gap-2 rounded-[14px] border border-[#d6e3f4] bg-[rgba(255,255,255,0.97)] p-3 shadow-[0_14px_34px_rgba(18,32,51,0.15)] backdrop-blur-[8px]"
+          className={[
+            'pointer-events-auto grid grid-cols-[auto_1fr_auto] items-start gap-2 rounded-[14px] border border-[#d6e3f4] bg-[rgba(255,255,255,0.97)] p-3 shadow-[0_14px_34px_rgba(18,32,51,0.15)] backdrop-blur-[8px]',
+            'toast-shell',
+            item.phase === 'enter' ? 'toast-enter' : '',
+            item.phase === 'exit' ? 'toast-exit' : '',
+          ].join(' ')}
         >
           <div className={`inline-flex h-7 w-7 items-center justify-center rounded-full text-[0.82rem] ${toneClass(item.tone)}`} aria-hidden="true">
             <i className={toneIcon(item.tone)} />

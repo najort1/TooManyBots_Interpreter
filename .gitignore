@@ -13,3 +13,16 @@ config.user.json
 data/
 /bots
 *.tmb
+# Agentes IA e Editores
+.agent/
+.cline/
+.codex/
+.continue/
+.cursor/
+.cursorrules
+.gemini/
+.github/
+.trae/
+.windsurf/
+.zed/
+CONVENTIONS.md

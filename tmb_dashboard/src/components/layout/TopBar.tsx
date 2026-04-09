@@ -7,8 +7,6 @@ interface TopBarProps {
   onModeChange: (mode: DashboardMode) => void;
   botName: string;
   uptimeMs: number;
-  onReload: () => void;
-  onOpenSettings: () => void;
   onOpenSidebar: () => void;
 }
 
@@ -21,8 +19,6 @@ export function TopBar({
   onModeChange,
   botName,
   uptimeMs,
-  onReload,
-  onOpenSettings,
   onOpenSidebar,
 }: TopBarProps) {
   const showModeSwitch = availableModes.length > 1;
@@ -85,12 +81,6 @@ export function TopBar({
           <span>Bot: <strong className="text-[#122033]">{botName || 'Desconhecido'}</strong></span>
           <span>Uptime: <strong className="text-[#122033]">{fmtUptime(uptimeMs)}</strong></span>
         </div>
-        <button type="button" className={ghostBtn} onClick={onReload}>
-          <i className="fa-solid fa-rotate-right" aria-hidden="true" /> Recarregar
-        </button>
-        <button type="button" className={ghostBtn} onClick={onOpenSettings}>
-          <i className="fa-solid fa-gear" aria-hidden="true" /> Configuracoes
-        </button>
       </div>
     </header>
   );
