@@ -4,7 +4,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 
-import { initDb, createSession, deleteSession, getSession, updateSession } from '../db/index.js';
+import {
+  initDb,
+  createSession,
+  deleteSession,
+  getSession,
+  updateSession,
+  getConversationDashboardStats,
+  getConversationSessionsTotal,
+  getDatabaseInfo,
+} from '../db/index.js';
 import { handleIncoming } from '../engine/flowEngine.js';
 import { loadFlows } from '../engine/flowLoader.js';
 
@@ -119,4 +128,48 @@ test('flow loader rejects multiple conversation flows in parallel', () => {
   } finally {
     fs.rmSync(tempDir, { recursive: true, force: true });
   }
+});
+
+test('command bot does not create conversation session analytics records', async () => {
+  const now = Date.now();
+  const jid = `no-analytics-${now}@s.whatsapp.net`;
+  const commandFlowPath = `/tmp/command-no-analytics-${now}.tmb`;
+  const commandFlow = {
+    flowPath: commandFlowPath,
+    runtimeConfig: { conversationMode: 'command' },
+    blocks: [
+      { id: 'cmd', type: 'command-input', config: { pattern: '/status', command: 'status', args: [] } },
+      { id: 'txt', type: 'send-text', config: { text: 'ok', waitForResponse: false, captureResponse: false } },
+      { id: 'end', type: 'end-conversation', config: { message: 'ok', resetVariables: true } },
+    ],
+    blockMap: new Map(),
+    indexMap: new Map(),
+    branchMap: new Map(),
+    endIfMap: new Map(),
+  };
+  const sock = {
+    sendMessage: async () => ({ ok: true }),
+  };
+
+  await handleIncoming(sock, jid, '/status', null, commandFlow, `msg-${now}`);
+
+  const stats = getConversationDashboardStats({
+    from: now - (5 * 60 * 1000),
+    to: Date.now() + (5 * 60 * 1000),
+    flowPath: commandFlowPath,
+  });
+
+  assert.equal(stats.conversationsStarted, 0);
+  assert.equal(stats.abandonedSessions, 0);
+  assert.equal(stats.activeSessions, 0);
+  assert.equal(getConversationSessionsTotal(commandFlowPath), 0);
+
+  deleteSession(jid, { flowPath: commandFlowPath, botType: 'command' });
+});
+
+test('database info includes daily size history snapshots', () => {
+  const info = getDatabaseInfo();
+  assert.ok(Array.isArray(info.sizeHistory), 'sizeHistory should be an array');
+  assert.ok((info.sizeHistory?.length || 0) >= 1, 'sizeHistory should have at least one daily point');
+  assert.ok(Number.isFinite(info.totalStorageBytes), 'totalStorageBytes should be numeric');
 });

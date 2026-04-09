@@ -254,6 +254,7 @@ function App() {
     return stored === 'dark' ? 'dark' : 'light';
   });
   const [autoReloadFlows, setAutoReloadFlows] = useState(true);
+  const [broadcastSendIntervalMs, setBroadcastSendIntervalMs] = useState(250);
   const [dbInfo, setDbInfo] = useState<DatabaseInfo | null>(null);
   const [busySaveSettings, setBusySaveSettings] = useState(false);
   const [busyClearRuntimeCache, setBusyClearRuntimeCache] = useState(false);
@@ -416,6 +417,7 @@ function App() {
   const loadRuntimeSettings = useCallback(async () => {
     const settings = await fetchRuntimeSettings();
     setAutoReloadFlows(settings.autoReloadFlows !== false);
+    setBroadcastSendIntervalMs(Math.max(0, Math.floor(Number(settings.broadcastSendIntervalMs ?? 250) || 250)));
   }, []);
 
   const loadDbInfo = useCallback(async () => {
@@ -943,9 +945,26 @@ function App() {
     try {
       const updated = await postRuntimeSettings({ autoReloadFlows: value });
       setAutoReloadFlows(updated.autoReloadFlows !== false);
+      setBroadcastSendIntervalMs(Math.max(0, Math.floor(Number(updated.broadcastSendIntervalMs ?? 250) || 250)));
       showNotice(`Auto-reload ${updated.autoReloadFlows ? 'habilitado' : 'desabilitado'} com sucesso.`);
     } catch (error) {
       showNotice(`Falha ao atualizar auto-reload: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusySaveSettings(false);
+    }
+  }, [showNotice]);
+
+  const handleUpdateBroadcastSendInterval = useCallback(async (value: number) => {
+    const normalized = Math.max(0, Math.floor(Number(value) || 0));
+    setBusySaveSettings(true);
+    try {
+      const updated = await postRuntimeSettings({ broadcastSendIntervalMs: normalized });
+      setAutoReloadFlows(updated.autoReloadFlows !== false);
+      const effective = Math.max(0, Math.floor(Number(updated.broadcastSendIntervalMs ?? normalized) || normalized));
+      setBroadcastSendIntervalMs(effective);
+      showNotice(`Intervalo do anuncio em massa atualizado para ${effective} ms.`);
+    } catch (error) {
+      showNotice(`Falha ao atualizar intervalo do anuncio em massa: ${String((error as Error)?.message || error)}`);
     } finally {
       setBusySaveSettings(false);
     }
@@ -1127,6 +1146,7 @@ function App() {
               busySend={busyBroadcastSend}
               lastResult={broadcastLastResult}
               sendProgress={broadcastProgress}
+              broadcastSendIntervalMs={broadcastSendIntervalMs}
               onRecipientModeChange={setBroadcastRecipientMode}
               onSearchChange={setBroadcastSearch}
               onRefreshContacts={() => {
@@ -1186,6 +1206,7 @@ function App() {
           {renderedView === 'settings' && (
             <SettingsView
               autoReloadFlows={autoReloadFlows}
+              broadcastSendIntervalMs={broadcastSendIntervalMs}
               theme={theme}
               dbInfo={dbInfo}
               busySaveSettings={busySaveSettings}
@@ -1193,6 +1214,9 @@ function App() {
               busyRefreshDb={busyRefreshDbInfo}
               onToggleAutoReload={value => {
                 void handleToggleAutoReload(value);
+              }}
+              onUpdateBroadcastSendInterval={value => {
+                void handleUpdateBroadcastSendInterval(value);
               }}
               onToggleTheme={setTheme}
               onClearCache={() => {

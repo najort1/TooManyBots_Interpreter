@@ -173,11 +173,19 @@ export async function fetchRuntimeSettings(): Promise<RuntimeSettings> {
   return requestJson<RuntimeSettings>('/api/settings');
 }
 
-export async function postRuntimeSettings(input: { autoReloadFlows: boolean }): Promise<RuntimeSettings> {
+export async function postRuntimeSettings(input: {
+  autoReloadFlows?: boolean;
+  broadcastSendIntervalMs?: number;
+}): Promise<RuntimeSettings> {
   return requestJson<RuntimeSettings>('/api/settings', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ autoReloadFlows: input.autoReloadFlows }),
+    body: JSON.stringify({
+      ...(input.autoReloadFlows !== undefined ? { autoReloadFlows: input.autoReloadFlows } : {}),
+      ...(input.broadcastSendIntervalMs !== undefined
+        ? { broadcastSendIntervalMs: input.broadcastSendIntervalMs }
+        : {}),
+    }),
   });
 }
 

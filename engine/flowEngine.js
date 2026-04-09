@@ -279,6 +279,7 @@ function parseObjectVar(value) {
 
 function createOrResetSessionRuntimeState(jid, nowTs, flow) {
   const scope = buildSessionScope(flow);
+  const isConversationBot = scope.botType === 'conversation';
   createSession(jid, scope);
   const session = getSession(jid, scope);
   const sessionId = createSessionId(jid, nowTs);
@@ -299,22 +300,24 @@ function createOrResetSessionRuntimeState(jid, nowTs, flow) {
     botType: scope.botType,
   }, scope);
 
-  createConversationSessionRecord({
-    sessionId,
-    jid,
-    flowPath: flow?.flowPath ?? '',
-    startedAt: nowTs,
-  });
+  if (isConversationBot) {
+    createConversationSessionRecord({
+      sessionId,
+      jid,
+      flowPath: flow?.flowPath ?? '',
+      startedAt: nowTs,
+    });
 
-  addConversationEvent({
-    occurredAt: nowTs,
-    eventType: 'session-start',
-    direction: 'system',
-    jid,
-    flowPath: flow?.flowPath ?? '',
-    messageText: '',
-    metadata: { sessionId },
-  });
+    addConversationEvent({
+      occurredAt: nowTs,
+      eventType: 'session-start',
+      direction: 'system',
+      jid,
+      flowPath: flow?.flowPath ?? '',
+      messageText: '',
+      metadata: { sessionId },
+    });
+  }
 
   return getSession(jid, scope);
 }
@@ -322,6 +325,7 @@ function createOrResetSessionRuntimeState(jid, nowTs, flow) {
 function endSession(jid, session, nowTs, reason, flow) {
   if (!session) return;
   const scope = buildSessionScope(flow);
+  const isConversationBot = scope.botType === 'conversation';
   const startedAt = getNumericInternalVar(session, INTERNAL_VAR.SESSION_STARTED_AT, 0);
   const sessionId = getSessionId(session);
   const durationMs = startedAt > 0 ? Math.max(0, nowTs - startedAt) : 0;
@@ -338,25 +342,27 @@ function endSession(jid, session, nowTs, reason, flow) {
     botType: scope.botType,
   }, scope);
 
-  finishConversationSessionRecord({
-    sessionId,
-    endedAt: nowTs,
-    endReason: reason,
-  });
-
-  addConversationEvent({
-    occurredAt: nowTs,
-    eventType: 'session-end',
-    direction: 'system',
-    jid,
-    flowPath: flow?.flowPath ?? '',
-    messageText: '',
-    metadata: {
-      reason,
+  if (isConversationBot) {
+    finishConversationSessionRecord({
       sessionId,
-      durationMs,
-    },
-  });
+      endedAt: nowTs,
+      endReason: reason,
+    });
+
+    addConversationEvent({
+      occurredAt: nowTs,
+      eventType: 'session-end',
+      direction: 'system',
+      jid,
+      flowPath: flow?.flowPath ?? '',
+      messageText: '',
+      metadata: {
+        reason,
+        sessionId,
+        durationMs,
+      },
+    });
+  }
 }
 
 function isSessionTimedOut(session, flow, nowTs) {

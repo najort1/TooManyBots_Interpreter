@@ -1,13 +1,18 @@
+import { useEffect, useMemo, useState } from 'react';
+import type { ChartConfiguration } from 'chart.js';
+import { ChartCanvas } from '../charts/ChartCanvas';
 import type { DatabaseInfo } from '../../types';
 
 interface SettingsViewProps {
   autoReloadFlows: boolean;
+  broadcastSendIntervalMs: number;
   theme: 'light' | 'dark';
   dbInfo: DatabaseInfo | null;
   busySaveSettings: boolean;
   busyClearCache: boolean;
   busyRefreshDb: boolean;
   onToggleAutoReload: (value: boolean) => void;
+  onUpdateBroadcastSendInterval: (value: number) => void;
   onToggleTheme: (value: 'light' | 'dark') => void;
   onClearCache: () => void;
   onRefreshDbInfo: () => void;
@@ -27,18 +32,89 @@ function formatBytes(value: number) {
   return `${(mb / 1024).toFixed(2)} GB`;
 }
 
+function formatMb(value: number) {
+  const mb = (Number(value) || 0) / (1024 * 1024);
+  return `${mb.toFixed(2)} MB`;
+}
+
+function toBrDateLabel(dateKey: string) {
+  const match = String(dateKey || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return dateKey;
+  const [, y, m, d] = match;
+  return `${d}/${m}/${y.slice(2)}`;
+}
+
+function buildDbGrowthConfig(dbInfo: DatabaseInfo | null): ChartConfiguration<'line'> {
+  const history = Array.isArray(dbInfo?.sizeHistory) ? dbInfo.sizeHistory : [];
+  const labels = history.map(item => toBrDateLabel(item.date));
+  const points = history.map(item => Number((item.totalBytes / (1024 * 1024)).toFixed(2)));
+
+  return {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Tamanho (MB)',
+          data: points,
+          borderColor: '#1e63c9',
+          backgroundColor: 'rgba(30, 99, 201, 0.15)',
+          fill: true,
+          borderWidth: 2,
+          tension: 0.35,
+          pointRadius: 3,
+          pointHoverRadius: 4,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => `${Number(ctx.parsed.y || 0).toFixed(2)} MB`,
+          },
+        },
+      },
+      scales: {
+        x: {
+          grid: { display: false },
+        },
+        y: {
+          beginAtZero: true,
+          ticks: {
+            callback: value => `${Number(value).toFixed(2)} MB`,
+          },
+        },
+      },
+    },
+  };
+}
+
 export function SettingsView({
   autoReloadFlows,
+  broadcastSendIntervalMs,
   theme,
   dbInfo,
   busySaveSettings,
   busyClearCache,
   busyRefreshDb,
   onToggleAutoReload,
+  onUpdateBroadcastSendInterval,
   onToggleTheme,
   onClearCache,
   onRefreshDbInfo,
 }: SettingsViewProps) {
+  const dbGrowthConfig = useMemo(() => buildDbGrowthConfig(dbInfo), [dbInfo]);
+  const historyLength = Array.isArray(dbInfo?.sizeHistory) ? dbInfo.sizeHistory.length : 0;
+  const [broadcastIntervalInput, setBroadcastIntervalInput] = useState(String(Math.max(0, Math.floor(Number(broadcastSendIntervalMs) || 0))));
+
+  useEffect(() => {
+    setBroadcastIntervalInput(String(Math.max(0, Math.floor(Number(broadcastSendIntervalMs) || 0))));
+  }, [broadcastSendIntervalMs]);
+
   return (
     <section className="mx-auto grid max-w-[1560px] grid-cols-1 gap-4 xl:grid-cols-2">
       <article className={panel}>
@@ -50,7 +126,7 @@ export function SettingsView({
           <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
             <p className="m-0 text-sm font-semibold text-slate-700">Auto-reload de flows (.tmb)</p>
             <small className="text-xs text-slate-500">
-              Atualiza automaticamente o flow ao detectar mudanças em arquivos.
+              Atualiza automaticamente o flow ao detectar mudancas em arquivos.
             </small>
             <div className="mt-2 flex gap-2">
               <button
@@ -106,9 +182,39 @@ export function SettingsView({
           </div>
 
           <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
+            <p className="m-0 text-sm font-semibold text-slate-700">Intervalo do Anuncio em Massa</p>
+            <small className="text-xs text-slate-500">
+              Controla o tempo de espera entre cada envio de destinatario no broadcast.
+            </small>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                step={50}
+                value={broadcastIntervalInput}
+                onChange={event => setBroadcastIntervalInput(event.target.value)}
+                disabled={busySaveSettings}
+                className="h-9 w-32 rounded-[10px] border border-[#cfdcec] bg-white px-3 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
+              />
+              <span className="text-xs font-semibold text-slate-600">ms entre envios</span>
+              <button
+                type="button"
+                className={`${buttonBase} border-[#174d9d] bg-[#1e63c9] text-white hover:bg-[#174d9d]`}
+                disabled={busySaveSettings}
+                onClick={() => {
+                  const next = Math.max(0, Math.floor(Number(broadcastIntervalInput) || 0));
+                  onUpdateBroadcastSendInterval(next);
+                }}
+              >
+                Salvar intervalo
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
             <p className="m-0 text-sm font-semibold text-slate-700">Cache Settings</p>
             <small className="text-xs text-slate-500">
-              Limpa cache em memória de sessões/blocos para diagnóstico sem reiniciar.
+              Limpa cache em memoria de sessoes/blocos para diagnostico sem reiniciar.
             </small>
             <div className="mt-2">
               <button
@@ -126,7 +232,7 @@ export function SettingsView({
 
       <article className={panel}>
         <header className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-base font-extrabold">Informações do DB</h3>
+          <h3 className="text-base font-extrabold">Informacoes do DB</h3>
           <button
             type="button"
             className={`${buttonBase} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
@@ -163,9 +269,12 @@ export function SettingsView({
                 <strong>SHM:</strong> {formatBytes(dbInfo.shmSizeBytes)}
               </div>
             </div>
+            <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+              <strong>Total Armazenamento:</strong> {formatMb(dbInfo.totalStorageBytes ?? (dbInfo.fileSizeBytes + dbInfo.walSizeBytes + dbInfo.shmSizeBytes))}
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
-                <strong>Sessões:</strong> {dbInfo.sessionsTotal} (ativas: {dbInfo.sessionsActive})
+                <strong>Sessoes:</strong> {dbInfo.sessionsTotal} (ativas: {dbInfo.sessionsActive})
               </div>
               <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
                 <strong>Eventos:</strong> {dbInfo.conversationEventsTotal}
@@ -174,8 +283,19 @@ export function SettingsView({
                 <strong>Conversas:</strong> {dbInfo.conversationSessionsTotal}
               </div>
               <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
-                <strong>Broadcast:</strong> {dbInfo.broadcastCampaignsTotal} campanhas / {dbInfo.broadcastRecipientsTotal} destinatários
+                <strong>Broadcast:</strong> {dbInfo.broadcastCampaignsTotal} campanhas / {dbInfo.broadcastRecipientsTotal} destinatarios
               </div>
+            </div>
+            <div className="rounded-lg border border-[#dce6f3] bg-white p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <strong className="text-sm text-slate-700">Evolucao diaria do tamanho do DB</strong>
+                <small className="text-xs text-slate-500">Ultimos 7 dias</small>
+              </div>
+              {historyLength >= 2 ? (
+                <ChartCanvas config={dbGrowthConfig} height={240} />
+              ) : (
+                <p className="text-sm text-slate-500">Historico insuficiente. Aguarde novos snapshots diarios.</p>
+              )}
             </div>
           </div>
         )}

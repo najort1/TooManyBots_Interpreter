@@ -8,6 +8,7 @@ import WebSocket, { WebSocketServer } from 'ws';
 import {
   getActiveSessions,
   getConversationDashboardStats,
+  getConversationSessionsTotal,
   getConversationEndedByReasonCount,
   listConversationSessionStarts,
   listConversationSessionEndsByReason,
@@ -599,6 +600,7 @@ export class DashboardServer {
         const body = await readJsonBody(req);
         const result = await this.onUpdateSettings({
           autoReloadFlows: body?.autoReloadFlows,
+          broadcastSendIntervalMs: body?.broadcastSendIntervalMs,
         });
         if (!result?.ok) {
           sendJson(res, 400, { error: result?.error || 'failed-to-update-settings' });
@@ -786,7 +788,7 @@ export class DashboardServer {
       }
 
       if (requestUrl.pathname === '/api/handoff/sessions') {
-        const activeSessions = getActiveSessions();
+        const activeSessions = getActiveSessions({ botType: 'conversation' });
         const sessions = activeSessions
           .map(session => {
             const handoff = getHumanHandoffFromSession(session);
@@ -828,7 +830,7 @@ export class DashboardServer {
           return;
         }
 
-        const activeSession = getActiveSessions().find(session => {
+        const activeSession = getActiveSessions({ botType: 'conversation' }).find(session => {
           if (session.jid !== jid) return false;
           if (flowPathFilter && String(session.flowPath) !== flowPathFilter) return false;
           return String(session.waitingFor || '').trim().toLowerCase() === 'human';
@@ -1078,6 +1080,14 @@ export class DashboardServer {
         }
 
         if (mode === 'conversation') {
+          const totalStats = getConversationDashboardStats({ flowPath });
+          const completedSessionsTotal =
+            getConversationEndedByReasonCount({ endReason: 'flow-complete', flowPath }) +
+            getConversationEndedByReasonCount({ endReason: 'end-conversation', flowPath });
+          const totalSessions = getConversationSessionsTotal(flowPath);
+          const completionRateTotal = totalSessions > 0
+            ? Number((completedSessionsTotal / totalSessions).toFixed(4))
+            : 0;
           const completedSessions =
             getConversationEndedByReasonCount({ from: start, to: end, endReason: 'flow-complete', flowPath }) +
             getConversationEndedByReasonCount({ from: start, to: end, endReason: 'end-conversation', flowPath });
@@ -1093,6 +1103,11 @@ export class DashboardServer {
 
           sendJson(res, 200, {
             ...baseStats,
+            totalSessions,
+            conversationsTotal: totalStats.conversationsStarted,
+            abandonmentRateTotal: totalStats.abandonmentRate,
+            averageDurationTotalMs: totalStats.averageDurationMs,
+            completionRateTotal,
             completedSessions,
             medianDurationMs: baseStats.averageDurationMs,
             hourlyVolume,
@@ -1113,7 +1128,7 @@ export class DashboardServer {
           // Command mode
           const info = runtimeInfo;
           sendJson(res, 200, {
-            totalExecutions: totalCommands || baseStats.conversationsStarted || 0,
+            totalExecutions: totalCommands || 0,
             avgLatencyMs: 245, // Mocked (requer interceptação no FlowLoader p/ APIs externas)
             successRate: 0.982,
             peakPerHour: Math.max(...hourlyVolume),

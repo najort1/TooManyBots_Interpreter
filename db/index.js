@@ -202,6 +202,11 @@ export async function initDb() {
       UNIQUE(campaign_id, jid),
       FOREIGN KEY (campaign_id) REFERENCES broadcast_campaigns(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS db_size_daily (
+      date_key      TEXT PRIMARY KEY,
+      total_bytes   INTEGER NOT NULL,
+      captured_at   INTEGER NOT NULL
+    );
     CREATE INDEX IF NOT EXISTS idx_conversation_events_occurred_at ON conversation_events(occurred_at DESC);
     CREATE INDEX IF NOT EXISTS idx_conversation_events_jid ON conversation_events(jid);
     CREATE INDEX IF NOT EXISTS idx_conversation_events_jid_occurred_at ON conversation_events(jid, occurred_at DESC, id DESC);
@@ -431,7 +436,27 @@ export async function initDb() {
     countConversationSessionsTotal: db.prepare('SELECT COUNT(*) AS total FROM conversation_sessions'),
     countBroadcastCampaignsTotal: db.prepare('SELECT COUNT(*) AS total FROM broadcast_campaigns'),
     countBroadcastRecipientsTotal: db.prepare('SELECT COUNT(*) AS total FROM broadcast_recipients'),
+    upsertDbSizeDaily: db.prepare(
+      `INSERT INTO db_size_daily (date_key, total_bytes, captured_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(date_key) DO UPDATE SET
+         total_bytes = excluded.total_bytes,
+         captured_at = excluded.captured_at`
+    ),
+    listDbSizeDaily: db.prepare(
+      `SELECT date_key, total_bytes, captured_at
+       FROM db_size_daily
+       ORDER BY date_key DESC
+       LIMIT ?`
+    ),
+    countConversationSessionsTotalByFlowPath: db.prepare(
+      `SELECT COUNT(*) AS total
+       FROM conversation_sessions
+       WHERE flow_path = ?`
+    ),
   };
+
+  recordDbSizeSnapshot();
 
   return db;
 }
@@ -724,6 +749,14 @@ export function getConversationDashboardStats({ from, to, flowPath = '' }) {
   };
 }
 
+export function getConversationSessionsTotal(flowPath = '') {
+  const normalizedFlowPath = String(flowPath ?? '').trim();
+  if (normalizedFlowPath) {
+    return Number(stmts.countConversationSessionsTotalByFlowPath.get(normalizedFlowPath)?.total ?? 0) || 0;
+  }
+  return Number(stmts.countConversationSessionsTotal.get()?.total ?? 0) || 0;
+}
+
 export function getConversationEndedByReasonCount({ from, to, endReason, flowPath = '' }) {
   const fromTs = Number(from) || 0;
   const toTs = Number(to) || Date.now();
@@ -873,16 +906,60 @@ function fileSizeOrZero(filePath) {
   }
 }
 
+function pad2(value) {
+  return String(value).padStart(2, '0');
+}
+
+function toLocalDateKey(now = new Date()) {
+  const year = now.getFullYear();
+  const month = pad2(now.getMonth() + 1);
+  const day = pad2(now.getDate());
+  return `${year}-${month}-${day}`;
+}
+
+function toDbStorageTotalBytes() {
+  return (
+    fileSizeOrZero(DB_PATH) +
+    fileSizeOrZero(`${DB_PATH}-wal`) +
+    fileSizeOrZero(`${DB_PATH}-shm`)
+  );
+}
+
+function recordDbSizeSnapshot(nowTs = Date.now()) {
+  const dateKey = toLocalDateKey(new Date(nowTs));
+  const totalBytes = toDbStorageTotalBytes();
+  stmts.upsertDbSizeDaily.run(dateKey, totalBytes, nowTs);
+}
+
+function listDbSizeDaily(days = 7) {
+  const limit = Math.max(1, Math.min(365, Number(days) || 7));
+  const rows = stmts.listDbSizeDaily.all(limit);
+  return rows
+    .map(row => ({
+      date: String(row?.date_key || ''),
+      totalBytes: Number(row?.total_bytes) || 0,
+      capturedAt: Number(row?.captured_at) || 0,
+    }))
+    .filter(item => item.date)
+    .sort((a, b) => a.date.localeCompare(b.date));
+}
+
 export function getDatabaseInfo() {
+  recordDbSizeSnapshot();
   const journalMode = String(db.pragma('journal_mode', { simple: true }) || '').toLowerCase();
   const synchronous = String(db.pragma('synchronous', { simple: true }) || '');
+  const fileSizeBytes = fileSizeOrZero(DB_PATH);
+  const walSizeBytes = fileSizeOrZero(`${DB_PATH}-wal`);
+  const shmSizeBytes = fileSizeOrZero(`${DB_PATH}-shm`);
   return {
     path: DB_PATH,
     journalMode,
     synchronous,
-    fileSizeBytes: fileSizeOrZero(DB_PATH),
-    walSizeBytes: fileSizeOrZero(`${DB_PATH}-wal`),
-    shmSizeBytes: fileSizeOrZero(`${DB_PATH}-shm`),
+    fileSizeBytes,
+    walSizeBytes,
+    shmSizeBytes,
+    totalStorageBytes: fileSizeBytes + walSizeBytes + shmSizeBytes,
+    sizeHistory: listDbSizeDaily(7),
     sessionsTotal: Number(stmts.countSessionsTotal.get()?.total ?? 0) || 0,
     sessionsActive: Number(stmts.countSessionsActiveTotal.get(SESSION_STATUS.ACTIVE)?.total ?? 0) || 0,
     conversationEventsTotal: Number(stmts.countConversationEventsTotal.get()?.total ?? 0) || 0,

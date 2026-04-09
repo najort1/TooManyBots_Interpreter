@@ -27,6 +27,7 @@ export const config = {
   flowPaths: ['./bots/flow.tmb'],
   runtimeMode: RUNTIME_MODE.PRODUCTION,
   autoReloadFlows: true,
+  broadcastSendIntervalMs: 250,
   flowSessionTimeoutOverrides: {},
   testTargetMode: 'contacts-and-groups',
   testJid: '',
@@ -68,6 +69,12 @@ function toPortNumber(value, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
   if (n <= 0 || n > 65535) return fallback;
+  return Math.floor(n);
+}
+
+function toNonNegativeMs(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return fallback;
   return Math.floor(n);
 }
 
@@ -123,6 +130,10 @@ function normalizeConfigShape(input) {
 
   normalized.flowPath = normalized.flowPaths[0] || config.flowPath;
   normalized.autoReloadFlows = normalized.autoReloadFlows !== false;
+  normalized.broadcastSendIntervalMs = toNonNegativeMs(
+    normalized.broadcastSendIntervalMs,
+    config.broadcastSendIntervalMs
+  );
   normalized.flowSessionTimeoutOverrides = normalizeTimeoutOverrides(normalized.flowSessionTimeoutOverrides);
 
   normalized.testTargetMode = String(normalized.testTargetMode ?? config.testTargetMode).trim() || config.testTargetMode;
@@ -159,6 +170,7 @@ function sanitizeConfigForSave(input) {
     flowPaths: normalized.flowPaths,
     runtimeMode: normalized.runtimeMode,
     autoReloadFlows: normalized.autoReloadFlows,
+    broadcastSendIntervalMs: normalized.broadcastSendIntervalMs,
     flowSessionTimeoutOverrides: normalized.flowSessionTimeoutOverrides,
     testTargetMode: normalized.testTargetMode,
     testJid: normalized.testJid,

@@ -274,6 +274,7 @@ export function AnalyticsView({
   );
 
   const avgDuration = safeStats.avgDurationMs ?? safeStats.averageDurationMs ?? 0;
+  const avgDurationTotal = safeStats.averageDurationTotalMs ?? safeStats.averageDurationMs ?? 0;
   const completed = Number(safeStats.completedSessions ?? 0);
   const started = Number(safeStats.conversationsStarted ?? 0);
   const abandoned = Number(safeStats.abandonedSessions ?? 0);
@@ -286,21 +287,27 @@ export function AnalyticsView({
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {mode === 'CONVERSATION' ? (
           <>
-            <KpiCard title="Conversas Hoje" value={safeStats.conversationsStarted ?? 0} icon="fa-regular fa-comments" />
             <KpiCard
-              title="Abandono"
-              value={Number((safeStats.abandonmentRate ?? 0) * 100)}
+              title="Taxa de Conclusao Total"
+              value={Number((safeStats.completionRateTotal ?? 0) * 100)}
+              icon="fa-regular fa-circle-check"
+              valueClass="text-[#0f766e]"
+              formatValue={value => `${value.toFixed(1)}%`}
+            />
+            <KpiCard
+              title="Abandono Total"
+              value={Number((safeStats.abandonmentRateTotal ?? safeStats.abandonmentRate ?? 0) * 100)}
               icon="fa-solid fa-person-walking-arrow-right"
               valueClass="text-[#c62828]"
               formatValue={value => `${value.toFixed(1)}%`}
             />
             <KpiCard
-              title="Tempo Medio"
-              value={Number(avgDuration)}
+              title="Tempo Medio Total"
+              value={Number(avgDurationTotal)}
               icon="fa-regular fa-clock"
               formatValue={value => fmtDuration(Math.max(0, Math.round(value)))}
             />
-            <KpiCard title="Sessoes Ativas" value={safeStats.activeSessions ?? 0} icon="fa-solid fa-signal" valueClass="text-[#0f766e]" />
+            <KpiCard title="Total de Sessoes" value={safeStats.totalSessions ?? 0} icon="fa-solid fa-layer-group" valueClass="text-[#0f766e]" />
           </>
         ) : (
           <>

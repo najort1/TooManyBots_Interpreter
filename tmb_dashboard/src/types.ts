@@ -79,6 +79,11 @@ export interface DashboardStats {
   avgDurationMs?: number;
   medianDurationMs?: number;
   activeSessions?: number;
+  totalSessions?: number;
+  conversationsTotal?: number;
+  abandonmentRateTotal?: number;
+  averageDurationTotalMs?: number;
+  completionRateTotal?: number;
   completedSessions?: number;
   hourlyVolume?: number[];
   funnel?: FunnelPoint[];
@@ -152,6 +157,7 @@ export interface BroadcastSendProgress {
 
 export interface RuntimeSettings {
   autoReloadFlows: boolean;
+  broadcastSendIntervalMs?: number;
   runtimeMode?: string;
 }
 
@@ -162,6 +168,12 @@ export interface DatabaseInfo {
   fileSizeBytes: number;
   walSizeBytes: number;
   shmSizeBytes: number;
+  totalStorageBytes?: number;
+  sizeHistory?: Array<{
+    date: string;
+    totalBytes: number;
+    capturedAt: number;
+  }>;
   sessionsTotal: number;
   sessionsActive: number;
   conversationEventsTotal: number;

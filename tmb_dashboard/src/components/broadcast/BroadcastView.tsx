@@ -14,6 +14,7 @@ interface BroadcastViewProps {
   busySend: boolean;
   lastResult: BroadcastSendResult | null;
   sendProgress: BroadcastSendProgress | null;
+  broadcastSendIntervalMs: number;
   onRecipientModeChange: (value: 'all' | 'selected') => void;
   onSearchChange: (value: string) => void;
   onRefreshContacts: () => void;
@@ -63,6 +64,7 @@ export function BroadcastView({
   busySend,
   lastResult,
   sendProgress,
+  broadcastSendIntervalMs,
   onRecipientModeChange,
   onSearchChange,
   onRefreshContacts,
@@ -385,7 +387,10 @@ export function BroadcastView({
         <header className="mb-3">
           <h3 className="text-base font-extrabold">Novo Anuncio</h3>
           <small className="mt-1 block text-xs text-slate-500">
-            Destinatarios atuais: {recipientsCount} · modo {recipientMode === 'all' ? 'todos' : 'selecionados'}
+            Destinatarios atuais: {recipientsCount} | modo {recipientMode === 'all' ? 'todos' : 'selecionados'}
+          </small>
+          <small className="mt-1 block text-[0.74rem] text-[#1d4e89]">
+            Intervalo atual de envio: {Math.max(0, Math.floor(Number(broadcastSendIntervalMs) || 0))} ms. Configure em Configuracoes &gt; Runtime.
           </small>
           {recipientMode === 'all' && search.trim() ? (
             <small className="mt-1 block text-[0.72rem] text-amber-700">

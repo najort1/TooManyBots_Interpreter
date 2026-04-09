@@ -69,6 +69,7 @@ let terminalCommandInterface = null;
 let dashboardServer = null;
 let removeConversationEventListener = null;
 let authStateMaintenanceTimer = null;
+let dbSizeSnapshotMaintenanceTimer = null;
 let broadcastService = null;
 const contactCache = new Map();
 const HANDOFF_MEDIA_DIR = path.resolve('./data/handoff-media');
@@ -305,7 +306,7 @@ function parseHumanHandoff(value) {
 }
 
 function buildSessionManagementOverview() {
-  const activeSessions = getActiveSessions();
+  const activeSessions = getActiveSessions({ botType: 'conversation' });
   const nowTs = Date.now();
 
   let handoffSessions = 0;
@@ -342,7 +343,9 @@ function buildSessionManagementOverview() {
 }
 
 function listSessionManagementFlows() {
-  return getActiveFlows().map(flow => ({
+  return getActiveFlows()
+    .filter(flow => getFlowBotType(flow) === 'conversation')
+    .map(flow => ({
     flowPath: flow.flowPath,
     botType: getFlowBotType(flow),
     sessionTimeoutMinutes: getFlowSessionTimeoutMinutes(flow),
@@ -354,7 +357,7 @@ function listActiveSessionsForManagement({ search = '', limit = 200 } = {}) {
   const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 200));
   const nowTs = Date.now();
 
-  const rows = getActiveSessions()
+  const rows = getActiveSessions({ botType: 'conversation' })
     .filter(session => {
       if (!normalizedSearch) return true;
       const jid = String(session?.jid || '').toLowerCase();
@@ -668,6 +671,28 @@ function normalizeRuntimeInfo() {
   };
 }
 
+function startDbSizeSnapshotMaintenance() {
+  if (dbSizeSnapshotMaintenanceTimer) return;
+  const intervalMs = Math.max(60 * 60 * 1000, Number(process.env.TMB_DB_SIZE_SNAPSHOT_INTERVAL_MS) || (60 * 60 * 1000));
+  dbSizeSnapshotMaintenanceTimer = setInterval(() => {
+    try {
+      getDatabaseInfo();
+    } catch {
+      // ignore snapshot maintenance failures
+    }
+  }, intervalMs);
+
+  if (typeof dbSizeSnapshotMaintenanceTimer.unref === 'function') {
+    dbSizeSnapshotMaintenanceTimer.unref();
+  }
+}
+
+function normalizeBroadcastSendIntervalMs(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return Math.floor(n);
+}
+
 async function startDashboardServer() {
   if (dashboardServer) {
     await dashboardServer.stop();
@@ -876,24 +901,42 @@ async function startDashboardServer() {
     },
     onGetSettings: async () => ({
       autoReloadFlows: config.autoReloadFlows !== false,
+      broadcastSendIntervalMs: Number(config.broadcastSendIntervalMs ?? 250),
       runtimeMode: String(config.runtimeMode || ''),
     }),
-    onUpdateSettings: async ({ autoReloadFlows }) => {
-      if (typeof autoReloadFlows !== 'boolean') {
+    onUpdateSettings: async ({ autoReloadFlows, broadcastSendIntervalMs }) => {
+      const hasAutoReloadPatch = autoReloadFlows !== undefined;
+      const hasBroadcastIntervalPatch = broadcastSendIntervalMs !== undefined;
+      if (!hasAutoReloadPatch && !hasBroadcastIntervalPatch) {
+        return { ok: false, error: 'at least one setting must be provided' };
+      }
+
+      if (hasAutoReloadPatch && typeof autoReloadFlows !== 'boolean') {
         return { ok: false, error: 'autoReloadFlows must be boolean' };
+      }
+      const normalizedBroadcastInterval = hasBroadcastIntervalPatch
+        ? normalizeBroadcastSendIntervalMs(broadcastSendIntervalMs)
+        : null;
+      if (hasBroadcastIntervalPatch && normalizedBroadcastInterval == null) {
+        return { ok: false, error: 'broadcastSendIntervalMs must be >= 0' };
       }
 
       config = {
         ...config,
-        autoReloadFlows,
+        ...(hasAutoReloadPatch ? { autoReloadFlows } : {}),
+        ...(hasBroadcastIntervalPatch ? { broadcastSendIntervalMs: normalizedBroadcastInterval } : {}),
       };
       saveUserConfig(config);
       setupFlowWatcher();
-      logger?.info?.({ autoReloadFlows }, 'Settings updated');
+      logger?.info?.({
+        ...(hasAutoReloadPatch ? { autoReloadFlows } : {}),
+        ...(hasBroadcastIntervalPatch ? { broadcastSendIntervalMs: normalizedBroadcastInterval } : {}),
+      }, 'Settings updated');
 
       return {
         ok: true,
         autoReloadFlows: config.autoReloadFlows !== false,
+        broadcastSendIntervalMs: Number(config.broadcastSendIntervalMs ?? 250),
       };
     },
     onClearRuntimeCache: async () => {
@@ -951,7 +994,8 @@ async function startDashboardServer() {
       }
 
       try {
-        const active = getActiveSessions().filter(session => String(session?.jid || '').trim() === normalizedJid);
+        const active = getActiveSessions({ botType: 'conversation' })
+          .filter(session => String(session?.jid || '').trim() === normalizedJid);
         for (const session of active) {
           deleteSession(normalizedJid, {
             flowPath: session.flowPath,
@@ -1183,12 +1227,16 @@ async function start() {
   installLibSignalNoiseFilter(suppressSignalNoise);
 
   logger = createRuntimeLogger(config);
-  broadcastService = createBroadcastService({ logger });
+  broadcastService = createBroadcastService({
+    logger,
+    getSendDelayMs: () => Number(config?.broadcastSendIntervalMs ?? 250),
+  });
 
   await initDb();
   console.log('Banco de dados inicializado (better-sqlite3 + WAL)');
   cleanupSignalAuthState({ reason: 'startup', forceLog: true });
   startAuthStateMaintenance();
+  startDbSizeSnapshotMaintenance();
 
   currentFlowRegistry = applyFlowSessionTimeoutOverrides(loadFlowRegistryFromConfig(config), config);
   const activeFlows = getActiveFlows();

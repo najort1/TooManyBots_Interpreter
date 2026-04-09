@@ -45,7 +45,7 @@ function buildProgressSnapshot(result, {
   };
 }
 
-export function createBroadcastService({ logger }) {
+export function createBroadcastService({ logger, getSendDelayMs = null }) {
   const log = logger?.child ? logger.child({ module: 'broadcast-service' }) : logger;
   const activeLookup = createActiveSessionLookup();
 
@@ -143,8 +143,15 @@ export function createBroadcastService({ logger }) {
           error: recipientError,
         }));
 
-        if (BROADCAST_LIMITS.SEND_DELAY_MS > 0) {
-          await delay(BROADCAST_LIMITS.SEND_DELAY_MS);
+        const configuredDelayMs = typeof getSendDelayMs === 'function'
+          ? Number(getSendDelayMs())
+          : BROADCAST_LIMITS.SEND_DELAY_MS;
+        const sendDelayMs = Number.isFinite(configuredDelayMs) && configuredDelayMs > 0
+          ? Math.floor(configuredDelayMs)
+          : 0;
+
+        if (sendDelayMs > 0) {
+          await delay(sendDelayMs);
         }
       }
 
