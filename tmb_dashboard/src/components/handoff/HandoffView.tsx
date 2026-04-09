@@ -1,7 +1,9 @@
 ﻿import { useEffect, useMemo, useRef } from 'react';
 import { fmtTime, formatJidPhone } from '../../lib/format';
+import { buttonBaseClass, iconButtonClass, inputBaseClass, panelClass, timelineItemClass } from '../../lib/uiTokens';
 import type { EventLog, HandoffBlock, HandoffSession } from '../../types';
 import { Select2Field } from '../form/Select2Field';
+import { EmptyStateMascot } from '../feedback/EmptyStateMascot';
 
 interface HandoffViewProps {
   sessions: HandoffSession[];
@@ -71,9 +73,7 @@ function getTimelineItemKey(event: EventLog, index: number): string {
   ].join('-');
 }
 
-const panel = 'rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]';
-const minimalBtn =
-  'inline-flex h-9 items-center justify-center rounded-full border px-3 text-[0.78rem] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60';
+const minimalBtn = buttonBaseClass;
 
 export function HandoffView({
   sessions,
@@ -102,6 +102,7 @@ export function HandoffView({
     () => [...history].sort((a, b) => (a.occurredAt || 0) - (b.occurredAt || 0)),
     [history]
   );
+  const timelineEmptyState = !selectedJid || sortedTimeline.length === 0;
 
   useEffect(() => {
     if (!selectedJid) return;
@@ -113,12 +114,12 @@ export function HandoffView({
 
   return (
     <section className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(260px,320px)_1fr]">
-      <article className={`${panel} min-w-0`}>
+      <article className={`${panelClass} min-w-0`}>
         <header className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-base font-extrabold">Sessoes em Espera</h3>
           <button
             type="button"
-            className={`${minimalBtn} w-9 border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-[#f8fafc]`}
+            className={`${minimalBtn} ${iconButtonClass} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-[#f8fafc]`}
             onClick={onRefreshSessions}
             aria-label="Atualizar sessoes"
             title="Atualizar sessoes"
@@ -128,7 +129,11 @@ export function HandoffView({
         </header>
         <div className="flex max-h-[560px] flex-col gap-2 overflow-auto">
           {sessions.length === 0 ? (
-            <p className="py-4 text-center text-sm text-slate-500">Nenhuma sessao aguardando atendimento.</p>
+            <EmptyStateMascot
+              compact
+              title="Nenhuma sessao aguardando atendimento."
+              description="Quando um usuario pedir atendimento humano, ele aparecera aqui."
+            />
           ) : (
             sessions.map(session => {
               const isActive = selectedJid === session.jid;
@@ -170,7 +175,7 @@ export function HandoffView({
         </div>
       </article>
 
-      <article className={`${panel} min-h-[620px] min-w-0`}>
+      <article className={`${panelClass} min-h-[620px] min-w-0`}>
         <header className="mb-3 flex items-center justify-between gap-3">
           <div>
             <h3 className="text-base font-extrabold">Chat em Tempo Real</h3>
@@ -188,14 +193,27 @@ export function HandoffView({
           </button>
         </header>
 
-        <div className="h-[380px] overflow-auto overflow-x-hidden rounded-xl border border-[#dce6f3] bg-[#eef3fb] p-2">
+        <div
+          className={[
+            'h-[380px] overflow-auto overflow-x-hidden rounded-xl p-3',
+            timelineEmptyState ? 'border border-[#dce6f3] bg-transparent' : 'border border-[#dce6f3] bg-[#eef3fb]',
+          ].join(' ')}
+        >
           {!selectedJid ? (
-            <p className="py-4 text-center text-sm text-slate-500">Selecione uma sessao para ver as mensagens.</p>
+            <EmptyStateMascot
+              compact
+              title="Selecione uma sessao para ver as mensagens."
+              description="Escolha um contato na lista para abrir o atendimento em tempo real."
+            />
           ) : sortedTimeline.length === 0 ? (
-            <p className="py-4 text-center text-sm text-slate-500">Sem historico para esta sessao.</p>
+            <EmptyStateMascot
+              compact
+              title="Sem historico para esta sessao."
+              description="As novas interacoes desta conversa aparecerao aqui."
+            />
           ) : (
             sortedTimeline.map((event, index) => (
-              <div key={getTimelineItemKey(event, index)} className="mb-2 rounded-[10px] border border-[#e5edf7] bg-white p-2.5 last:mb-0">
+              <div key={getTimelineItemKey(event, index)} className={`mb-2 ${timelineItemClass} last:mb-0`}>
                 <div className="mb-1 flex items-center justify-between text-[0.72rem] font-bold text-[#59687b]">
                   <span>{getTimelineLabel(event)}</span>
                   <time>{event.occurredAt ? fmtTime(event.occurredAt) : '--:--'}</time>
@@ -211,7 +229,7 @@ export function HandoffView({
 
                   return (
                     <img
-                      className="mt-2 max-h-[280px] max-w-full rounded-[10px] border border-[#d7e3f2] object-cover"
+                      className="mt-2 max-h-[280px] max-w-full rounded-xl border border-[#d7e3f2] object-cover"
                       src={mediaUrl}
                       alt={event.messageText || 'Imagem da conversa'}
                       loading="lazy"
@@ -232,7 +250,7 @@ export function HandoffView({
               onChange={event => onMessageChange(event.target.value)}
               placeholder="Digite a mensagem do atendente..."
               disabled={!selectedJid}
-              className="rounded-[10px] border border-[#cfdcec] bg-white px-3 py-2 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
+              className={inputBaseClass}
               onKeyDown={async event => {
                 if (busySend || !selectedJid) return;
                 if (event.key === 'Enter') {
@@ -246,7 +264,7 @@ export function HandoffView({
             />
             <button
               type="button"
-              className={`${minimalBtn} h-9 w-9 border-[#174d9d] bg-[#1e63c9] p-0 text-white hover:bg-[#174d9d]`}
+              className={`${minimalBtn} ${iconButtonClass} border-[#174d9d] bg-[#1e63c9] text-white hover:bg-[#174d9d]`}
               onClick={async () => {
                 await onSend();
                 window.requestAnimationFrame(() => {
@@ -276,7 +294,7 @@ export function HandoffView({
             />
             <button
               type="button"
-              className={`${minimalBtn} h-9 w-9 border-[#d4e0f1] bg-white/80 p-0 text-slate-700 hover:bg-slate-50`}
+              className={`${minimalBtn} ${iconButtonClass} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
               onClick={() => imageInputRef.current?.click()}
               disabled={!selectedJid || busySendImage}
               aria-label={busySendImage ? 'Enviando imagem' : 'Enviar imagem'}

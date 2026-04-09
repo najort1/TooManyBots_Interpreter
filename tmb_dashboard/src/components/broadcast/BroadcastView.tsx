@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { fmtTime, formatJidPhone } from '../../lib/format';
+import { buttonBaseClass, iconButtonClass, inputBaseClass, panelClass, timelineItemClass } from '../../lib/uiTokens';
 import type { BroadcastContact, BroadcastSendProgress, BroadcastSendResult } from '../../types';
+import { EmptyStateMascot } from '../feedback/EmptyStateMascot';
 
 interface BroadcastViewProps {
   contacts: BroadcastContact[];
@@ -27,9 +29,7 @@ interface BroadcastViewProps {
   onSend: () => void;
 }
 
-const panel = 'rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]';
-const buttonBase =
-  'inline-flex h-9 items-center justify-center rounded-full border px-3 text-[0.78rem] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60';
+const buttonBase = buttonBaseClass;
 
 function clamp01(value: number): number {
   if (value <= 0) return 0;
@@ -110,6 +110,7 @@ export function BroadcastView({
     !showOutboundPlane &&
     !showReturnFlight &&
     (!progressCompleted || currentCampaignId <= 0 || hasReturnedForCurrentCampaign);
+  const contactsEmpty = !loadingContacts && contacts.length === 0;
 
   const runwayStartX = 9;
   const runwayStartY = 83;
@@ -281,12 +282,12 @@ export function BroadcastView({
 
   return (
     <section className="mx-auto grid max-w-[1560px] grid-cols-1 gap-4 xl:grid-cols-[minmax(320px,460px)_1fr]">
-      <article className={`${panel} min-w-0`}>
+      <article className={`${panelClass} min-w-0`}>
         <header className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-base font-extrabold">Destinatarios</h3>
           <button
             type="button"
-            className={`${buttonBase} w-9 border-[#d4e0f1] bg-white/80 p-0 text-slate-700 hover:bg-slate-50`}
+            className={`${buttonBase} ${iconButtonClass} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
             onClick={onRefreshContacts}
             aria-label="Atualizar contatos"
             title="Atualizar contatos"
@@ -299,7 +300,7 @@ export function BroadcastView({
           <button
             type="button"
             className={[
-              'rounded-lg px-3 py-2 text-sm font-semibold transition',
+              'h-9 rounded-xl px-3 text-sm font-semibold transition',
               recipientMode === 'all' ? 'bg-[#1e63c9] text-white' : 'bg-white text-slate-700 hover:bg-slate-50',
             ].join(' ')}
             onClick={() => onRecipientModeChange('all')}
@@ -309,7 +310,7 @@ export function BroadcastView({
           <button
             type="button"
             className={[
-              'rounded-lg px-3 py-2 text-sm font-semibold transition',
+              'h-9 rounded-xl px-3 text-sm font-semibold transition',
               recipientMode === 'selected' ? 'bg-[#1e63c9] text-white' : 'bg-white text-slate-700 hover:bg-slate-50',
             ].join(' ')}
             onClick={() => onRecipientModeChange('selected')}
@@ -327,7 +328,7 @@ export function BroadcastView({
           value={search}
           onChange={event => onSearchChange(event.target.value)}
           placeholder="Filtrar por JID"
-          className="mb-3 w-full rounded-[10px] border border-[#cfdcec] bg-white px-3 py-2 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
+          className={`mb-3 w-full ${inputBaseClass}`}
         />
 
         <div className="mb-2 flex items-center gap-2">
@@ -337,6 +338,7 @@ export function BroadcastView({
             onClick={onSelectAllVisible}
             disabled={contacts.length === 0}
           >
+            <i className="fa-solid fa-list-check" aria-hidden="true" />
             Selecionar lista
           </button>
           <button
@@ -345,20 +347,30 @@ export function BroadcastView({
             onClick={onClearSelection}
             disabled={selectedJids.length === 0}
           >
+            <i className="fa-solid fa-eraser" aria-hidden="true" />
             Limpar
           </button>
         </div>
 
-        <div className="max-h-[520px] overflow-auto rounded-xl border border-[#dce6f3] bg-[#eef3fb] p-2">
+        <div
+          className={[
+            'max-h-[520px] overflow-auto rounded-xl p-3',
+            contactsEmpty ? 'border border-[#dce6f3] bg-transparent' : 'border border-[#dce6f3] bg-[#eef3fb]',
+          ].join(' ')}
+        >
           {loadingContacts ? (
             <p className="py-4 text-center text-sm text-slate-500">Carregando contatos...</p>
           ) : contacts.length === 0 ? (
-            <p className="py-4 text-center text-sm text-slate-500">Nenhum contato encontrado.</p>
+            <EmptyStateMascot
+              compact
+              title="Nenhum contato encontrado."
+              description="Sincronize ou ajuste o filtro para exibir destinatarios nesta lista."
+            />
           ) : (
             contacts.map(contact => (
               <label
                 key={contact.jid}
-                className="mb-2 flex cursor-pointer items-start gap-2 rounded-[10px] border border-[#dce6f3] bg-white p-2.5 last:mb-0"
+                className={`mb-2 flex cursor-pointer items-start gap-2 ${timelineItemClass} last:mb-0`}
               >
                 <input
                   type="checkbox"
@@ -383,7 +395,7 @@ export function BroadcastView({
         </div>
       </article>
 
-      <article className={`${panel} min-w-0`}>
+      <article className={`${panelClass} min-w-0`}>
         <header className="mb-3">
           <h3 className="text-base font-extrabold">Novo Anuncio</h3>
           <small className="mt-1 block text-xs text-slate-500">
@@ -473,7 +485,7 @@ export function BroadcastView({
           value={messageText}
           onChange={event => onMessageChange(event.target.value)}
           placeholder="Digite o texto do anuncio (opcional se enviar apenas imagem)"
-          className="min-h-[180px] w-full rounded-[10px] border border-[#cfdcec] bg-white px-3 py-2 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
+          className="min-h-[180px] w-full rounded-xl border border-[#cfdcec] bg-white px-3 py-2 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
         />
 
         <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -522,7 +534,7 @@ export function BroadcastView({
               <img
                 src={imagePreviewUrl}
                 alt="Preview da imagem de anuncio"
-                className="mt-2 max-h-[240px] rounded-[10px] border border-[#d7e3f2] object-contain"
+                className="mt-2 max-h-[240px] rounded-xl border border-[#d7e3f2] object-contain"
               />
             ) : null}
           </div>

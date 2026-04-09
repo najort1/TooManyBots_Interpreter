@@ -1,5 +1,7 @@
 ﻿import { fmtDuration, fmtTime, formatJidPhone } from '../../lib/format';
+import { buttonBaseClass, inputBaseClass, panelClass, timelineItemClass } from '../../lib/uiTokens';
 import type { ActiveSessionManagementItem, SessionFlowConfigItem, SessionOverview } from '../../types';
+import { EmptyStateMascot } from '../feedback/EmptyStateMascot';
 
 interface SessionManagementViewProps {
   overview: SessionOverview | null;
@@ -22,9 +24,7 @@ interface SessionManagementViewProps {
   onUpdateTimeout: () => void;
 }
 
-const panel = 'rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]';
-const buttonBase =
-  'inline-flex h-9 items-center justify-center rounded-full border px-3 text-[0.78rem] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60';
+const buttonBase = buttonBaseClass;
 
 export function SessionManagementView({
   overview,
@@ -51,22 +51,22 @@ export function SessionManagementView({
   return (
     <section className="mx-auto max-w-[1560px] space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <article className={panel}>
+        <article className={panelClass}>
           <p className="text-[0.78rem] uppercase tracking-[0.06em] text-slate-500">Sessoes Ativas</p>
           <p className="mt-1 text-[1.8rem] font-extrabold">{overview?.activeSessions ?? 0}</p>
         </article>
-        <article className={panel}>
+        <article className={panelClass}>
           <p className="text-[0.78rem] uppercase tracking-[0.06em] text-slate-500">Sessoes em Handoff</p>
           <p className="mt-1 text-[1.8rem] font-extrabold">{overview?.handoffSessions ?? 0}</p>
         </article>
-        <article className={panel}>
+        <article className={panelClass}>
           <p className="text-[0.78rem] uppercase tracking-[0.06em] text-slate-500">Tempo Medio de Sessao</p>
           <p className="mt-1 text-[1.8rem] font-extrabold">{fmtDuration(overview?.averageSessionDurationMs ?? 0)}</p>
         </article>
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.15fr_1fr]">
-        <article className={panel}>
+        <article className={panelClass}>
           <header className="mb-3 flex items-center justify-between gap-3">
             <h3 className="text-base font-extrabold">Acoes de Gestao</h3>
             <button
@@ -75,6 +75,7 @@ export function SessionManagementView({
               onClick={onRefresh}
               disabled={busyRefresh}
             >
+              <i className={busyRefresh ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-arrows-rotate'} aria-hidden="true" />
               {busyRefresh ? 'Atualizando...' : 'Atualizar dados'}
             </button>
           </header>
@@ -93,7 +94,7 @@ export function SessionManagementView({
                 </button>
                 <button
                   type="button"
-                  className={`${buttonBase} border-[#d4e0f1] bg-white text-slate-700 hover:bg-slate-50`}
+                  className={`${buttonBase} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
                   onClick={onClearFlow}
                   disabled={busyAction || !selectedFlowPath}
                 >
@@ -110,7 +111,7 @@ export function SessionManagementView({
                   value={resetJidInput}
                   onChange={event => onResetJidInputChange(event.target.value)}
                   placeholder="Ex.: 5511999999999@s.whatsapp.net"
-                  className="rounded-[10px] border border-[#cfdcec] bg-white px-3 py-2 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
+                  className={inputBaseClass}
                 />
                 <button
                   type="button"
@@ -118,6 +119,7 @@ export function SessionManagementView({
                   onClick={onResetByJid}
                   disabled={busyAction || !resetJidInput.trim()}
                 >
+                  <i className="fa-solid fa-rotate-right" aria-hidden="true" />
                   Reset por JID
                 </button>
               </div>
@@ -130,7 +132,7 @@ export function SessionManagementView({
                 <select
                   value={selectedFlowPath}
                   onChange={event => onSelectFlowPath(event.target.value)}
-                  className="rounded-[10px] border border-[#cfdcec] bg-white px-3 py-2 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
+                  className={inputBaseClass}
                 >
                   <option value="">Selecione um flow</option>
                   {flows.map(flow => (
@@ -147,7 +149,7 @@ export function SessionManagementView({
                     value={timeoutInputMinutes}
                     onChange={event => onTimeoutInputChange(event.target.value)}
                     placeholder={selectedFlow ? String(selectedFlow.sessionTimeoutMinutes) : 'Minutos'}
-                    className="rounded-[10px] border border-[#cfdcec] bg-white px-3 py-2 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
+                    className={inputBaseClass}
                   />
                   <button
                     type="button"
@@ -155,6 +157,7 @@ export function SessionManagementView({
                     onClick={onUpdateTimeout}
                     disabled={busyAction || !selectedFlowPath}
                   >
+                    <i className="fa-regular fa-floppy-disk" aria-hidden="true" />
                     Salvar timeout
                   </button>
                 </div>
@@ -163,7 +166,7 @@ export function SessionManagementView({
           </div>
         </article>
 
-        <article className={panel}>
+        <article className={panelClass}>
           <header className="mb-3">
             <h3 className="text-base font-extrabold">Sessoes Ativas</h3>
           </header>
@@ -172,14 +175,23 @@ export function SessionManagementView({
             value={search}
             onChange={event => onSearchChange(event.target.value)}
             placeholder="Buscar por JID ou flow"
-            className="mb-3 w-full rounded-[10px] border border-[#cfdcec] bg-white px-3 py-2 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
+            className={`mb-3 w-full ${inputBaseClass}`}
           />
-          <div className="max-h-[560px] overflow-auto rounded-xl border border-[#dce6f3] bg-[#eef3fb] p-2">
+          <div
+            className={[
+              'max-h-[560px] overflow-auto rounded-xl p-3',
+              activeSessions.length === 0 ? 'border border-[#dce6f3] bg-transparent' : 'border border-[#dce6f3] bg-[#eef3fb]',
+            ].join(' ')}
+          >
             {activeSessions.length === 0 ? (
-              <p className="py-4 text-center text-sm text-slate-500">Nenhuma sessao ativa encontrada.</p>
+              <EmptyStateMascot
+                compact
+                title="Nenhuma sessao ativa encontrada."
+                description="Quando uma nova conversa iniciar, ela aparecera aqui com flow e duracao."
+              />
             ) : (
               activeSessions.map(session => (
-                <div key={`${session.jid}-${session.flowPath}`} className="mb-2 rounded-[10px] border border-[#e5edf7] bg-white p-2.5 last:mb-0">
+                <div key={`${session.jid}-${session.flowPath}`} className={`mb-2 ${timelineItemClass} last:mb-0`}>
                   <div className="flex items-center justify-between gap-2">
                     <strong className="text-[0.86rem]">{formatJidPhone(session.jid)}</strong>
                     <span

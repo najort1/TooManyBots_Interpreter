@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import type { ChartConfiguration } from 'chart.js';
 import { ChartCanvas } from '../charts/ChartCanvas';
+import { buttonBaseClass, inputBaseClass, panelClass } from '../../lib/uiTokens';
 import type { DatabaseInfo } from '../../types';
 
 interface SettingsViewProps {
@@ -18,9 +19,7 @@ interface SettingsViewProps {
   onRefreshDbInfo: () => void;
 }
 
-const panel = 'rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]';
-const buttonBase =
-  'inline-flex h-9 items-center justify-center rounded-full border px-3 text-[0.78rem] font-semibold transition disabled:cursor-not-allowed disabled:opacity-60';
+const buttonBase = buttonBaseClass;
 
 function formatBytes(value: number) {
   const bytes = Number(value) || 0;
@@ -117,7 +116,7 @@ export function SettingsView({
 
   return (
     <section className="mx-auto grid max-w-[1560px] grid-cols-1 gap-4 xl:grid-cols-2">
-      <article className={panel}>
+      <article className={panelClass}>
         <header className="mb-3">
           <h3 className="text-base font-extrabold">Runtime</h3>
         </header>
@@ -194,7 +193,7 @@ export function SettingsView({
                 value={broadcastIntervalInput}
                 onChange={event => setBroadcastIntervalInput(event.target.value)}
                 disabled={busySaveSettings}
-                className="h-9 w-32 rounded-[10px] border border-[#cfdcec] bg-white px-3 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
+                className={`${inputBaseClass} w-32`}
               />
               <span className="text-xs font-semibold text-slate-600">ms entre envios</span>
               <button
@@ -206,6 +205,7 @@ export function SettingsView({
                   onUpdateBroadcastSendInterval(next);
                 }}
               >
+                <i className="fa-regular fa-floppy-disk" aria-hidden="true" />
                 Salvar intervalo
               </button>
             </div>
@@ -223,6 +223,7 @@ export function SettingsView({
                 onClick={onClearCache}
                 disabled={busyClearCache}
               >
+                <i className="fa-regular fa-trash-can" aria-hidden="true" />
                 {busyClearCache ? 'Limpando...' : 'Limpar cache runtime'}
               </button>
             </div>
@@ -230,7 +231,7 @@ export function SettingsView({
         </div>
       </article>
 
-      <article className={panel}>
+      <article className={panelClass}>
         <header className="mb-3 flex items-center justify-between gap-3">
           <h3 className="text-base font-extrabold">Informacoes do DB</h3>
           <button
@@ -247,46 +248,46 @@ export function SettingsView({
           <p className="text-sm text-slate-500">Sem dados do banco ainda.</p>
         ) : (
           <div className="grid grid-cols-1 gap-2">
-            <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+            <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
               <strong>Arquivo:</strong> {dbInfo.path}
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+              <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
                 <strong>Journal:</strong> {dbInfo.journalMode}
               </div>
-              <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+              <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
                 <strong>Synchronous:</strong> {dbInfo.synchronous}
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2">
-              <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+              <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
                 <strong>DB:</strong> {formatBytes(dbInfo.fileSizeBytes)}
               </div>
-              <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+              <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
                 <strong>WAL:</strong> {formatBytes(dbInfo.walSizeBytes)}
               </div>
-              <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+              <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
                 <strong>SHM:</strong> {formatBytes(dbInfo.shmSizeBytes)}
               </div>
             </div>
-            <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+            <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
               <strong>Total Armazenamento:</strong> {formatMb(dbInfo.totalStorageBytes ?? (dbInfo.fileSizeBytes + dbInfo.walSizeBytes + dbInfo.shmSizeBytes))}
             </div>
             <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+              <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
                 <strong>Sessoes:</strong> {dbInfo.sessionsTotal} (ativas: {dbInfo.sessionsActive})
               </div>
-              <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+              <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
                 <strong>Eventos:</strong> {dbInfo.conversationEventsTotal}
               </div>
-              <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+              <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
                 <strong>Conversas:</strong> {dbInfo.conversationSessionsTotal}
               </div>
-              <div className="rounded-lg border border-[#dce6f3] bg-[#f8fbff] p-2 text-sm">
+              <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
                 <strong>Broadcast:</strong> {dbInfo.broadcastCampaignsTotal} campanhas / {dbInfo.broadcastRecipientsTotal} destinatarios
               </div>
             </div>
-            <div className="rounded-lg border border-[#dce6f3] bg-white p-3">
+            <div className="rounded-xl border border-[#dce6f3] bg-white p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <strong className="text-sm text-slate-700">Evolucao diaria do tamanho do DB</strong>
                 <small className="text-xs text-slate-500">Ultimos 7 dias</small>

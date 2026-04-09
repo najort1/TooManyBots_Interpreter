@@ -209,6 +209,13 @@ function toBroadcastProgress(log: EventLog): BroadcastSendProgress | null {
   };
 }
 
+type PendingConfirmAction =
+  | 'clear-runtime-cache'
+  | 'clear-all-sessions'
+  | 'clear-flow-sessions'
+  | 'reset-session-by-jid'
+  | 'send-broadcast';
+
 function App() {
   const [view, setView] = useState<DashboardView>('analytics');
   const [renderedView, setRenderedView] = useState<DashboardView>('analytics');
@@ -237,6 +244,7 @@ function App() {
   const [busyResume, setBusyResume] = useState(false);
   const [busyEnd, setBusyEnd] = useState(false);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
+  const [pendingConfirmAction, setPendingConfirmAction] = useState<PendingConfirmAction | null>(null);
   const [broadcastContacts, setBroadcastContacts] = useState<BroadcastContact[]>([]);
   const [broadcastSearch, setBroadcastSearch] = useState('');
   const [broadcastRecipientMode, setBroadcastRecipientMode] = useState<'all' | 'selected'>('all');
@@ -824,6 +832,26 @@ function App() {
     setConfirmEndOpen(true);
   }, []);
 
+  const openConfirmAction = useCallback((action: PendingConfirmAction) => {
+    setPendingConfirmAction(action);
+  }, []);
+
+  const openBroadcastSendModal = useCallback(() => {
+    const hasText = broadcastMessage.trim().length > 0;
+    const hasImage = broadcastImageDataUrl.length > 0;
+    if (!hasText && !hasImage) {
+      showNotice('Informe texto ou imagem para enviar o anuncio.');
+      return;
+    }
+
+    if (broadcastRecipientMode === 'selected' && selectedBroadcastJids.length === 0) {
+      showNotice('Selecione ao menos um destinatario.');
+      return;
+    }
+
+    setPendingConfirmAction('send-broadcast');
+  }, [broadcastImageDataUrl, broadcastMessage, broadcastRecipientMode, selectedBroadcastJids.length, showNotice]);
+
   const handleToggleBroadcastRecipient = useCallback((jid: string) => {
     setSelectedBroadcastJids(previous => {
       if (previous.includes(jid)) {
@@ -1069,6 +1097,115 @@ function App() {
     }
   }, [refreshSessionManagement, sessionSelectedFlowPath, sessionTimeoutInputMinutes, showNotice]);
 
+  const confirmActionBusy =
+    pendingConfirmAction === 'send-broadcast'
+      ? busyBroadcastSend
+      : pendingConfirmAction === 'clear-runtime-cache'
+        ? busyClearRuntimeCache
+        : pendingConfirmAction === 'clear-all-sessions' || pendingConfirmAction === 'clear-flow-sessions' || pendingConfirmAction === 'reset-session-by-jid'
+          ? busySessionAction
+          : false;
+
+  const confirmActionConfig = useMemo(() => {
+    if (!pendingConfirmAction) return null;
+
+    if (pendingConfirmAction === 'clear-runtime-cache') {
+      return {
+        title: 'Limpar cache runtime',
+        description: 'Esta acao remove o cache em memoria de sessoes/blocos para diagnostico.',
+        confirmLabel: confirmActionBusy ? 'Limpando...' : 'Limpar cache',
+        variant: 'danger' as const,
+      };
+    }
+
+    if (pendingConfirmAction === 'clear-all-sessions') {
+      return {
+        title: 'Limpar todas as sessoes ativas',
+        description: 'Deseja remover todas as sessoes ativas agora? Esta acao nao pode ser desfeita.',
+        confirmLabel: confirmActionBusy ? 'Limpando...' : 'Limpar todas',
+        variant: 'danger' as const,
+      };
+    }
+
+    if (pendingConfirmAction === 'clear-flow-sessions') {
+      const flowPath = sessionSelectedFlowPath.trim();
+      return {
+        title: 'Limpar sessoes do flow',
+        description: flowPath
+          ? `Deseja remover as sessoes ativas do flow ${flowPath}?`
+          : 'Deseja remover as sessoes ativas do flow selecionado?',
+        confirmLabel: confirmActionBusy ? 'Limpando...' : 'Limpar flow',
+        variant: 'danger' as const,
+      };
+    }
+
+    if (pendingConfirmAction === 'reset-session-by-jid') {
+      const jid = sessionResetJidInput.trim();
+      return {
+        title: 'Resetar sessao por JID',
+        description: jid
+          ? `Deseja resetar as sessoes associadas ao JID ${jid}?`
+          : 'Deseja resetar as sessoes associadas ao JID informado?',
+        confirmLabel: confirmActionBusy ? 'Resetando...' : 'Resetar JID',
+        variant: 'danger' as const,
+      };
+    }
+
+    const recipients = broadcastRecipientMode === 'all' ? broadcastContacts.length : selectedBroadcastJids.length;
+    return {
+      title: 'Enviar anuncio em massa',
+      description: `Confirma envio para ${recipients} destinatario(s)?`,
+      confirmLabel: confirmActionBusy ? 'Enviando...' : 'Enviar anuncio',
+      variant: 'primary' as const,
+    };
+  }, [
+    broadcastContacts.length,
+    broadcastRecipientMode,
+    confirmActionBusy,
+    pendingConfirmAction,
+    selectedBroadcastJids.length,
+    sessionResetJidInput,
+    sessionSelectedFlowPath,
+  ]);
+
+  const handleConfirmPendingAction = useCallback(async () => {
+    if (!pendingConfirmAction) return;
+
+    if (pendingConfirmAction === 'clear-runtime-cache') {
+      await handleClearRuntimeCache();
+      setPendingConfirmAction(null);
+      return;
+    }
+
+    if (pendingConfirmAction === 'clear-all-sessions') {
+      await handleClearAllSessions();
+      setPendingConfirmAction(null);
+      return;
+    }
+
+    if (pendingConfirmAction === 'clear-flow-sessions') {
+      await handleClearSessionsByFlow();
+      setPendingConfirmAction(null);
+      return;
+    }
+
+    if (pendingConfirmAction === 'reset-session-by-jid') {
+      await handleResetSessionByJid();
+      setPendingConfirmAction(null);
+      return;
+    }
+
+    await handleSendBroadcast();
+    setPendingConfirmAction(null);
+  }, [
+    handleClearAllSessions,
+    handleClearRuntimeCache,
+    handleClearSessionsByFlow,
+    handleResetSessionByJid,
+    handleSendBroadcast,
+    pendingConfirmAction,
+  ]);
+
   return (
     <div className="flex min-h-screen">
       <Sidebar
@@ -1165,7 +1302,7 @@ function App() {
                 setBroadcastImageFileName('');
               }}
               onSend={() => {
-                void handleSendBroadcast();
+                void openBroadcastSendModal();
               }}
             />
           )}
@@ -1186,14 +1323,14 @@ function App() {
                 void refreshSessionManagement();
               }}
               onClearAll={() => {
-                void handleClearAllSessions();
+                openConfirmAction('clear-all-sessions');
               }}
               onClearFlow={() => {
-                void handleClearSessionsByFlow();
+                openConfirmAction('clear-flow-sessions');
               }}
               onResetJidInputChange={setSessionResetJidInput}
               onResetByJid={() => {
-                void handleResetSessionByJid();
+                openConfirmAction('reset-session-by-jid');
               }}
               onSelectFlowPath={handleSelectSessionFlow}
               onTimeoutInputChange={setSessionTimeoutInputMinutes}
@@ -1220,7 +1357,7 @@ function App() {
               }}
               onToggleTheme={setTheme}
               onClearCache={() => {
-                void handleClearRuntimeCache();
+                openConfirmAction('clear-runtime-cache');
               }}
               onRefreshDbInfo={() => {
                 void loadDbInfo().catch(error => {
@@ -1254,9 +1391,33 @@ function App() {
           },
         ]}
       />
+
+      <Modal
+        open={pendingConfirmAction !== null && confirmActionConfig !== null}
+        title={confirmActionConfig?.title || 'Confirmar acao'}
+        description={confirmActionConfig?.description || ''}
+        onClose={() => {
+          if (!confirmActionBusy) setPendingConfirmAction(null);
+        }}
+        actions={[
+          {
+            label: 'Cancelar',
+            variant: 'ghost',
+            onClick: () => setPendingConfirmAction(null),
+            disabled: confirmActionBusy,
+          },
+          {
+            label: confirmActionConfig?.confirmLabel || 'Confirmar',
+            variant: confirmActionConfig?.variant || 'primary',
+            onClick: () => {
+              void handleConfirmPendingAction();
+            },
+            disabled: confirmActionBusy,
+          },
+        ]}
+      />
     </div>
   );
 }
 
 export default App;
-

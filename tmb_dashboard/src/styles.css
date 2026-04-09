@@ -4,6 +4,9 @@
 :root {
   --bg: #f3f6fb;
   --text: #122033;
+  --radius-base: 12px;
+  --radius-lg: 16px;
+  --control-height: 36px;
 }
 
 html.theme-dark {
@@ -240,11 +243,11 @@ html.theme-dark [class*='border-[#0e6059]'] {
 }
 
 .select2-container--default .select2-selection--single.select2-tmb-selection {
-  height: 38px;
+  height: var(--control-height);
   border: 1px solid #c9d8ec;
-  border-radius: 12px;
+  border-radius: var(--radius-base);
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-  padding: 0.2rem 0.35rem;
+  padding: 0.1rem 0.35rem;
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 
@@ -256,7 +259,7 @@ html.theme-dark [class*='border-[#0e6059]'] {
 
 .select2-container--default .select2-selection--single.select2-tmb-selection .select2-selection__rendered {
   color: #122033;
-  line-height: 32px;
+  line-height: 30px;
   font-size: 0.84rem;
   font-weight: 600;
 }
@@ -267,7 +270,7 @@ html.theme-dark [class*='border-[#0e6059]'] {
 }
 
 .select2-container--default .select2-selection--single.select2-tmb-selection .select2-selection__arrow {
-  height: 36px;
+  height: var(--control-height);
   right: 6px;
 }
 
@@ -277,7 +280,7 @@ html.theme-dark [class*='border-[#0e6059]'] {
 
 .select2-dropdown.select2-tmb-dropdown {
   border: 1px solid #c9d8ec;
-  border-radius: 12px;
+  border-radius: var(--radius-base);
   overflow: hidden;
   box-shadow: 0 14px 34px rgba(18, 32, 51, 0.14);
   background: #ffffff;
@@ -384,7 +387,7 @@ html.theme-transitioning [class*='shadow-'] {
 .broadcast-flight-scene {
   margin-bottom: 14px;
   border: 1px solid #dce6f3;
-  border-radius: 14px;
+  border-radius: var(--radius-base);
   padding: 12px;
   background: linear-gradient(180deg, #f9fbff 0%, #eef5ff 100%);
 }
@@ -409,7 +412,7 @@ html.theme-transitioning [class*='shadow-'] {
   position: relative;
   margin-top: 9px;
   height: 142px;
-  border-radius: 12px;
+  border-radius: var(--radius-base);
   overflow: hidden;
   background:
     radial-gradient(circle at 84% 10%, rgba(255, 255, 255, 0.78) 0%, rgba(255, 255, 255, 0) 29%),
@@ -592,7 +595,7 @@ html.theme-transitioning [class*='shadow-'] {
 .broadcast-flight-pill {
   margin: 0;
   border: 1px solid #cfe0f4;
-  border-radius: 10px;
+  border-radius: var(--radius-base);
   padding: 8px 10px;
   text-align: center;
   font-size: 0.78rem;

@@ -1,4 +1,5 @@
 ﻿import type { DashboardView } from '../../types';
+import projectFavicon from '../../assets/dhRt6-removebg-preview.png';
 
 interface SidebarProps {
   currentView: DashboardView;
@@ -30,13 +31,18 @@ export function Sidebar({
         ].join(' ')}
       >
         <div className="flex items-center gap-2.5 border-b border-[#dce8f6] px-4 py-4">
-          <span className="rounded-lg border border-[#2a72db] bg-gradient-to-br from-[#1e63c9] to-[#2f7ef1] px-2.5 py-1 font-mono text-xs tracking-[0.08em] text-white shadow-[0_6px_16px_rgba(30,99,201,0.25)]">
-            TMB
-          </span>
-          <span className="text-base font-bold text-[#16365b]">OpsPanel</span>
+          <img
+            src={projectFavicon}
+            alt="TooManyBots"
+            className="h-12 w-12 shrink-0 rounded-xl border border-[#cfe0f5] bg-white object-contain p-0.5 shadow-[0_8px_18px_rgba(30,99,201,0.16)]"
+          />
+          <div className="min-w-0">
+            <p className="truncate text-[0.95rem] font-bold text-[#16365b]">TooManyBots</p>
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.08em] text-[#6f8298]">OpsPanel</p>
+          </div>
           <button
             type="button"
-            className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-lg text-[#5d6f85] hover:bg-[#e7effa] md:hidden"
+            className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-xl text-[#5d6f85] hover:bg-[#e7effa] md:hidden"
             onClick={onCloseMobile}
             aria-label="Fechar menu"
           >
@@ -65,7 +71,7 @@ export function Sidebar({
               >
                 <span
                   className={[
-                    'inline-flex h-[30px] w-[30px] items-center justify-center rounded-lg border text-[0.82rem]',
+                    'inline-flex h-9 w-9 items-center justify-center rounded-xl border text-[0.82rem]',
                     active
                       ? 'border-[#1e63c9] bg-[#1e63c9] text-white'
                       : 'border-[#d6e5f8] bg-[#edf4ff] text-[#2d5fa9]',

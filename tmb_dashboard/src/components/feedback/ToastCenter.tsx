@@ -90,7 +90,7 @@ export function ToastCenter({ items, onDismiss }: ToastCenterProps) {
         <article
           key={item.id}
           className={[
-            'pointer-events-auto grid grid-cols-[auto_1fr_auto] items-start gap-2 rounded-[14px] border border-[#d6e3f4] bg-[rgba(255,255,255,0.97)] p-3 shadow-[0_14px_34px_rgba(18,32,51,0.15)] backdrop-blur-[8px]',
+            'pointer-events-auto grid grid-cols-[auto_1fr_auto] items-start gap-2 rounded-xl border border-[#d6e3f4] bg-[rgba(255,255,255,0.97)] p-3 shadow-[0_14px_34px_rgba(18,32,51,0.15)] backdrop-blur-[8px]',
             'toast-shell',
             item.phase === 'enter' ? 'toast-enter' : '',
             item.phase === 'exit' ? 'toast-exit' : '',
@@ -105,7 +105,7 @@ export function ToastCenter({ items, onDismiss }: ToastCenterProps) {
           </div>
           <button
             type="button"
-            className="inline-flex h-6 w-6 items-center justify-center rounded-lg text-[#6d8097] hover:bg-[#eef4fd]"
+            className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-[#6d8097] hover:bg-[#eef4fd]"
             aria-label="Fechar notificacao"
             onClick={() => onDismiss(item.id)}
           >

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChartConfiguration } from 'chart.js';
 import { ChartCanvas } from '../charts/ChartCanvas';
 import { fmtDuration, fmtTime, isLikelyErrorMessage } from '../../lib/format';
+import { buttonBaseClass, panelClass } from '../../lib/uiTokens';
 import type { DashboardMode, DashboardStats, EventLog } from '../../types';
 
 interface AnalyticsViewProps {
@@ -161,7 +162,7 @@ function getBottomChartConfig(stats: DashboardStats, prefersReducedMotion: boole
 
 function PanelTitle({ icon, text }: { icon: string; text: string }) {
   return (
-    <h3 className="inline-flex items-center gap-2 text-base font-extrabold">
+    <h3 className="inline-flex items-center gap-1 text-base font-extrabold">
       <i className={`${icon} text-[0.9rem] text-[#2f5f9f]`} aria-hidden="true" />
       <span>{text}</span>
     </h3>
@@ -244,8 +245,6 @@ function KpiCard({
     </article>
   );
 }
-
-const panel = 'rounded-2xl border border-[#d8e2ef] bg-white p-4 shadow-[0_10px_32px_rgba(18,32,51,0.08)]';
 
 export function AnalyticsView({
   mode,
@@ -331,7 +330,7 @@ export function AnalyticsView({
       </div>
 
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
-        <article className={`${panel} xl:col-span-2`}>
+        <article className={`${panelClass} xl:col-span-2`}>
           <header className="mb-3">
             <PanelTitle
               icon={mode === 'CONVERSATION' ? 'fa-solid fa-filter-circle-dollar' : 'fa-solid fa-fire'}
@@ -341,14 +340,14 @@ export function AnalyticsView({
           <ChartCanvas config={primaryChartConfig} height={320} />
         </article>
 
-        <article className={panel}>
+        <article className={panelClass}>
           <header className="mb-3">
             <PanelTitle icon="fa-regular fa-clock" text="Volume Horario" />
           </header>
           <ChartCanvas config={volumeChartConfig} height={320} />
         </article>
 
-        <article className={panel}>
+        <article className={panelClass}>
           <header className="mb-3">
             <PanelTitle
               icon={mode === 'CONVERSATION' ? 'fa-solid fa-users' : 'fa-solid fa-user-group'}
@@ -393,18 +392,18 @@ export function AnalyticsView({
           </div>
         </article>
 
-        <article className={`${panel} xl:col-span-2 min-h-[420px]`}>
+        <article className={`${panelClass} xl:col-span-2 min-h-[420px]`}>
           <header className="mb-3 flex items-center justify-between gap-3">
             <PanelTitle icon="fa-regular fa-rectangle-list" text={mode === 'CONVERSATION' ? 'Logs em Tempo Real' : 'Logs de Comandos'} />
             <button
               type="button"
-              className="inline-flex items-center gap-1.5 rounded-full border border-[#d4e0f1] bg-white/80 px-3 py-1.5 text-[0.78rem] font-semibold text-slate-700 transition hover:bg-slate-50"
+              className={`${buttonBaseClass} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
               onClick={onExport}
             >
               <i className="fa-solid fa-file-export" aria-hidden="true" /> Exportar CSV
             </button>
           </header>
-          <div className="max-h-[360px] overflow-auto rounded-[10px] border border-[#dce6f2] bg-[#eef3fb] p-2.5">
+          <div className="max-h-[360px] overflow-auto rounded-xl border border-[#dce6f2] bg-[#eef3fb] p-3">
             {logs.length === 0 ? (
               <p className="py-4 text-center text-sm text-slate-500">Aguardando mensagens...</p>
             ) : mode === 'CONVERSATION' ? (
@@ -419,7 +418,7 @@ export function AnalyticsView({
                 return (
                   <div
                     key={`${log.occurredAt}-${index}`}
-                    className={`mb-1 grid grid-cols-[68px_1fr] gap-2 rounded-[10px] p-2 ${isOutgoing ? 'bg-[#e2e8f0]' : 'bg-white'}`}
+                    className={`mb-1 grid grid-cols-[68px_1fr] gap-2 rounded-xl p-3 ${isOutgoing ? 'bg-[#e2e8f0]' : 'bg-white'}`}
                   >
                     <time className="text-xs text-slate-500">{fmtTime(log.occurredAt)}</time>
                     <p className="text-[0.84rem] leading-[1.45]">
@@ -460,13 +459,13 @@ export function AnalyticsView({
 
         {mode === 'CONVERSATION' ? (
           <>
-            <article className={`${panel} xl:col-span-2`}>
+            <article className={`${panelClass} xl:col-span-2`}>
               <header className="mb-3">
                 <PanelTitle icon="fa-solid fa-chart-column" text="Tendencia Semanal" />
               </header>
               <ChartCanvas config={bottomChartConfig} height={260} />
             </article>
-            <article className={panel}>
+            <article className={panelClass}>
               <header className="mb-3">
                 <PanelTitle icon="fa-solid fa-chart-simple" text="Metricas Avancadas" />
               </header>
@@ -492,7 +491,7 @@ export function AnalyticsView({
           </>
         ) : (
           <>
-            <article className={`${panel} xl:col-span-2`}>
+            <article className={`${panelClass} xl:col-span-2`}>
               <header className="mb-3">
                 <PanelTitle icon="fa-solid fa-triangle-exclamation" text="Erros Recentes" />
               </header>
@@ -512,7 +511,7 @@ export function AnalyticsView({
                 )}
               </div>
             </article>
-            <article className={panel}>
+            <article className={panelClass}>
               <header className="mb-3">
                 <PanelTitle icon="fa-solid fa-heart-pulse" text="Saude das APIs" />
               </header>
