@@ -20,12 +20,23 @@ function cloneConfig(config: ChartConfiguration): ChartConfiguration {
   };
 }
 
+function getConfigSignature(config: ChartConfiguration): string {
+  return JSON.stringify({
+    type: config.type,
+    data: config.data,
+    options: config.options ?? {},
+  });
+}
+
 export function ChartCanvas({
   config,
   height = 280,
 }: ChartCanvasProps) {
+  const initialConfigRef = useRef(config);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const chartRef = useRef<Chart | null>(null);
+  const previousConfigSignatureRef = useRef('');
+  const hasAnimatedFirstDataUpdateRef = useRef(false);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -35,7 +46,9 @@ export function ChartCanvas({
     if (!context) return;
 
     if (!chartRef.current) {
-      chartRef.current = new Chart(context, cloneConfig(config));
+      const initialConfig = initialConfigRef.current;
+      chartRef.current = new Chart(context, cloneConfig(initialConfig));
+      previousConfigSignatureRef.current = getConfigSignature(initialConfig);
     }
 
     return () => {
@@ -48,6 +61,9 @@ export function ChartCanvas({
     const chart = chartRef.current;
     if (!chart) return;
 
+    const nextConfigSignature = getConfigSignature(config);
+    if (nextConfigSignature === previousConfigSignatureRef.current) return;
+
     const nextConfig = cloneConfig(config);
     const nextType = (nextConfig as { type?: string }).type;
     if (nextType) {
@@ -55,7 +71,15 @@ export function ChartCanvas({
     }
     chart.data = nextConfig.data;
     chart.options = nextConfig.options ?? {};
-    chart.update();
+
+    if (!hasAnimatedFirstDataUpdateRef.current) {
+      chart.update();
+      hasAnimatedFirstDataUpdateRef.current = true;
+    } else {
+      chart.update('none');
+    }
+
+    previousConfigSignatureRef.current = nextConfigSignature;
   }, [config]);
 
   return (
