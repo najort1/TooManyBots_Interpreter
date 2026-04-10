@@ -15,6 +15,7 @@ import {
   handleElseIf,
   handleEndIf,
   handleIfCondition,
+  handleKeycheck,
 } from './conditionalHandlers.js';
 import {
   handleDataProcessor,
@@ -35,6 +36,7 @@ export const HANDLERS = {
   [BLOCK_TYPE.COMMAND_INPUT]: handleCommandInput,
   [BLOCK_TYPE.MULTIPLE_CHOICE]: handleMultipleChoice,
   [BLOCK_TYPE.HTTP_REQUEST]: handleHttpRequest,
+  [BLOCK_TYPE.KEYCHECK]: handleKeycheck,
   [BLOCK_TYPE.DATA_PROCESSOR]: handleDataProcessor,
   [BLOCK_TYPE.SEND_REACTION]: handleSendReaction,
   [BLOCK_TYPE.CONDITION]: handleCondition,

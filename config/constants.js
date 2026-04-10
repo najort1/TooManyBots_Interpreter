@@ -37,6 +37,7 @@ export const BLOCK_TYPE = {
   RESTART_FLOW: 'restart-flow',
   COMMAND_INPUT: 'command-input',
   HTTP_REQUEST: 'http-request',
+  KEYCHECK: 'keycheck',
   DATA_PROCESSOR: 'data-processor',
   MULTIPLE_CHOICE: 'multiple-choice',
   SEND_REACTION: 'send-reaction',

@@ -19,6 +19,25 @@ import { loadFlows } from '../engine/flowLoader.js';
 
 await initDb();
 
+function createFlowFixture(flowPath, blocks, runtimeConfig = { conversationMode: 'conversation' }) {
+  const blockMap = new Map();
+  const indexMap = new Map();
+  blocks.forEach((block, index) => {
+    blockMap.set(block.id, block);
+    indexMap.set(block.id, index);
+  });
+
+  return {
+    flowPath,
+    runtimeConfig,
+    blocks,
+    blockMap,
+    indexMap,
+    branchMap: new Map(),
+    endIfMap: new Map(),
+  };
+}
+
 test('session rows are isolated by flow path and bot type', () => {
   const jid = `isolation-${Date.now()}@s.whatsapp.net`;
   const scopeConversation = { flowPath: '/tmp/flow-conversation.tmb', botType: 'conversation' };
@@ -165,6 +184,116 @@ test('command bot does not create conversation session analytics records', async
   assert.equal(getConversationSessionsTotal(commandFlowPath), 0);
 
   deleteSession(jid, { flowPath: commandFlowPath, botType: 'command' });
+});
+
+test('keycheck executes matching thenActions and continues flow', async () => {
+  const now = Date.now();
+  const jid = `keycheck-success-${now}@s.whatsapp.net`;
+  const flowPath = `/tmp/keycheck-success-${now}.tmb`;
+  const sent = [];
+  const sock = {
+    sendMessage: async (targetJid, payload) => {
+      sent.push({ targetJid, payload });
+      return { ok: true };
+    },
+  };
+
+  const flow = createFlowFixture(flowPath, [
+    { id: 'start', type: 'initial-message', config: { text: 'inicio' } },
+    { id: 'setPayload', type: 'set-variable', config: { variableName: 'payload', variableValue: 'ok-response' } },
+    {
+      id: 'check',
+      type: 'keycheck',
+      config: {
+        conditionals: [
+          {
+            id: 'fail',
+            type: 'Failure',
+            mode: 'OR',
+            conditions: [{ id: 'c1', source: 'payload', operator: 'Contains', value: 'erro' }],
+            redirectBlockId: 'fallback',
+            thenActions: [{ id: 'a1', type: 'send-text', config: { text: 'falhou' } }],
+          },
+          {
+            id: 'success',
+            type: 'Success',
+            mode: 'OR',
+            conditions: [{ id: 'c2', source: 'payload', operator: 'Contains', value: 'ok' }],
+            redirectBlockId: '',
+            thenActions: [{ id: 'a2', type: 'send-text', config: { text: 'sucesso {{$payload}}' } }],
+          },
+        ],
+      },
+    },
+    { id: 'after', type: 'send-text', config: { text: 'continuou', waitForResponse: false, captureResponse: false } },
+    { id: 'end', type: 'end-conversation', config: { message: '' } },
+    { id: 'fallback', type: 'send-text', config: { text: 'rota-falha', waitForResponse: false, captureResponse: false } },
+  ]);
+
+  try {
+    await handleIncoming(sock, jid, 'oi', null, flow, `msg-${now}`);
+    const texts = sent.map(item => item.payload?.text).filter(Boolean);
+
+    assert.deepEqual(texts, ['inicio', 'sucesso ok-response', 'continuou']);
+    assert.equal(texts.includes('rota-falha'), false);
+  } finally {
+    deleteSession(jid, { flowPath });
+  }
+});
+
+test('keycheck supports redirectBlockId for matched conditional', async () => {
+  const now = Date.now();
+  const jid = `keycheck-redirect-${now}@s.whatsapp.net`;
+  const flowPath = `/tmp/keycheck-redirect-${now}.tmb`;
+  const sent = [];
+  const sock = {
+    sendMessage: async (targetJid, payload) => {
+      sent.push({ targetJid, payload });
+      return { ok: true };
+    },
+  };
+
+  const flow = createFlowFixture(flowPath, [
+    { id: 'start', type: 'initial-message', config: { text: 'inicio' } },
+    { id: 'setPayload', type: 'set-variable', config: { variableName: 'payload', variableValue: 'erro-status' } },
+    {
+      id: 'check',
+      type: 'keycheck',
+      config: {
+        conditionals: [
+          {
+            id: 'fail',
+            type: 'Failure',
+            mode: 'OR',
+            conditions: [{ id: 'c1', source: 'payload', operator: 'Contains', value: 'erro' }],
+            redirectBlockId: 'fallback',
+            thenActions: [{ id: 'a1', type: 'send-text', config: { text: 'falhou {{$payload}}' } }],
+          },
+          {
+            id: 'success',
+            type: 'Success',
+            mode: 'OR',
+            conditions: [{ id: 'c2', source: 'payload', operator: 'Contains', value: 'ok' }],
+            redirectBlockId: '',
+            thenActions: [{ id: 'a2', type: 'send-text', config: { text: 'sucesso' } }],
+          },
+        ],
+      },
+    },
+    { id: 'after', type: 'send-text', config: { text: 'continuou', waitForResponse: false, captureResponse: false } },
+    { id: 'end', type: 'end-conversation', config: { message: '' } },
+    { id: 'fallback', type: 'send-text', config: { text: 'rota-falha', waitForResponse: false, captureResponse: false } },
+  ]);
+
+  try {
+    await handleIncoming(sock, jid, 'oi', null, flow, `msg-${now}`);
+    const texts = sent.map(item => item.payload?.text).filter(Boolean);
+
+    assert.deepEqual(texts, ['inicio', 'falhou erro-status', 'rota-falha']);
+    assert.equal(texts.includes('continuou'), false);
+  } finally {
+    deleteSession(jid, { flowPath });
+  }
 });
 
 test('database info includes daily size history snapshots', () => {
