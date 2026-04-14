@@ -153,7 +153,45 @@ function resolveByPath(root, pathExpression) {
 }
 
 export function interpolate(text, variables = {}) {
+  return interpolateInternal(text, variables, { displayMode: false });
+}
+
+function formatDisplayValue(value) {
+  if (value == null) return '';
+
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '';
+    const renderedItems = value.map(item => {
+      if (item == null) return '';
+      if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+        return String(item);
+      }
+      try {
+        return JSON.stringify(item);
+      } catch {
+        return String(item);
+      }
+    });
+
+    return renderedItems
+      .map((item, index) => `${index + 1}. ${item}`)
+      .join('\n');
+  }
+
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
+  }
+
+  return String(value);
+}
+
+function interpolateInternal(text, variables = {}, options = {}) {
   if (typeof text !== 'string') return text;
+  const displayMode = options.displayMode === true;
   const systemVars = getSystemInterpolationVariables(new Date());
 
   return text.replace(/\{\{\s*\$?\s*([^}]+?)\s*\}\}/g, (_, rawExpression) => {
@@ -164,6 +202,10 @@ export function interpolate(text, variables = {}) {
     const valueFromSystem = resolveByPath(systemVars, expression);
     const value = valueFromSession ?? valueFromSystem ?? '';
     if (value == null) return '';
-    return String(value);
+    return displayMode ? formatDisplayValue(value) : String(value);
   });
+}
+
+export function interpolateForDisplay(text, variables = {}) {
+  return interpolateInternal(text, variables, { displayMode: true });
 }

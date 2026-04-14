@@ -145,6 +145,33 @@ function escapePathSegment(segment) {
   return segment.replace(/\[(\d+)\]/g, '.$1');
 }
 
+function normalizeLookupToken(value) {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[\s_-]+/g, '');
+}
+
+function resolveObjectFieldByToken(obj, token) {
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return undefined;
+  if (Object.prototype.hasOwnProperty.call(obj, token)) {
+    return obj[token];
+  }
+
+  const normalizedToken = normalizeLookupToken(token);
+  if (!normalizedToken) return undefined;
+
+  for (const key of Object.keys(obj)) {
+    if (normalizeLookupToken(key) === normalizedToken) {
+      return obj[key];
+    }
+  }
+
+  return undefined;
+}
+
 export function extractJsonPath(source, jsonPath) {
   const path = toText(jsonPath);
   if (!path) return source;
@@ -163,7 +190,13 @@ export function extractJsonPath(source, jsonPath) {
   let current = obj;
   for (const token of tokens) {
     if (current == null) return undefined;
-    current = current[token];
+    if (Array.isArray(current)) {
+      current = current[token];
+      continue;
+    }
+
+    const resolved = resolveObjectFieldByToken(current, token);
+    current = resolved;
   }
   return current;
 }
@@ -306,17 +339,30 @@ export function applyDataTransform(sourceValue, cfg, sessionVariables) {
     }
     case 'json_stringify':
       return JSON.stringify(inputValue);
-    case 'extract_field':
-      return extractJsonPath(inputValue, cfg.jsonPath);
+    case 'extract_field': {
+      const resolvedPath = interpolate(toText(cfg.jsonPath), sessionVariables);
+      return extractJsonPath(inputValue, resolvedPath);
+    }
     case 'array_map': {
       if (!Array.isArray(inputValue)) throw new Error('Fonte nao e um array para array_map.');
-      const expression = toText(cfg.mapExpression) || 'item';
+      const expression = toText(cfg.mapExpression);
+      const jsonPathTemplate = toText(cfg.jsonPath);
+
+      if (!expression && jsonPathTemplate) {
+        return inputValue.map((item, index, array) => {
+          const scope = { item, index, array, vars: sessionVariables, ...sessionVariables };
+          const resolvedPath = interpolate(jsonPathTemplate, scope);
+          return extractJsonPath(item, resolvedPath);
+        });
+      }
+
+      const expressionToUse = expression || 'item';
       return inputValue.map((item, index, array) => {
         const scope = { item, index, array, vars: sessionVariables };
-        if (expression.includes('{{') && expression.includes('}}')) {
-          return interpolate(expression, scope);
+        if (expressionToUse.includes('{{') && expressionToUse.includes('}}')) {
+          return interpolate(expressionToUse, scope);
         }
-        return evaluateExpression(expression, scope, item);
+        return evaluateExpression(expressionToUse, scope, item);
       });
     }
     case 'array_filter': {
@@ -399,7 +445,8 @@ export function evaluateSingleCondition(conditionConfig, session) {
   const type = conditionConfig.conditionType || CONDITION_TYPE.VARIABLE;
 
   if (type === CONDITION_TYPE.VARIABLE) {
-    const varRaw = String(session.variables[conditionConfig.variable] ?? '').trim();
+    const varOriginal = session.variables[conditionConfig.variable];
+    const varRaw = String(varOriginal ?? '').trim();
     const compRaw = String(conditionConfig.value ?? '').trim();
     const compMaxRaw = String(conditionConfig.valueMax ?? '').trim();
 
@@ -422,6 +469,10 @@ export function evaluateSingleCondition(conditionConfig, session) {
       case 'ends_with': return varValue.endsWith(compareValue);
       case 'is_empty': return varRaw === '';
       case 'is_not_empty': return varRaw !== '';
+      case 'is_null': return varOriginal == null || varValue === 'null';
+      case 'is_not_null': return !(varOriginal == null || varValue === 'null');
+      case 'is_number': return varRaw !== '' && Number.isFinite(Number(varRaw));
+      case 'is_integer': return /^-?\d+$/.test(varRaw);
       default: return false;
     }
   } else if (type === CONDITION_TYPE.KEYWORD) {

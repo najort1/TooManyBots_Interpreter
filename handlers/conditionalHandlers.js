@@ -14,6 +14,8 @@ import {
 import {
   handleDataProcessor,
   handleHttpRequest,
+  handleListOperations,
+  handleStringFunctions,
 } from './integrationHandlers.js';
 import {
   handleCommandInput,
@@ -38,6 +40,8 @@ const INLINE_ACTION_HANDLERS = {
   [BLOCK_TYPE.COMMAND_INPUT]: handleCommandInput,
   [BLOCK_TYPE.MULTIPLE_CHOICE]: handleMultipleChoice,
   [BLOCK_TYPE.HTTP_REQUEST]: handleHttpRequest,
+  [BLOCK_TYPE.STRING_FUNCTIONS]: handleStringFunctions,
+  [BLOCK_TYPE.LIST_OPERATIONS]: handleListOperations,
   [BLOCK_TYPE.DATA_PROCESSOR]: handleDataProcessor,
   [BLOCK_TYPE.SEND_REACTION]: handleSendReaction,
   [BLOCK_TYPE.SET_VARIABLE]: handleSetVariable,
@@ -55,15 +59,25 @@ function normalizeOperator(operator) {
 
   const compact = raw.replace(/[\s_-]+/g, '');
   if (compact === 'equals' || compact === 'equal' || compact === 'eq') return '==';
+  if (compact === 'equalto') return '==';
   if (compact === 'notequals' || compact === 'neq') return '!=';
+  if (compact === 'notequalto') return '!=';
+  if (compact === 'greaterthan') return '>';
+  if (compact === 'lessthan') return '<';
+  if (compact === 'greaterthanorequal' || compact === 'greaterthanorequalto') return '>=';
+  if (compact === 'lessthanorequal' || compact === 'lessthanorequalto') return '<=';
   if (compact === 'contains' || compact === 'contain' || compact === 'includes') return 'contains';
+  if (compact === 'doesnotcontain') return 'not_contains';
   if (compact === 'notcontains' || compact === 'notinclude') return 'not_contains';
   if (compact === 'startswith') return 'starts_with';
   if (compact === 'endswith') return 'ends_with';
   if (compact === 'isempty') return 'is_empty';
   if (compact === 'isnotempty') return 'is_not_empty';
+  if (compact === 'exists') return 'exists';
+  if (compact === 'doesnotexist') return 'does_not_exist';
   if (compact === 'between') return 'between';
   if (compact === 'regex' || compact === 'matchesregex' || compact === 'matchregex') return 'regex';
+  if (compact === 'doesnotmatchregex') return 'not_regex';
   return raw;
 }
 
@@ -150,14 +164,20 @@ function evaluateKeycheckCondition(condition, session) {
       return isEmptyValue(sourceValueRaw);
     case 'is_not_empty':
       return !isEmptyValue(sourceValueRaw);
+    case 'exists':
+      return !isEmptyValue(sourceValueRaw);
+    case 'does_not_exist':
+      return isEmptyValue(sourceValueRaw);
     case 'between':
       return sourceNumValid && compareNumValid && compareMaxNumValid &&
         sourceNum >= compareNum && sourceNum <= compareMaxNum;
-    case 'regex': {
+    case 'regex':
+    case 'not_regex': {
       try {
         const flags = toText(condition?.regexFlags || condition?.flags);
         const regex = new RegExp(String(compareValueRaw), flags);
-        return regex.test(toComparableText(sourceValueRaw));
+        const matched = regex.test(toComparableText(sourceValueRaw));
+        return operator === 'not_regex' ? !matched : matched;
       } catch {
         return false;
       }

@@ -38,6 +38,8 @@ export const BLOCK_TYPE = {
   COMMAND_INPUT: 'command-input',
   HTTP_REQUEST: 'http-request',
   KEYCHECK: 'keycheck',
+  STRING_FUNCTIONS: 'string-functions',
+  LIST_OPERATIONS: 'list-operations',
   DATA_PROCESSOR: 'data-processor',
   MULTIPLE_CHOICE: 'multiple-choice',
   SEND_REACTION: 'send-reaction',

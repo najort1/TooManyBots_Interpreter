@@ -20,6 +20,8 @@ import {
 import {
   handleDataProcessor,
   handleHttpRequest,
+  handleListOperations,
+  handleStringFunctions,
 } from './integrationHandlers.js';
 import {
   handleCommandInput,
@@ -37,6 +39,8 @@ export const HANDLERS = {
   [BLOCK_TYPE.MULTIPLE_CHOICE]: handleMultipleChoice,
   [BLOCK_TYPE.HTTP_REQUEST]: handleHttpRequest,
   [BLOCK_TYPE.KEYCHECK]: handleKeycheck,
+  [BLOCK_TYPE.STRING_FUNCTIONS]: handleStringFunctions,
+  [BLOCK_TYPE.LIST_OPERATIONS]: handleListOperations,
   [BLOCK_TYPE.DATA_PROCESSOR]: handleDataProcessor,
   [BLOCK_TYPE.SEND_REACTION]: handleSendReaction,
   [BLOCK_TYPE.CONDITION]: handleCondition,

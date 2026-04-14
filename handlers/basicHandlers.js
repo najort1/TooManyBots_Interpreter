@@ -1,5 +1,5 @@
 import { sendTextMessage, sendListMessage } from '../engine/sender.js';
-import { interpolate } from '../engine/utils.js';
+import { interpolate, interpolateForDisplay } from '../engine/utils.js';
 import {
   INTERNAL_VAR,
   SESSION_STATUS,
@@ -7,13 +7,13 @@ import {
 } from '../config/constants.js';
 
 export async function handleInitialMessage({ block, session, sock, jid }) {
-  const text = interpolate(block.config.text, session.variables);
+  const text = interpolateForDisplay(block.config.text, session.variables);
   await sendTextMessage(sock, jid, text);
   return { nextBlockIndex: session.blockIndex + 1, sessionPatch: {}, done: false };
 }
 
 export async function handleSendText({ block, session, sock, jid }) {
-  const text = interpolate(block.config.text, session.variables);
+  const text = interpolateForDisplay(block.config.text, session.variables);
   await sendTextMessage(sock, jid, text);
 
   if (block.config.waitForResponse || block.config.captureResponse) {
@@ -105,7 +105,7 @@ export async function handleDelay({ block, session }) {
 export async function handleEndConversation({ block, session, sock, jid, flow }) {
   const shouldSendClosingMessage = flow?.runtimeConfig?.endBehavior?.sendClosingMessage !== false;
   if (shouldSendClosingMessage && block.config.message) {
-    const text = interpolate(block.config.message, session.variables);
+    const text = interpolateForDisplay(block.config.message, session.variables);
     await sendTextMessage(sock, jid, text);
   }
   return { nextBlockIndex: null, sessionPatch: { status: SESSION_STATUS.ENDED }, done: true };

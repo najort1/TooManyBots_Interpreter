@@ -107,6 +107,29 @@ export function isSelectableTestTargetJid(jid) {
   return isUserJid(jid) || isGroupJid(jid);
 }
 
+function extractJidLocalPart(jid) {
+  const normalized = toJidString(jid);
+  const atIndex = normalized.lastIndexOf('@');
+  if (atIndex <= 0) return '';
+  return normalized.slice(0, atIndex);
+}
+
+export function isLikelyRealUserJid(jid) {
+  if (!isUserJid(jid)) return false;
+  const local = extractJidLocalPart(jid);
+  return /^\d{8,20}$/.test(local);
+}
+
+export function isLikelyRealGroupJid(jid) {
+  if (!isGroupJid(jid)) return false;
+  const local = extractJidLocalPart(jid);
+  return /^\d{8,24}(?:-\d{1,24})?$/.test(local);
+}
+
+export function isLikelyRealSelectableJid(jid) {
+  return isLikelyRealUserJid(jid) || isLikelyRealGroupJid(jid);
+}
+
 export function normalizeManualTargetJid(raw) {
   const value = String(raw ?? '').trim();
   if (!value) return '';
@@ -225,6 +248,7 @@ export function fetchSavedTestTargetJidsFromDb(contactCache, limit = 2000) {
   for (const event of events) {
     const knownJids = extractKnownJidsFromConversationEvent(event);
     for (const jid of knownJids) {
+      if (!isLikelyRealSelectableJid(jid)) continue;
       const knownName = contactCache.get(jid)?.name || jid;
       map.set(jid, knownName);
     }

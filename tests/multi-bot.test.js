@@ -296,6 +296,57 @@ test('keycheck supports redirectBlockId for matched conditional', async () => {
   }
 });
 
+test('keycheck supports orchestrator operator aliases', async () => {
+  const now = Date.now();
+  const jid = `keycheck-operators-${now}@s.whatsapp.net`;
+  const flowPath = `/tmp/keycheck-operators-${now}.tmb`;
+  const sent = [];
+  const sock = {
+    sendMessage: async (targetJid, payload) => {
+      sent.push({ targetJid, payload });
+      return { ok: true };
+    },
+  };
+
+  const flow = createFlowFixture(flowPath, [
+    { id: 'start', type: 'initial-message', config: { text: 'inicio' } },
+    { id: 'setScore', type: 'set-variable', config: { variableName: 'score', variableValue: '5' } },
+    {
+      id: 'check',
+      type: 'keycheck',
+      config: {
+        conditionals: [
+          {
+            id: 'less',
+            type: 'Custom',
+            mode: 'AND',
+            conditions: [{ id: 'c1', source: 'score', operator: 'LessThan', value: '10' }],
+            redirectBlockId: '',
+            thenActions: [{ id: 'a1', type: 'send-text', config: { text: 'less-than-ok' } }],
+          },
+          {
+            id: 'missing',
+            type: 'Custom',
+            mode: 'AND',
+            conditions: [{ id: 'c2', source: 'nao_existe', operator: 'DoesNotExist', value: '' }],
+            redirectBlockId: '',
+            thenActions: [{ id: 'a2', type: 'send-text', config: { text: 'missing-ok' } }],
+          },
+        ],
+      },
+    },
+    { id: 'end', type: 'end-conversation', config: { message: '' } },
+  ]);
+
+  try {
+    await handleIncoming(sock, jid, 'oi', null, flow, `msg-${now}`);
+    const texts = sent.map(item => item.payload?.text).filter(Boolean);
+    assert.deepEqual(texts, ['inicio', 'less-than-ok']);
+  } finally {
+    deleteSession(jid, { flowPath });
+  }
+});
+
 test('database info includes daily size history snapshots', () => {
   const info = getDatabaseInfo();
   assert.ok(Array.isArray(info.sizeHistory), 'sizeHistory should be an array');
