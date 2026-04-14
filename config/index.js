@@ -161,6 +161,10 @@ function normalizeConfigShape(input) {
   return normalized;
 }
 
+export function normalizeUserConfig(input) {
+  return normalizeConfigShape(input);
+}
+
 function sanitizeConfigForSave(input) {
   const { __startupChoice, ...rest } = input;
   const normalized = normalizeConfigShape(rest);

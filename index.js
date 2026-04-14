@@ -1,6 +1,7 @@
-﻿import fs from 'fs';
+import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
+import { spawn } from 'node:child_process';
 import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
@@ -28,17 +29,27 @@ import {
   endSessionFromDashboard,
   clearEngineRuntimeCaches,
 } from './engine/flowEngine.js';
-import { getConfig, saveUserConfig, RUNTIME_MODE } from './config/index.js';
+import {
+  getConfig,
+  loadSavedUserConfig,
+  normalizeUserConfig,
+  saveUserConfig,
+  RUNTIME_MODE,
+} from './config/index.js';
 import { DashboardServer } from './dashboard/server.js';
 import { createBroadcastService } from './engine/broadcastService.js';
 import { buildBroadcastMessage } from './engine/broadcastMessageBuilder.js';
 import { sendImageMessage, sendTextMessage } from './engine/sender.js';
-import { configureRuntimeAccessSelectors } from './runtime/accessSelectors.js';
 import {
+  fetchSavedTestTargetJidsFromDb,
+  fetchSelectableContacts,
+  fetchSelectableGroups,
   getAllowedTestJids,
   getGroupWhitelistJids,
   getMessageDebugInfo,
+  isGroupJid,
   isGroupWhitelistScope,
+  isUserJid,
   mergeChatsIntoContactCache,
   mergeContactCacheEntry,
   mergeContactList,
@@ -71,6 +82,11 @@ let removeConversationEventListener = null;
 let authStateMaintenanceTimer = null;
 let dbSizeSnapshotMaintenanceTimer = null;
 let broadcastService = null;
+let hasSavedConfigAtBoot = false;
+let requiresInitialSetup = false;
+let whatsappRuntimeStarted = false;
+let whatsappRuntimeStartPromise = null;
+let dashboardAutoOpenAttempted = false;
 const contactCache = new Map();
 const HANDOFF_MEDIA_DIR = path.resolve('./data/handoff-media');
 const ALLOWED_INCOMING_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
@@ -656,7 +672,7 @@ function normalizeRuntimeInfo() {
     ...(conversationFlow ? ['conversation'] : []),
     ...(commandFlows.length > 0 ? ['command'] : []),
   ];
-  const mode = conversationFlow ? 'conversation' : 'command';
+  const mode = conversationFlow ? 'conversation' : (commandFlows.length > 0 ? 'command' : 'conversation');
   const flowPath = dashboardFlow?.flowPath ?? path.resolve(String(config?.flowPath ?? ''));
   return {
     flowFile,
@@ -693,6 +709,289 @@ function normalizeBroadcastSendIntervalMs(value) {
   return Math.floor(n);
 }
 
+function toTrimmedStringArray(value) {
+  if (!Array.isArray(value)) return [];
+  const dedup = new Set();
+  const result = [];
+  for (const item of value) {
+    const normalized = String(item ?? '').trim();
+    if (!normalized || dedup.has(normalized)) continue;
+    dedup.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function buildSetupConfigSnapshot() {
+  return {
+    botRuntimeMode: String(config?.botRuntimeMode || 'single-flow'),
+    flowPath: String(config?.flowPath || ''),
+    flowPaths: toTrimmedStringArray(config?.flowPaths),
+    runtimeMode: String(config?.runtimeMode || RUNTIME_MODE.PRODUCTION),
+    autoReloadFlows: config?.autoReloadFlows !== false,
+    broadcastSendIntervalMs: Number(config?.broadcastSendIntervalMs ?? 250),
+    testTargetMode: String(config?.testTargetMode || 'contacts-and-groups'),
+    testJid: String(config?.testJid || ''),
+    testJids: toTrimmedStringArray(config?.testJids),
+    groupWhitelistJids: toTrimmedStringArray(config?.groupWhitelistJids),
+    dashboardHost: String(config?.dashboardHost || '127.0.0.1'),
+    dashboardPort: Number(config?.dashboardPort || 8787),
+  };
+}
+
+function normalizeSetupSearch(value) {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function targetMatchesSearch(target, normalizedSearch) {
+  if (!normalizedSearch) return true;
+  const jid = String(target?.jid ?? '').toLowerCase();
+  const name = String(target?.name ?? '').toLowerCase();
+  return jid.includes(normalizedSearch) || name.includes(normalizedSearch);
+}
+
+async function listSetupSelectableTargets({ search = '', limit = 300 } = {}) {
+  const normalizedSearch = normalizeSetupSearch(search);
+  const maxLimit = Math.max(1, Math.min(1000, Number(limit) || 300));
+
+  const contactsFromCache = await fetchSelectableContacts(contactCache);
+  const groupsFromSocket = currentSocket
+    ? await fetchSelectableGroups(currentSocket).catch(() => [])
+    : [];
+  const recoveredFromDb = fetchSavedTestTargetJidsFromDb(contactCache, 2500);
+
+  const contactsByJid = new Map();
+  const groupsByJid = new Map();
+
+  for (const contact of contactsFromCache) {
+    const jid = String(contact?.jid ?? '').trim();
+    if (!isUserJid(jid)) continue;
+    contactsByJid.set(jid, {
+      jid,
+      name: String(contact?.name ?? jid).trim() || jid,
+      source: 'cache',
+    });
+  }
+
+  for (const group of groupsFromSocket) {
+    const jid = String(group?.jid ?? '').trim();
+    if (!isGroupJid(jid)) continue;
+    groupsByJid.set(jid, {
+      jid,
+      name: String(group?.name ?? jid).trim() || jid,
+      participants: Math.max(0, Number(group?.participants) || 0),
+      source: 'socket',
+    });
+  }
+
+  for (const entry of recoveredFromDb) {
+    const jid = String(entry?.jid ?? '').trim();
+    if (!jid) continue;
+
+    if (isUserJid(jid)) {
+      if (!contactsByJid.has(jid)) {
+        contactsByJid.set(jid, {
+          jid,
+          name: String(entry?.name ?? jid).trim() || jid,
+          source: 'db',
+        });
+      }
+      continue;
+    }
+
+    if (isGroupJid(jid) && !groupsByJid.has(jid)) {
+      groupsByJid.set(jid, {
+        jid,
+        name: String(entry?.name ?? jid).trim() || jid,
+        participants: 0,
+        source: 'db',
+      });
+    }
+  }
+
+  const contacts = [...contactsByJid.values()]
+    .filter(target => targetMatchesSearch(target, normalizedSearch))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, maxLimit);
+
+  const groups = [...groupsByJid.values()]
+    .filter(target => targetMatchesSearch(target, normalizedSearch))
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .slice(0, maxLimit);
+
+  return {
+    contacts,
+    groups,
+    socketReady: Boolean(currentSocket),
+    updatedAt: Date.now(),
+  };
+}
+
+function normalizeSetupPatch(input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return null;
+  }
+
+  const patch = {};
+
+  if (input.botRuntimeMode !== undefined) {
+    patch.botRuntimeMode = String(input.botRuntimeMode || '').trim();
+  }
+  if (input.flowPath !== undefined) {
+    patch.flowPath = String(input.flowPath || '').trim();
+  }
+  if (input.flowPaths !== undefined) {
+    patch.flowPaths = toTrimmedStringArray(input.flowPaths);
+  }
+  if (input.runtimeMode !== undefined) {
+    patch.runtimeMode = String(input.runtimeMode || '').trim();
+  }
+  if (input.autoReloadFlows !== undefined) {
+    patch.autoReloadFlows = Boolean(input.autoReloadFlows);
+  }
+  if (input.broadcastSendIntervalMs !== undefined) {
+    const normalizedBroadcastInterval = normalizeBroadcastSendIntervalMs(input.broadcastSendIntervalMs);
+    if (normalizedBroadcastInterval == null) {
+      return { error: 'broadcastSendIntervalMs must be >= 0' };
+    }
+    patch.broadcastSendIntervalMs = normalizedBroadcastInterval;
+  }
+  if (input.testTargetMode !== undefined) {
+    patch.testTargetMode = String(input.testTargetMode || '').trim() || 'contacts-and-groups';
+  }
+  if (input.testJid !== undefined) {
+    patch.testJid = String(input.testJid || '').trim();
+  }
+  if (input.testJids !== undefined) {
+    patch.testJids = toTrimmedStringArray(input.testJids);
+  }
+  if (input.groupWhitelistJids !== undefined) {
+    patch.groupWhitelistJids = toTrimmedStringArray(input.groupWhitelistJids);
+  }
+  if (input.dashboardHost !== undefined) {
+    patch.dashboardHost = String(input.dashboardHost || '').trim();
+  }
+  if (input.dashboardPort !== undefined) {
+    patch.dashboardPort = Number(input.dashboardPort);
+  }
+
+  return patch;
+}
+
+function openDashboardInBrowser(url) {
+  if (dashboardAutoOpenAttempted) return;
+  dashboardAutoOpenAttempted = true;
+
+  if (String(process.env.TMB_DASHBOARD_AUTO_OPEN ?? '1') === '0') return;
+  if (!process.stdout?.isTTY) return;
+
+  try {
+    if (process.platform === 'win32') {
+      spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
+      return;
+    }
+    if (process.platform === 'darwin') {
+      spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
+      return;
+    }
+    spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
+  } catch {
+    // ignore auto-open failures
+  }
+}
+
+async function applyRuntimeConfigFromDashboard(input = {}) {
+  const patchOrError = normalizeSetupPatch(input);
+  if (patchOrError == null) {
+    return { ok: false, error: 'invalid setup payload' };
+  }
+  if (patchOrError.error) {
+    return { ok: false, error: patchOrError.error };
+  }
+
+  const nextConfig = normalizeUserConfig({
+    ...config,
+    ...patchOrError,
+  });
+
+  let nextRegistry;
+  try {
+    nextRegistry = applyFlowSessionTimeoutOverrides(loadFlowRegistryFromConfig(nextConfig), nextConfig);
+  } catch (error) {
+    return { ok: false, error: String(error?.message || 'invalid-flow-selection') };
+  }
+
+  const hasGroupWhitelistScopeFlow = nextRegistry.all.some(flow => isGroupWhitelistScope(flow));
+  if (hasGroupWhitelistScopeFlow && getGroupWhitelistJids(nextConfig).size === 0) {
+    return {
+      ok: false,
+      error: 'Selecione ao menos 1 grupo na whitelist para flows com escopo group-whitelist.',
+    };
+  }
+
+  if (nextConfig.testMode && getAllowedTestJids(nextConfig).size === 0) {
+    return {
+      ok: false,
+      error: 'Modo Teste restrito exige ao menos 1 contato/grupo permitido.',
+    };
+  }
+
+  config = nextConfig;
+  currentFlowRegistry = nextRegistry;
+  warnedMissingTestTargets = false;
+  runtimeSetupDone = true;
+  saveUserConfig(config);
+
+  const suppressSignalNoise =
+    config.runtimeMode === RUNTIME_MODE.PRODUCTION &&
+    String(process.env.TMB_SUPPRESS_SIGNAL_NOISE ?? '1') !== '0';
+  installLibSignalNoiseFilter(suppressSignalNoise);
+  if (logger) {
+    logger.level = config.logLevel;
+  }
+
+  if (currentSocket) {
+    startSessionCleanup(currentSocket, getActiveFlows());
+  }
+
+  setupFlowWatcher();
+  requiresInitialSetup = false;
+  hasSavedConfigAtBoot = true;
+
+  await ensureWhatsAppRuntimeStarted();
+
+  return {
+    ok: true,
+    needsInitialSetup: requiresInitialSetup,
+    hasSavedConfig: true,
+    config: buildSetupConfigSnapshot(),
+  };
+}
+
+async function ensureWhatsAppRuntimeStarted() {
+  if (whatsappRuntimeStarted) return;
+  if (whatsappRuntimeStartPromise) {
+    await whatsappRuntimeStartPromise;
+    return;
+  }
+
+  whatsappRuntimeStartPromise = (async () => {
+    const { state, saveCreds } = useSqliteAuthState();
+    const { version } = await fetchLatestBaileysVersion();
+    console.log(`Versao Baileys: ${version.join('.')}\n`);
+    await connectToWhatsApp({ state, saveCreds, version });
+    whatsappRuntimeStarted = true;
+  })();
+
+  try {
+    await whatsappRuntimeStartPromise;
+  } finally {
+    if (!whatsappRuntimeStarted) {
+      whatsappRuntimeStartPromise = null;
+    }
+  }
+}
+
 async function startDashboardServer() {
   if (dashboardServer) {
     await dashboardServer.stop();
@@ -705,6 +1004,7 @@ async function startDashboardServer() {
     logger,
     getRuntimeInfo: () => ({
       ...normalizeRuntimeInfo(),
+      needsInitialSetup: requiresInitialSetup,
       apis: getActiveFlows()
         .flatMap(flow => flow.blocks || [])
         ?.filter(b => b.type === 'http-request')
@@ -899,6 +1199,18 @@ async function startDashboardServer() {
         return { ok: false, error: String(error?.message || 'broadcast-send-failed') };
       }
     },
+    onGetSetupState: async () => ({
+      needsInitialSetup: requiresInitialSetup,
+      hasSavedConfig: hasSavedConfigAtBoot || !requiresInitialSetup,
+      config: buildSetupConfigSnapshot(),
+    }),
+    onApplySetupState: async (input) => {
+      const result = await applyRuntimeConfigFromDashboard(input);
+      return result;
+    },
+    onListSetupTargets: async ({ search, limit }) => (
+      listSetupSelectableTargets({ search, limit })
+    ),
     onGetSettings: async () => ({
       autoReloadFlows: config.autoReloadFlows !== false,
       broadcastSendIntervalMs: Number(config.broadcastSendIntervalMs ?? 250),
@@ -1059,6 +1371,7 @@ async function startDashboardServer() {
   });
 
   console.log(`Dashboard HTTP: ${dashboardServer.getUrl()}`);
+  openDashboardInBrowser(dashboardServer.getUrl());
 }
 
 function stopFlowWatcher() {
@@ -1218,8 +1531,13 @@ async function start() {
   runtimeSetupPromise = null;
   runtimeSetupDone = false;
   warnedMissingTestTargets = false;
+  dashboardAutoOpenAttempted = false;
 
-  config = await getConfig({ interactive: true });
+  const savedConfig = loadSavedUserConfig();
+  hasSavedConfigAtBoot = Boolean(savedConfig);
+  requiresInitialSetup = !hasSavedConfigAtBoot;
+
+  config = await getConfig({ interactive: false });
 
   const suppressSignalNoise =
     config.runtimeMode === RUNTIME_MODE.PRODUCTION &&
@@ -1238,25 +1556,39 @@ async function start() {
   startAuthStateMaintenance();
   startDbSizeSnapshotMaintenance();
 
-  currentFlowRegistry = applyFlowSessionTimeoutOverrides(loadFlowRegistryFromConfig(config), config);
-  const activeFlows = getActiveFlows();
-  console.log(`Fluxos carregados - ${activeFlows.length} ativo(s)\n`);
-  for (const flow of activeFlows) {
-    const flowLabel = `${path.basename(flow.flowPath)} [${getFlowBotType(flow)}]`;
-    console.log(`Fluxo: ${flowLabel} - ${flow.blocks.length} bloco(s) ativo(s)`);
-    flow.blocks.forEach((b, i) => console.log(`   [${i}] ${b.type.padEnd(20)} id=${b.id}`));
-    console.log('');
+  if (!requiresInitialSetup) {
+    try {
+      currentFlowRegistry = applyFlowSessionTimeoutOverrides(loadFlowRegistryFromConfig(config), config);
+      const activeFlows = getActiveFlows();
+      console.log(`Fluxos carregados - ${activeFlows.length} ativo(s)\n`);
+      for (const flow of activeFlows) {
+        const flowLabel = `${path.basename(flow.flowPath)} [${getFlowBotType(flow)}]`;
+        console.log(`Fluxo: ${flowLabel} - ${flow.blocks.length} bloco(s) ativo(s)`);
+        flow.blocks.forEach((b, i) => console.log(`   [${i}] ${b.type.padEnd(20)} id=${b.id}`));
+        console.log('');
+      }
+    } catch (error) {
+      requiresInitialSetup = true;
+      console.error('Configuracao salva invalida. Redirecionando para Setup Inicial:', String(error?.message || error));
+    }
+  }
+
+  if (requiresInitialSetup) {
+    currentFlowRegistry = {
+      all: [],
+      byPath: new Map(),
+      byBotType: { conversation: [], command: [] },
+      conversationFlow: null,
+      commandFlows: [],
+    };
+    console.log('Nenhuma configuracao salva detectada. Abra a aba "Setup Inicial" na dashboard para continuar.\n');
   }
 
   await startDashboardServer();
-  setupFlowWatcher();
-
-  const { state, saveCreds } = useSqliteAuthState();
-
-  const { version } = await fetchLatestBaileysVersion();
-  console.log(`Versao Baileys: ${version.join('.')}\n`);
-
-  await connectToWhatsApp({ state, saveCreds, version });
+  if (!requiresInitialSetup) {
+    setupFlowWatcher();
+  }
+  await ensureWhatsAppRuntimeStarted();
 }
 
 async function connectToWhatsApp({ state, saveCreds, version }) {
@@ -1317,20 +1649,7 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
     if (connection === 'open') {
       console.log('Conectado ao WhatsApp!\n');
 
-      if (!runtimeSetupDone && !runtimeSetupPromise) {
-        runtimeSetupPromise = (async () => {
-          config = await configureRuntimeAccessSelectors(sock, getDashboardFlow(), config, contactCache);
-          saveUserConfig(config);
-          runtimeSetupDone = true;
-        })().catch(err => {
-          console.error('Falha ao configurar contatos/grupos permitidos:', err);
-          runtimeSetupDone = true;
-        });
-      }
-
-      if (runtimeSetupPromise) {
-        await runtimeSetupPromise;
-      }
+      runtimeSetupDone = true;
 
       startSessionCleanup(sock, getActiveFlows());
       initializeTerminalCommands();
@@ -1361,7 +1680,6 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
     }
 
     const activeFlows = getActiveFlows();
-    if (activeFlows.length === 0) return;
 
     for (const msg of messages) {
       const rawRemoteJid = toJidString(msg?.key?.remoteJid);
@@ -1387,6 +1705,10 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
       const participantPnJid = toJidString(msg?.key?.participantPn);
       if (participantPnJid.endsWith('@s.whatsapp.net')) {
         mergeContactCacheEntry(contactCache, { id: participantPnJid });
+      }
+
+      if (activeFlows.length === 0) {
+        continue;
       }
 
       if (config.debugMode) {
@@ -1540,3 +1862,4 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
 start().catch(err => {
   void handleFatal('Erro fatal no start()', err);
 });
+

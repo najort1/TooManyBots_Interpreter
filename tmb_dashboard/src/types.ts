@@ -1,6 +1,6 @@
 export type DashboardMode = 'CONVERSATION' | 'COMMAND';
 
-export type DashboardView = 'analytics' | 'handoff' | 'broadcast' | 'sessions' | 'settings' | 'flows';
+export type DashboardView = 'setup' | 'analytics' | 'handoff' | 'broadcast' | 'sessions' | 'settings' | 'flows';
 
 export interface RuntimeHealth {
   status: string;
@@ -8,6 +8,7 @@ export interface RuntimeHealth {
   mode: string;
   flowFile: string;
   flowPath: string;
+  needsInitialSetup?: boolean;
   availableModes?: string[];
   flowPathsByMode?: {
     conversation?: string[];
@@ -159,6 +160,42 @@ export interface RuntimeSettings {
   autoReloadFlows: boolean;
   broadcastSendIntervalMs?: number;
   runtimeMode?: string;
+}
+
+export interface RuntimeSetupConfig {
+  botRuntimeMode: 'single-flow' | 'multi-bot' | string;
+  flowPath: string;
+  flowPaths: string[];
+  runtimeMode: 'production' | 'development' | 'restricted-test' | string;
+  autoReloadFlows: boolean;
+  broadcastSendIntervalMs: number;
+  testTargetMode?: string;
+  testJid?: string;
+  testJids: string[];
+  groupWhitelistJids: string[];
+  dashboardHost?: string;
+  dashboardPort?: number;
+}
+
+export interface RuntimeSetupState {
+  ok?: boolean;
+  needsInitialSetup: boolean;
+  hasSavedConfig: boolean;
+  config: RuntimeSetupConfig;
+}
+
+export interface SetupSelectableTarget {
+  jid: string;
+  name: string;
+  source?: string;
+  participants?: number;
+}
+
+export interface SetupTargetsResponse {
+  contacts: SetupSelectableTarget[];
+  groups: SetupSelectableTarget[];
+  socketReady: boolean;
+  updatedAt: number;
 }
 
 export interface DatabaseInfo {

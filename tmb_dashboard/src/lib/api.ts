@@ -11,6 +11,9 @@ import type {
   HandoffBlock,
   HandoffSession,
   RuntimeHealth,
+  RuntimeSetupConfig,
+  RuntimeSetupState,
+  SetupTargetsResponse,
   BotInfo,
 } from '../types';
 
@@ -177,6 +180,26 @@ export async function postBroadcastSend(payload: {
 
 export async function fetchRuntimeSettings(): Promise<RuntimeSettings> {
   return requestJson<RuntimeSettings>('/api/settings');
+}
+
+export async function fetchSetupState(): Promise<RuntimeSetupState> {
+  return requestJson<RuntimeSetupState>('/api/setup-state');
+}
+
+export async function postSetupState(input: Partial<RuntimeSetupConfig>): Promise<RuntimeSetupState> {
+  return requestJson<RuntimeSetupState>('/api/setup-state', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchSetupTargets(search = '', limit = 300): Promise<SetupTargetsResponse> {
+  const params = new URLSearchParams({
+    search: String(search || ''),
+    limit: String(limit),
+  });
+  return requestJson<SetupTargetsResponse>(`/api/setup/targets?${params.toString()}`);
 }
 
 export async function postRuntimeSettings(input: {

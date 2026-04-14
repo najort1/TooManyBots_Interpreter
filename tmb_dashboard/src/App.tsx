@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchActiveSessionsForManagement,
+  fetchBots,
   fetchBroadcastContacts,
   fetchDatabaseInfo,
   fetchHandoffBlocks,
@@ -9,6 +10,8 @@ import {
   fetchHealth,
   fetchLogs,
   fetchRuntimeSettings,
+  fetchSetupState,
+  fetchSetupTargets,
   fetchSessionFlows,
   fetchSessionOverview,
   postClearAllActiveSessions,
@@ -17,6 +20,7 @@ import {
   postBroadcastSend,
   postResetSessionByJid,
   postRuntimeSettings,
+  postSetupState,
   fetchStats,
   postHandoffEnd,
   postHandoffImage,
@@ -33,6 +37,7 @@ import { HandoffView } from './components/handoff/HandoffView';
 import { SessionManagementView } from './components/sessions/SessionManagementView';
 import { FlowsView } from './components/flows/FlowsView';
 import { SettingsView } from './components/settings/SettingsView';
+import { SetupView } from './components/setup/SetupView';
 import { Modal } from './components/Modal';
 import { ToastCenter } from './components/feedback/ToastCenter';
 import type { ToastItem, ToastTone } from './components/feedback/ToastCenter';
@@ -42,6 +47,7 @@ import type {
   DashboardView,
   DatabaseInfo,
   EventLog,
+  BotInfo,
   BroadcastContact,
   BroadcastSendResult,
   BroadcastSendProgress,
@@ -50,6 +56,8 @@ import type {
   ActiveSessionManagementItem,
   SessionFlowConfigItem,
   SessionOverview,
+  RuntimeSetupConfig,
+  SetupTargetsResponse,
 } from './types';
 
 const WS_REFRESH_EVENT_TYPES = new Set([
@@ -221,6 +229,7 @@ function App() {
   const [view, setView] = useState<DashboardView>('analytics');
   const [renderedView, setRenderedView] = useState<DashboardView>('analytics');
   const [viewTransition, setViewTransition] = useState<'idle' | 'enter' | 'exit'>('idle');
+  const [needsInitialSetup, setNeedsInitialSetup] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [mode, setMode] = useState<DashboardMode>('CONVERSATION');
   const [availableModes, setAvailableModes] = useState<DashboardMode[]>(['CONVERSATION']);
@@ -277,6 +286,12 @@ function App() {
   const [sessionResetJidInput, setSessionResetJidInput] = useState('');
   const [busySessionRefresh, setBusySessionRefresh] = useState(false);
   const [busySessionAction, setBusySessionAction] = useState(false);
+  const [setupConfig, setSetupConfig] = useState<RuntimeSetupConfig | null>(null);
+  const [setupBots, setSetupBots] = useState<BotInfo[]>([]);
+  const [busySetupLoad, setBusySetupLoad] = useState(false);
+  const [busySetupTargets, setBusySetupTargets] = useState(false);
+  const [busySetupSave, setBusySetupSave] = useState(false);
+  const [setupTargets, setSetupTargets] = useState<SetupTargetsResponse | null>(null);
 
   const modeQuery = useMemo(() => modeToQuery(mode), [mode]);
   const prefersReducedMotion = useMemo(
@@ -292,6 +307,7 @@ function App() {
   const selectedJidRef = useRef(selectedHandoffJid);
   const handoffSessionsRef = useRef(handoffSessions);
   const viewRef = useRef(view);
+  const needsInitialSetupRef = useRef(needsInitialSetup);
   const busyBroadcastSendRef = useRef(busyBroadcastSend);
   const activeBroadcastCampaignIdRef = useRef<number | null>(null);
   const refreshTimeoutRef = useRef<number | null>(null);
@@ -321,6 +337,10 @@ function App() {
   useEffect(() => {
     viewRef.current = view;
   }, [view]);
+
+  useEffect(() => {
+    needsInitialSetupRef.current = needsInitialSetup;
+  }, [needsInitialSetup]);
 
   useEffect(() => {
     busyBroadcastSendRef.current = busyBroadcastSend;
@@ -361,6 +381,12 @@ function App() {
       window.clearTimeout(switchTimer);
     };
   }, [prefersReducedMotion, renderedView, view]);
+
+  useEffect(() => {
+    if (needsInitialSetup && view !== 'setup') {
+      setView('setup');
+    }
+  }, [needsInitialSetup, view]);
 
   const dismissToast = useCallback((id: string) => {
     setToasts(previous => previous.filter(item => item.id !== id));
@@ -404,10 +430,15 @@ function App() {
 
   const loadHealth = useCallback(async () => {
     const health = await fetchHealth();
+    const nextNeedsInitialSetup = health.needsInitialSetup === true;
     const available = Array.isArray(health.availableModes) && health.availableModes.length > 0
       ? health.availableModes.map(item => toDashboardMode(item))
       : [toDashboardMode(health.mode)];
     const uniqueAvailable = [...new Set(available)];
+    setNeedsInitialSetup(nextNeedsInitialSetup);
+    if (nextNeedsInitialSetup) {
+      setView('setup');
+    }
     setAvailableModes(uniqueAvailable);
     setMode(previous => (uniqueAvailable.includes(previous) ? previous : toDashboardMode(health.mode)));
     setBotName(health.flowFile || 'Desconhecido');
@@ -421,12 +452,44 @@ function App() {
         : [],
     });
     setUptimeMs(Number(health.uptimeMs || 0));
+    return nextNeedsInitialSetup;
   }, []);
 
   const loadRuntimeSettings = useCallback(async () => {
     const settings = await fetchRuntimeSettings();
     setAutoReloadFlows(settings.autoReloadFlows !== false);
     setBroadcastSendIntervalMs(Math.max(0, Math.floor(Number(settings.broadcastSendIntervalMs ?? 250) || 250)));
+  }, []);
+
+  const loadSetupState = useCallback(async () => {
+    const state = await fetchSetupState();
+    setSetupConfig(state.config || null);
+    const nextNeedsInitialSetup = state.needsInitialSetup === true;
+    setNeedsInitialSetup(nextNeedsInitialSetup);
+    if (nextNeedsInitialSetup) {
+      setView('setup');
+    }
+    return nextNeedsInitialSetup;
+  }, []);
+
+  const loadSetupBots = useCallback(async () => {
+    setBusySetupLoad(true);
+    try {
+      const bots = await fetchBots();
+      setSetupBots(bots);
+    } finally {
+      setBusySetupLoad(false);
+    }
+  }, []);
+
+  const loadSetupTargets = useCallback(async (search = '') => {
+    setBusySetupTargets(true);
+    try {
+      const targets = await fetchSetupTargets(search, 400);
+      setSetupTargets(targets);
+    } finally {
+      setBusySetupTargets(false);
+    }
   }, []);
 
   const loadDbInfo = useCallback(async () => {
@@ -530,15 +593,22 @@ function App() {
 
     const bootstrap = async () => {
       try {
-        await loadHealth();
-        await loadRuntimeSettings();
-        const blocks = await fetchHandoffBlocks();
-        if (!cancelled) setHandoffBlocks(blocks);
-        if (!cancelled) {
-          await loadDbInfo();
-        }
-        if (!cancelled) {
-          await Promise.all([refreshStats(), refreshHandoffQueue()]);
+        const [needsSetupByHealth, needsSetupByState] = await Promise.all([
+          loadHealth(),
+          loadSetupState(),
+        ]);
+        await Promise.all([loadRuntimeSettings(), loadSetupBots(), loadSetupTargets()]);
+        const needsSetup = Boolean(needsSetupByHealth || needsSetupByState);
+
+        if (!needsSetup) {
+          const blocks = await fetchHandoffBlocks();
+          if (!cancelled) setHandoffBlocks(blocks);
+          if (!cancelled) {
+            await loadDbInfo();
+          }
+          if (!cancelled) {
+            await Promise.all([refreshStats(), refreshHandoffQueue()]);
+          }
         }
       } catch (error) {
         if (!cancelled) {
@@ -551,6 +621,13 @@ function App() {
 
     const pollTimer = window.setInterval(() => {
       void loadHealth().catch(() => {});
+      void loadSetupState().catch(() => {});
+      if (needsInitialSetupRef.current || viewRef.current === 'setup') {
+        void loadSetupTargets().catch(() => {});
+      }
+      if (needsInitialSetupRef.current) {
+        return;
+      }
       void refreshStats().catch(() => {});
       void refreshHandoffQueue().catch(() => {});
       if (viewRef.current === 'sessions') {
@@ -568,7 +645,18 @@ function App() {
       }
       toastTimers.clear();
     };
-  }, [loadDbInfo, loadHealth, loadRuntimeSettings, refreshHandoffQueue, refreshSessionManagement, refreshStats, showNotice]);
+  }, [
+    loadDbInfo,
+    loadHealth,
+    loadRuntimeSettings,
+    loadSetupBots,
+    loadSetupState,
+    loadSetupTargets,
+    refreshHandoffQueue,
+    refreshSessionManagement,
+    refreshStats,
+    showNotice,
+  ]);
 
   useEffect(() => {
     if (view !== 'broadcast') return;
@@ -608,6 +696,22 @@ function App() {
       window.clearTimeout(timeout);
     };
   }, [loadSessionActiveSessions, sessionSearch, showNotice, view]);
+
+  useEffect(() => {
+    if (view !== 'setup' && !needsInitialSetup) return;
+
+    void loadSetupTargets().catch(error => {
+      showNotice(`Falha ao carregar alvos do setup: ${String((error as Error)?.message || error)}`);
+    });
+
+    const timer = window.setInterval(() => {
+      void loadSetupTargets().catch(() => {});
+    }, 4000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [loadSetupTargets, needsInitialSetup, showNotice, view]);
 
   useEffect(() => {
     let ws: WebSocket | null = null;
@@ -1098,6 +1202,41 @@ function App() {
     }
   }, [refreshSessionManagement, sessionSelectedFlowPath, sessionTimeoutInputMinutes, showNotice]);
 
+  const handleSaveSetup = useCallback(async (input: Partial<RuntimeSetupConfig>) => {
+    setBusySetupSave(true);
+    try {
+      const next = await postSetupState(input);
+      setSetupConfig(next.config || null);
+      setNeedsInitialSetup(next.needsInitialSetup === true);
+      await Promise.all([loadHealth(), loadRuntimeSettings(), loadSetupBots(), loadSetupTargets()]);
+      const blocks = await fetchHandoffBlocks();
+      setHandoffBlocks(blocks);
+
+      if (next.needsInitialSetup) {
+        setView('setup');
+        showNotice('Configuracao salva. Finalize os campos obrigatorios para iniciar o runtime.');
+      } else {
+        if (viewRef.current === 'setup') {
+          setView('analytics');
+        }
+        await Promise.all([refreshStats(), refreshHandoffQueue()]);
+        showNotice('Configuracao aplicada com sucesso.');
+      }
+    } catch (error) {
+      showNotice(`Falha ao aplicar setup: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusySetupSave(false);
+    }
+  }, [
+    loadHealth,
+    loadRuntimeSettings,
+    loadSetupBots,
+    loadSetupTargets,
+    refreshHandoffQueue,
+    refreshStats,
+    showNotice,
+  ]);
+
   const confirmActionBusy =
     pendingConfirmAction === 'send-broadcast'
       ? busyBroadcastSend
@@ -1214,6 +1353,7 @@ function App() {
         onNavigate={setView}
         mobileOpen={sidebarOpen}
         onCloseMobile={() => setSidebarOpen(false)}
+        needsInitialSetup={needsInitialSetup}
       />
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
@@ -1235,6 +1375,36 @@ function App() {
             viewTransition === 'exit' ? 'view-stage-exit' : '',
           ].join(' ')}
         >
+          {renderedView === 'setup' && (
+            <SetupView
+              key={[
+                setupConfig?.flowPath || '',
+                setupConfig?.runtimeMode || '',
+                setupConfig?.botRuntimeMode || '',
+                (setupConfig?.flowPaths || []).join('|'),
+                (setupConfig?.testJids || []).join('|'),
+                (setupConfig?.groupWhitelistJids || []).join('|'),
+              ].join('::')}
+              needsInitialSetup={needsInitialSetup}
+              bots={setupBots}
+              setupConfig={setupConfig}
+              busyLoad={busySetupLoad}
+              busyTargets={busySetupTargets}
+              busySave={busySetupSave}
+              setupTargets={setupTargets}
+              onReloadBots={() => {
+                void loadSetupBots();
+              }}
+              onRefreshTargets={() => {
+                void loadSetupTargets();
+              }}
+              onSave={input => {
+                void handleSaveSetup(input);
+              }}
+              onShowNotice={showNotice}
+            />
+          )}
+
           {renderedView === 'analytics' && (
             <AnalyticsView
               mode={mode}

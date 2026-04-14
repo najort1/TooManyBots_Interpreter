@@ -6,9 +6,11 @@ interface SidebarProps {
   onNavigate: (view: DashboardView) => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
+  needsInitialSetup?: boolean;
 }
 
 const navItems: Array<{ id: DashboardView; label: string; iconClass: string }> = [
+  { id: 'setup', label: 'Setup Inicial', iconClass: 'fa-solid fa-wand-magic-sparkles' },
   { id: 'analytics', label: 'Dashboard', iconClass: 'fa-solid fa-chart-pie' },
   { id: 'handoff', label: 'Atendimento Humano', iconClass: 'fa-solid fa-headset' },
   { id: 'broadcast', label: 'Anuncios em Massa', iconClass: 'fa-solid fa-bullhorn' },
@@ -22,7 +24,12 @@ export function Sidebar({
   onNavigate,
   mobileOpen,
   onCloseMobile,
+  needsInitialSetup = false,
 }: SidebarProps) {
+  const visibleNavItems = needsInitialSetup
+    ? navItems.filter(item => item.id === 'setup')
+    : navItems;
+
   return (
     <>
       <aside
@@ -53,7 +60,7 @@ export function Sidebar({
 
         <nav className="flex flex-col gap-2 p-4">
           <p className="mb-1 text-[0.72rem] font-bold uppercase tracking-[0.08em] text-[#6f8298]">Navegacao</p>
-          {navItems.map(item => {
+          {visibleNavItems.map(item => {
             const active = currentView === item.id;
             return (
               <button

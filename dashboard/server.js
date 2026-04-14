@@ -489,6 +489,9 @@ export class DashboardServer {
     onHumanEndSession = async () => ({ ok: false, error: 'not-implemented' }),
     onBroadcastListContacts = async () => ({ contacts: [] }),
     onBroadcastSend = async () => ({ ok: false, error: 'not-implemented' }),
+    onGetSetupState = async () => ({ needsInitialSetup: false, hasSavedConfig: true, config: {} }),
+    onApplySetupState = async () => ({ ok: false, error: 'not-implemented' }),
+    onListSetupTargets = async () => ({ contacts: [], groups: [], socketReady: false, updatedAt: Date.now() }),
     onGetSettings = async () => ({ autoReloadFlows: true }),
     onUpdateSettings = async () => ({ ok: false, error: 'not-implemented' }),
     onClearRuntimeCache = async () => ({ ok: false, error: 'not-implemented' }),
@@ -514,6 +517,9 @@ export class DashboardServer {
     this.onHumanEndSession = onHumanEndSession;
     this.onBroadcastListContacts = onBroadcastListContacts;
     this.onBroadcastSend = onBroadcastSend;
+    this.onGetSetupState = onGetSetupState;
+    this.onApplySetupState = onApplySetupState;
+    this.onListSetupTargets = onListSetupTargets;
     this.onGetSettings = onGetSettings;
     this.onUpdateSettings = onUpdateSettings;
     this.onClearRuntimeCache = onClearRuntimeCache;
@@ -566,6 +572,7 @@ export class DashboardServer {
           mode,
           flowFile: info.flowFile || 'unknown',
           flowPath: normalizeFlowPath(info.flowPath),
+          needsInitialSetup: info.needsInitialSetup === true,
           availableModes,
           flowPathsByMode: {
             conversation: resolveFlowPathsForMode(info, 'conversation'),
@@ -640,6 +647,31 @@ export class DashboardServer {
       if (requestUrl.pathname === '/api/settings' && req.method === 'GET') {
         const settings = await this.onGetSettings();
         sendJson(res, 200, settings || {});
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/setup-state' && req.method === 'GET') {
+        const state = await this.onGetSetupState();
+        sendJson(res, 200, state || {});
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/setup-state' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const result = await this.onApplySetupState(body || {});
+        if (!result?.ok) {
+          sendJson(res, 400, { error: result?.error || 'failed-to-apply-setup-state' });
+          return;
+        }
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/setup/targets' && req.method === 'GET') {
+        const search = String(requestUrl.searchParams.get('search') ?? '').trim();
+        const limit = Math.max(1, Math.min(1000, toInt(requestUrl.searchParams.get('limit'), 300)));
+        const result = await this.onListSetupTargets({ search, limit });
+        sendJson(res, 200, result || { contacts: [], groups: [], socketReady: false, updatedAt: Date.now() });
         return;
       }
 
