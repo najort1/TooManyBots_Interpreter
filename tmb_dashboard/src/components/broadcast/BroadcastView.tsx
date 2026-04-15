@@ -327,7 +327,7 @@ export function BroadcastView({
           type="text"
           value={search}
           onChange={event => onSearchChange(event.target.value)}
-          placeholder="Filtrar por JID"
+          placeholder="Filtrar por nome ou JID"
           className={`mb-3 w-full ${inputBaseClass}`}
         />
 
@@ -379,7 +379,10 @@ export function BroadcastView({
                   onChange={() => onToggleRecipient(contact.jid)}
                 />
                 <span className="min-w-0 flex-1">
-                  <strong className="block text-[0.85rem]">{formatJidPhone(contact.jid)}</strong>
+                  <strong className="block text-[0.85rem]">
+                    {String(contact.name || '').trim() || formatJidPhone(contact.jid)}
+                  </strong>
+                  <small className="block text-[0.72rem] text-slate-500">{contact.jid}</small>
                   <small className="block text-[0.73rem] text-slate-500">
                     Ultima interação: {contact.lastInteractionAt ? fmtTime(contact.lastInteractionAt) : '--:--'}
                   </small>

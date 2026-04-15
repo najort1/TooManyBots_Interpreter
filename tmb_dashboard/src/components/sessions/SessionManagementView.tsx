@@ -203,7 +203,9 @@ export function SessionManagementView({
               activeSessions.map(session => (
                 <div key={`${session.jid}-${session.flowPath}`} className={`mb-2 ${timelineItemClass} last:mb-0`}>
                   <div className="flex items-center justify-between gap-2">
-                    <strong className="text-[0.86rem]">{formatJidPhone(session.jid)}</strong>
+                    <strong className="text-[0.86rem]">
+                      {String(session.displayName || '').trim() || formatJidPhone(session.jid)}
+                    </strong>
                     <span
                       className={[
                         'rounded-full px-2 py-0.5 text-[0.66rem] font-bold',

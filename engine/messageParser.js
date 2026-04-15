@@ -24,12 +24,13 @@ export function parseMessage(msg) {
   if (msg.key?.fromMe) return null;
 
   // Ignorar transmissões de status
-  const remoteJid = msg.key?.remoteJid ?? '';
+  const messageKey = msg.key ?? {};
+  const remoteJid = messageKey.remoteJid ?? messageKey.remote_jid ?? '';
   if (remoteJid === 'status@broadcast') return null;
   if (!remoteJid) return null;
-  const jid = remoteJid.endsWith('@lid') && msg.key?.senderPn ? msg.key.senderPn : remoteJid;
+  const senderPn = messageKey.senderPn ?? messageKey.sender_pn ?? '';
+  const jid = remoteJid.endsWith('@lid') && senderPn ? senderPn : remoteJid;
   const isGroup = remoteJid.endsWith('@g.us');
-  const messageKey = msg.key ?? {};
 
   let content = msg.message;
   if (!content) return null;

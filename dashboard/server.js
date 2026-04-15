@@ -393,8 +393,8 @@ function extractPhoneFromJid(jid) {
 
 function formatActorLabel(getContactName, jid) {
   const normalizedJid = String(jid ?? '').trim();
-  const name = getContactName(normalizedJid);
-  if (name) return name;
+  const name = String(getContactName(normalizedJid) ?? '').trim();
+  if (name) return name.replace(/^~+\s*/, '').trim() || name;
 
   const phone = extractPhoneFromJid(normalizedJid);
   if (phone) return phone;
@@ -880,6 +880,7 @@ export class DashboardServer {
 
             return {
               jid: session.jid,
+              displayName: formatActorLabel(this.getContactName, session.jid),
               flowPath: session.flowPath,
               botType: session.botType,
               waitingFor: session.waitingFor,

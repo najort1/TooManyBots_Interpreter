@@ -17,6 +17,9 @@ import {
   getDatabaseInfo,
   clearActiveSessions,
   clearActiveSessionsByFlowPath,
+  getContactDisplayName,
+  listContactDisplayNames,
+  upsertContactDisplayName,
 } from './db/index.js';
 import { cleanupAuthSignalSessions, useSqliteAuthState } from './db/authState.js';
 import { getFlowBotType, loadFlows } from './engine/flowLoader.js';
@@ -87,7 +90,84 @@ let requiresInitialSetup = false;
 let whatsappRuntimeStarted = false;
 let whatsappRuntimeStartPromise = null;
 let dashboardAutoOpenAttempted = false;
-const contactCache = new Map();
+
+function normalizePersistableContactName(name, jid) {
+  const normalizedJid = String(jid ?? '').trim();
+  const rawName = String(name ?? '').trim();
+  if (!rawName) return '';
+  const cleaned = rawName.replace(/^~+\s*/, '').trim() || rawName;
+  if (!cleaned) return '';
+  if (normalizedJid && cleaned === normalizedJid) return '';
+  const jidLocal = normalizedJid.split('@')[0] || '';
+  if (jidLocal && cleaned === jidLocal) return '';
+  return cleaned.slice(0, 180);
+}
+
+class PersistentContactCache extends Map {
+  constructor({ onPersistName = null } = {}) {
+    super();
+    this.onPersistName = typeof onPersistName === 'function' ? onPersistName : null;
+    this.persistedNames = new Map();
+    this.hydrating = false;
+  }
+
+  hydrate(entries = []) {
+    this.hydrating = true;
+    try {
+      for (const entry of entries) {
+        const jid = String(entry?.jid ?? '').trim();
+        const name = String(entry?.name ?? '').trim();
+        if (!jid) continue;
+        const normalizedName = normalizePersistableContactName(name, jid) || jid;
+        this.persistedNames.set(jid, normalizedName);
+        super.set(jid, { jid, name: normalizedName });
+      }
+    } finally {
+      this.hydrating = false;
+    }
+  }
+
+  set(key, value) {
+    const normalizedJid = String(key ?? value?.jid ?? '').trim();
+    if (!normalizedJid) return this;
+
+    const normalizedValue =
+      value && typeof value === 'object'
+        ? { ...value, jid: normalizedJid, name: String(value?.name ?? normalizedJid).trim() || normalizedJid }
+        : { jid: normalizedJid, name: normalizedJid };
+
+    const result = super.set(normalizedJid, normalizedValue);
+
+    if (!this.hydrating && this.onPersistName) {
+      const normalizedName = normalizePersistableContactName(normalizedValue.name, normalizedJid);
+      if (normalizedName) {
+        const previousPersistedName = this.persistedNames.get(normalizedJid) || '';
+        if (previousPersistedName !== normalizedName) {
+          this.persistedNames.set(normalizedJid, normalizedName);
+          this.onPersistName({ jid: normalizedJid, name: normalizedName });
+        }
+      }
+    }
+
+    return result;
+  }
+
+  clear() {
+    super.clear();
+    this.persistedNames.clear();
+  }
+}
+
+const contactCache = new PersistentContactCache({
+  onPersistName: ({ jid, name }) => {
+    upsertContactDisplayName({
+      jid,
+      displayName: name,
+      source: 'runtime-cache',
+      updatedAt: Date.now(),
+    });
+  },
+});
 const HANDOFF_MEDIA_DIR = path.resolve('./data/handoff-media');
 const ALLOWED_INCOMING_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
@@ -378,7 +458,8 @@ function listActiveSessionsForManagement({ search = '', limit = 200 } = {}) {
       if (!normalizedSearch) return true;
       const jid = String(session?.jid || '').toLowerCase();
       const flowPath = String(session?.flowPath || '').toLowerCase();
-      return jid.includes(normalizedSearch) || flowPath.includes(normalizedSearch);
+      const displayName = resolveContactDisplayName(session?.jid).toLowerCase();
+      return jid.includes(normalizedSearch) || flowPath.includes(normalizedSearch) || displayName.includes(normalizedSearch);
     })
     .slice(0, normalizedLimit)
     .map(session => {
@@ -392,6 +473,7 @@ function listActiveSessionsForManagement({ search = '', limit = 200 } = {}) {
         botType: session.botType,
         waitingFor: session.waitingFor,
         blockIndex: session.blockIndex,
+        displayName: resolveContactDisplayName(session.jid),
         startedAt,
         lastActivityAt,
         durationMs: startedAt > 0 && startedAt <= nowTs ? nowTs - startedAt : 0,
@@ -743,6 +825,31 @@ function normalizeSetupSearch(value) {
   return String(value ?? '').trim().toLowerCase();
 }
 
+function hydrateContactCacheFromDb(limit = 10000) {
+  const rows = listContactDisplayNames(limit);
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  contactCache.hydrate(
+    rows.map(item => ({
+      jid: item?.jid,
+      name: item?.name,
+    }))
+  );
+  return rows.length;
+}
+
+function resolveContactDisplayName(jid) {
+  const normalizedJid = String(jid ?? '').trim();
+  if (!normalizedJid) return '';
+  const raw = String(contactCache.get(normalizedJid)?.name ?? '').trim();
+  if (raw) return raw.replace(/^~+\s*/, '').trim() || raw;
+  const persisted = getContactDisplayName(normalizedJid);
+  if (persisted) {
+    contactCache.hydrate([{ jid: normalizedJid, name: persisted }]);
+    return persisted;
+  }
+  return normalizedJid;
+}
+
 function targetMatchesSearch(target, normalizedSearch) {
   if (!normalizedSearch) return true;
   const jid = String(target?.jid ?? '').toLowerCase();
@@ -1014,7 +1121,10 @@ async function startDashboardServer() {
         })) || []
     }),
     getFlowBlocks: () => getDashboardFlow()?.blocks ?? [],
-    getContactName: (jid) => contactCache.get(jid)?.name || null,
+    getContactName: (jid) => {
+      const name = resolveContactDisplayName(jid);
+      return name || null;
+    },
     onReload: async () => await reloadFlow({ source: 'dashboard' }),
     onHumanSendMessage: async ({ jid, text, actor }) => {
       const sock = currentSocket;
@@ -1132,7 +1242,11 @@ async function startDashboardServer() {
       if (!broadcastService) {
         return [];
       }
-      return broadcastService.listContacts({ search, limit });
+      const contacts = broadcastService.listContacts({ search, limit });
+      return contacts.map(contact => ({
+        ...contact,
+        name: String(contact?.name || '').trim() || resolveContactDisplayName(contact?.jid),
+      }));
     },
     onBroadcastSend: async ({ actor, target, selectedJids, message }) => {
       const sock = currentSocket;
@@ -1552,6 +1666,10 @@ async function start() {
 
   await initDb();
   console.log('Banco de dados inicializado (better-sqlite3 + WAL)');
+  const hydratedContacts = hydrateContactCacheFromDb(15000);
+  if (hydratedContacts > 0) {
+    console.log(`Cache de contatos restaurado do banco: ${hydratedContacts} registro(s)`);
+  }
   cleanupSignalAuthState({ reason: 'startup', forceLog: true });
   startAuthStateMaintenance();
   startDbSizeSnapshotMaintenance();
@@ -1682,30 +1800,25 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
     const activeFlows = getActiveFlows();
 
     for (const msg of messages) {
-      const rawRemoteJid = toJidString(msg?.key?.remoteJid);
-      if (rawRemoteJid.endsWith('@s.whatsapp.net')) {
-        mergeContactCacheEntry(contactCache, {
-          id: rawRemoteJid,
-          notify: msg?.pushName,
-          verifiedName: msg?.verifiedBizName,
-        });
-      }
-      const senderPnJid = toJidString(msg?.key?.senderPn);
-      if (senderPnJid.endsWith('@s.whatsapp.net')) {
-        mergeContactCacheEntry(contactCache, {
-          id: senderPnJid,
-          notify: msg?.pushName,
-          verifiedName: msg?.verifiedBizName,
-        });
-      }
-      const participantJid = toJidString(msg?.key?.participant);
-      if (participantJid.endsWith('@s.whatsapp.net')) {
-        mergeContactCacheEntry(contactCache, { id: participantJid });
-      }
-      const participantPnJid = toJidString(msg?.key?.participantPn);
-      if (participantPnJid.endsWith('@s.whatsapp.net')) {
-        mergeContactCacheEntry(contactCache, { id: participantPnJid });
-      }
+      const rawMessageKey = msg?.key && typeof msg.key === 'object' ? msg.key : {};
+      mergeContactCacheEntry(contactCache, {
+        ...msg,
+        key: rawMessageKey,
+        notify:
+          rawMessageKey.notify ??
+          rawMessageKey.Notify ??
+          msg?.notify ??
+          msg?.Notify ??
+          msg?.pushName ??
+          msg?.pushname ??
+          '',
+        verifiedName:
+          rawMessageKey.verifiedBizName ??
+          rawMessageKey.verifiedName ??
+          msg?.verifiedBizName ??
+          msg?.verifiedName ??
+          '',
+      });
 
       if (activeFlows.length === 0) {
         continue;

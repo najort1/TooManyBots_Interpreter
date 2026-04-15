@@ -109,6 +109,7 @@ export interface HandoffBlock {
 
 export interface HandoffSession {
   jid: string;
+  displayName?: string;
   flowPath?: string;
   botType?: string;
   waitingFor?: string;
@@ -127,6 +128,7 @@ export interface HandoffSession {
 
 export interface BroadcastContact {
   jid: string;
+  name?: string;
   lastInteractionAt: number;
   hasActiveSession?: boolean;
 }
@@ -237,6 +239,7 @@ export interface SessionOverview {
 
 export interface ActiveSessionManagementItem {
   jid: string;
+  displayName?: string;
   flowPath: string;
   botType: string;
   waitingFor?: string | null;

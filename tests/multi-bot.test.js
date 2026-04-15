@@ -13,6 +13,11 @@ import {
   getConversationDashboardStats,
   getConversationSessionsTotal,
   getDatabaseInfo,
+  addConversationEvent,
+  getContactDisplayName,
+  listBroadcastContacts,
+  listContactDisplayNames,
+  upsertContactDisplayName,
 } from '../db/index.js';
 import { handleIncoming } from '../engine/flowEngine.js';
 import { loadFlows } from '../engine/flowLoader.js';
@@ -352,4 +357,41 @@ test('database info includes daily size history snapshots', () => {
   assert.ok(Array.isArray(info.sizeHistory), 'sizeHistory should be an array');
   assert.ok((info.sizeHistory?.length || 0) >= 1, 'sizeHistory should have at least one daily point');
   assert.ok(Number.isFinite(info.totalStorageBytes), 'totalStorageBytes should be numeric');
+});
+
+test('contact display names persist in sqlite and enrich broadcast list results', () => {
+  const now = Date.now();
+  const jid = `persisted-contact-${now}@s.whatsapp.net`;
+
+  addConversationEvent({
+    occurredAt: now,
+    eventType: 'message-incoming',
+    direction: 'incoming',
+    jid,
+    flowPath: '/tmp/persisted-contact-flow.tmb',
+    messageText: 'oi',
+    metadata: {},
+  });
+
+  const upserted = upsertContactDisplayName({
+    jid,
+    displayName: '~lucy',
+    source: 'test-suite',
+    updatedAt: now,
+  });
+
+  assert.equal(upserted, true);
+  assert.equal(getContactDisplayName(jid), 'lucy');
+
+  const names = listContactDisplayNames(5000);
+  assert.ok(
+    names.some(item => item.jid === jid && item.name === 'lucy'),
+    'expected persisted contact name in listContactDisplayNames'
+  );
+
+  const broadcastList = listBroadcastContacts({ search: 'lucy', limit: 200 });
+  assert.ok(
+    broadcastList.some(item => item.jid === jid && item.name === 'lucy'),
+    'expected persisted contact name to be searchable in broadcast contacts'
+  );
 });

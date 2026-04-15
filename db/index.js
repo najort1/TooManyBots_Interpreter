@@ -202,6 +202,12 @@ export async function initDb() {
       UNIQUE(campaign_id, jid),
       FOREIGN KEY (campaign_id) REFERENCES broadcast_campaigns(id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS contact_profiles (
+      jid           TEXT PRIMARY KEY,
+      display_name  TEXT NOT NULL,
+      source        TEXT NOT NULL DEFAULT 'runtime',
+      updated_at    INTEGER NOT NULL
+    );
     CREATE TABLE IF NOT EXISTS db_size_daily (
       date_key      TEXT PRIMARY KEY,
       total_bytes   INTEGER NOT NULL,
@@ -216,6 +222,8 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_broadcast_campaigns_created_at ON broadcast_campaigns(created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_campaign_status ON broadcast_recipients(campaign_id, send_status);
     CREATE INDEX IF NOT EXISTS idx_broadcast_recipients_jid_created ON broadcast_recipients(jid, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_contact_profiles_display_name ON contact_profiles(display_name);
+    CREATE INDEX IF NOT EXISTS idx_contact_profiles_updated_at ON contact_profiles(updated_at DESC);
   `);
 
   rebuildSessionsTableIfNeeded();
@@ -395,10 +403,13 @@ export async function initDb() {
     listBroadcastContacts: db.prepare(
       `SELECT
          ce.jid AS jid,
-         MAX(ce.occurred_at) AS last_interaction_at
+         MAX(ce.occurred_at) AS last_interaction_at,
+         COALESCE(MAX(cp.display_name), '') AS display_name
        FROM conversation_events ce
+       LEFT JOIN contact_profiles cp
+         ON cp.jid = ce.jid
        WHERE ce.direction = 'incoming'
-         AND ce.jid LIKE '%@s.whatsapp.net'
+          AND ce.jid LIKE '%@s.whatsapp.net'
        GROUP BY ce.jid
        ORDER BY last_interaction_at DESC
        LIMIT ?`
@@ -406,14 +417,40 @@ export async function initDb() {
     searchBroadcastContacts: db.prepare(
       `SELECT
          ce.jid AS jid,
-         MAX(ce.occurred_at) AS last_interaction_at
+         MAX(ce.occurred_at) AS last_interaction_at,
+         COALESCE(MAX(cp.display_name), '') AS display_name
        FROM conversation_events ce
+       LEFT JOIN contact_profiles cp
+         ON cp.jid = ce.jid
        WHERE ce.direction = 'incoming'
-         AND ce.jid LIKE '%@s.whatsapp.net'
-         AND ce.jid LIKE ?
+          AND ce.jid LIKE '%@s.whatsapp.net'
+         AND (
+           ce.jid LIKE ?
+           OR cp.display_name LIKE ?
+         )
        GROUP BY ce.jid
        ORDER BY last_interaction_at DESC
        LIMIT ?`
+    ),
+    getContactDisplayNameByJid: db.prepare(
+      `SELECT display_name
+       FROM contact_profiles
+       WHERE jid = ?
+       LIMIT 1`
+    ),
+    listContactProfiles: db.prepare(
+      `SELECT jid, display_name, source, updated_at
+       FROM contact_profiles
+       ORDER BY updated_at DESC
+       LIMIT ?`
+    ),
+    upsertContactProfile: db.prepare(
+      `INSERT INTO contact_profiles (jid, display_name, source, updated_at)
+       VALUES (?, ?, ?, ?)
+       ON CONFLICT(jid) DO UPDATE SET
+         display_name = excluded.display_name,
+         source = excluded.source,
+         updated_at = excluded.updated_at`
     ),
     insertBroadcastCampaign: db.prepare(
       `INSERT INTO broadcast_campaigns (
@@ -802,6 +839,7 @@ export function listConversationSessionEndsByReason({ from, to, endReason, flowP
 function mapBroadcastContactRow(row) {
   return {
     jid: String(row?.jid || '').trim(),
+    name: String(row?.display_name || '').trim(),
     lastInteractionAt: Number(row?.last_interaction_at) || 0,
   };
 }
@@ -810,12 +848,71 @@ export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
   const normalizedLimit = Math.max(1, Math.min(5000, Number(limit) || 200));
   const normalizedSearch = String(search ?? '').trim();
   const rows = normalizedSearch
-    ? stmts.searchBroadcastContacts.all(`%${normalizedSearch}%`, normalizedLimit)
+    ? stmts.searchBroadcastContacts.all(`%${normalizedSearch}%`, `%${normalizedSearch}%`, normalizedLimit)
     : stmts.listBroadcastContacts.all(normalizedLimit);
 
   return rows
     .map(mapBroadcastContactRow)
     .filter(row => row.jid);
+}
+
+function normalizePersistedDisplayName(value, fallbackJid = '') {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const cleaned = raw.replace(/^~+\s*/, '').trim();
+  const resolved = cleaned || raw;
+  if (!resolved) return '';
+  const normalizedJid = String(fallbackJid ?? '').trim();
+  if (normalizedJid && resolved === normalizedJid) return '';
+  return resolved.slice(0, 180);
+}
+
+export function upsertContactDisplayName({
+  jid = '',
+  displayName = '',
+  source = 'runtime',
+  updatedAt = Date.now(),
+} = {}) {
+  const normalizedJid = String(jid ?? '').trim();
+  if (!normalizedJid) return false;
+  const normalizedDisplayName = normalizePersistedDisplayName(displayName, normalizedJid);
+  if (!normalizedDisplayName) return false;
+  const normalizedSource = String(source ?? '').trim() || 'runtime';
+  const normalizedUpdatedAt = Number(updatedAt) || Date.now();
+
+  stmts.upsertContactProfile.run(
+    normalizedJid,
+    normalizedDisplayName,
+    normalizedSource,
+    normalizedUpdatedAt
+  );
+
+  return true;
+}
+
+export function getContactDisplayName(jid = '') {
+  const normalizedJid = String(jid ?? '').trim();
+  if (!normalizedJid) return '';
+  const row = stmts.getContactDisplayNameByJid.get(normalizedJid);
+  return normalizePersistedDisplayName(row?.display_name, normalizedJid);
+}
+
+export function listContactDisplayNames(limit = 5000) {
+  const normalizedLimit = Math.max(1, Math.min(50000, Number(limit) || 5000));
+  const rows = stmts.listContactProfiles.all(normalizedLimit);
+  return rows
+    .map(row => {
+      const jid = String(row?.jid || '').trim();
+      const name = normalizePersistedDisplayName(row?.display_name, jid);
+      if (!jid || !name) return null;
+      return {
+        jid,
+        name,
+        source: String(row?.source || '').trim() || 'runtime',
+        updatedAt: Number(row?.updated_at) || 0,
+      };
+    })
+    .filter(Boolean);
 }
 
 function normalizeRecipientList(recipients = []) {

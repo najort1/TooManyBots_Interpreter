@@ -2,9 +2,11 @@ import { listConversationEvents, onConversationEvent } from '../db/index.js';
 
 export function getMessageDebugInfo(msg, type) {
   const key = msg.key ?? {};
-  const remoteJid = key.remoteJid ?? '';
-  const senderPn = key.senderPn ?? '';
+  const remoteJid = key.remoteJid ?? key.remote_jid ?? '';
+  const senderPn = key.senderPn ?? key.sender_pn ?? '';
   const participant = key.participant ?? '';
+  const participantPn = key.participantPn ?? key.participant_pn ?? '';
+  const notify = key.notify ?? key.Notify ?? msg.notify ?? msg.Notify ?? msg.pushName ?? msg.pushname ?? '';
   const fromMe = Boolean(key.fromMe);
   const hasMessage = Boolean(msg.message);
   const messageKeys = hasMessage ? Object.keys(msg.message) : [];
@@ -18,6 +20,8 @@ export function getMessageDebugInfo(msg, type) {
     remoteJid,
     senderPn,
     participant,
+    participantPn,
+    notify,
     fromMe,
     hasMessage,
     messageKeys,
@@ -54,8 +58,14 @@ export function toJidString(value) {
   if (typeof value === 'string') return value.trim();
   if (typeof value === 'object') {
     if (typeof value.remoteJid === 'string') return value.remoteJid.trim();
+    if (typeof value.remote_jid === 'string') return value.remote_jid.trim();
     if (typeof value.jid === 'string') return value.jid.trim();
     if (typeof value.id === 'string') return value.id.trim();
+    if (typeof value.senderPn === 'string') return value.senderPn.trim();
+    if (typeof value.sender_pn === 'string') return value.sender_pn.trim();
+    if (typeof value.participantPn === 'string') return value.participantPn.trim();
+    if (typeof value.participant_pn === 'string') return value.participant_pn.trim();
+    if (typeof value.participant === 'string') return value.participant.trim();
   }
   return '';
 }
@@ -63,7 +73,9 @@ export function toJidString(value) {
 function extractPersonJidFromMessageKey(messageKey = {}) {
   const candidates = [
     messageKey.participantPn,
+    messageKey.participant_pn,
     messageKey.senderPn,
+    messageKey.sender_pn,
     messageKey.participant,
     messageKey.senderJid,
   ];
@@ -97,6 +109,10 @@ function toJidSet(values = []) {
 
 export function isUserJid(jid) {
   return String(jid ?? '').endsWith('@s.whatsapp.net');
+}
+
+export function isLidJid(jid) {
+  return String(jid ?? '').endsWith('@lid');
 }
 
 export function isGroupJid(jid) {
@@ -157,27 +173,68 @@ export function getGroupWhitelistJids(currentConfig) {
 
 function formatNameOrFallback(primary, fallback) {
   const p = String(primary ?? '').trim();
-  if (p) return p;
+  if (p) {
+    return p.replace(/^~+\s*/, '').trim() || p;
+  }
   return String(fallback ?? '').trim() || 'Sem nome';
+}
+
+function normalizeCandidateName(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) return '';
+  const cleaned = raw.replace(/^~+\s*/, '').trim();
+  return cleaned || raw;
 }
 
 export function mergeContactCacheEntry(contactCache, input) {
   if (!input || typeof input !== 'object') return;
 
-  const jid = toJidString(input.jid) || toJidString(input.id);
-  if (!jid || !isUserJid(jid)) return;
+  const messageKey = input?.key && typeof input.key === 'object' ? input.key : {};
+  const directJidCandidates = [
+    toJidString(input),
+    toJidString(input.jid),
+    toJidString(input.id),
+    toJidString(input.remoteJid),
+    toJidString(input.remote_jid),
+    toJidString(input.participant),
+    toJidString(input.participantPn),
+    toJidString(input.participant_pn),
+    toJidString(input.senderPn),
+    toJidString(input.sender_pn),
+    toJidString(messageKey.participant),
+    toJidString(messageKey.participantPn),
+    toJidString(messageKey.participant_pn),
+    toJidString(messageKey.senderPn),
+    toJidString(messageKey.sender_pn),
+    toJidString(messageKey.remoteJid),
+    toJidString(messageKey.remote_jid),
+  ].filter(Boolean);
 
-  const existing = contactCache.get(jid) ?? { jid, name: jid };
-  const nextName = formatNameOrFallback(
+  const personJids = directJidCandidates.filter(jid => isUserJid(jid) || isLidJid(jid));
+  if (personJids.length === 0) return;
+
+  const explicitName = normalizeCandidateName(
     input.name ??
     input.notify ??
+    input.Notify ??
+    input.verifiedBizName ??
     input.verifiedName ??
     input.pushName ??
-    input.pushname,
-    existing.name ?? jid
+    input.pushname ??
+    messageKey.notify ??
+    messageKey.Notify ??
+    messageKey.pushName ??
+    messageKey.pushname ??
+    messageKey.verifiedBizName
   );
 
-  contactCache.set(jid, { jid, name: nextName });
+  for (const jid of personJids) {
+    const existing = contactCache.get(jid) ?? { jid, name: jid };
+    const nextName = explicitName
+      ? formatNameOrFallback(explicitName, existing.name ?? jid)
+      : formatNameOrFallback(existing.name, jid);
+    contactCache.set(jid, { jid, name: nextName });
+  }
 }
 
 export function mergeContactList(contactCache, list) {
@@ -259,11 +316,15 @@ export function fetchSavedTestTargetJidsFromDb(contactCache, limit = 2000) {
 }
 
 function extractSelectableJidsFromMessage(msg) {
+  const messageKey = msg?.key && typeof msg.key === 'object' ? msg.key : {};
   const candidates = [
-    toJidString(msg?.key?.remoteJid),
-    toJidString(msg?.key?.senderPn),
-    toJidString(msg?.key?.participant),
-    toJidString(msg?.key?.participantPn),
+    toJidString(messageKey.remoteJid),
+    toJidString(messageKey.remote_jid),
+    toJidString(messageKey.senderPn),
+    toJidString(messageKey.sender_pn),
+    toJidString(messageKey.participant),
+    toJidString(messageKey.participantPn),
+    toJidString(messageKey.participant_pn),
   ];
   const result = new Set();
   for (const candidate of candidates) {
@@ -301,15 +362,27 @@ export function subscribeToRealtimeJidDiscovery({ sock, contactCache, onDiscover
   listen('messages.upsert', ({ messages }) => {
     if (!Array.isArray(messages)) return;
     for (const msg of messages) {
+      const messageKey = msg?.key && typeof msg.key === 'object' ? msg.key : {};
+      mergeContactCacheEntry(contactCache, {
+        ...msg,
+        key: messageKey,
+        notify:
+          messageKey.notify ??
+          messageKey.Notify ??
+          msg?.notify ??
+          msg?.Notify ??
+          msg?.pushName ??
+          msg?.pushname ??
+          '',
+        verifiedName:
+          messageKey.verifiedBizName ??
+          messageKey.verifiedName ??
+          msg?.verifiedBizName ??
+          msg?.verifiedName ??
+          '',
+      });
       const discovered = extractSelectableJidsFromMessage(msg);
       for (const jid of discovered) {
-        if (isUserJid(jid)) {
-          mergeContactCacheEntry(contactCache, {
-            id: jid,
-            notify: msg?.pushName,
-            verifiedName: msg?.verifiedBizName,
-          });
-        }
         pushJid(jid);
       }
     }

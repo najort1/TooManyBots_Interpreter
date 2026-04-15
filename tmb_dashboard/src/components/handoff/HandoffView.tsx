@@ -102,6 +102,10 @@ export function HandoffView({
     () => [...history].sort((a, b) => (a.occurredAt || 0) - (b.occurredAt || 0)),
     [history]
   );
+  const selectedSession = useMemo(
+    () => sessions.find(session => session.jid === selectedJid) || null,
+    [sessions, selectedJid]
+  );
   const timelineEmptyState = !selectedJid || sortedTimeline.length === 0;
 
   useEffect(() => {
@@ -139,6 +143,7 @@ export function HandoffView({
               const isActive = selectedJid === session.jid;
               const snippet = session.lastMessage?.text || 'Sem mensagem recente';
               const badge = getSessionBadge(session);
+              const sessionLabel = String(session.displayName || '').trim() || formatJidPhone(session.jid);
               return (
                 <button
                   type="button"
@@ -152,7 +157,7 @@ export function HandoffView({
                   onClick={() => onSelectSession(session.jid)}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <strong>{formatJidPhone(session.jid)}</strong>
+                    <strong>{sessionLabel}</strong>
                     <span
                       className={[
                         'rounded-full px-2 py-0.5 text-[0.66rem] font-bold',
@@ -180,7 +185,9 @@ export function HandoffView({
           <div>
             <h3 className="text-base font-extrabold">Chat em Tempo Real</h3>
             <small className="mt-1 block text-xs text-slate-500">
-              {selectedJid ? `Sessao ativa: ${formatJidPhone(selectedJid)}` : 'Selecione uma sessao na lista'}
+              {selectedJid
+                ? `Sessao ativa: ${String(selectedSession?.displayName || '').trim() || formatJidPhone(selectedJid)}`
+                : 'Selecione uma sessao na lista'}
             </small>
           </div>
           <button
