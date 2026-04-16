@@ -38,6 +38,13 @@ export const config = {
   postProcessQueueMax: 5000,
   mediaPipelineConcurrency: 2,
   mediaPipelineQueueMax: 500,
+  dbMaintenanceEnabled: true,
+  dbMaintenanceIntervalMinutes: 30,
+  dbRetentionDays: 30,
+  dbRetentionArchiveEnabled: true,
+  dbEventBatchEnabled: true,
+  dbEventBatchFlushMs: 1000,
+  dbEventBatchSize: 200,
   flowSessionTimeoutOverrides: {},
   testTargetMode: 'contacts-and-groups',
   testJid: '',
@@ -203,6 +210,29 @@ function normalizeConfigShape(input) {
     config.mediaPipelineQueueMax,
     { min: 1, max: 100000 }
   );
+  normalized.dbMaintenanceEnabled = normalized.dbMaintenanceEnabled !== false;
+  normalized.dbMaintenanceIntervalMinutes = toIntInRange(
+    normalized.dbMaintenanceIntervalMinutes,
+    config.dbMaintenanceIntervalMinutes,
+    { min: 5, max: 1440 }
+  );
+  normalized.dbRetentionDays = toIntInRange(
+    normalized.dbRetentionDays,
+    config.dbRetentionDays,
+    { min: 1, max: 3650 }
+  );
+  normalized.dbRetentionArchiveEnabled = normalized.dbRetentionArchiveEnabled !== false;
+  normalized.dbEventBatchEnabled = normalized.dbEventBatchEnabled !== false;
+  normalized.dbEventBatchFlushMs = toIntInRange(
+    normalized.dbEventBatchFlushMs,
+    config.dbEventBatchFlushMs,
+    { min: 100, max: 60000 }
+  );
+  normalized.dbEventBatchSize = toIntInRange(
+    normalized.dbEventBatchSize,
+    config.dbEventBatchSize,
+    { min: 10, max: 5000 }
+  );
   normalized.flowSessionTimeoutOverrides = normalizeTimeoutOverrides(normalized.flowSessionTimeoutOverrides);
 
   normalized.testTargetMode = String(normalized.testTargetMode ?? config.testTargetMode).trim() || config.testTargetMode;
@@ -254,6 +284,13 @@ function sanitizeConfigForSave(input) {
     postProcessQueueMax: normalized.postProcessQueueMax,
     mediaPipelineConcurrency: normalized.mediaPipelineConcurrency,
     mediaPipelineQueueMax: normalized.mediaPipelineQueueMax,
+    dbMaintenanceEnabled: normalized.dbMaintenanceEnabled,
+    dbMaintenanceIntervalMinutes: normalized.dbMaintenanceIntervalMinutes,
+    dbRetentionDays: normalized.dbRetentionDays,
+    dbRetentionArchiveEnabled: normalized.dbRetentionArchiveEnabled,
+    dbEventBatchEnabled: normalized.dbEventBatchEnabled,
+    dbEventBatchFlushMs: normalized.dbEventBatchFlushMs,
+    dbEventBatchSize: normalized.dbEventBatchSize,
     flowSessionTimeoutOverrides: normalized.flowSessionTimeoutOverrides,
     testTargetMode: normalized.testTargetMode,
     testJid: normalized.testJid,
