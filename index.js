@@ -33,6 +33,7 @@ import {
   endSessionFromDashboard,
   clearEngineRuntimeCaches,
 } from './engine/flowEngine.js';
+import { configureConversationEventEmitter } from './engine/conversationEvents.js';
 import {
   getConfig,
   loadSavedUserConfig,
@@ -512,6 +513,7 @@ function listActiveSessionsForManagement({ search = '', limit = 200 } = {}) {
 }
 
 function logConversationEvent({
+  occurredAt = Date.now(),
   eventType = 'message',
   direction = 'system',
   jid = 'unknown',
@@ -520,7 +522,7 @@ function logConversationEvent({
   metadata = {},
 }) {
   addConversationEvent({
-    occurredAt: Date.now(),
+    occurredAt: Number(occurredAt) || Date.now(),
     eventType,
     direction,
     jid,
@@ -910,6 +912,7 @@ function getIngestionSnapshot() {
       queueDropped: ingestionRuntimeCounters.mediaQueueDropped,
       queue: mediaPipelineSnapshot,
     },
+    engine: engineStats,
     ingestionQueue: ingestionQueueSnapshot,
     dispatchScheduler: dispatchQueueSnapshot,
   };
@@ -983,6 +986,11 @@ function initializeRuntimeSchedulers(currentConfig) {
         'Media pipeline queue backlog reached warn threshold'
       );
     },
+  });
+
+  configureConversationEventEmitter((event = {}) => {
+    const queueKey = String(event?.jid || event?.flowPath || 'conversation-events');
+    logConversationEventAsync(event, { key: queueKey });
   });
 }
 
