@@ -140,7 +140,7 @@ export async function handleRedirectToHuman({ block, session, sock, jid, flow })
       direction: 'system',
       jid,
       flowPath: flow?.flowPath ?? '',
-      messageText: reason || 'Sessao transferida para atendimento humano',
+      messageText: reason || 'Sessão transferida para atendimento humano',
       metadata: {
         blockId: toText(block?.id),
         blockType: toText(block?.type),

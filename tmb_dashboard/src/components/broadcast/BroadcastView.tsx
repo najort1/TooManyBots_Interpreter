@@ -284,7 +284,7 @@ export function BroadcastView({
     <section className="mx-auto grid max-w-[1560px] grid-cols-1 gap-4 xl:grid-cols-[minmax(320px,460px)_1fr]">
       <article className={`${panelClass} min-w-0`}>
         <header className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-base font-extrabold">Destinatarios</h3>
+          <h3 className="text-base font-extrabold">Destinatários</h3>
           <button
             type="button"
             className={`${buttonBase} ${iconButtonClass} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
@@ -364,7 +364,7 @@ export function BroadcastView({
             <EmptyStateMascot
               compact
               title="Nenhum contato encontrado."
-              description="Sincronize ou ajuste o filtro para exibir destinatarios nesta lista."
+              description="Sincronize ou ajuste o filtro para exibir destinatários nesta lista."
             />
           ) : (
             contacts.map(contact => (
@@ -384,11 +384,11 @@ export function BroadcastView({
                   </strong>
                   <small className="block text-[0.72rem] text-slate-500">{contact.jid}</small>
                   <small className="block text-[0.73rem] text-slate-500">
-                    Ultima interação: {contact.lastInteractionAt ? fmtTime(contact.lastInteractionAt) : '--:--'}
+                    Última interação: {contact.lastInteractionAt ? fmtTime(contact.lastInteractionAt) : '--:--'}
                   </small>
                   {contact.hasActiveSession ? (
                     <small className="mt-1 inline-block rounded-full bg-[#dcfce7] px-2 py-0.5 text-[0.66rem] font-bold text-[#166534]">
-                      Sessao ativa
+                      Sessão ativa
                     </small>
                   ) : null}
                 </span>
@@ -400,16 +400,16 @@ export function BroadcastView({
 
       <article className={`${panelClass} min-w-0`}>
         <header className="mb-3">
-          <h3 className="text-base font-extrabold">Novo Anuncio</h3>
+          <h3 className="text-base font-extrabold">Novo Anúncio</h3>
           <small className="mt-1 block text-xs text-slate-500">
-            Destinatarios atuais: {recipientsCount} | modo {recipientMode === 'all' ? 'todos' : 'selecionados'}
+            Destinatários atuais: {recipientsCount} | modo {recipientMode === 'all' ? 'todos' : 'selecionados'}
           </small>
           <small className="mt-1 block text-[0.74rem] text-[#1d4e89]">
-            Intervalo atual de envio: {Math.max(0, Math.floor(Number(broadcastSendIntervalMs) || 0))} ms. Configure em Configuracoes &gt; Runtime.
+            Intervalo atual de envio: {Math.max(0, Math.floor(Number(broadcastSendIntervalMs) || 0))} ms. Configure em Configurações &gt; Runtime.
           </small>
           {recipientMode === 'all' && search.trim() ? (
             <small className="mt-1 block text-[0.72rem] text-amber-700">
-              O filtro de busca nao limita o envio no modo "todos".
+              O filtro de busca não limita o envio no modo "todos".
             </small>
           ) : null}
         </header>
@@ -487,7 +487,7 @@ export function BroadcastView({
           id="broadcast-message"
           value={messageText}
           onChange={event => onMessageChange(event.target.value)}
-          placeholder="Digite o texto do anuncio (opcional se enviar apenas imagem)"
+          placeholder="Digite o texto do anúncio (opcional se enviar apenas imagem)"
           className="min-h-[180px] w-full rounded-xl border border-[#cfdcec] bg-white px-3 py-2 text-sm outline-none focus:border-[#7ca4db] focus:ring-2 focus:ring-[rgba(30,99,201,0.15)]"
         />
 
@@ -527,7 +527,7 @@ export function BroadcastView({
             disabled={busySend || recipientsCount <= 0}
           >
             <i className={busySend ? 'fa-solid fa-spinner fa-spin' : 'fa-regular fa-paper-plane'} aria-hidden="true" />{' '}
-            {busySend ? 'Enviando...' : 'Enviar anuncio'}
+            {busySend ? 'Enviando...' : 'Enviar anúncio'}
           </button>
         </div>
 
@@ -537,7 +537,7 @@ export function BroadcastView({
             {imagePreviewUrl ? (
               <img
                 src={imagePreviewUrl}
-                alt="Preview da imagem de anuncio"
+                alt="Preview da imagem de anúncio"
                 className="mt-2 max-h-[240px] rounded-xl border border-[#d7e3f2] object-contain"
               />
             ) : null}

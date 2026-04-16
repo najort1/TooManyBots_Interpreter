@@ -50,7 +50,7 @@ export function TopBar({
             mode === 'COMMAND' ? 'bg-orange-100 text-orange-800' : 'bg-blue-100 text-blue-700',
           ].join(' ')}
         >
-          {mode === 'COMMAND' ? 'Modo Comando' : 'Modo Conversacao'}
+          {mode === 'COMMAND' ? 'Modo Comando' : 'Modo Conversação'}
         </span>
         {showModeSwitch && (
           <div className="hidden items-center rounded-xl border border-[#d8e2ef] bg-white p-0.5 md:inline-flex">

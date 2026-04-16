@@ -53,19 +53,19 @@ export function SessionManagementView({
     <section className="mx-auto max-w-[1560px] space-y-4">
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <KpiCard
-          title="Sessoes Ativas"
+          title="Sessões Ativas"
           value={overview?.activeSessions ?? 0}
           icon="fa-solid fa-users"
           color="blue"
         />
         <KpiCard
-          title="Sessoes em Handoff"
+          title="Sessões em Handoff"
           value={overview?.handoffSessions ?? 0}
           icon="fa-solid fa-headset"
           color="amber"
         />
         <KpiCard
-          title="Tempo Medio de Sessao"
+          title="Tempo Médio de Sessão"
           value={overview?.averageSessionDurationMs ?? 0}
           icon="fa-regular fa-clock"
           color="emerald"
@@ -76,7 +76,7 @@ export function SessionManagementView({
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.15fr_1fr]">
         <article className={panelClass}>
           <header className="mb-3 flex items-center justify-between gap-3">
-            <h3 className="text-base font-extrabold">Acoes de Gestao</h3>
+            <h3 className="text-base font-extrabold">Ações de Gestão</h3>
             <button
               type="button"
               className={`${buttonBase} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
@@ -90,7 +90,7 @@ export function SessionManagementView({
 
           <div className="space-y-3">
             <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
-              <p className="m-0 text-sm font-semibold text-slate-700">Acoes em Massa</p>
+              <p className="m-0 text-sm font-semibold text-slate-700">Ações em Massa</p>
               <div className="mt-2 flex flex-wrap gap-2">
                 <button
                   type="button"
@@ -99,7 +99,7 @@ export function SessionManagementView({
                   disabled={busyAction}
                 >
                   <i className="fa-solid fa-triangle-exclamation" aria-hidden="true" />
-                  Limpar todas as sessoes ativas
+                  Limpar todas as sessões ativas
                 </button>
                 <button
                   type="button"
@@ -108,7 +108,7 @@ export function SessionManagementView({
                   disabled={busyAction || !selectedFlowPath}
                 >
                   <i className="fa-solid fa-broom" aria-hidden="true" />
-                  Limpar sessoes do flow selecionado
+                  Limpar sessões do flow selecionado
                 </button>
               </div>
             </div>
@@ -178,7 +178,7 @@ export function SessionManagementView({
 
         <article className={panelClass}>
           <header className="mb-3">
-            <h3 className="text-base font-extrabold">Sessoes Ativas</h3>
+            <h3 className="text-base font-extrabold">Sessões Ativas</h3>
           </header>
           <input
             type="text"
@@ -196,8 +196,8 @@ export function SessionManagementView({
             {activeSessions.length === 0 ? (
               <EmptyStateMascot
                 compact
-                title="Nenhuma sessao ativa encontrada."
-                description="Quando uma nova conversa iniciar, ela aparecera aqui com flow e duracao."
+                title="Nenhuma sessão ativa encontrada."
+                description="Quando uma nova conversa iniciar, ela aparecerá aqui com flow e duração."
               />
             ) : (
               activeSessions.map(session => (
@@ -219,9 +219,9 @@ export function SessionManagementView({
                     Flow: {session.flowPath} | Bloco: {session.blockIndex}
                   </small>
                   <small className="block text-[0.72rem] text-slate-500">
-                    Inicio: {session.startedAt ? fmtTime(session.startedAt) : '--:--'} | Ultima atividade: {session.lastActivityAt ? fmtTime(session.lastActivityAt) : '--:--'}
+                    Início: {session.startedAt ? fmtTime(session.startedAt) : '--:--'} | Última atividade: {session.lastActivityAt ? fmtTime(session.lastActivityAt) : '--:--'}
                   </small>
-                  <small className="block text-[0.72rem] text-slate-500">Duracao: {fmtDuration(session.durationMs)}</small>
+                  <small className="block text-[0.72rem] text-slate-500">Duração: {fmtDuration(session.durationMs)}</small>
                 </div>
               ))
             )}

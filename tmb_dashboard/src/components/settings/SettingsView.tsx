@@ -181,9 +181,9 @@ export function SettingsView({
           </div>
 
           <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
-            <p className="m-0 text-sm font-semibold text-slate-700">Intervalo do Anuncio em Massa</p>
+            <p className="m-0 text-sm font-semibold text-slate-700">Intervalo do Anúncio em Massa</p>
             <small className="text-xs text-slate-500">
-              Controla o tempo de espera entre cada envio de destinatario no broadcast.
+              Controla o tempo de espera entre cada envio de destinatário no broadcast.
             </small>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <input
@@ -214,7 +214,7 @@ export function SettingsView({
           <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
             <p className="m-0 text-sm font-semibold text-slate-700">Cache Settings</p>
             <small className="text-xs text-slate-500">
-              Limpa cache em memoria de sessoes/blocos para diagnostico sem reiniciar.
+              Limpa cache em memória de sessões/blocos para diagnóstico sem reiniciar.
             </small>
             <div className="mt-2">
               <button
@@ -233,7 +233,7 @@ export function SettingsView({
 
       <article className={panelClass}>
         <header className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-base font-extrabold">Informacoes do DB</h3>
+          <h3 className="text-base font-extrabold">Informações do DB</h3>
           <button
             type="button"
             className={`${buttonBase} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
@@ -275,7 +275,7 @@ export function SettingsView({
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
-                <strong>Sessoes:</strong> {dbInfo.sessionsTotal} (ativas: {dbInfo.sessionsActive})
+                <strong>Sessões:</strong> {dbInfo.sessionsTotal} (ativas: {dbInfo.sessionsActive})
               </div>
               <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
                 <strong>Eventos:</strong> {dbInfo.conversationEventsTotal}
@@ -284,18 +284,18 @@ export function SettingsView({
                 <strong>Conversas:</strong> {dbInfo.conversationSessionsTotal}
               </div>
               <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
-                <strong>Broadcast:</strong> {dbInfo.broadcastCampaignsTotal} campanhas / {dbInfo.broadcastRecipientsTotal} destinatarios
+                <strong>Broadcast:</strong> {dbInfo.broadcastCampaignsTotal} campanhas / {dbInfo.broadcastRecipientsTotal} destinatários
               </div>
             </div>
             <div className="rounded-xl border border-[#dce6f3] bg-white p-3">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <strong className="text-sm text-slate-700">Evolucao diaria do tamanho do DB</strong>
-                <small className="text-xs text-slate-500">Ultimos 7 dias</small>
+                <strong className="text-sm text-slate-700">Evolução diária do tamanho do DB</strong>
+                <small className="text-xs text-slate-500">Últimos 7 dias</small>
               </div>
               {historyLength >= 2 ? (
                 <ChartCanvas config={dbGrowthConfig} height={240} />
               ) : (
-                <p className="text-sm text-slate-500">Historico insuficiente. Aguarde novos snapshots diarios.</p>
+                <p className="text-sm text-slate-500">Histórico insuficiente. Aguarde novos snapshots diários.</p>
               )}
             </div>
           </div>

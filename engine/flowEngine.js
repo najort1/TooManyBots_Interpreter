@@ -434,7 +434,7 @@ function getSessionLimits(flow) {
   return {
     maxMessagesPerSession: Number(limits.maxMessagesPerSession) || 0,
     sessionTimeoutMinutes: Number(limits.sessionTimeoutMinutes) || 0,
-    timeoutMessage: limits.timeoutMessage || 'Sessao encerrada por tempo limite.',
+    timeoutMessage: limits.timeoutMessage || 'Sessão encerrada por tempo limite.',
   };
 }
 
@@ -443,7 +443,7 @@ function getPostEndConfig(flow) {
   return {
     reentryPolicy: cfg.reentryPolicy ?? 'allow-always',
     cooldownMinutes: Number(cfg.cooldownMinutes) || 0,
-    blockedMessage: cfg.blockedMessage || 'Este fluxo nao permite novas conversas para este usuario.',
+    blockedMessage: cfg.blockedMessage || 'Este fluxo não permite novas conversas para este usuário.',
     cooldownMessage: cfg.cooldownMessage || 'Aguarde alguns minutos para iniciar uma nova conversa.',
   };
 }
@@ -1020,7 +1020,7 @@ export function startSessionCleanup(sock, flowOrFlows) {
               if (!syncSession || syncSession.status !== SESSION_STATUS.ACTIVE) return;
               if (!isSessionTimedOut(syncSession, flow, nowTs)) return;
 
-              console.log(`[SessionCleanup] Sessao para ${session.jid} atingiu o timeout (${limits.sessionTimeoutMinutes} min). Encerrando e enviando mensagem...`);
+              console.log(`[SessionCleanup] Sessão para ${session.jid} atingiu o timeout (${limits.sessionTimeoutMinutes} min). Encerrando e enviando mensagem...`);
               if (limits.timeoutMessage) {
                 await sock.sendMessage(session.jid, { text: limits.timeoutMessage }).catch(console.error);
               }

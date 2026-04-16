@@ -106,7 +106,7 @@ export function ToastCenter({ items, onDismiss }: ToastCenterProps) {
           <button
             type="button"
             className="inline-flex h-9 w-9 items-center justify-center rounded-xl text-[#6d8097] hover:bg-[#eef4fd]"
-            aria-label="Fechar notificacao"
+            aria-label="Fechar notificação"
             onClick={() => onDismiss(item.id)}
           >
             <i className="fa-solid fa-xmark" aria-hidden="true" />

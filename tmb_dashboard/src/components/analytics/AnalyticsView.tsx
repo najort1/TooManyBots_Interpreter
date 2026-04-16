@@ -50,7 +50,7 @@ function getPrimaryChartConfig(mode: DashboardMode, stats: DashboardStats, prefe
         labels: funnel.map(item => item.label),
         datasets: [
           {
-            label: 'Usuarios',
+            label: 'Usuários',
             data: funnel.map(item => item.count),
             backgroundColor: 'rgba(30, 99, 201, 0.85)',
             borderRadius: 6,
@@ -211,7 +211,7 @@ export function AnalyticsView({
         {mode === 'CONVERSATION' ? (
           <>
             <KpiCard
-              title="Taxa de Conclusao Total"
+              title="Taxa de Conclusão Total"
               value={Number((safeStats.completionRateTotal ?? 0) * 100)}
               icon="fa-regular fa-circle-check"
               color="emerald"
@@ -225,19 +225,19 @@ export function AnalyticsView({
               formatValue={value => `${value.toFixed(1)}%`}
             />
             <KpiCard
-              title="Tempo Medio Total"
+              title="Tempo Médio Total"
               value={Number(avgDurationTotal)}
               icon="fa-regular fa-clock"
               color="blue"
               formatValue={value => fmtDuration(Math.max(0, Math.round(value)))}
             />
-            <KpiCard title="Total de Sessoes" value={safeStats.totalSessions ?? 0} icon="fa-solid fa-layer-group" color="emerald" />
+            <KpiCard title="Total de Sessões" value={safeStats.totalSessions ?? 0} icon="fa-solid fa-layer-group" color="emerald" />
           </>
         ) : (
           <>
-            <KpiCard title="Execucoes Hoje" value={safeStats.totalExecutions ?? 0} icon="fa-solid fa-bolt" color="blue" />
+            <KpiCard title="Execuções Hoje" value={safeStats.totalExecutions ?? 0} icon="fa-solid fa-bolt" color="blue" />
             <KpiCard
-              title="Latencia Media"
+              title="Latência Média"
               value={Number(safeStats.avgLatencyMs ?? 0)}
               icon="fa-solid fa-gauge-high"
               color="amber"
@@ -260,7 +260,7 @@ export function AnalyticsView({
           <header className="mb-3">
             <PanelTitle
               icon={mode === 'CONVERSATION' ? 'fa-solid fa-filter-circle-dollar' : 'fa-solid fa-fire'}
-              text={mode === 'CONVERSATION' ? 'Funil de Conversacao' : 'Comandos Populares'}
+              text={mode === 'CONVERSATION' ? 'Funil de Conversação' : 'Comandos Populares'}
             />
           </header>
           <ChartCanvas config={primaryChartConfig} height={320} />
@@ -268,7 +268,7 @@ export function AnalyticsView({
 
         <article className={panelClass}>
           <header className="mb-3">
-            <PanelTitle icon="fa-regular fa-clock" text="Volume Horario" />
+            <PanelTitle icon="fa-regular fa-clock" text="Volume Horário" />
           </header>
           <ChartCanvas config={volumeChartConfig} height={320} />
         </article>
@@ -277,7 +277,7 @@ export function AnalyticsView({
           <header className="mb-3">
             <PanelTitle
               icon={mode === 'CONVERSATION' ? 'fa-solid fa-users' : 'fa-solid fa-user-group'}
-              text={mode === 'CONVERSATION' ? 'Contatos Mais Ativos' : 'Usuarios Mais Ativos'}
+              text={mode === 'CONVERSATION' ? 'Contatos Mais Ativos' : 'Usuários Mais Ativos'}
             />
           </header>
           <div className="max-h-[320px] overflow-auto">
@@ -293,7 +293,7 @@ export function AnalyticsView({
                     <div className="min-w-0">
                       <strong className="block truncate text-[0.86rem]">{item.name || item.jid}</strong>
                       <small className="text-[0.74rem] text-slate-500">
-                        Ultima atividade: {item.lastActivity ? fmtTime(item.lastActivity) : '--:--'}
+                        Última atividade: {item.lastActivity ? fmtTime(item.lastActivity) : '--:--'}
                       </small>
                     </div>
                     <span className="ml-auto text-xs font-bold text-slate-700">{item.messageCount} msgs</span>
@@ -387,17 +387,17 @@ export function AnalyticsView({
           <>
             <article className={`${panelClass} xl:col-span-2`}>
               <header className="mb-3">
-                <PanelTitle icon="fa-solid fa-chart-column" text="Tendencia Semanal" />
+                <PanelTitle icon="fa-solid fa-chart-column" text="Tendência Semanal" />
               </header>
               <ChartCanvas config={bottomChartConfig} height={260} />
             </article>
             <article className={panelClass}>
               <header className="mb-3">
-                <PanelTitle icon="fa-solid fa-chart-simple" text="Metricas Avancadas" />
+                <PanelTitle icon="fa-solid fa-chart-simple" text="Métricas Avançadas" />
               </header>
               <div className="grid grid-cols-2 gap-3">
                 <div className="rounded-xl border border-[#dce7f5] bg-[#f8fbff] p-3">
-                  <span className="block text-xs text-slate-500">Taxa de Conversao</span>
+                  <span className="block text-xs text-slate-500">Taxa de Conversão</span>
                   <strong className="mt-1 block text-xl">{conversionRate.toFixed(1)}%</strong>
                 </div>
                 <div className="rounded-xl border border-[#dce7f5] bg-[#f8fbff] p-3">
@@ -405,7 +405,7 @@ export function AnalyticsView({
                   <strong className="mt-1 block text-xl">{fmtDuration(safeStats.medianDurationMs ?? avgDuration)}</strong>
                 </div>
                 <div className="rounded-xl border border-[#dce7f5] bg-[#f8fbff] p-3">
-                  <span className="block text-xs text-slate-500">Concluidas</span>
+                  <span className="block text-xs text-slate-500">Concluídas</span>
                   <strong className="mt-1 block text-xl">{completed}</strong>
                 </div>
                 <div className="rounded-xl border border-[#dce7f5] bg-[#f8fbff] p-3">
@@ -439,11 +439,11 @@ export function AnalyticsView({
             </article>
             <article className={panelClass}>
               <header className="mb-3">
-                <PanelTitle icon="fa-solid fa-heart-pulse" text="Saude das APIs" />
+                <PanelTitle icon="fa-solid fa-heart-pulse" text="Saúde das APIs" />
               </header>
               <div className="max-h-[250px] overflow-auto">
                 {apiHealth.length === 0 ? (
-                  <p className="py-4 text-center text-sm text-slate-500">Sem integracoes mapeadas.</p>
+                  <p className="py-4 text-center text-sm text-slate-500">Sem integrações mapeadas.</p>
                 ) : (
                   apiHealth.map((item, index) => (
                     <div key={`${item.name}-${index}`} className="flex items-start justify-between gap-3 border-b border-[#ebf1f8] py-2 last:border-b-0">

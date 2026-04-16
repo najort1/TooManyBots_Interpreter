@@ -161,7 +161,7 @@ export function SetupView({
     const selectedValidFiles = selectedFiles.filter(fileName => validBots.some(bot => bot.fileName === fileName));
 
     if (selectedValidFiles.length === 0) {
-      onShowNotice?.('Selecione ao menos 1 flow valido.');
+      onShowNotice?.('Selecione ao menos 1 flow válido.');
       return;
     }
 
@@ -215,8 +215,8 @@ export function SetupView({
             <h3 className="text-base font-extrabold">Setup Inicial</h3>
             <p className="mt-1 text-xs text-slate-600">
               {needsInitialSetup
-                ? 'Finalize esta configuracao para iniciar o runtime e autenticar o WhatsApp via terminal.'
-                : 'Edite a configuracao em tempo real. As alteracoes sao aplicadas imediatamente.'}
+                ? 'Finalize esta configuração para iniciar o runtime e autenticar o WhatsApp via terminal.'
+                : 'Edite a configuração em tempo real. As alterações são aplicadas imediatamente.'}
             </p>
           </div>
           <button
@@ -263,10 +263,10 @@ export function SetupView({
           </div>
 
           <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
-            <p className="m-0 text-sm font-semibold text-slate-700">Modo de execucao</p>
+            <p className="m-0 text-sm font-semibold text-slate-700">Modo de execução</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {[
-                { value: 'production', label: 'Producao' },
+                { value: 'production', label: 'Produção' },
                 { value: 'development', label: 'Desenvolvimento' },
                 { value: 'restricted-test', label: 'Teste restrito' },
               ].map(item => (
@@ -328,7 +328,7 @@ export function SetupView({
                         </span>
                         {!bot.syntaxValid ? (
                           <span className="block text-[11px] text-red-600">
-                            Sintaxe invalida: {bot.syntaxError || 'erro nao identificado'}
+                            Sintaxe inválida: {bot.syntaxError || 'erro não identificado'}
                           </span>
                         ) : null}
                       </span>
@@ -388,7 +388,7 @@ export function SetupView({
               </button>
             </div>
             <small className="text-xs text-slate-500">
-              Atualizacao automatica a cada ~4s enquanto esta aba estiver aberta.
+              Atualização automática a cada ~4s enquanto esta aba estiver aberta.
             </small>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <input
@@ -564,7 +564,7 @@ export function SetupView({
               onClick={handleSave}
               disabled={busySave || busyLoad}
             >
-              {busySave ? 'Salvando...' : needsInitialSetup ? 'Salvar e Iniciar Runtime' : 'Salvar Configuracao'}
+              {busySave ? 'Salvando...' : needsInitialSetup ? 'Salvar e Iniciar Runtime' : 'Salvar Configuração'}
             </button>
           </div>
         </div>

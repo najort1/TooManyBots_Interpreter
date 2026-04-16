@@ -120,13 +120,13 @@ export function HandoffView({
     <section className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(260px,320px)_1fr]">
       <article className={`${panelClass} min-w-0`}>
         <header className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-base font-extrabold">Sessoes em Espera</h3>
+          <h3 className="text-base font-extrabold">Sessões em Espera</h3>
           <button
             type="button"
             className={`${minimalBtn} ${iconButtonClass} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-[#f8fafc]`}
             onClick={onRefreshSessions}
-            aria-label="Atualizar sessoes"
-            title="Atualizar sessoes"
+            aria-label="Atualizar sessões"
+            title="Atualizar sessões"
           >
             <i className="fa-solid fa-arrows-rotate" aria-hidden="true" />
           </button>
@@ -135,8 +135,8 @@ export function HandoffView({
           {sessions.length === 0 ? (
             <EmptyStateMascot
               compact
-              title="Nenhuma sessao aguardando atendimento."
-              description="Quando um usuario pedir atendimento humano, ele aparecera aqui."
+              title="Nenhuma sessão aguardando atendimento."
+              description="Quando um usuário pedir atendimento humano, ele aparecerá aqui."
             />
           ) : (
             sessions.map(session => {
@@ -186,8 +186,8 @@ export function HandoffView({
             <h3 className="text-base font-extrabold">Chat em Tempo Real</h3>
             <small className="mt-1 block text-xs text-slate-500">
               {selectedJid
-                ? `Sessao ativa: ${String(selectedSession?.displayName || '').trim() || formatJidPhone(selectedJid)}`
-                : 'Selecione uma sessao na lista'}
+                ? `Sessão ativa: ${String(selectedSession?.displayName || '').trim() || formatJidPhone(selectedJid)}`
+                : 'Selecione uma sessão na lista'}
             </small>
           </div>
           <button
@@ -196,7 +196,7 @@ export function HandoffView({
             onClick={onEnd}
             disabled={!selectedJid || busyEnd}
           >
-            <i className="fa-regular fa-circle-xmark" aria-hidden="true" /> {busyEnd ? 'Encerrando...' : 'Encerrar sessao'}
+            <i className="fa-regular fa-circle-xmark" aria-hidden="true" /> {busyEnd ? 'Encerrando...' : 'Encerrar sessão'}
           </button>
         </header>
 
@@ -209,14 +209,14 @@ export function HandoffView({
           {!selectedJid ? (
             <EmptyStateMascot
               compact
-              title="Selecione uma sessao para ver as mensagens."
+              title="Selecione uma sessão para ver as mensagens."
               description="Escolha um contato na lista para abrir o atendimento em tempo real."
             />
           ) : sortedTimeline.length === 0 ? (
             <EmptyStateMascot
               compact
-              title="Sem historico para esta sessao."
-              description="As novas interacoes desta conversa aparecerao aqui."
+              title="Sem histórico para esta sessão."
+              description="As novas interações desta conversa aparecerão aqui."
             />
           ) : (
             sortedTimeline.map((event, index) => (
