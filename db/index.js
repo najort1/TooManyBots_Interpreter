@@ -26,6 +26,7 @@ let db;
 
 /** Prepared statements — compilados uma vez, reutilizados sempre. */
 let stmts = {};
+const dynamicStatementCache = new Map();
 const conversationEventListeners = new Set();
 
 function tableExists(name) {
@@ -116,6 +117,19 @@ function normalizeSessionScope(scope = null) {
   return { flowPath: '', botType: null };
 }
 
+function toJsonPath(key) {
+  const safe = String(key ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return `$."${safe}"`;
+}
+
+function getDynamicStatement(sql) {
+  let stmt = dynamicStatementCache.get(sql);
+  if (stmt) return stmt;
+  stmt = db.prepare(sql);
+  dynamicStatementCache.set(sql, stmt);
+  return stmt;
+}
+
 function mapSessionRow(row) {
   return {
     jid: row.jid,
@@ -125,6 +139,7 @@ function mapSessionRow(row) {
     variables: JSON.parse(row.variables),
     status: row.status,
     waitingFor: row.waiting_for,
+    updatedAt: Number(row.updated_at) || 0,
   };
 }
 
@@ -232,17 +247,19 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS idx_sessions_jid_updated_at ON sessions(jid, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sessions_status_updated_at ON sessions(status, updated_at DESC);
     CREATE INDEX IF NOT EXISTS idx_sessions_flow_status ON sessions(flow_path, status);
+    CREATE INDEX IF NOT EXISTS idx_sessions_status_updated_jid ON sessions(status, updated_at DESC, jid DESC);
+    CREATE INDEX IF NOT EXISTS idx_sessions_flow_status_updated_jid ON sessions(flow_path, status, updated_at DESC, jid DESC);
   `);
 
   // Pré-compilar prepared statements para performance máxima
   stmts = {
     getSession: db.prepare(
-      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for, updated_at
        FROM sessions
        WHERE jid = ? AND flow_path = ?`
     ),
     getLatestSessionByJid: db.prepare(
-      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for, updated_at
        FROM sessions
        WHERE jid = ?
        ORDER BY updated_at DESC
@@ -252,27 +269,47 @@ export async function initDb() {
       `INSERT OR REPLACE INTO sessions (jid, flow_path, bot_type, block_index, variables, status, waiting_for)
        VALUES (?, ?, ?, 0, '{}', ?, NULL)`
     ),
-    updateSession: db.prepare(
-      `UPDATE sessions
-       SET bot_type=?, block_index=?, variables=?, status=?, waiting_for=?,
-           updated_at=strftime('%s','now')
-       WHERE jid=? AND flow_path=?`
-    ),
     deleteSession: db.prepare('DELETE FROM sessions WHERE jid = ? AND flow_path = ?'),
     getActiveSessions: db.prepare(
-      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for, updated_at
        FROM sessions
        WHERE status = ?`
     ),
     getActiveSessionsByFlowPath: db.prepare(
-      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for, updated_at
        FROM sessions
        WHERE status = ? AND flow_path = ?`
     ),
     getActiveSessionsByBotType: db.prepare(
-      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for, updated_at
        FROM sessions
        WHERE status = ? AND bot_type = ?`
+    ),
+    getActiveSessionsPage: db.prepare(
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for, updated_at
+       FROM sessions
+       WHERE status = ?
+         AND (updated_at < ? OR (updated_at = ? AND jid < ?))
+       ORDER BY updated_at DESC, jid DESC
+       LIMIT ?`
+    ),
+    getActiveSessionsPageByFlowPath: db.prepare(
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for, updated_at
+       FROM sessions
+       WHERE status = ?
+         AND flow_path = ?
+         AND (updated_at < ? OR (updated_at = ? AND jid < ?))
+       ORDER BY updated_at DESC, jid DESC
+       LIMIT ?`
+    ),
+    getActiveSessionsPageByBotType: db.prepare(
+      `SELECT jid, flow_path, bot_type, block_index, variables, status, waiting_for, updated_at
+       FROM sessions
+       WHERE status = ?
+         AND bot_type = ?
+         AND (updated_at < ? OR (updated_at = ? AND jid < ?))
+       ORDER BY updated_at DESC, jid DESC
+       LIMIT ?`
     ),
     deleteActiveSessions: db.prepare('DELETE FROM sessions WHERE status = ?'),
     deleteActiveSessionsByFlowPath: db.prepare('DELETE FROM sessions WHERE status = ? AND flow_path = ?'),
@@ -547,38 +584,92 @@ export function createSession(jid, scope = null) {
   return getSession(normalizedJid, { flowPath });
 }
 
+function normalizeVariablesDelta(delta = {}) {
+  if (!delta || typeof delta !== 'object' || Array.isArray(delta)) {
+    return { setEntries: [], removeKeys: [] };
+  }
+
+  const setEntries = [];
+  const removeKeys = [];
+
+  const setValues = delta.set && typeof delta.set === 'object' && !Array.isArray(delta.set)
+    ? delta.set
+    : {};
+  for (const [key, value] of Object.entries(setValues)) {
+    const normalizedKey = String(key ?? '').trim();
+    if (!normalizedKey) continue;
+    if (value === undefined) {
+      removeKeys.push(normalizedKey);
+      continue;
+    }
+    setEntries.push([normalizedKey, value]);
+  }
+
+  const removeValues = Array.isArray(delta.remove) ? delta.remove : [];
+  for (const key of removeValues) {
+    const normalizedKey = String(key ?? '').trim();
+    if (!normalizedKey) continue;
+    if (setEntries.some(([setKey]) => setKey === normalizedKey)) continue;
+    removeKeys.push(normalizedKey);
+  }
+
+  return { setEntries, removeKeys };
+}
+
 export function updateSession(jid, patch = {}, scope = null) {
   const normalizedJid = String(jid ?? '').trim();
   if (!normalizedJid) return;
 
   const { flowPath, botType } = normalizeSessionScope(scope);
-  const current = getSession(normalizedJid, { flowPath }) ?? {
-    jid: normalizedJid,
-    flowPath,
-    botType: botType ?? 'conversation',
-    blockIndex: 0,
-    variables: {},
-    status: SESSION_STATUS.ACTIVE,
-    waitingFor: null,
-  };
+  const setClauses = [];
+  const params = [];
 
-  const blockIndex = patch.blockIndex ?? current.blockIndex;
-  const variables = JSON.stringify(patch.variables ?? current.variables);
-  const status = patch.status ?? current.status;
-  const waitingFor = patch.waitingFor !== undefined ? patch.waitingFor : current.waitingFor;
-  const resolvedBotType = String(patch.botType ?? botType ?? current.botType ?? 'conversation').toLowerCase() === 'command'
-    ? 'command'
-    : 'conversation';
+  if (Object.prototype.hasOwnProperty.call(patch, 'botType')) {
+    const resolvedBotType = String(patch.botType ?? botType ?? 'conversation').toLowerCase() === 'command'
+      ? 'command'
+      : 'conversation';
+    setClauses.push('bot_type = ?');
+    params.push(resolvedBotType);
+  }
 
-  stmts.updateSession.run(
-    resolvedBotType,
-    blockIndex,
-    variables,
-    status,
-    waitingFor,
-    normalizedJid,
-    flowPath
-  );
+  if (Object.prototype.hasOwnProperty.call(patch, 'blockIndex')) {
+    setClauses.push('block_index = ?');
+    params.push(Number.isFinite(Number(patch.blockIndex)) ? Number(patch.blockIndex) : 0);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'status')) {
+    setClauses.push('status = ?');
+    params.push(String(patch.status ?? SESSION_STATUS.ACTIVE));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'waitingFor')) {
+    setClauses.push('waiting_for = ?');
+    params.push(patch.waitingFor == null ? null : String(patch.waitingFor));
+  }
+
+  if (Object.prototype.hasOwnProperty.call(patch, 'variables')) {
+    setClauses.push('variables = ?');
+    params.push(JSON.stringify(patch.variables ?? {}));
+  } else if (Object.prototype.hasOwnProperty.call(patch, 'variablesDelta')) {
+    const { setEntries, removeKeys } = normalizeVariablesDelta(patch.variablesDelta);
+    if (setEntries.length > 0 || removeKeys.length > 0) {
+      let expression = "COALESCE(variables, '{}')";
+      for (const [key, value] of setEntries) {
+        expression = `json_set(${expression}, ?, json(?))`;
+        params.push(toJsonPath(key), JSON.stringify(value));
+      }
+      for (const key of removeKeys) {
+        expression = `json_remove(${expression}, ?)`;
+        params.push(toJsonPath(key));
+      }
+      setClauses.push(`variables = ${expression}`);
+    }
+  }
+
+  setClauses.push("updated_at = strftime('%s','now')");
+  const sql = `UPDATE sessions SET ${setClauses.join(', ')} WHERE jid = ? AND flow_path = ?`;
+  params.push(normalizedJid, flowPath);
+  getDynamicStatement(sql).run(...params);
 }
 
 export function deleteSession(jid, scope = null) {
@@ -598,6 +689,50 @@ export function getActiveSessions(scope = null) {
   } else {
     rows = stmts.getActiveSessions.all(SESSION_STATUS.ACTIVE);
   }
+  return rows.map(mapSessionRow);
+}
+
+export function getActiveSessionsPage(scope = null, {
+  cursorUpdatedAt = Number.MAX_SAFE_INTEGER,
+  cursorJid = '\uffff',
+  limit = 200,
+} = {}) {
+  const { flowPath, botType } = normalizeSessionScope(scope);
+  const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 200));
+  const normalizedCursorUpdatedAt = Number.isFinite(Number(cursorUpdatedAt))
+    ? Number(cursorUpdatedAt)
+    : Number.MAX_SAFE_INTEGER;
+  const normalizedCursorJid = String(cursorJid ?? '\uffff');
+
+  let rows = [];
+  if (flowPath) {
+    rows = stmts.getActiveSessionsPageByFlowPath.all(
+      SESSION_STATUS.ACTIVE,
+      flowPath,
+      normalizedCursorUpdatedAt,
+      normalizedCursorUpdatedAt,
+      normalizedCursorJid,
+      normalizedLimit
+    );
+  } else if (botType) {
+    rows = stmts.getActiveSessionsPageByBotType.all(
+      SESSION_STATUS.ACTIVE,
+      botType,
+      normalizedCursorUpdatedAt,
+      normalizedCursorUpdatedAt,
+      normalizedCursorJid,
+      normalizedLimit
+    );
+  } else {
+    rows = stmts.getActiveSessionsPage.all(
+      SESSION_STATUS.ACTIVE,
+      normalizedCursorUpdatedAt,
+      normalizedCursorUpdatedAt,
+      normalizedCursorJid,
+      normalizedLimit
+    );
+  }
+
   return rows.map(mapSessionRow);
 }
 
