@@ -1,5 +1,5 @@
 import { interpolate, safeParseJSON } from '../engine/utils.js';
-import { addConversationEvent } from '../db/index.js';
+import { emitConversationEvent } from '../engine/conversationEvents.js';
 import {
   BLOCK_TYPE,
   CONDITION_TYPE,
@@ -85,7 +85,7 @@ export function logHandlerErrorEvent({ block, session, jid, flow, userMessage = 
   const safeUserMessage = toText(userMessage);
   const safeError = stringifyError(error);
 
-  addConversationEvent({
+  emitConversationEvent({
     occurredAt: Date.now(),
     eventType: 'flow-error',
     direction: 'system',

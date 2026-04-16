@@ -1,7 +1,7 @@
 import { sendTextMessage } from '../engine/sender.js';
 import { interpolate } from '../engine/utils.js';
 import { parseCommandInput } from '../engine/commandParser.js';
-import { addConversationEvent } from '../db/index.js';
+import { emitConversationEvent } from '../engine/conversationEvents.js';
 import {
   INTERNAL_VAR,
   WAIT_TYPE,
@@ -134,7 +134,7 @@ export async function handleRedirectToHuman({ block, session, sock, jid, flow })
   };
 
   if (!alreadyActive) {
-    addConversationEvent({
+    emitConversationEvent({
       occurredAt: nowTs,
       eventType: 'human-handoff-requested',
       direction: 'system',
