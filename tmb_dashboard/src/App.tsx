@@ -4,6 +4,7 @@ import {
   fetchBots,
   fetchBroadcastContacts,
   fetchDatabaseInfo,
+  fetchDbMaintenanceInfo,
   fetchHandoffBlocks,
   fetchHandoffHistory,
   fetchHandoffSessions,
@@ -20,6 +21,8 @@ import {
   postBroadcastSend,
   postResetSessionByJid,
   postRuntimeSettings,
+  postDbMaintenanceConfig,
+  postRunDbMaintenance,
   postSetupState,
   fetchStats,
   postHandoffEnd,
@@ -37,6 +40,7 @@ import { HandoffView } from './components/handoff/HandoffView';
 import { SessionManagementView } from './components/sessions/SessionManagementView';
 import { FlowsView } from './components/flows/FlowsView';
 import { SettingsView } from './components/settings/SettingsView';
+import { DbMaintenanceView } from './components/settings/DbMaintenanceView';
 import { SetupView } from './components/setup/SetupView';
 import { Modal } from './components/Modal';
 import { ToastCenter } from './components/feedback/ToastCenter';
@@ -58,6 +62,8 @@ import type {
   SessionOverview,
   RuntimeSetupConfig,
   SetupTargetsResponse,
+  DbMaintenanceConfig,
+  DbMaintenanceStatus,
 } from './types';
 
 const WS_REFRESH_EVENT_TYPES = new Set([
@@ -274,9 +280,14 @@ function App() {
   const [autoReloadFlows, setAutoReloadFlows] = useState(true);
   const [broadcastSendIntervalMs, setBroadcastSendIntervalMs] = useState(250);
   const [dbInfo, setDbInfo] = useState<DatabaseInfo | null>(null);
+  const [dbMaintenanceConfig, setDbMaintenanceConfig] = useState<DbMaintenanceConfig | null>(null);
+  const [dbMaintenanceStatus, setDbMaintenanceStatus] = useState<DbMaintenanceStatus | null>(null);
   const [busySaveSettings, setBusySaveSettings] = useState(false);
   const [busyClearRuntimeCache, setBusyClearRuntimeCache] = useState(false);
   const [busyRefreshDbInfo, setBusyRefreshDbInfo] = useState(false);
+  const [busyRefreshDbMaintenance, setBusyRefreshDbMaintenance] = useState(false);
+  const [busySaveDbMaintenance, setBusySaveDbMaintenance] = useState(false);
+  const [busyRunDbMaintenance, setBusyRunDbMaintenance] = useState(false);
   const [sessionOverview, setSessionOverview] = useState<SessionOverview | null>(null);
   const [sessionFlows, setSessionFlows] = useState<SessionFlowConfigItem[]>([]);
   const [activeManagementSessions, setActiveManagementSessions] = useState<ActiveSessionManagementItem[]>([]);
@@ -502,6 +513,17 @@ function App() {
     }
   }, []);
 
+  const loadDbMaintenance = useCallback(async () => {
+    setBusyRefreshDbMaintenance(true);
+    try {
+      const info = await fetchDbMaintenanceInfo();
+      setDbMaintenanceConfig(info?.config || null);
+      setDbMaintenanceStatus(info?.maintenanceStatus || null);
+    } finally {
+      setBusyRefreshDbMaintenance(false);
+    }
+  }, []);
+
   const refreshStats = useCallback(async () => {
     const nextStats = await fetchStats(modeQuery);
     setStats(nextStats);
@@ -604,7 +626,7 @@ function App() {
           const blocks = await fetchHandoffBlocks();
           if (!cancelled) setHandoffBlocks(blocks);
           if (!cancelled) {
-            await loadDbInfo();
+            await Promise.all([loadDbInfo(), loadDbMaintenance()]);
           }
           if (!cancelled) {
             await Promise.all([refreshStats(), refreshHandoffQueue()]);
@@ -633,6 +655,9 @@ function App() {
       if (viewRef.current === 'sessions') {
         void refreshSessionManagement().catch(() => {});
       }
+      if (viewRef.current === 'dbMaintenance') {
+        void loadDbMaintenance().catch(() => {});
+      }
     }, 30000);
 
     const toastTimers = toastTimersRef.current;
@@ -647,6 +672,7 @@ function App() {
     };
   }, [
     loadDbInfo,
+    loadDbMaintenance,
     loadHealth,
     loadRuntimeSettings,
     loadSetupBots,
@@ -662,7 +688,7 @@ function App() {
     if (view !== 'broadcast') return;
     const timeout = window.setTimeout(() => {
       void loadBroadcastContacts(broadcastSearch).catch(error => {
-        showNotice(`Falha ao carregar contatos para anuncio: ${String((error as Error)?.message || error)}`);
+        showNotice(`Falha ao carregar contatos para anúncio: ${String((error as Error)?.message || error)}`);
       });
     }, 220);
 
@@ -674,14 +700,21 @@ function App() {
   useEffect(() => {
     if (view !== 'settings') return;
     void loadDbInfo().catch(error => {
-      showNotice(`Falha ao carregar informacoes do DB: ${String((error as Error)?.message || error)}`);
+      showNotice(`Falha ao carregar informações do DB: ${String((error as Error)?.message || error)}`);
     });
   }, [loadDbInfo, showNotice, view]);
 
   useEffect(() => {
+    if (view !== 'dbMaintenance') return;
+    void loadDbMaintenance().catch(error => {
+      showNotice(`Falha ao carregar política de manutenção: ${String((error as Error)?.message || error)}`);
+    });
+  }, [loadDbMaintenance, showNotice, view]);
+
+  useEffect(() => {
     if (view !== 'sessions') return;
     void refreshSessionManagement().catch(error => {
-      showNotice(`Falha ao carregar dados de sessoes: ${String((error as Error)?.message || error)}`);
+      showNotice(`Falha ao carregar dados de sessões: ${String((error as Error)?.message || error)}`);
     });
   }, [refreshSessionManagement, showNotice, view]);
 
@@ -689,7 +722,7 @@ function App() {
     if (view !== 'sessions') return;
     const timeout = window.setTimeout(() => {
       void loadSessionActiveSessions(sessionSearch).catch(error => {
-        showNotice(`Falha ao buscar sessoes ativas: ${String((error as Error)?.message || error)}`);
+        showNotice(`Falha ao buscar sessões ativas: ${String((error as Error)?.message || error)}`);
       });
     }, 240);
     return () => {
@@ -945,12 +978,12 @@ function App() {
     const hasText = broadcastMessage.trim().length > 0;
     const hasImage = broadcastImageDataUrl.length > 0;
     if (!hasText && !hasImage) {
-      showNotice('Informe texto ou imagem para enviar o anuncio.');
+      showNotice('Informe texto ou imagem para enviar o anúncio.');
       return;
     }
 
     if (broadcastRecipientMode === 'selected' && selectedBroadcastJids.length === 0) {
-      showNotice('Selecione ao menos um destinatario.');
+      showNotice('Selecione ao menos um destinatário.');
       return;
     }
 
@@ -978,7 +1011,7 @@ function App() {
 
   const handlePickBroadcastImage = useCallback(async (file: File) => {
     if (!file.type.startsWith('image/')) {
-      showNotice('Selecione um arquivo de imagem valido para o anuncio.');
+      showNotice('Selecione um arquivo de imagem válido para o anúncio.');
       return;
     }
 
@@ -988,7 +1021,7 @@ function App() {
       setBroadcastImagePreviewUrl(dataUrl);
       setBroadcastImageFileName(file.name);
     } catch (error) {
-      showNotice(`Nao foi possivel ler a imagem: ${String((error as Error)?.message || error)}`);
+      showNotice(`Não foi possível ler a imagem: ${String((error as Error)?.message || error)}`);
     }
   }, [showNotice]);
 
@@ -996,12 +1029,12 @@ function App() {
     const hasText = broadcastMessage.trim().length > 0;
     const hasImage = broadcastImageDataUrl.length > 0;
     if (!hasText && !hasImage) {
-      showNotice('Informe texto ou imagem para enviar o anuncio.');
+      showNotice('Informe texto ou imagem para enviar o anúncio.');
       return;
     }
 
     if (broadcastRecipientMode === 'selected' && selectedBroadcastJids.length === 0) {
-      showNotice('Selecione ao menos um destinatario.');
+      showNotice('Selecione ao menos um destinatário.');
       return;
     }
 
@@ -1058,7 +1091,7 @@ function App() {
     } catch (error) {
       activeBroadcastCampaignIdRef.current = null;
       setBroadcastProgress(null);
-      showNotice(`Falha ao enviar anuncio: ${String((error as Error)?.message || error)}`);
+      showNotice(`Falha ao enviar anúncio: ${String((error as Error)?.message || error)}`);
     } finally {
       busyBroadcastSendRef.current = false;
       setBusyBroadcastSend(false);
@@ -1095,9 +1128,9 @@ function App() {
       setAutoReloadFlows(updated.autoReloadFlows !== false);
       const effective = Math.max(0, Math.floor(Number(updated.broadcastSendIntervalMs ?? normalized) || normalized));
       setBroadcastSendIntervalMs(effective);
-      showNotice(`Intervalo do anuncio em massa atualizado para ${effective} ms.`);
+      showNotice(`Intervalo do anúncio em massa atualizado para ${effective} ms.`);
     } catch (error) {
-      showNotice(`Falha ao atualizar intervalo do anuncio em massa: ${String((error as Error)?.message || error)}`);
+      showNotice(`Falha ao atualizar intervalo do anúncio em massa: ${String((error as Error)?.message || error)}`);
     } finally {
       setBusySaveSettings(false);
     }
@@ -1115,6 +1148,39 @@ function App() {
     }
   }, [showNotice]);
 
+  const handleSaveDbMaintenance = useCallback(async (input: Partial<DbMaintenanceConfig>) => {
+    setBusySaveDbMaintenance(true);
+    try {
+      const result = await postDbMaintenanceConfig(input);
+      setDbMaintenanceConfig(result?.config || null);
+      setDbMaintenanceStatus(result?.maintenanceStatus || null);
+      await Promise.all([loadRuntimeSettings(), loadDbInfo()]);
+      showNotice('Política de manutenção do DB atualizada com sucesso.');
+    } catch (error) {
+      showNotice(`Falha ao atualizar manutenção do DB: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusySaveDbMaintenance(false);
+    }
+  }, [loadDbInfo, loadRuntimeSettings, showNotice]);
+
+  const handleRunDbMaintenanceNow = useCallback(async () => {
+    setBusyRunDbMaintenance(true);
+    try {
+      const result = await postRunDbMaintenance(true);
+      if (!result?.ok) {
+        throw new Error(String(result?.error || 'db-maintenance-failed'));
+      }
+      setDbMaintenanceStatus(result?.status || null);
+      await Promise.all([loadDbInfo(), loadDbMaintenance()]);
+      const durationMs = Number(result?.durationMs) || 0;
+      showNotice(`Manutenção do DB executada (${durationMs} ms).`);
+    } catch (error) {
+      showNotice(`Falha ao executar manutenção do DB: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusyRunDbMaintenance(false);
+    }
+  }, [loadDbInfo, loadDbMaintenance, showNotice]);
+
   const handleSelectSessionFlow = useCallback((flowPath: string) => {
     setSessionSelectedFlowPath(flowPath);
     const flow = sessionFlows.find(item => item.flowPath === flowPath);
@@ -1125,10 +1191,10 @@ function App() {
     setBusySessionAction(true);
     try {
       const result = await postClearAllActiveSessions();
-      showNotice(`Sessoes ativas removidas: ${result.removed}.`);
+      showNotice(`Sessões ativas removidas: ${result.removed}.`);
       await refreshSessionManagement();
     } catch (error) {
-      showNotice(`Falha ao limpar sessoes ativas: ${String((error as Error)?.message || error)}`);
+      showNotice(`Falha ao limpar sessões ativas: ${String((error as Error)?.message || error)}`);
     } finally {
       setBusySessionAction(false);
     }
@@ -1137,16 +1203,16 @@ function App() {
   const handleClearSessionsByFlow = useCallback(async () => {
     const flowPath = sessionSelectedFlowPath.trim();
     if (!flowPath) {
-      showNotice('Selecione um flow para limpar sessoes.');
+      showNotice('Selecione um flow para limpar sessões.');
       return;
     }
     setBusySessionAction(true);
     try {
       const result = await postClearFlowSessions(flowPath);
-      showNotice(`Sessoes removidas do flow selecionado: ${result.removed}.`);
+      showNotice(`Sessões removidas do flow selecionado: ${result.removed}.`);
       await refreshSessionManagement();
     } catch (error) {
-      showNotice(`Falha ao limpar sessoes do flow: ${String((error as Error)?.message || error)}`);
+      showNotice(`Falha ao limpar sessões do flow: ${String((error as Error)?.message || error)}`);
     } finally {
       setBusySessionAction(false);
     }
@@ -1155,17 +1221,17 @@ function App() {
   const handleResetSessionByJid = useCallback(async () => {
     const jid = sessionResetJidInput.trim();
     if (!jid) {
-      showNotice('Informe um JID valido.');
+      showNotice('Informe um JID válido.');
       return;
     }
     setBusySessionAction(true);
     try {
       const result = await postResetSessionByJid(jid);
-      showNotice(`Sessoes removidas para o JID informado: ${result.removed}.`);
+      showNotice(`Sessões removidas para o JID informado: ${result.removed}.`);
       setSessionResetJidInput('');
       await refreshSessionManagement();
     } catch (error) {
-      showNotice(`Falha ao resetar sessao por JID: ${String((error as Error)?.message || error)}`);
+      showNotice(`Falha ao resetar sessão por JID: ${String((error as Error)?.message || error)}`);
     } finally {
       setBusySessionAction(false);
     }
@@ -1179,7 +1245,7 @@ function App() {
     }
     const timeoutValue = Number(sessionTimeoutInputMinutes);
     if (!Number.isFinite(timeoutValue) || timeoutValue < 0) {
-      showNotice('Informe um timeout valido (>= 0).');
+      showNotice('Informe um timeout válido (>= 0).');
       return;
     }
     setBusySessionAction(true);
@@ -1208,19 +1274,19 @@ function App() {
       const next = await postSetupState(input);
       setSetupConfig(next.config || null);
       setNeedsInitialSetup(next.needsInitialSetup === true);
-      await Promise.all([loadHealth(), loadRuntimeSettings(), loadSetupBots(), loadSetupTargets()]);
+      await Promise.all([loadHealth(), loadRuntimeSettings(), loadSetupBots(), loadSetupTargets(), loadDbMaintenance()]);
       const blocks = await fetchHandoffBlocks();
       setHandoffBlocks(blocks);
 
       if (next.needsInitialSetup) {
         setView('setup');
-        showNotice('Configuracao salva. Finalize os campos obrigatorios para iniciar o runtime.');
+        showNotice('Configuração salva. Finalize os campos obrigatórios para iniciar o runtime.');
       } else {
         if (viewRef.current === 'setup') {
           setView('analytics');
         }
         await Promise.all([refreshStats(), refreshHandoffQueue()]);
-        showNotice('Configuracao aplicada com sucesso.');
+        showNotice('Configuração aplicada com sucesso.');
       }
     } catch (error) {
       showNotice(`Falha ao aplicar setup: ${String((error as Error)?.message || error)}`);
@@ -1229,6 +1295,7 @@ function App() {
     }
   }, [
     loadHealth,
+    loadDbMaintenance,
     loadRuntimeSettings,
     loadSetupBots,
     loadSetupTargets,
@@ -1252,7 +1319,7 @@ function App() {
     if (pendingConfirmAction === 'clear-runtime-cache') {
       return {
         title: 'Limpar cache runtime',
-        description: 'Esta acao remove o cache em memoria de sessoes/blocos para diagnostico.',
+        description: 'Esta ação remove o cache em memória de sessões/blocos para diagnóstico.',
         confirmLabel: confirmActionBusy ? 'Limpando...' : 'Limpar cache',
         variant: 'danger' as const,
       };
@@ -1260,8 +1327,8 @@ function App() {
 
     if (pendingConfirmAction === 'clear-all-sessions') {
       return {
-        title: 'Limpar todas as sessoes ativas',
-        description: 'Deseja remover todas as sessoes ativas agora? Esta acao nao pode ser desfeita.',
+        title: 'Limpar todas as sessões ativas',
+        description: 'Deseja remover todas as sessões ativas agora? Esta ação não pode ser desfeita.',
         confirmLabel: confirmActionBusy ? 'Limpando...' : 'Limpar todas',
         variant: 'danger' as const,
       };
@@ -1270,10 +1337,10 @@ function App() {
     if (pendingConfirmAction === 'clear-flow-sessions') {
       const flowPath = sessionSelectedFlowPath.trim();
       return {
-        title: 'Limpar sessoes do flow',
+        title: 'Limpar sessões do flow',
         description: flowPath
-          ? `Deseja remover as sessoes ativas do flow ${flowPath}?`
-          : 'Deseja remover as sessoes ativas do flow selecionado?',
+          ? `Deseja remover as sessões ativas do flow ${flowPath}?`
+          : 'Deseja remover as sessões ativas do flow selecionado?',
         confirmLabel: confirmActionBusy ? 'Limpando...' : 'Limpar flow',
         variant: 'danger' as const,
       };
@@ -1282,10 +1349,10 @@ function App() {
     if (pendingConfirmAction === 'reset-session-by-jid') {
       const jid = sessionResetJidInput.trim();
       return {
-        title: 'Resetar sessao por JID',
+        title: 'Resetar sessão por JID',
         description: jid
-          ? `Deseja resetar as sessoes associadas ao JID ${jid}?`
-          : 'Deseja resetar as sessoes associadas ao JID informado?',
+          ? `Deseja resetar as sessões associadas ao JID ${jid}?`
+          : 'Deseja resetar as sessões associadas ao JID informado?',
         confirmLabel: confirmActionBusy ? 'Resetando...' : 'Resetar JID',
         variant: 'danger' as const,
       };
@@ -1293,9 +1360,9 @@ function App() {
 
     const recipients = broadcastRecipientMode === 'all' ? broadcastContacts.length : selectedBroadcastJids.length;
     return {
-      title: 'Enviar anuncio em massa',
-      description: `Confirma envio para ${recipients} destinatario(s)?`,
-      confirmLabel: confirmActionBusy ? 'Enviando...' : 'Enviar anuncio',
+      title: 'Enviar anúncio em massa',
+      description: `Confirma envio para ${recipients} destinatário(s)?`,
+      confirmLabel: confirmActionBusy ? 'Enviando...' : 'Enviar anúncio',
       variant: 'primary' as const,
     };
   }, [
@@ -1517,6 +1584,27 @@ function App() {
             />
           )}
 
+          {renderedView === 'dbMaintenance' && (
+            <DbMaintenanceView
+              config={dbMaintenanceConfig}
+              status={dbMaintenanceStatus}
+              busyLoad={busyRefreshDbMaintenance}
+              busySave={busySaveDbMaintenance}
+              busyRun={busyRunDbMaintenance}
+              onRefresh={() => {
+                void Promise.all([loadDbMaintenance(), loadDbInfo()]).catch(error => {
+                  showNotice(`Falha ao atualizar painel de manutenção: ${String((error as Error)?.message || error)}`);
+                });
+              }}
+              onSave={input => {
+                void handleSaveDbMaintenance(input);
+              }}
+              onRunNow={() => {
+                void handleRunDbMaintenanceNow();
+              }}
+            />
+          )}
+
           {renderedView === 'settings' && (
             <SettingsView
               autoReloadFlows={autoReloadFlows}
@@ -1538,7 +1626,7 @@ function App() {
               }}
               onRefreshDbInfo={() => {
                 void loadDbInfo().catch(error => {
-                  showNotice(`Falha ao atualizar informacoes do DB: ${String((error as Error)?.message || error)}`);
+                  showNotice(`Falha ao atualizar informações do DB: ${String((error as Error)?.message || error)}`);
                 });
               }}
             />
@@ -1571,7 +1659,7 @@ function App() {
 
       <Modal
         open={pendingConfirmAction !== null && confirmActionConfig !== null}
-        title={confirmActionConfig?.title || 'Confirmar acao'}
+        title={confirmActionConfig?.title || 'Confirmar ação'}
         description={confirmActionConfig?.description || ''}
         onClose={() => {
           if (!confirmActionBusy) setPendingConfirmAction(null);

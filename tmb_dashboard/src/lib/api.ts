@@ -15,6 +15,9 @@ import type {
   RuntimeSetupState,
   SetupTargetsResponse,
   BotInfo,
+  DbMaintenanceConfig,
+  DbMaintenanceInfo,
+  DbMaintenanceRunResult,
 } from '../types';
 
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').trim();
@@ -44,7 +47,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     try {
       return JSON.parse(text) as T;
     } catch (error) {
-      throw new Error(`Resposta JSON invalida em ${resolvedUrl}: ${String((error as Error)?.message || error)}`);
+      throw new Error(`Resposta JSON inválida em ${resolvedUrl}: ${String((error as Error)?.message || error)}`);
     }
   }
 
@@ -60,7 +63,7 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
     return JSON.parse(text) as T;
   } catch (error) {
     throw new Error(
-      `Nao foi possivel interpretar resposta da API em ${resolvedUrl}: ${String((error as Error)?.message || error)}`
+      `Não foi possível interpretar resposta da API em ${resolvedUrl}: ${String((error as Error)?.message || error)}`
     );
   }
 }
@@ -205,6 +208,13 @@ export async function fetchSetupTargets(search = '', limit = 300): Promise<Setup
 export async function postRuntimeSettings(input: {
   autoReloadFlows?: boolean;
   broadcastSendIntervalMs?: number;
+  dbMaintenanceEnabled?: boolean;
+  dbMaintenanceIntervalMinutes?: number;
+  dbRetentionDays?: number;
+  dbRetentionArchiveEnabled?: boolean;
+  dbEventBatchEnabled?: boolean;
+  dbEventBatchFlushMs?: number;
+  dbEventBatchSize?: number;
 }): Promise<RuntimeSettings> {
   return requestJson<RuntimeSettings>('/api/settings', {
     method: 'POST',
@@ -213,6 +223,27 @@ export async function postRuntimeSettings(input: {
       ...(input.autoReloadFlows !== undefined ? { autoReloadFlows: input.autoReloadFlows } : {}),
       ...(input.broadcastSendIntervalMs !== undefined
         ? { broadcastSendIntervalMs: input.broadcastSendIntervalMs }
+        : {}),
+      ...(input.dbMaintenanceEnabled !== undefined
+        ? { dbMaintenanceEnabled: input.dbMaintenanceEnabled }
+        : {}),
+      ...(input.dbMaintenanceIntervalMinutes !== undefined
+        ? { dbMaintenanceIntervalMinutes: input.dbMaintenanceIntervalMinutes }
+        : {}),
+      ...(input.dbRetentionDays !== undefined
+        ? { dbRetentionDays: input.dbRetentionDays }
+        : {}),
+      ...(input.dbRetentionArchiveEnabled !== undefined
+        ? { dbRetentionArchiveEnabled: input.dbRetentionArchiveEnabled }
+        : {}),
+      ...(input.dbEventBatchEnabled !== undefined
+        ? { dbEventBatchEnabled: input.dbEventBatchEnabled }
+        : {}),
+      ...(input.dbEventBatchFlushMs !== undefined
+        ? { dbEventBatchFlushMs: input.dbEventBatchFlushMs }
+        : {}),
+      ...(input.dbEventBatchSize !== undefined
+        ? { dbEventBatchSize: input.dbEventBatchSize }
         : {}),
     }),
   });
@@ -226,6 +257,48 @@ export async function postClearRuntimeCache(): Promise<{ ok: boolean }> {
 
 export async function fetchDatabaseInfo(): Promise<DatabaseInfo> {
   return requestJson<DatabaseInfo>('/api/settings/db');
+}
+
+export async function fetchDbMaintenanceInfo(): Promise<DbMaintenanceInfo> {
+  return requestJson<DbMaintenanceInfo>('/api/settings/db/maintenance');
+}
+
+export async function postDbMaintenanceConfig(input: Partial<DbMaintenanceConfig>): Promise<DbMaintenanceInfo> {
+  return requestJson<DbMaintenanceInfo>('/api/settings/db/maintenance', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(input.dbMaintenanceEnabled !== undefined
+        ? { dbMaintenanceEnabled: input.dbMaintenanceEnabled }
+        : {}),
+      ...(input.dbMaintenanceIntervalMinutes !== undefined
+        ? { dbMaintenanceIntervalMinutes: input.dbMaintenanceIntervalMinutes }
+        : {}),
+      ...(input.dbRetentionDays !== undefined
+        ? { dbRetentionDays: input.dbRetentionDays }
+        : {}),
+      ...(input.dbRetentionArchiveEnabled !== undefined
+        ? { dbRetentionArchiveEnabled: input.dbRetentionArchiveEnabled }
+        : {}),
+      ...(input.dbEventBatchEnabled !== undefined
+        ? { dbEventBatchEnabled: input.dbEventBatchEnabled }
+        : {}),
+      ...(input.dbEventBatchFlushMs !== undefined
+        ? { dbEventBatchFlushMs: input.dbEventBatchFlushMs }
+        : {}),
+      ...(input.dbEventBatchSize !== undefined
+        ? { dbEventBatchSize: input.dbEventBatchSize }
+        : {}),
+    }),
+  });
+}
+
+export async function postRunDbMaintenance(force = true): Promise<DbMaintenanceRunResult> {
+  return requestJson<DbMaintenanceRunResult>('/api/settings/db/maintenance/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ force }),
+  });
 }
 
 export async function fetchSessionOverview(): Promise<SessionOverview> {

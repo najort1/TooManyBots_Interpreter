@@ -1,6 +1,6 @@
 export type DashboardMode = 'CONVERSATION' | 'COMMAND';
 
-export type DashboardView = 'setup' | 'analytics' | 'handoff' | 'broadcast' | 'sessions' | 'settings' | 'flows';
+export type DashboardView = 'setup' | 'analytics' | 'handoff' | 'broadcast' | 'sessions' | 'settings' | 'flows' | 'dbMaintenance';
 
 export interface RuntimeHealth {
   status: string;
@@ -162,6 +162,13 @@ export interface RuntimeSettings {
   autoReloadFlows: boolean;
   broadcastSendIntervalMs?: number;
   runtimeMode?: string;
+  dbMaintenanceEnabled?: boolean;
+  dbMaintenanceIntervalMinutes?: number;
+  dbRetentionDays?: number;
+  dbRetentionArchiveEnabled?: boolean;
+  dbEventBatchEnabled?: boolean;
+  dbEventBatchFlushMs?: number;
+  dbEventBatchSize?: number;
 }
 
 export interface RuntimeSetupConfig {
@@ -204,10 +211,30 @@ export interface DatabaseInfo {
   path: string;
   journalMode: string;
   synchronous: string;
+  journalModeAnalytics?: string;
+  synchronousAnalytics?: string;
   fileSizeBytes: number;
   walSizeBytes: number;
   shmSizeBytes: number;
   totalStorageBytes?: number;
+  splitDatabases?: boolean;
+  dailyGrowthBytes?: number;
+  files?: {
+    runtime?: {
+      path: string;
+      fileSizeBytes: number;
+      walSizeBytes: number;
+      shmSizeBytes: number;
+      totalStorageBytes: number;
+    };
+    analytics?: {
+      path: string;
+      fileSizeBytes: number;
+      walSizeBytes: number;
+      shmSizeBytes: number;
+      totalStorageBytes: number;
+    };
+  };
   sizeHistory?: Array<{
     date: string;
     totalBytes: number;
@@ -219,6 +246,49 @@ export interface DatabaseInfo {
   conversationSessionsTotal: number;
   broadcastCampaignsTotal: number;
   broadcastRecipientsTotal: number;
+  maintenance?: DbMaintenanceStatus;
+  runtimeConfig?: Record<string, unknown>;
+  operationalLimits?: Record<string, unknown>;
+}
+
+export interface DbMaintenanceConfig {
+  dbMaintenanceEnabled: boolean;
+  dbMaintenanceIntervalMinutes: number;
+  dbRetentionDays: number;
+  dbRetentionArchiveEnabled: boolean;
+  dbEventBatchEnabled: boolean;
+  dbEventBatchFlushMs: number;
+  dbEventBatchSize: number;
+}
+
+export interface DbMaintenanceStatus {
+  inProgress?: boolean;
+  lastRunAt?: number;
+  lastRunReason?: string;
+  lastDurationMs?: number;
+  lastStatus?: string;
+  lastError?: string;
+  lastSummary?: Record<string, unknown> | null;
+  lastRetentionAt?: number;
+  lastAnalyzeAt?: number;
+  lastVacuumAt?: number;
+  lastIntegrityCheckAt?: number;
+}
+
+export interface DbMaintenanceInfo {
+  ok: boolean;
+  config: DbMaintenanceConfig;
+  runtimeConfig?: Record<string, unknown>;
+  maintenanceStatus?: DbMaintenanceStatus;
+}
+
+export interface DbMaintenanceRunResult {
+  ok: boolean;
+  skipped?: boolean;
+  durationMs?: number;
+  error?: string;
+  summary?: Record<string, unknown>;
+  status?: DbMaintenanceStatus;
 }
 
 export interface SessionFlowConfigItem {

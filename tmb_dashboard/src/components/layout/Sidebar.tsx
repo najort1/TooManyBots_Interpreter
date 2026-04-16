@@ -13,10 +13,11 @@ const navItems: Array<{ id: DashboardView; label: string; iconClass: string }> =
   { id: 'setup', label: 'Setup Inicial', iconClass: 'fa-solid fa-wand-magic-sparkles' },
   { id: 'analytics', label: 'Dashboard', iconClass: 'fa-solid fa-chart-pie' },
   { id: 'handoff', label: 'Atendimento Humano', iconClass: 'fa-solid fa-headset' },
-  { id: 'broadcast', label: 'Anuncios em Massa', iconClass: 'fa-solid fa-bullhorn' },
-  { id: 'sessions', label: 'Gestao de Sessoes', iconClass: 'fa-solid fa-layer-group' },
-  { id: 'flows', label: 'Gestao de Fluxos', iconClass: 'fa-solid fa-sitemap' },
-  { id: 'settings', label: 'Configuracoes', iconClass: 'fa-solid fa-sliders' },
+  { id: 'broadcast', label: 'Anúncios em Massa', iconClass: 'fa-solid fa-bullhorn' },
+  { id: 'sessions', label: 'Gestão de Sessões', iconClass: 'fa-solid fa-layer-group' },
+  { id: 'flows', label: 'Gestão de Fluxos', iconClass: 'fa-solid fa-sitemap' },
+  { id: 'dbMaintenance', label: 'Manutenção DB', iconClass: 'fa-solid fa-database' },
+  { id: 'settings', label: 'Configurações', iconClass: 'fa-solid fa-sliders' },
 ];
 
 export function Sidebar({
@@ -59,7 +60,7 @@ export function Sidebar({
         </div>
 
         <nav className="flex flex-col gap-2 p-4">
-          <p className="mb-1 text-[0.72rem] font-bold uppercase tracking-[0.08em] text-[#6f8298]">Navegacao</p>
+          <p className="mb-1 text-[0.72rem] font-bold uppercase tracking-[0.08em] text-[#6f8298]">Navegação</p>
           {visibleNavItems.map(item => {
             const active = currentView === item.id;
             return (
