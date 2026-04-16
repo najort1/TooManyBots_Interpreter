@@ -26,6 +26,7 @@ import { getFlowBotType, loadFlows } from './engine/flowLoader.js';
 import { parseMessage } from './engine/messageParser.js';
 import {
   handleIncoming,
+  getEngineRuntimeStats,
   startSessionCleanup,
   resetActiveSessions,
   resumeSessionFromHumanHandoff,
@@ -61,6 +62,8 @@ import {
   shouldProcessByInteractionScope,
   toJidString,
 } from './runtime/contactUtils.js';
+import { createIngestionQueue } from './runtime/ingestionQueue.js';
+import { createTaskScheduler } from './runtime/taskScheduler.js';
 
 let config;
 let logger;
@@ -90,6 +93,30 @@ let requiresInitialSetup = false;
 let whatsappRuntimeStarted = false;
 let whatsappRuntimeStartPromise = null;
 let dashboardAutoOpenAttempted = false;
+let ingestionQueue = null;
+let dispatchScheduler = null;
+let postProcessQueue = null;
+let mediaPipelineQueue = null;
+const runtimeStatsStartedAt = Date.now();
+const ingestionRuntimeCounters = {
+  received: 0,
+  parseDropped: 0,
+  filteredOut: 0,
+  queueOverflowDropped: 0,
+  duplicateDropped: 0,
+  processedMessages: 0,
+  processingFailed: 0,
+  parseMsTotal: 0,
+  routingMsTotal: 0,
+  totalMsTotal: 0,
+  postTasksQueued: 0,
+  postTasksDropped: 0,
+  postTasksFailed: 0,
+  mediaQueued: 0,
+  mediaCaptured: 0,
+  mediaCaptureFailed: 0,
+  mediaQueueDropped: 0,
+};
 
 function normalizePersistableContactName(name, jid) {
   const normalizedJid = String(jid ?? '').trim();
@@ -713,19 +740,19 @@ function attachOutgoingMessageLogger(sock) {
     try {
       const result = await original(jid, content, safeOptions);
       if (!skipConversationLog) {
-        logConversationEvent({
+        logConversationEventAsync({
           eventType: 'message-outgoing',
           direction: 'outgoing',
           jid,
           flowPath,
           messageText: text,
           metadata: { kind },
-        });
+        }, { key: jid });
       }
       return result;
     } catch (err) {
       if (!skipConversationLog) {
-        logConversationEvent({
+        logConversationEventAsync({
           eventType: 'message-outgoing-error',
           direction: 'system',
           jid,
@@ -735,13 +762,228 @@ function attachOutgoingMessageLogger(sock) {
             kind,
             error: formatError(err),
           },
-        });
+        }, { key: jid });
       }
       throw err;
     }
   };
 
   sock.__tmbSendMessageWrapped = true;
+}
+
+function safeAverage(total, count) {
+  if (!Number.isFinite(total) || !Number.isFinite(count) || count <= 0) return 0;
+  return Number((total / count).toFixed(2));
+}
+
+function toPerSecond(count, startedAt) {
+  const uptimeSeconds = Math.max(1, (Date.now() - Number(startedAt || Date.now())) / 1000);
+  return Number(((Number(count) || 0) / uptimeSeconds).toFixed(2));
+}
+
+function queueSnapshotOrFallback(queue, fallback = {}) {
+  if (!queue || typeof queue.getSnapshot !== 'function') return { ...fallback };
+  return queue.getSnapshot();
+}
+
+function getIngestionSnapshot() {
+  const ingestionQueueSnapshot = queueSnapshotOrFallback(ingestionQueue, {
+    concurrency: Number(config?.ingestionConcurrency ?? 8),
+    maxQueueSize: Number(config?.ingestionQueueMax ?? 5000),
+    warnThreshold: Number(config?.ingestionQueueWarnThreshold ?? 1000),
+    queued: 0,
+    running: 0,
+    activeKeys: 0,
+    accepted: 0,
+    rejected: 0,
+    started: 0,
+    completed: 0,
+    failed: 0,
+    maxQueuedObserved: 0,
+    avgWaitMs: 0,
+    avgProcessMs: 0,
+    acceptedPerSecond: 0,
+    processedPerSecond: 0,
+    droppedPerSecond: 0,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  const dispatchQueueSnapshot = queueSnapshotOrFallback(dispatchScheduler, {
+    globalConcurrency: Number(config?.schedulerGlobalConcurrency ?? 16),
+    maxPerJid: Number(config?.schedulerPerJidConcurrency ?? 1),
+    maxPerFlowPath: Number(config?.schedulerPerFlowPathConcurrency ?? 4),
+    maxQueueSize: 20000,
+    warnThreshold: 5000,
+    queued: 0,
+    running: 0,
+    runningJids: 0,
+    runningFlowPaths: 0,
+    accepted: 0,
+    rejected: 0,
+    started: 0,
+    completed: 0,
+    failed: 0,
+    maxQueuedObserved: 0,
+    avgWaitMs: 0,
+    avgProcessMs: 0,
+    acceptedPerSecond: 0,
+    processedPerSecond: 0,
+    droppedPerSecond: 0,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  const postProcessSnapshot = queueSnapshotOrFallback(postProcessQueue, {
+    concurrency: Number(config?.postProcessConcurrency ?? 2),
+    maxQueueSize: Number(config?.postProcessQueueMax ?? 5000),
+    warnThreshold: Math.min(Number(config?.postProcessQueueMax ?? 5000), 1000),
+    queued: 0,
+    running: 0,
+    activeKeys: 0,
+    accepted: 0,
+    rejected: 0,
+    started: 0,
+    completed: 0,
+    failed: 0,
+    maxQueuedObserved: 0,
+    avgWaitMs: 0,
+    avgProcessMs: 0,
+    acceptedPerSecond: 0,
+    processedPerSecond: 0,
+    droppedPerSecond: 0,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+  const mediaPipelineSnapshot = queueSnapshotOrFallback(mediaPipelineQueue, {
+    concurrency: Number(config?.mediaPipelineConcurrency ?? 2),
+    maxQueueSize: Number(config?.mediaPipelineQueueMax ?? 500),
+    warnThreshold: Math.min(Number(config?.mediaPipelineQueueMax ?? 500), 100),
+    queued: 0,
+    running: 0,
+    activeKeys: 0,
+    accepted: 0,
+    rejected: 0,
+    started: 0,
+    completed: 0,
+    failed: 0,
+    maxQueuedObserved: 0,
+    avgWaitMs: 0,
+    avgProcessMs: 0,
+    acceptedPerSecond: 0,
+    processedPerSecond: 0,
+    droppedPerSecond: 0,
+    startedAt: Date.now(),
+    updatedAt: Date.now(),
+  });
+
+  const engineStats = getEngineRuntimeStats();
+
+  return {
+    callback: {
+      received: ingestionRuntimeCounters.received,
+      parseDropped: ingestionRuntimeCounters.parseDropped,
+      filteredOut: ingestionRuntimeCounters.filteredOut,
+      queueOverflowDropped: ingestionRuntimeCounters.queueOverflowDropped,
+      duplicateDropped: Number(engineStats?.duplicateDropped || 0),
+      processedMessages: ingestionRuntimeCounters.processedMessages,
+      processingFailed: ingestionRuntimeCounters.processingFailed,
+      parseAvgMs: safeAverage(ingestionRuntimeCounters.parseMsTotal, ingestionRuntimeCounters.processedMessages + ingestionRuntimeCounters.parseDropped),
+      routingAvgMs: safeAverage(ingestionRuntimeCounters.routingMsTotal, ingestionRuntimeCounters.processedMessages),
+      totalAvgMs: safeAverage(ingestionRuntimeCounters.totalMsTotal, ingestionRuntimeCounters.processedMessages),
+      receivedPerSecond: toPerSecond(ingestionRuntimeCounters.received, runtimeStatsStartedAt),
+      processedPerSecond: toPerSecond(ingestionRuntimeCounters.processedMessages, runtimeStatsStartedAt),
+      droppedPerSecond: toPerSecond(
+        ingestionRuntimeCounters.queueOverflowDropped + ingestionRuntimeCounters.parseDropped + ingestionRuntimeCounters.filteredOut + Number(engineStats?.duplicateDropped || 0),
+        runtimeStatsStartedAt
+      ),
+      updatedAt: Date.now(),
+    },
+    postProcessing: {
+      queued: ingestionRuntimeCounters.postTasksQueued,
+      dropped: ingestionRuntimeCounters.postTasksDropped,
+      failed: ingestionRuntimeCounters.postTasksFailed,
+      queue: postProcessSnapshot,
+    },
+    media: {
+      queued: ingestionRuntimeCounters.mediaQueued,
+      captured: ingestionRuntimeCounters.mediaCaptured,
+      failed: ingestionRuntimeCounters.mediaCaptureFailed,
+      queueDropped: ingestionRuntimeCounters.mediaQueueDropped,
+      queue: mediaPipelineSnapshot,
+    },
+    ingestionQueue: ingestionQueueSnapshot,
+    dispatchScheduler: dispatchQueueSnapshot,
+  };
+}
+
+function initializeRuntimeSchedulers(currentConfig) {
+  ingestionQueue = createIngestionQueue({
+    concurrency: Number(currentConfig?.ingestionConcurrency ?? 8),
+    maxQueueSize: Number(currentConfig?.ingestionQueueMax ?? 5000),
+    warnThreshold: Number(currentConfig?.ingestionQueueWarnThreshold ?? 1000),
+    onWarn: (snapshot) => {
+      logger?.warn?.(
+        {
+          queued: snapshot?.queued ?? 0,
+          running: snapshot?.running ?? 0,
+          maxQueueSize: snapshot?.maxQueueSize ?? 0,
+          rejected: snapshot?.rejected ?? 0,
+        },
+        'Ingestion queue backlog reached warn threshold'
+      );
+    },
+  });
+
+  dispatchScheduler = createTaskScheduler({
+    globalConcurrency: Number(currentConfig?.schedulerGlobalConcurrency ?? 16),
+    maxPerJid: Number(currentConfig?.schedulerPerJidConcurrency ?? 1),
+    maxPerFlowPath: Number(currentConfig?.schedulerPerFlowPathConcurrency ?? 4),
+    maxQueueSize: 20000,
+    warnThreshold: 5000,
+    onWarn: (snapshot) => {
+      logger?.warn?.(
+        {
+          queued: snapshot?.queued ?? 0,
+          running: snapshot?.running ?? 0,
+          rejected: snapshot?.rejected ?? 0,
+        },
+        'Dispatch scheduler backlog reached warn threshold'
+      );
+    },
+  });
+
+  postProcessQueue = createIngestionQueue({
+    concurrency: Number(currentConfig?.postProcessConcurrency ?? 2),
+    maxQueueSize: Number(currentConfig?.postProcessQueueMax ?? 5000),
+    warnThreshold: Math.min(Number(currentConfig?.postProcessQueueMax ?? 5000), 1000),
+    onWarn: (snapshot) => {
+      logger?.warn?.(
+        {
+          queued: snapshot?.queued ?? 0,
+          running: snapshot?.running ?? 0,
+          maxQueueSize: snapshot?.maxQueueSize ?? 0,
+          rejected: snapshot?.rejected ?? 0,
+        },
+        'Post-processing queue backlog reached warn threshold'
+      );
+    },
+  });
+
+  mediaPipelineQueue = createIngestionQueue({
+    concurrency: Number(currentConfig?.mediaPipelineConcurrency ?? 2),
+    maxQueueSize: Number(currentConfig?.mediaPipelineQueueMax ?? 500),
+    warnThreshold: Math.min(Number(currentConfig?.mediaPipelineQueueMax ?? 500), 100),
+    onWarn: (snapshot) => {
+      logger?.warn?.(
+        {
+          queued: snapshot?.queued ?? 0,
+          running: snapshot?.running ?? 0,
+          maxQueueSize: snapshot?.maxQueueSize ?? 0,
+          rejected: snapshot?.rejected ?? 0,
+        },
+        'Media pipeline queue backlog reached warn threshold'
+      );
+    },
+  });
 }
 
 function normalizeRuntimeInfo() {
@@ -766,6 +1008,7 @@ function normalizeRuntimeInfo() {
       command: commandFlows.map(flow => flow.flowPath),
     },
     availableModes,
+    ingestion: getIngestionSnapshot(),
   };
 }
 
@@ -812,6 +1055,16 @@ function buildSetupConfigSnapshot() {
     runtimeMode: String(config?.runtimeMode || RUNTIME_MODE.PRODUCTION),
     autoReloadFlows: config?.autoReloadFlows !== false,
     broadcastSendIntervalMs: Number(config?.broadcastSendIntervalMs ?? 250),
+    ingestionConcurrency: Number(config?.ingestionConcurrency ?? 8),
+    ingestionQueueMax: Number(config?.ingestionQueueMax ?? 5000),
+    ingestionQueueWarnThreshold: Number(config?.ingestionQueueWarnThreshold ?? 1000),
+    schedulerGlobalConcurrency: Number(config?.schedulerGlobalConcurrency ?? 16),
+    schedulerPerJidConcurrency: Number(config?.schedulerPerJidConcurrency ?? 1),
+    schedulerPerFlowPathConcurrency: Number(config?.schedulerPerFlowPathConcurrency ?? 4),
+    postProcessConcurrency: Number(config?.postProcessConcurrency ?? 2),
+    postProcessQueueMax: Number(config?.postProcessQueueMax ?? 5000),
+    mediaPipelineConcurrency: Number(config?.mediaPipelineConcurrency ?? 2),
+    mediaPipelineQueueMax: Number(config?.mediaPipelineQueueMax ?? 500),
     testTargetMode: String(config?.testTargetMode || 'contacts-and-groups'),
     testJid: String(config?.testJid || ''),
     testJids: toTrimmedStringArray(config?.testJids),
@@ -963,6 +1216,36 @@ function normalizeSetupPatch(input = {}) {
     }
     patch.broadcastSendIntervalMs = normalizedBroadcastInterval;
   }
+  if (input.ingestionConcurrency !== undefined) {
+    patch.ingestionConcurrency = Number(input.ingestionConcurrency);
+  }
+  if (input.ingestionQueueMax !== undefined) {
+    patch.ingestionQueueMax = Number(input.ingestionQueueMax);
+  }
+  if (input.ingestionQueueWarnThreshold !== undefined) {
+    patch.ingestionQueueWarnThreshold = Number(input.ingestionQueueWarnThreshold);
+  }
+  if (input.schedulerGlobalConcurrency !== undefined) {
+    patch.schedulerGlobalConcurrency = Number(input.schedulerGlobalConcurrency);
+  }
+  if (input.schedulerPerJidConcurrency !== undefined) {
+    patch.schedulerPerJidConcurrency = Number(input.schedulerPerJidConcurrency);
+  }
+  if (input.schedulerPerFlowPathConcurrency !== undefined) {
+    patch.schedulerPerFlowPathConcurrency = Number(input.schedulerPerFlowPathConcurrency);
+  }
+  if (input.postProcessConcurrency !== undefined) {
+    patch.postProcessConcurrency = Number(input.postProcessConcurrency);
+  }
+  if (input.postProcessQueueMax !== undefined) {
+    patch.postProcessQueueMax = Number(input.postProcessQueueMax);
+  }
+  if (input.mediaPipelineConcurrency !== undefined) {
+    patch.mediaPipelineConcurrency = Number(input.mediaPipelineConcurrency);
+  }
+  if (input.mediaPipelineQueueMax !== undefined) {
+    patch.mediaPipelineQueueMax = Number(input.mediaPipelineQueueMax);
+  }
   if (input.testTargetMode !== undefined) {
     patch.testTargetMode = String(input.testTargetMode || '').trim() || 'contacts-and-groups';
   }
@@ -1056,6 +1339,7 @@ async function applyRuntimeConfigFromDashboard(input = {}) {
   if (logger) {
     logger.level = config.logLevel;
   }
+  initializeRuntimeSchedulers(config);
 
   if (currentSocket) {
     startSessionCleanup(currentSocket, getActiveFlows());
@@ -1659,6 +1943,7 @@ async function start() {
   installLibSignalNoiseFilter(suppressSignalNoise);
 
   logger = createRuntimeLogger(config);
+  initializeRuntimeSchedulers(config);
   broadcastService = createBroadcastService({
     logger,
     getSendDelayMs: () => Number(config?.broadcastSendIntervalMs ?? 250),
@@ -1707,6 +1992,477 @@ async function start() {
     setupFlowWatcher();
   }
   await ensureWhatsAppRuntimeStarted();
+}
+
+function resolveQueueJidFromIncomingMessage(msg) {
+  const messageKey = msg?.key && typeof msg.key === 'object' ? msg.key : {};
+  const remoteJid = String(messageKey.remoteJid ?? messageKey.remote_jid ?? '').trim();
+  if (!remoteJid) return '';
+  const senderPn = String(messageKey.senderPn ?? messageKey.sender_pn ?? '').trim();
+  if (remoteJid.endsWith('@lid') && senderPn) {
+    return senderPn;
+  }
+  return remoteJid;
+}
+
+function enqueuePostProcessTask({ key = 'post', taskName = 'post-task', task }) {
+  if (typeof task !== 'function') return;
+  ingestionRuntimeCounters.postTasksQueued += 1;
+
+  if (!postProcessQueue) {
+    try {
+      task();
+    } catch (error) {
+      ingestionRuntimeCounters.postTasksFailed += 1;
+      logger?.error?.(
+        {
+          taskName,
+          err: {
+            name: error?.name || 'Error',
+            message: error?.message || 'post-task-failed',
+            stack: error?.stack || '',
+          },
+        },
+        'Post-process task failed (direct execution)'
+      );
+    }
+    return;
+  }
+
+  const result = postProcessQueue.enqueue({
+    key: String(key || 'post'),
+    priority: 'low',
+    payload: null,
+    handler: async () => {
+      try {
+        await task();
+      } catch (error) {
+        ingestionRuntimeCounters.postTasksFailed += 1;
+        logger?.error?.(
+          {
+            taskName,
+            err: {
+              name: error?.name || 'Error',
+              message: error?.message || 'post-task-failed',
+              stack: error?.stack || '',
+            },
+          },
+          'Post-process task failed'
+        );
+      }
+    },
+  });
+
+  if (!result?.accepted) {
+    ingestionRuntimeCounters.postTasksDropped += 1;
+    const dropped = ingestionRuntimeCounters.postTasksDropped;
+    if (dropped === 1 || dropped % 100 === 0) {
+      logger?.warn?.(
+        {
+          taskName,
+          dropped,
+          queued: Number(result?.snapshot?.queued ?? 0),
+          maxQueueSize: Number(result?.snapshot?.maxQueueSize ?? 0),
+        },
+        'Post-process task dropped due to queue overflow'
+      );
+    }
+  }
+}
+
+function logConversationEventAsync(event, { key = '' } = {}) {
+  const queueKey = String(key || event?.jid || 'post');
+  enqueuePostProcessTask({
+    key: queueKey,
+    taskName: `conversation-event:${String(event?.eventType || 'unknown')}`,
+    task: () => {
+      logConversationEvent(event);
+    },
+  });
+}
+
+function enqueueIncomingMediaCapture({
+  sock,
+  msg,
+  jid,
+  actorJid,
+  id,
+  mediaMimeType,
+  mediaFileName,
+  flowPaths = [],
+}) {
+  ingestionRuntimeCounters.mediaQueued += 1;
+  const queueKey = String(jid || 'media');
+
+  if (!mediaPipelineQueue) {
+    void (async () => {
+      try {
+        const media = await captureIncomingImageForDashboard({
+          msg,
+          sock,
+          mimeType: mediaMimeType,
+          fileName: mediaFileName || `incoming-${id || Date.now()}`,
+        });
+        if (!media) return;
+        ingestionRuntimeCounters.mediaCaptured += 1;
+        for (const flowPath of flowPaths) {
+          logConversationEventAsync({
+            eventType: 'message-media-captured',
+            direction: 'system',
+            jid: actorJid || jid,
+            flowPath,
+            messageText: '[Imagem armazenada para dashboard]',
+            metadata: {
+              id: id || null,
+              actorJid: actorJid || null,
+              chatJid: jid,
+              mediaType: mediaMimeType || null,
+              mediaUrl: media.mediaUrl || null,
+              mediaId: media.mediaId || null,
+            },
+          }, { key: jid });
+        }
+      } catch {
+        ingestionRuntimeCounters.mediaCaptureFailed += 1;
+      }
+    })();
+    return;
+  }
+
+  const enqueueResult = mediaPipelineQueue.enqueue({
+    key: queueKey,
+    priority: 'low',
+    payload: null,
+    handler: async () => {
+      try {
+        const media = await captureIncomingImageForDashboard({
+          msg,
+          sock,
+          mimeType: mediaMimeType,
+          fileName: mediaFileName || `incoming-${id || Date.now()}`,
+        });
+        if (!media) return;
+        ingestionRuntimeCounters.mediaCaptured += 1;
+        for (const flowPath of flowPaths) {
+          logConversationEventAsync({
+            eventType: 'message-media-captured',
+            direction: 'system',
+            jid: actorJid || jid,
+            flowPath,
+            messageText: '[Imagem armazenada para dashboard]',
+            metadata: {
+              id: id || null,
+              actorJid: actorJid || null,
+              chatJid: jid,
+              mediaType: mediaMimeType || null,
+              mediaUrl: media.mediaUrl || null,
+              mediaId: media.mediaId || null,
+            },
+          }, { key: jid });
+        }
+      } catch {
+        ingestionRuntimeCounters.mediaCaptureFailed += 1;
+      }
+    },
+  });
+
+  if (!enqueueResult?.accepted) {
+    ingestionRuntimeCounters.mediaQueueDropped += 1;
+    const dropped = ingestionRuntimeCounters.mediaQueueDropped;
+    if (dropped === 1 || dropped % 50 === 0) {
+      logger?.warn?.(
+        {
+          dropped,
+          queued: Number(enqueueResult?.snapshot?.queued ?? 0),
+          maxQueueSize: Number(enqueueResult?.snapshot?.maxQueueSize ?? 0),
+        },
+        'Incoming media capture dropped due to media pipeline queue overflow'
+      );
+    }
+  }
+}
+
+function resolveDispatchPriority({ messageType }) {
+  if (messageType === 'unknown') return 'low';
+  return 'high';
+}
+
+async function processIncomingUpsertMessage({ sock, msg, type }) {
+  const totalStartedAt = Date.now();
+  const rawMessageKey = msg?.key && typeof msg.key === 'object' ? msg.key : {};
+  mergeContactCacheEntry(contactCache, {
+    ...msg,
+    key: rawMessageKey,
+    notify:
+      rawMessageKey.notify ??
+      rawMessageKey.Notify ??
+      msg?.notify ??
+      msg?.Notify ??
+      msg?.pushName ??
+      msg?.pushname ??
+      '',
+    verifiedName:
+      rawMessageKey.verifiedBizName ??
+      rawMessageKey.verifiedName ??
+      msg?.verifiedBizName ??
+      msg?.verifiedName ??
+      '',
+  });
+
+  const activeFlows = getActiveFlows();
+  if (activeFlows.length === 0) return;
+
+  if (config.debugMode) {
+    console.log('Incoming raw', getMessageDebugInfo(msg, type));
+  }
+
+  const parseStartedAt = Date.now();
+  const parsed = parseMessage(msg);
+  ingestionRuntimeCounters.parseMsTotal += Math.max(0, Date.now() - parseStartedAt);
+  if (!parsed) {
+    ingestionRuntimeCounters.parseDropped += 1;
+    if (config.debugMode) {
+      console.log('Dropped by parser', getMessageDebugInfo(msg, type));
+    }
+    return;
+  }
+
+  const { id, jid, text, listId, isGroup, messageKey, messageType, mediaMimeType, mediaFileName } = parsed;
+  const actorJid = resolveIncomingActorJid(parsed);
+
+  const groupWhitelist = getGroupWhitelistJids(config);
+  const allowedTestJids = getAllowedTestJids(config);
+
+  if (config.testMode) {
+    if (allowedTestJids.size === 0) {
+      if (!warnedMissingTestTargets) {
+        console.warn('testMode ativo, mas nenhum contato/grupo permitido foi selecionado.');
+        warnedMissingTestTargets = true;
+      }
+      ingestionRuntimeCounters.filteredOut += 1;
+      return;
+    }
+    if (!allowedTestJids.has(jid)) {
+      ingestionRuntimeCounters.filteredOut += 1;
+      return;
+    }
+  }
+
+  const incomingText = String(text ?? '').trim();
+  const hasCommandPrefix = incomingText.startsWith('/');
+  const dispatchFlows = [];
+  const routingStartedAt = Date.now();
+
+  for (const flow of activeFlows) {
+    const interactionScope = normalizeInteractionScope(flow);
+    const requiresGroupWhitelist = isGroupWhitelistScope(flow);
+    if (!shouldProcessByInteractionScope(isGroup, flow)) {
+      continue;
+    }
+
+    if (requiresGroupWhitelist && isGroup) {
+      if (groupWhitelist.size === 0) continue;
+      if (!groupWhitelist.has(jid)) continue;
+    }
+
+    const scope = { flowPath: flow.flowPath, botType: getFlowBotType(flow) };
+    const existingSession = getSession(jid, scope);
+    const hasActiveSession = existingSession?.status === 'active';
+    const botType = getFlowBotType(flow);
+
+    if (botType === 'command') {
+      if (!hasActiveSession && !hasCommandPrefix) continue;
+      dispatchFlows.push(flow);
+      continue;
+    }
+
+    if (hasActiveSession || !hasCommandPrefix) {
+      dispatchFlows.push(flow);
+    }
+
+    if (config.debugMode) {
+      console.log('Decision', {
+        id,
+        jid,
+        flowPath: flow.flowPath,
+        botType,
+        actorJid: actorJid || null,
+        textLength: incomingText.length,
+        listId,
+        isGroup,
+        interactionScope,
+        requiresGroupWhitelist,
+        hasActiveSession,
+        groupWhitelistCount: groupWhitelist.size,
+        testMode: config.testMode,
+        testJidsCount: allowedTestJids.size,
+        passesTestMode: !config.testMode || allowedTestJids.has(jid),
+      });
+    }
+  }
+  ingestionRuntimeCounters.routingMsTotal += Math.max(0, Date.now() - routingStartedAt);
+
+  if (dispatchFlows.length === 0) {
+    ingestionRuntimeCounters.filteredOut += 1;
+    return;
+  }
+
+  if (messageType === 'image') {
+    enqueueIncomingMediaCapture({
+      sock,
+      msg,
+      jid,
+      actorJid,
+      id,
+      mediaMimeType,
+      mediaFileName,
+      flowPaths: dispatchFlows.map(item => item.flowPath),
+    });
+  }
+
+  const resolvedMessageText =
+    incomingText ||
+    (messageType === 'image' ? '[Imagem recebida]' : '');
+
+  const mediaState = messageType === 'image' ? 'queued' : 'none';
+  for (const flow of dispatchFlows) {
+    logConversationEventAsync({
+      eventType: 'message-incoming',
+      direction: 'incoming',
+      jid: actorJid || jid,
+      flowPath: flow.flowPath,
+      messageText: resolvedMessageText,
+      metadata: {
+        id,
+        listId: listId ?? null,
+        isGroup,
+        actorJid: actorJid || null,
+        chatJid: jid,
+        kind: messageType || 'unknown',
+        mediaType: messageType === 'image' ? mediaMimeType || null : null,
+        mediaState,
+        mediaUrl: null,
+        mediaId: null,
+        routedFlowPath: flow.flowPath,
+        routedFlowBotType: getFlowBotType(flow),
+        routedFlowPaths: dispatchFlows.map(item => item.flowPath),
+      },
+    }, { key: jid });
+  }
+
+  if (config.debugMode) {
+    console.log(`Mensagem de ${jid}: "${text}" ${listId ? `(listId: ${listId})` : ''} [ID msg: ${id || 'unknown'}]`);
+  }
+
+  const dispatchPriority = resolveDispatchPriority({ messageType });
+  const taskPromises = [];
+  for (const flow of dispatchFlows) {
+    if (!dispatchScheduler) {
+      taskPromises.push(handleIncoming(sock, jid, text, listId, flow, id, messageKey));
+      continue;
+    }
+
+    const scheduled = dispatchScheduler.enqueue({
+      jid,
+      flowPath: flow.flowPath,
+      priority: dispatchPriority,
+      payload: null,
+      handler: async () => {
+        await handleIncoming(sock, jid, text, listId, flow, id, messageKey);
+      },
+    });
+
+    if (!scheduled?.accepted) {
+      logger?.warn?.(
+        {
+          jid,
+          flowPath: flow.flowPath,
+          queued: Number(scheduled?.snapshot?.queued ?? 0),
+          maxQueueSize: Number(scheduled?.snapshot?.maxQueueSize ?? 0),
+        },
+        'Dispatch task dropped due to scheduler overflow'
+      );
+      continue;
+    }
+    taskPromises.push(scheduled.promise);
+  }
+
+  try {
+    await Promise.all(taskPromises);
+    ingestionRuntimeCounters.processedMessages += 1;
+  } catch (err) {
+    ingestionRuntimeCounters.processingFailed += 1;
+    console.error(`Erro no motor para ${jid}:`, err);
+    logConversationEventAsync({
+      eventType: 'engine-error',
+      direction: 'system',
+      jid,
+      messageText: 'Erro no motor ao processar mensagem',
+      metadata: {
+        id,
+        actorJid: actorJid || null,
+        chatJid: jid,
+        error: formatError(err),
+      },
+    }, { key: jid });
+  } finally {
+    ingestionRuntimeCounters.totalMsTotal += Math.max(0, Date.now() - totalStartedAt);
+  }
+}
+
+function enqueueIncomingUpsertMessage({ sock, msg, type }) {
+  ingestionRuntimeCounters.received += 1;
+  if (!ingestionQueue) {
+    void processIncomingUpsertMessage({ sock, msg, type });
+    return;
+  }
+
+  const queueKey = resolveQueueJidFromIncomingMessage(msg);
+  const quickMessage = msg?.message && typeof msg.message === 'object' ? msg.message : {};
+  const isLikelyMedia = Boolean(
+    quickMessage.imageMessage ||
+    quickMessage.videoMessage ||
+    quickMessage.documentMessage
+  );
+  const enqueueResult = ingestionQueue.enqueue({
+    key: queueKey || 'unknown',
+    priority: isLikelyMedia ? 'low' : 'high',
+    payload: { sock, msg, type },
+    handler: async (payload) => {
+      try {
+        await processIncomingUpsertMessage(payload);
+      } catch (error) {
+        logger?.error?.(
+          {
+            queueKey: queueKey || 'unknown',
+            err: {
+              name: error?.name || 'Error',
+              message: error?.message || 'ingestion-queue-task-failed',
+              stack: error?.stack || '',
+            },
+          },
+          'Ingestion queue task failed'
+        );
+        throw error;
+      }
+    },
+  });
+
+  if (!enqueueResult?.accepted) {
+    ingestionRuntimeCounters.queueOverflowDropped += 1;
+    const rejectedCount = Number(enqueueResult?.snapshot?.rejected ?? 0);
+    if (rejectedCount === 1 || rejectedCount % 100 === 0) {
+      logger?.warn?.(
+        {
+          queueKey: queueKey || 'unknown',
+          rejected: rejectedCount,
+          queued: Number(enqueueResult?.snapshot?.queued ?? 0),
+          maxQueueSize: Number(enqueueResult?.snapshot?.maxQueueSize ?? 0),
+        },
+        'Incoming message dropped due to ingestion queue overflow'
+      );
+    }
+  }
 }
 
 async function connectToWhatsApp({ state, saveCreds, version }) {
@@ -1797,175 +2553,8 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
       }
     }
 
-    const activeFlows = getActiveFlows();
-
     for (const msg of messages) {
-      const rawMessageKey = msg?.key && typeof msg.key === 'object' ? msg.key : {};
-      mergeContactCacheEntry(contactCache, {
-        ...msg,
-        key: rawMessageKey,
-        notify:
-          rawMessageKey.notify ??
-          rawMessageKey.Notify ??
-          msg?.notify ??
-          msg?.Notify ??
-          msg?.pushName ??
-          msg?.pushname ??
-          '',
-        verifiedName:
-          rawMessageKey.verifiedBizName ??
-          rawMessageKey.verifiedName ??
-          msg?.verifiedBizName ??
-          msg?.verifiedName ??
-          '',
-      });
-
-      if (activeFlows.length === 0) {
-        continue;
-      }
-
-      if (config.debugMode) {
-        console.log('Incoming raw', getMessageDebugInfo(msg, type));
-      }
-
-      const parsed = parseMessage(msg);
-      if (!parsed) {
-        if (config.debugMode) {
-          console.log('Dropped by parser', getMessageDebugInfo(msg, type));
-        }
-        continue;
-      }
-
-      const { id, jid, text, listId, isGroup, messageKey, messageType, mediaMimeType, mediaFileName } = parsed;
-      const actorJid = resolveIncomingActorJid(parsed);
-
-      const groupWhitelist = getGroupWhitelistJids(config);
-      const allowedTestJids = getAllowedTestJids(config);
-
-      if (config.testMode) {
-        if (allowedTestJids.size === 0) {
-          if (!warnedMissingTestTargets) {
-            console.warn('testMode ativo, mas nenhum contato/grupo permitido foi selecionado.');
-            warnedMissingTestTargets = true;
-          }
-          continue;
-        }
-        if (!allowedTestJids.has(jid)) continue;
-      }
-
-      const incomingText = String(text ?? '').trim();
-      const hasCommandPrefix = incomingText.startsWith('/');
-      const dispatchFlows = [];
-
-      for (const flow of activeFlows) {
-        const interactionScope = normalizeInteractionScope(flow);
-        const requiresGroupWhitelist = isGroupWhitelistScope(flow);
-        if (!shouldProcessByInteractionScope(isGroup, flow)) {
-          continue;
-        }
-
-        if (requiresGroupWhitelist && isGroup) {
-          if (groupWhitelist.size === 0) continue;
-          if (!groupWhitelist.has(jid)) continue;
-        }
-
-        const scope = { flowPath: flow.flowPath, botType: getFlowBotType(flow) };
-        const existingSession = getSession(jid, scope);
-        const hasActiveSession = existingSession?.status === 'active';
-        const botType = getFlowBotType(flow);
-
-        if (botType === 'command') {
-          if (!hasActiveSession && !hasCommandPrefix) continue;
-          dispatchFlows.push(flow);
-          continue;
-        }
-
-        if (hasActiveSession || !hasCommandPrefix) {
-          dispatchFlows.push(flow);
-        }
-
-        if (config.debugMode) {
-          console.log('Decision', {
-            id,
-            jid,
-            flowPath: flow.flowPath,
-            botType,
-            actorJid: actorJid || null,
-            textLength: incomingText.length,
-            listId,
-            isGroup,
-            interactionScope,
-            requiresGroupWhitelist,
-            hasActiveSession,
-            groupWhitelistCount: groupWhitelist.size,
-            testMode: config.testMode,
-            testJidsCount: allowedTestJids.size,
-            passesTestMode: !config.testMode || allowedTestJids.has(jid),
-          });
-        }
-      }
-
-      if (dispatchFlows.length === 0) continue;
-
-      let incomingMedia = null;
-      if (messageType === 'image') {
-        incomingMedia = await captureIncomingImageForDashboard({
-          msg,
-          sock,
-          mimeType: mediaMimeType,
-          fileName: mediaFileName || `incoming-${id || Date.now()}`,
-        });
-      }
-
-      const resolvedMessageText =
-        incomingText ||
-        (messageType === 'image' ? '[Imagem recebida]' : '');
-
-      for (const flow of dispatchFlows) {
-        logConversationEvent({
-          eventType: 'message-incoming',
-          direction: 'incoming',
-          jid: actorJid || jid,
-          flowPath: flow.flowPath,
-          messageText: resolvedMessageText,
-          metadata: {
-            id,
-            listId: listId ?? null,
-            isGroup,
-            actorJid: actorJid || null,
-            chatJid: jid,
-            kind: messageType || 'unknown',
-            mediaType: messageType === 'image' ? mediaMimeType || null : null,
-            mediaUrl: incomingMedia?.mediaUrl || null,
-            mediaId: incomingMedia?.mediaId || null,
-            routedFlowPath: flow.flowPath,
-            routedFlowBotType: getFlowBotType(flow),
-            routedFlowPaths: dispatchFlows.map(item => item.flowPath),
-          },
-        });
-      }
-
-      console.log(`Mensagem de ${jid}: "${text}" ${listId ? `(listId: ${listId})` : ''} [ID msg: ${id || 'unknown'}]`);
-
-      try {
-        await Promise.all(
-          dispatchFlows.map(flow => handleIncoming(sock, jid, text, listId, flow, id, messageKey))
-        );
-      } catch (err) {
-        console.error(`Erro no motor para ${jid}:`, err);
-        logConversationEvent({
-          eventType: 'engine-error',
-          direction: 'system',
-          jid,
-          messageText: 'Erro no motor ao processar mensagem',
-          metadata: {
-            id,
-            actorJid: actorJid || null,
-            chatJid: jid,
-            error: formatError(err),
-          },
-        });
-      }
+      enqueueIncomingUpsertMessage({ sock, msg, type });
     }
   });
 

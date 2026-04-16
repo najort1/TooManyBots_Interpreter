@@ -86,9 +86,20 @@ async function executeWithLock(jid, flow, task) {
 }
 
 const PROCESSED_IDS = new LRUCache(ENGINE_LIMITS.PROCESSED_IDS_MAX, ENGINE_LIMITS.PROCESSED_IDS_TTL_MS);
+const engineRuntimeStats = {
+  duplicateDropped: 0,
+};
 
 export function clearEngineRuntimeCaches() {
   PROCESSED_IDS.clear();
+  engineRuntimeStats.duplicateDropped = 0;
+}
+
+export function getEngineRuntimeStats() {
+  return {
+    duplicateDropped: Number(engineRuntimeStats.duplicateDropped || 0),
+    updatedAt: Date.now(),
+  };
 }
 
 function getRuntimeConfig(flow) {
@@ -462,6 +473,7 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
   if (msgId) {
     const processedKey = `${scope.flowPath}::${msgId}`;
     if (PROCESSED_IDS.has(processedKey)) {
+      engineRuntimeStats.duplicateDropped += 1;
       console.log(`[handleIncoming] DUPLICATE message detected, skipping. ID: ${msgId} | flow=${scope.flowPath}`);
       return;
     }
@@ -717,12 +729,20 @@ async function resolveMultipleChoiceWait(sock, jid, message, session, flow) {
 }
 
 const cleanupIntervals = new Map();
+const cleanupCycleState = new Map();
+const SESSION_CLEANUP_BATCH_SIZE = Math.max(10, Number(process.env.TMB_SESSION_CLEANUP_BATCH_SIZE) || 120);
+const SESSION_CLEANUP_TIME_BUDGET_MS = Math.max(5, Number(process.env.TMB_SESSION_CLEANUP_TIME_BUDGET_MS) || 25);
+
+function yieldToEventLoop() {
+  return new Promise(resolve => setImmediate(resolve));
+}
 
 function clearCleanupInterval(flowPath) {
   const interval = cleanupIntervals.get(flowPath);
   if (!interval) return;
   clearInterval(interval);
   cleanupIntervals.delete(flowPath);
+  cleanupCycleState.delete(flowPath);
 }
 
 export function startSessionCleanup(sock, flowOrFlows) {
@@ -742,26 +762,49 @@ export function startSessionCleanup(sock, flowOrFlows) {
     clearCleanupInterval(flowPath);
 
     const scope = buildSessionScope(flow);
+    const cycleState = { running: false };
+    cleanupCycleState.set(flowPath, cycleState);
     const interval = setInterval(async () => {
+      if (cycleState.running) return;
+      cycleState.running = true;
       const limits = getSessionLimits(flow);
-      if (limits.sessionTimeoutMinutes <= 0) return;
+      if (limits.sessionTimeoutMinutes <= 0) {
+        cycleState.running = false;
+        return;
+      }
 
-      const activeSessions = getActiveSessions(scope);
-      const nowTs = Date.now();
+      try {
+        const activeSessions = getActiveSessions(scope);
+        const nowTs = Date.now();
+        let processedInBatch = 0;
+        let batchStartedAt = Date.now();
 
-      for (const session of activeSessions) {
-        if (isSessionTimedOut(session, flow, nowTs)) {
-          await executeWithLock(session.jid, flow, async () => {
-            const syncSession = getSession(session.jid, scope);
-            if (syncSession && syncSession.status === SESSION_STATUS.ACTIVE && isSessionTimedOut(syncSession, flow, nowTs)) {
-              console.log(`[SessionCleanup] Sessao para ${session.jid} atingiu o timeout (${limits.sessionTimeoutMinutes} min). Encerrando e enviando mensagem...`);
-              if (limits.timeoutMessage) {
-                await sock.sendMessage(session.jid, { text: limits.timeoutMessage }).catch(console.error);
+        for (const session of activeSessions) {
+          if (isSessionTimedOut(session, flow, nowTs)) {
+            await executeWithLock(session.jid, flow, async () => {
+              const syncSession = getSession(session.jid, scope);
+              if (syncSession && syncSession.status === SESSION_STATUS.ACTIVE && isSessionTimedOut(syncSession, flow, nowTs)) {
+                console.log(`[SessionCleanup] Sessao para ${session.jid} atingiu o timeout (${limits.sessionTimeoutMinutes} min). Encerrando e enviando mensagem...`);
+                if (limits.timeoutMessage) {
+                  await sock.sendMessage(session.jid, { text: limits.timeoutMessage }).catch(console.error);
+                }
+                endSession(session.jid, syncSession, nowTs, 'timeout', flow);
               }
-              endSession(session.jid, syncSession, nowTs, 'timeout', flow);
-            }
-          });
+            });
+          }
+
+          processedInBatch += 1;
+          if (
+            processedInBatch >= SESSION_CLEANUP_BATCH_SIZE ||
+            (Date.now() - batchStartedAt) >= SESSION_CLEANUP_TIME_BUDGET_MS
+          ) {
+            processedInBatch = 0;
+            batchStartedAt = Date.now();
+            await yieldToEventLoop();
+          }
         }
+      } finally {
+        cycleState.running = false;
       }
     }, 15000);
 

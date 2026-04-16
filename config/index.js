@@ -28,6 +28,16 @@ export const config = {
   runtimeMode: RUNTIME_MODE.PRODUCTION,
   autoReloadFlows: true,
   broadcastSendIntervalMs: 250,
+  ingestionConcurrency: 8,
+  ingestionQueueMax: 5000,
+  ingestionQueueWarnThreshold: 1000,
+  schedulerGlobalConcurrency: 16,
+  schedulerPerJidConcurrency: 1,
+  schedulerPerFlowPathConcurrency: 4,
+  postProcessConcurrency: 2,
+  postProcessQueueMax: 5000,
+  mediaPipelineConcurrency: 2,
+  mediaPipelineQueueMax: 500,
   flowSessionTimeoutOverrides: {},
   testTargetMode: 'contacts-and-groups',
   testJid: '',
@@ -76,6 +86,14 @@ function toNonNegativeMs(value, fallback) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return fallback;
   return Math.floor(n);
+}
+
+function toIntInRange(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const normalized = Math.floor(n);
+  if (normalized < min || normalized > max) return fallback;
+  return normalized;
 }
 
 function normalizeFlowPaths(input) {
@@ -134,6 +152,57 @@ function normalizeConfigShape(input) {
     normalized.broadcastSendIntervalMs,
     config.broadcastSendIntervalMs
   );
+  normalized.ingestionConcurrency = toIntInRange(
+    normalized.ingestionConcurrency,
+    config.ingestionConcurrency,
+    { min: 1, max: 64 }
+  );
+  normalized.ingestionQueueMax = toIntInRange(
+    normalized.ingestionQueueMax,
+    config.ingestionQueueMax,
+    { min: 1, max: 200000 }
+  );
+  const warnThresholdFallback = Math.min(config.ingestionQueueWarnThreshold, normalized.ingestionQueueMax);
+  normalized.ingestionQueueWarnThreshold = toIntInRange(
+    normalized.ingestionQueueWarnThreshold,
+    warnThresholdFallback,
+    { min: 1, max: normalized.ingestionQueueMax }
+  );
+  normalized.schedulerGlobalConcurrency = toIntInRange(
+    normalized.schedulerGlobalConcurrency,
+    config.schedulerGlobalConcurrency,
+    { min: 1, max: 256 }
+  );
+  normalized.schedulerPerJidConcurrency = toIntInRange(
+    normalized.schedulerPerJidConcurrency,
+    config.schedulerPerJidConcurrency,
+    { min: 1, max: 64 }
+  );
+  normalized.schedulerPerFlowPathConcurrency = toIntInRange(
+    normalized.schedulerPerFlowPathConcurrency,
+    config.schedulerPerFlowPathConcurrency,
+    { min: 1, max: 256 }
+  );
+  normalized.postProcessConcurrency = toIntInRange(
+    normalized.postProcessConcurrency,
+    config.postProcessConcurrency,
+    { min: 1, max: 64 }
+  );
+  normalized.postProcessQueueMax = toIntInRange(
+    normalized.postProcessQueueMax,
+    config.postProcessQueueMax,
+    { min: 1, max: 200000 }
+  );
+  normalized.mediaPipelineConcurrency = toIntInRange(
+    normalized.mediaPipelineConcurrency,
+    config.mediaPipelineConcurrency,
+    { min: 1, max: 64 }
+  );
+  normalized.mediaPipelineQueueMax = toIntInRange(
+    normalized.mediaPipelineQueueMax,
+    config.mediaPipelineQueueMax,
+    { min: 1, max: 100000 }
+  );
   normalized.flowSessionTimeoutOverrides = normalizeTimeoutOverrides(normalized.flowSessionTimeoutOverrides);
 
   normalized.testTargetMode = String(normalized.testTargetMode ?? config.testTargetMode).trim() || config.testTargetMode;
@@ -175,6 +244,16 @@ function sanitizeConfigForSave(input) {
     runtimeMode: normalized.runtimeMode,
     autoReloadFlows: normalized.autoReloadFlows,
     broadcastSendIntervalMs: normalized.broadcastSendIntervalMs,
+    ingestionConcurrency: normalized.ingestionConcurrency,
+    ingestionQueueMax: normalized.ingestionQueueMax,
+    ingestionQueueWarnThreshold: normalized.ingestionQueueWarnThreshold,
+    schedulerGlobalConcurrency: normalized.schedulerGlobalConcurrency,
+    schedulerPerJidConcurrency: normalized.schedulerPerJidConcurrency,
+    schedulerPerFlowPathConcurrency: normalized.schedulerPerFlowPathConcurrency,
+    postProcessConcurrency: normalized.postProcessConcurrency,
+    postProcessQueueMax: normalized.postProcessQueueMax,
+    mediaPipelineConcurrency: normalized.mediaPipelineConcurrency,
+    mediaPipelineQueueMax: normalized.mediaPipelineQueueMax,
     flowSessionTimeoutOverrides: normalized.flowSessionTimeoutOverrides,
     testTargetMode: normalized.testTargetMode,
     testJid: normalized.testJid,
