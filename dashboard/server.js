@@ -496,6 +496,9 @@ export class DashboardServer {
     onUpdateSettings = async () => ({ ok: false, error: 'not-implemented' }),
     onClearRuntimeCache = async () => ({ ok: false, error: 'not-implemented' }),
     onGetDbInfo = async () => ({}),
+    onGetDbMaintenance = async () => ({ ok: false, error: 'not-implemented' }),
+    onUpdateDbMaintenance = async () => ({ ok: false, error: 'not-implemented' }),
+    onRunDbMaintenance = async () => ({ ok: false, error: 'not-implemented' }),
     onGetSessionManagementOverview = async () => ({}),
     onListSessionManagementFlows = async () => [],
     onListActiveSessionsForManagement = async () => [],
@@ -524,6 +527,9 @@ export class DashboardServer {
     this.onUpdateSettings = onUpdateSettings;
     this.onClearRuntimeCache = onClearRuntimeCache;
     this.onGetDbInfo = onGetDbInfo;
+    this.onGetDbMaintenance = onGetDbMaintenance;
+    this.onUpdateDbMaintenance = onUpdateDbMaintenance;
+    this.onRunDbMaintenance = onRunDbMaintenance;
     this.onGetSessionManagementOverview = onGetSessionManagementOverview;
     this.onListSessionManagementFlows = onListSessionManagementFlows;
     this.onListActiveSessionsForManagement = onListActiveSessionsForManagement;
@@ -680,6 +686,13 @@ export class DashboardServer {
         const result = await this.onUpdateSettings({
           autoReloadFlows: body?.autoReloadFlows,
           broadcastSendIntervalMs: body?.broadcastSendIntervalMs,
+          dbMaintenanceEnabled: body?.dbMaintenanceEnabled,
+          dbMaintenanceIntervalMinutes: body?.dbMaintenanceIntervalMinutes,
+          dbRetentionDays: body?.dbRetentionDays,
+          dbRetentionArchiveEnabled: body?.dbRetentionArchiveEnabled,
+          dbEventBatchEnabled: body?.dbEventBatchEnabled,
+          dbEventBatchFlushMs: body?.dbEventBatchFlushMs,
+          dbEventBatchSize: body?.dbEventBatchSize,
         });
         if (!result?.ok) {
           sendJson(res, 400, { error: result?.error || 'failed-to-update-settings' });
@@ -702,6 +715,48 @@ export class DashboardServer {
       if (requestUrl.pathname === '/api/settings/db' && req.method === 'GET') {
         const info = await this.onGetDbInfo();
         sendJson(res, 200, info || {});
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/settings/db/maintenance' && req.method === 'GET') {
+        const info = await this.onGetDbMaintenance();
+        if (!info?.ok) {
+          sendJson(res, 500, { error: info?.error || 'failed-to-fetch-db-maintenance' });
+          return;
+        }
+        sendJson(res, 200, info);
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/settings/db/maintenance' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const result = await this.onUpdateDbMaintenance({
+          dbMaintenanceEnabled: body?.dbMaintenanceEnabled,
+          dbMaintenanceIntervalMinutes: body?.dbMaintenanceIntervalMinutes,
+          dbRetentionDays: body?.dbRetentionDays,
+          dbRetentionArchiveEnabled: body?.dbRetentionArchiveEnabled,
+          dbEventBatchEnabled: body?.dbEventBatchEnabled,
+          dbEventBatchFlushMs: body?.dbEventBatchFlushMs,
+          dbEventBatchSize: body?.dbEventBatchSize,
+        });
+        if (!result?.ok) {
+          sendJson(res, 400, { error: result?.error || 'failed-to-update-db-maintenance' });
+          return;
+        }
+        sendJson(res, 200, result);
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/settings/db/maintenance/run' && req.method === 'POST') {
+        const body = await readJsonBody(req);
+        const result = await this.onRunDbMaintenance({
+          force: body?.force !== false,
+        });
+        if (!result?.ok) {
+          sendJson(res, 500, { error: result?.error || 'failed-to-run-db-maintenance', result });
+          return;
+        }
+        sendJson(res, 200, result);
         return;
       }
 

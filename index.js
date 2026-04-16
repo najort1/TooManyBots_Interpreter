@@ -10,6 +10,10 @@ import qrcode from 'qrcode-terminal';
 import {
   initDb,
   addConversationEvent,
+  configureDatabaseRuntime,
+  getDatabaseRuntimeConfig,
+  getDatabaseMaintenanceStatus,
+  runDatabaseMaintenance,
   getSession,
   getActiveSessions,
   deleteSession,
@@ -88,6 +92,7 @@ let dashboardServer = null;
 let removeConversationEventListener = null;
 let authStateMaintenanceTimer = null;
 let dbSizeSnapshotMaintenanceTimer = null;
+let dbMaintenanceTimer = null;
 let broadcastService = null;
 let hasSavedConfigAtBoot = false;
 let requiresInitialSetup = false;
@@ -1042,6 +1047,94 @@ function normalizeBroadcastSendIntervalMs(value) {
   return Math.floor(n);
 }
 
+function normalizeDbMaintenanceIntervalMinutes(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const normalized = Math.floor(n);
+  if (normalized < 5 || normalized > 1440) return null;
+  return normalized;
+}
+
+function normalizeDbRetentionDays(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const normalized = Math.floor(n);
+  if (normalized < 1 || normalized > 3650) return null;
+  return normalized;
+}
+
+function normalizeDbEventBatchFlushMs(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const normalized = Math.floor(n);
+  if (normalized < 100 || normalized > 60000) return null;
+  return normalized;
+}
+
+function normalizeDbEventBatchSize(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return null;
+  const normalized = Math.floor(n);
+  if (normalized < 10 || normalized > 5000) return null;
+  return normalized;
+}
+
+function toBooleanOrNull(value) {
+  if (typeof value === 'boolean') return value;
+  return null;
+}
+
+function buildDatabaseRuntimeConfigFromCurrentConfig(currentConfig = config) {
+  return {
+    maintenanceEnabled: currentConfig?.dbMaintenanceEnabled !== false,
+    maintenanceIntervalMinutes: Number(currentConfig?.dbMaintenanceIntervalMinutes ?? 30),
+    retentionDays: Number(currentConfig?.dbRetentionDays ?? 30),
+    retentionArchiveEnabled: currentConfig?.dbRetentionArchiveEnabled !== false,
+    eventBatchingEnabled: currentConfig?.dbEventBatchEnabled !== false,
+    eventBatchFlushMs: Number(currentConfig?.dbEventBatchFlushMs ?? 1000),
+    eventBatchSize: Number(currentConfig?.dbEventBatchSize ?? 200),
+  };
+}
+
+function applyDatabaseRuntimeConfigFromAppConfig(currentConfig = config) {
+  return configureDatabaseRuntime(buildDatabaseRuntimeConfigFromCurrentConfig(currentConfig));
+}
+
+function stopDatabaseMaintenanceScheduler() {
+  if (!dbMaintenanceTimer) return;
+  clearInterval(dbMaintenanceTimer);
+  dbMaintenanceTimer = null;
+}
+
+function startDatabaseMaintenanceScheduler() {
+  stopDatabaseMaintenanceScheduler();
+
+  if (config?.dbMaintenanceEnabled === false) return;
+  const intervalMinutes = Math.max(5, Number(config?.dbMaintenanceIntervalMinutes) || 30);
+  const intervalMs = intervalMinutes * 60 * 1000;
+
+  dbMaintenanceTimer = setInterval(() => {
+    try {
+      const result = runDatabaseMaintenance({ reason: 'scheduled', force: false, runRetention: true });
+      if (!result?.ok && !result?.skipped) {
+        logger?.warn?.(
+          { error: String(result?.error || 'db-maintenance-failed') },
+          'Scheduled DB maintenance failed'
+        );
+      }
+    } catch (error) {
+      logger?.warn?.(
+        { error: String(error?.message || 'db-maintenance-failed') },
+        'Scheduled DB maintenance failed'
+      );
+    }
+  }, intervalMs);
+
+  if (typeof dbMaintenanceTimer.unref === 'function') {
+    dbMaintenanceTimer.unref();
+  }
+}
+
 function toTrimmedStringArray(value) {
   if (!Array.isArray(value)) return [];
   const dedup = new Set();
@@ -1348,6 +1441,8 @@ async function applyRuntimeConfigFromDashboard(input = {}) {
     logger.level = config.logLevel;
   }
   initializeRuntimeSchedulers(config);
+  applyDatabaseRuntimeConfigFromAppConfig(config);
+  startDatabaseMaintenanceScheduler();
 
   if (currentSocket) {
     startSessionCleanup(currentSocket, getActiveFlows());
@@ -1621,11 +1716,46 @@ async function startDashboardServer() {
       autoReloadFlows: config.autoReloadFlows !== false,
       broadcastSendIntervalMs: Number(config.broadcastSendIntervalMs ?? 250),
       runtimeMode: String(config.runtimeMode || ''),
+      dbMaintenanceEnabled: config.dbMaintenanceEnabled !== false,
+      dbMaintenanceIntervalMinutes: Number(config.dbMaintenanceIntervalMinutes ?? 30),
+      dbRetentionDays: Number(config.dbRetentionDays ?? 30),
+      dbRetentionArchiveEnabled: config.dbRetentionArchiveEnabled !== false,
+      dbEventBatchEnabled: config.dbEventBatchEnabled !== false,
+      dbEventBatchFlushMs: Number(config.dbEventBatchFlushMs ?? 1000),
+      dbEventBatchSize: Number(config.dbEventBatchSize ?? 200),
     }),
-    onUpdateSettings: async ({ autoReloadFlows, broadcastSendIntervalMs }) => {
+    onUpdateSettings: async ({
+      autoReloadFlows,
+      broadcastSendIntervalMs,
+      dbMaintenanceEnabled,
+      dbMaintenanceIntervalMinutes,
+      dbRetentionDays,
+      dbRetentionArchiveEnabled,
+      dbEventBatchEnabled,
+      dbEventBatchFlushMs,
+      dbEventBatchSize,
+    }) => {
       const hasAutoReloadPatch = autoReloadFlows !== undefined;
       const hasBroadcastIntervalPatch = broadcastSendIntervalMs !== undefined;
-      if (!hasAutoReloadPatch && !hasBroadcastIntervalPatch) {
+      const hasDbMaintenanceEnabledPatch = dbMaintenanceEnabled !== undefined;
+      const hasDbMaintenanceIntervalPatch = dbMaintenanceIntervalMinutes !== undefined;
+      const hasDbRetentionDaysPatch = dbRetentionDays !== undefined;
+      const hasDbRetentionArchivePatch = dbRetentionArchiveEnabled !== undefined;
+      const hasDbEventBatchEnabledPatch = dbEventBatchEnabled !== undefined;
+      const hasDbEventBatchFlushMsPatch = dbEventBatchFlushMs !== undefined;
+      const hasDbEventBatchSizePatch = dbEventBatchSize !== undefined;
+
+      if (
+        !hasAutoReloadPatch &&
+        !hasBroadcastIntervalPatch &&
+        !hasDbMaintenanceEnabledPatch &&
+        !hasDbMaintenanceIntervalPatch &&
+        !hasDbRetentionDaysPatch &&
+        !hasDbRetentionArchivePatch &&
+        !hasDbEventBatchEnabledPatch &&
+        !hasDbEventBatchFlushMsPatch &&
+        !hasDbEventBatchSizePatch
+      ) {
         return { ok: false, error: 'at least one setting must be provided' };
       }
 
@@ -1639,22 +1769,95 @@ async function startDashboardServer() {
         return { ok: false, error: 'broadcastSendIntervalMs must be >= 0' };
       }
 
+      const normalizedDbMaintenanceEnabled = hasDbMaintenanceEnabledPatch
+        ? toBooleanOrNull(dbMaintenanceEnabled)
+        : null;
+      if (hasDbMaintenanceEnabledPatch && normalizedDbMaintenanceEnabled == null) {
+        return { ok: false, error: 'dbMaintenanceEnabled must be boolean' };
+      }
+
+      const normalizedDbMaintenanceInterval = hasDbMaintenanceIntervalPatch
+        ? normalizeDbMaintenanceIntervalMinutes(dbMaintenanceIntervalMinutes)
+        : null;
+      if (hasDbMaintenanceIntervalPatch && normalizedDbMaintenanceInterval == null) {
+        return { ok: false, error: 'dbMaintenanceIntervalMinutes must be between 5 and 1440' };
+      }
+
+      const normalizedDbRetentionDays = hasDbRetentionDaysPatch
+        ? normalizeDbRetentionDays(dbRetentionDays)
+        : null;
+      if (hasDbRetentionDaysPatch && normalizedDbRetentionDays == null) {
+        return { ok: false, error: 'dbRetentionDays must be between 1 and 3650' };
+      }
+
+      const normalizedDbRetentionArchiveEnabled = hasDbRetentionArchivePatch
+        ? toBooleanOrNull(dbRetentionArchiveEnabled)
+        : null;
+      if (hasDbRetentionArchivePatch && normalizedDbRetentionArchiveEnabled == null) {
+        return { ok: false, error: 'dbRetentionArchiveEnabled must be boolean' };
+      }
+
+      const normalizedDbEventBatchEnabled = hasDbEventBatchEnabledPatch
+        ? toBooleanOrNull(dbEventBatchEnabled)
+        : null;
+      if (hasDbEventBatchEnabledPatch && normalizedDbEventBatchEnabled == null) {
+        return { ok: false, error: 'dbEventBatchEnabled must be boolean' };
+      }
+
+      const normalizedDbEventBatchFlushMs = hasDbEventBatchFlushMsPatch
+        ? normalizeDbEventBatchFlushMs(dbEventBatchFlushMs)
+        : null;
+      if (hasDbEventBatchFlushMsPatch && normalizedDbEventBatchFlushMs == null) {
+        return { ok: false, error: 'dbEventBatchFlushMs must be between 100 and 60000' };
+      }
+
+      const normalizedDbEventBatchSize = hasDbEventBatchSizePatch
+        ? normalizeDbEventBatchSize(dbEventBatchSize)
+        : null;
+      if (hasDbEventBatchSizePatch && normalizedDbEventBatchSize == null) {
+        return { ok: false, error: 'dbEventBatchSize must be between 10 and 5000' };
+      }
+
       config = {
         ...config,
         ...(hasAutoReloadPatch ? { autoReloadFlows } : {}),
         ...(hasBroadcastIntervalPatch ? { broadcastSendIntervalMs: normalizedBroadcastInterval } : {}),
+        ...(hasDbMaintenanceEnabledPatch ? { dbMaintenanceEnabled: normalizedDbMaintenanceEnabled } : {}),
+        ...(hasDbMaintenanceIntervalPatch ? { dbMaintenanceIntervalMinutes: normalizedDbMaintenanceInterval } : {}),
+        ...(hasDbRetentionDaysPatch ? { dbRetentionDays: normalizedDbRetentionDays } : {}),
+        ...(hasDbRetentionArchivePatch ? { dbRetentionArchiveEnabled: normalizedDbRetentionArchiveEnabled } : {}),
+        ...(hasDbEventBatchEnabledPatch ? { dbEventBatchEnabled: normalizedDbEventBatchEnabled } : {}),
+        ...(hasDbEventBatchFlushMsPatch ? { dbEventBatchFlushMs: normalizedDbEventBatchFlushMs } : {}),
+        ...(hasDbEventBatchSizePatch ? { dbEventBatchSize: normalizedDbEventBatchSize } : {}),
       };
       saveUserConfig(config);
       setupFlowWatcher();
+      applyDatabaseRuntimeConfigFromAppConfig(config);
+      startDatabaseMaintenanceScheduler();
       logger?.info?.({
         ...(hasAutoReloadPatch ? { autoReloadFlows } : {}),
         ...(hasBroadcastIntervalPatch ? { broadcastSendIntervalMs: normalizedBroadcastInterval } : {}),
+        ...(hasDbMaintenanceEnabledPatch ? { dbMaintenanceEnabled: normalizedDbMaintenanceEnabled } : {}),
+        ...(hasDbMaintenanceIntervalPatch ? { dbMaintenanceIntervalMinutes: normalizedDbMaintenanceInterval } : {}),
+        ...(hasDbRetentionDaysPatch ? { dbRetentionDays: normalizedDbRetentionDays } : {}),
+        ...(hasDbRetentionArchivePatch ? { dbRetentionArchiveEnabled: normalizedDbRetentionArchiveEnabled } : {}),
+        ...(hasDbEventBatchEnabledPatch ? { dbEventBatchEnabled: normalizedDbEventBatchEnabled } : {}),
+        ...(hasDbEventBatchFlushMsPatch ? { dbEventBatchFlushMs: normalizedDbEventBatchFlushMs } : {}),
+        ...(hasDbEventBatchSizePatch ? { dbEventBatchSize: normalizedDbEventBatchSize } : {}),
       }, 'Settings updated');
 
       return {
         ok: true,
         autoReloadFlows: config.autoReloadFlows !== false,
         broadcastSendIntervalMs: Number(config.broadcastSendIntervalMs ?? 250),
+        runtimeMode: String(config.runtimeMode || ''),
+        dbMaintenanceEnabled: config.dbMaintenanceEnabled !== false,
+        dbMaintenanceIntervalMinutes: Number(config.dbMaintenanceIntervalMinutes ?? 30),
+        dbRetentionDays: Number(config.dbRetentionDays ?? 30),
+        dbRetentionArchiveEnabled: config.dbRetentionArchiveEnabled !== false,
+        dbEventBatchEnabled: config.dbEventBatchEnabled !== false,
+        dbEventBatchFlushMs: Number(config.dbEventBatchFlushMs ?? 1000),
+        dbEventBatchSize: Number(config.dbEventBatchSize ?? 200),
       };
     },
     onClearRuntimeCache: async () => {
@@ -1678,6 +1881,121 @@ async function startDashboardServer() {
       }
     },
     onGetDbInfo: async () => getDatabaseInfo(),
+    onGetDbMaintenance: async () => ({
+      ok: true,
+      config: {
+        dbMaintenanceEnabled: config.dbMaintenanceEnabled !== false,
+        dbMaintenanceIntervalMinutes: Number(config.dbMaintenanceIntervalMinutes ?? 30),
+        dbRetentionDays: Number(config.dbRetentionDays ?? 30),
+        dbRetentionArchiveEnabled: config.dbRetentionArchiveEnabled !== false,
+        dbEventBatchEnabled: config.dbEventBatchEnabled !== false,
+        dbEventBatchFlushMs: Number(config.dbEventBatchFlushMs ?? 1000),
+        dbEventBatchSize: Number(config.dbEventBatchSize ?? 200),
+      },
+      runtimeConfig: getDatabaseRuntimeConfig(),
+      maintenanceStatus: getDatabaseMaintenanceStatus(),
+    }),
+    onUpdateDbMaintenance: async (input = {}) => {
+      const normalizedEnabled = input.dbMaintenanceEnabled === undefined
+        ? null
+        : toBooleanOrNull(input.dbMaintenanceEnabled);
+      if (input.dbMaintenanceEnabled !== undefined && normalizedEnabled == null) {
+        return { ok: false, error: 'dbMaintenanceEnabled must be boolean' };
+      }
+
+      const normalizedInterval = input.dbMaintenanceIntervalMinutes === undefined
+        ? null
+        : normalizeDbMaintenanceIntervalMinutes(input.dbMaintenanceIntervalMinutes);
+      if (input.dbMaintenanceIntervalMinutes !== undefined && normalizedInterval == null) {
+        return { ok: false, error: 'dbMaintenanceIntervalMinutes must be between 5 and 1440' };
+      }
+
+      const normalizedRetentionDays = input.dbRetentionDays === undefined
+        ? null
+        : normalizeDbRetentionDays(input.dbRetentionDays);
+      if (input.dbRetentionDays !== undefined && normalizedRetentionDays == null) {
+        return { ok: false, error: 'dbRetentionDays must be between 1 and 3650' };
+      }
+
+      const normalizedRetentionArchive = input.dbRetentionArchiveEnabled === undefined
+        ? null
+        : toBooleanOrNull(input.dbRetentionArchiveEnabled);
+      if (input.dbRetentionArchiveEnabled !== undefined && normalizedRetentionArchive == null) {
+        return { ok: false, error: 'dbRetentionArchiveEnabled must be boolean' };
+      }
+
+      const normalizedBatchEnabled = input.dbEventBatchEnabled === undefined
+        ? null
+        : toBooleanOrNull(input.dbEventBatchEnabled);
+      if (input.dbEventBatchEnabled !== undefined && normalizedBatchEnabled == null) {
+        return { ok: false, error: 'dbEventBatchEnabled must be boolean' };
+      }
+
+      const normalizedBatchFlushMs = input.dbEventBatchFlushMs === undefined
+        ? null
+        : normalizeDbEventBatchFlushMs(input.dbEventBatchFlushMs);
+      if (input.dbEventBatchFlushMs !== undefined && normalizedBatchFlushMs == null) {
+        return { ok: false, error: 'dbEventBatchFlushMs must be between 100 and 60000' };
+      }
+
+      const normalizedBatchSize = input.dbEventBatchSize === undefined
+        ? null
+        : normalizeDbEventBatchSize(input.dbEventBatchSize);
+      if (input.dbEventBatchSize !== undefined && normalizedBatchSize == null) {
+        return { ok: false, error: 'dbEventBatchSize must be between 10 and 5000' };
+      }
+
+      const hasAnyPatch =
+        normalizedEnabled !== null ||
+        normalizedInterval !== null ||
+        normalizedRetentionDays !== null ||
+        normalizedRetentionArchive !== null ||
+        normalizedBatchEnabled !== null ||
+        normalizedBatchFlushMs !== null ||
+        normalizedBatchSize !== null;
+
+      if (!hasAnyPatch) {
+        return { ok: false, error: 'at least one maintenance field must be provided' };
+      }
+
+      config = {
+        ...config,
+        ...(normalizedEnabled !== null ? { dbMaintenanceEnabled: normalizedEnabled } : {}),
+        ...(normalizedInterval !== null ? { dbMaintenanceIntervalMinutes: normalizedInterval } : {}),
+        ...(normalizedRetentionDays !== null ? { dbRetentionDays: normalizedRetentionDays } : {}),
+        ...(normalizedRetentionArchive !== null ? { dbRetentionArchiveEnabled: normalizedRetentionArchive } : {}),
+        ...(normalizedBatchEnabled !== null ? { dbEventBatchEnabled: normalizedBatchEnabled } : {}),
+        ...(normalizedBatchFlushMs !== null ? { dbEventBatchFlushMs: normalizedBatchFlushMs } : {}),
+        ...(normalizedBatchSize !== null ? { dbEventBatchSize: normalizedBatchSize } : {}),
+      };
+
+      saveUserConfig(config);
+      const runtimeConfig = applyDatabaseRuntimeConfigFromAppConfig(config);
+      startDatabaseMaintenanceScheduler();
+
+      return {
+        ok: true,
+        config: {
+          dbMaintenanceEnabled: config.dbMaintenanceEnabled !== false,
+          dbMaintenanceIntervalMinutes: Number(config.dbMaintenanceIntervalMinutes ?? 30),
+          dbRetentionDays: Number(config.dbRetentionDays ?? 30),
+          dbRetentionArchiveEnabled: config.dbRetentionArchiveEnabled !== false,
+          dbEventBatchEnabled: config.dbEventBatchEnabled !== false,
+          dbEventBatchFlushMs: Number(config.dbEventBatchFlushMs ?? 1000),
+          dbEventBatchSize: Number(config.dbEventBatchSize ?? 200),
+        },
+        runtimeConfig,
+        maintenanceStatus: getDatabaseMaintenanceStatus(),
+      };
+    },
+    onRunDbMaintenance: async ({ force = true } = {}) => {
+      const result = runDatabaseMaintenance({
+        reason: 'dashboard-manual',
+        force: Boolean(force),
+        runRetention: true,
+      });
+      return result;
+    },
     onGetSessionManagementOverview: async () => buildSessionManagementOverview(),
     onListSessionManagementFlows: async () => listSessionManagementFlows(),
     onListActiveSessionsForManagement: async ({ search, limit }) => (
@@ -1958,6 +2276,7 @@ async function start() {
   });
 
   await initDb();
+  applyDatabaseRuntimeConfigFromAppConfig(config);
   console.log('Banco de dados inicializado (better-sqlite3 + WAL)');
   const hydratedContacts = hydrateContactCacheFromDb(15000);
   if (hydratedContacts > 0) {
@@ -1966,6 +2285,7 @@ async function start() {
   cleanupSignalAuthState({ reason: 'startup', forceLog: true });
   startAuthStateMaintenance();
   startDbSizeSnapshotMaintenance();
+  startDatabaseMaintenanceScheduler();
 
   if (!requiresInitialSetup) {
     try {
