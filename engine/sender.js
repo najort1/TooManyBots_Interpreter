@@ -9,8 +9,16 @@
 /**
  * Envia uma mensagem de texto simples.
  */
+function withSendSource(options, source) {
+  const base = options && typeof options === 'object' ? { ...options } : {};
+  if (!base.__sendSource) {
+    base.__sendSource = source;
+  }
+  return base;
+}
+
 export async function sendTextMessage(sock, jid, text, options = undefined) {
-  await sock.sendMessage(jid, { text }, options);
+  await sock.sendMessage(jid, { text }, withSendSource(options, 'service'));
 }
 
 export async function sendImageMessage(sock, jid, { imageBuffer, caption = '', mimeType = '' }, options = undefined) {
@@ -21,7 +29,7 @@ export async function sendImageMessage(sock, jid, { imageBuffer, caption = '', m
   if (mimeType) {
     payload.mimetype = mimeType;
   }
-  await sock.sendMessage(jid, payload, options);
+  await sock.sendMessage(jid, payload, withSendSource(options, 'service'));
 }
 
 export async function sendBroadcastMessage(sock, jid, message, options = undefined) {
@@ -37,11 +45,11 @@ export async function sendBroadcastMessage(sock, jid, message, options = undefin
       imageBuffer: message.imageBuffer,
       caption: message.text || '',
       mimeType: message.mimeType || '',
-    }, options);
+    }, withSendSource(options, 'broadcast'));
     return;
   }
 
-  await sendTextMessage(sock, jid, String(message.text || ''), options);
+  await sendTextMessage(sock, jid, String(message.text || ''), withSendSource(options, 'broadcast'));
 }
 
 /**
