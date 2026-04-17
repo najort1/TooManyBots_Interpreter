@@ -580,6 +580,8 @@ export class DashboardServer {
           flowPath: normalizeFlowPath(info.flowPath),
           needsInitialSetup: info.needsInitialSetup === true,
           availableModes,
+          ingestion: info.ingestion || {},
+          whatsapp: info.whatsapp || {},
           flowPathsByMode: {
             conversation: resolveFlowPathsForMode(info, 'conversation'),
             command: resolveFlowPathsForMode(info, 'command'),
