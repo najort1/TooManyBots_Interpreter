@@ -38,6 +38,25 @@ export const config = {
   postProcessQueueMax: 5000,
   mediaPipelineConcurrency: 2,
   mediaPipelineQueueMax: 500,
+  whatsappReconnectBaseDelayMs: 3000,
+  whatsappReconnectMaxDelayMs: 60000,
+  whatsappReconnectBackoffMultiplier: 2,
+  whatsappReconnectJitterPct: 20,
+  whatsappReconnectAttemptsWindowMs: 10 * 60 * 1000,
+  whatsappReconnectMaxAttemptsPerWindow: 12,
+  whatsappReconnectCooldownMs: 2 * 60 * 1000,
+  authCredsDebounceMs: 250,
+  authMetricsRefreshMs: 30 * 1000,
+  incomingMediaMaxBytes: 8 * 1024 * 1024,
+  handoffMediaRetentionMinutes: 180,
+  handoffMediaCleanupIntervalMinutes: 15,
+  handoffMediaMaxStorageMb: 512,
+  whatsappMaxInboundPerMinute: 600,
+  whatsappMaxServiceOutboundPerMinute: 300,
+  whatsappMaxBroadcastOutboundPerMinute: 120,
+  runtimeDegradedQueueRatio: 90,
+  runtimeDegradedReconnectPendingMs: 20 * 1000,
+  runtimeDegradedDropConversationEvents: true,
   dbMaintenanceEnabled: true,
   dbMaintenanceIntervalMinutes: 30,
   dbRetentionDays: 30,
@@ -101,6 +120,13 @@ function toIntInRange(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER 
   const normalized = Math.floor(n);
   if (normalized < min || normalized > max) return fallback;
   return normalized;
+}
+
+function toNumberInRange(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  if (n < min || n > max) return fallback;
+  return n;
 }
 
 function normalizeFlowPaths(input) {
@@ -210,6 +236,97 @@ function normalizeConfigShape(input) {
     config.mediaPipelineQueueMax,
     { min: 1, max: 100000 }
   );
+  normalized.whatsappReconnectBaseDelayMs = toIntInRange(
+    normalized.whatsappReconnectBaseDelayMs,
+    config.whatsappReconnectBaseDelayMs,
+    { min: 100, max: 10 * 60 * 1000 }
+  );
+  normalized.whatsappReconnectMaxDelayMs = toIntInRange(
+    normalized.whatsappReconnectMaxDelayMs,
+    config.whatsappReconnectMaxDelayMs,
+    { min: normalized.whatsappReconnectBaseDelayMs, max: 60 * 60 * 1000 }
+  );
+  normalized.whatsappReconnectBackoffMultiplier = toNumberInRange(
+    normalized.whatsappReconnectBackoffMultiplier,
+    config.whatsappReconnectBackoffMultiplier,
+    { min: 1, max: 5 }
+  );
+  normalized.whatsappReconnectJitterPct = toIntInRange(
+    normalized.whatsappReconnectJitterPct,
+    config.whatsappReconnectJitterPct,
+    { min: 0, max: 90 }
+  );
+  normalized.whatsappReconnectAttemptsWindowMs = toIntInRange(
+    normalized.whatsappReconnectAttemptsWindowMs,
+    config.whatsappReconnectAttemptsWindowMs,
+    { min: 60 * 1000, max: 24 * 60 * 60 * 1000 }
+  );
+  normalized.whatsappReconnectMaxAttemptsPerWindow = toIntInRange(
+    normalized.whatsappReconnectMaxAttemptsPerWindow,
+    config.whatsappReconnectMaxAttemptsPerWindow,
+    { min: 1, max: 500 }
+  );
+  normalized.whatsappReconnectCooldownMs = toIntInRange(
+    normalized.whatsappReconnectCooldownMs,
+    config.whatsappReconnectCooldownMs,
+    { min: 1000, max: 60 * 60 * 1000 }
+  );
+  normalized.authCredsDebounceMs = toIntInRange(
+    normalized.authCredsDebounceMs,
+    config.authCredsDebounceMs,
+    { min: 0, max: 60 * 1000 }
+  );
+  normalized.authMetricsRefreshMs = toIntInRange(
+    normalized.authMetricsRefreshMs,
+    config.authMetricsRefreshMs,
+    { min: 1000, max: 60 * 60 * 1000 }
+  );
+  normalized.incomingMediaMaxBytes = toIntInRange(
+    normalized.incomingMediaMaxBytes,
+    config.incomingMediaMaxBytes,
+    { min: 64 * 1024, max: 512 * 1024 * 1024 }
+  );
+  normalized.handoffMediaRetentionMinutes = toIntInRange(
+    normalized.handoffMediaRetentionMinutes,
+    config.handoffMediaRetentionMinutes,
+    { min: 1, max: 365 * 24 * 60 }
+  );
+  normalized.handoffMediaCleanupIntervalMinutes = toIntInRange(
+    normalized.handoffMediaCleanupIntervalMinutes,
+    config.handoffMediaCleanupIntervalMinutes,
+    { min: 1, max: 24 * 60 }
+  );
+  normalized.handoffMediaMaxStorageMb = toIntInRange(
+    normalized.handoffMediaMaxStorageMb,
+    config.handoffMediaMaxStorageMb,
+    { min: 32, max: 1024 * 10 }
+  );
+  normalized.whatsappMaxInboundPerMinute = toIntInRange(
+    normalized.whatsappMaxInboundPerMinute,
+    config.whatsappMaxInboundPerMinute,
+    { min: 1, max: 100000 }
+  );
+  normalized.whatsappMaxServiceOutboundPerMinute = toIntInRange(
+    normalized.whatsappMaxServiceOutboundPerMinute,
+    config.whatsappMaxServiceOutboundPerMinute,
+    { min: 1, max: 100000 }
+  );
+  normalized.whatsappMaxBroadcastOutboundPerMinute = toIntInRange(
+    normalized.whatsappMaxBroadcastOutboundPerMinute,
+    config.whatsappMaxBroadcastOutboundPerMinute,
+    { min: 1, max: 100000 }
+  );
+  normalized.runtimeDegradedQueueRatio = toIntInRange(
+    normalized.runtimeDegradedQueueRatio,
+    config.runtimeDegradedQueueRatio,
+    { min: 50, max: 100 }
+  );
+  normalized.runtimeDegradedReconnectPendingMs = toIntInRange(
+    normalized.runtimeDegradedReconnectPendingMs,
+    config.runtimeDegradedReconnectPendingMs,
+    { min: 0, max: 60 * 60 * 1000 }
+  );
+  normalized.runtimeDegradedDropConversationEvents = normalized.runtimeDegradedDropConversationEvents !== false;
   normalized.dbMaintenanceEnabled = normalized.dbMaintenanceEnabled !== false;
   normalized.dbMaintenanceIntervalMinutes = toIntInRange(
     normalized.dbMaintenanceIntervalMinutes,
@@ -284,6 +401,25 @@ function sanitizeConfigForSave(input) {
     postProcessQueueMax: normalized.postProcessQueueMax,
     mediaPipelineConcurrency: normalized.mediaPipelineConcurrency,
     mediaPipelineQueueMax: normalized.mediaPipelineQueueMax,
+    whatsappReconnectBaseDelayMs: normalized.whatsappReconnectBaseDelayMs,
+    whatsappReconnectMaxDelayMs: normalized.whatsappReconnectMaxDelayMs,
+    whatsappReconnectBackoffMultiplier: normalized.whatsappReconnectBackoffMultiplier,
+    whatsappReconnectJitterPct: normalized.whatsappReconnectJitterPct,
+    whatsappReconnectAttemptsWindowMs: normalized.whatsappReconnectAttemptsWindowMs,
+    whatsappReconnectMaxAttemptsPerWindow: normalized.whatsappReconnectMaxAttemptsPerWindow,
+    whatsappReconnectCooldownMs: normalized.whatsappReconnectCooldownMs,
+    authCredsDebounceMs: normalized.authCredsDebounceMs,
+    authMetricsRefreshMs: normalized.authMetricsRefreshMs,
+    incomingMediaMaxBytes: normalized.incomingMediaMaxBytes,
+    handoffMediaRetentionMinutes: normalized.handoffMediaRetentionMinutes,
+    handoffMediaCleanupIntervalMinutes: normalized.handoffMediaCleanupIntervalMinutes,
+    handoffMediaMaxStorageMb: normalized.handoffMediaMaxStorageMb,
+    whatsappMaxInboundPerMinute: normalized.whatsappMaxInboundPerMinute,
+    whatsappMaxServiceOutboundPerMinute: normalized.whatsappMaxServiceOutboundPerMinute,
+    whatsappMaxBroadcastOutboundPerMinute: normalized.whatsappMaxBroadcastOutboundPerMinute,
+    runtimeDegradedQueueRatio: normalized.runtimeDegradedQueueRatio,
+    runtimeDegradedReconnectPendingMs: normalized.runtimeDegradedReconnectPendingMs,
+    runtimeDegradedDropConversationEvents: normalized.runtimeDegradedDropConversationEvents,
     dbMaintenanceEnabled: normalized.dbMaintenanceEnabled,
     dbMaintenanceIntervalMinutes: normalized.dbMaintenanceIntervalMinutes,
     dbRetentionDays: normalized.dbRetentionDays,
