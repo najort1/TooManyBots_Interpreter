@@ -2,7 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
 import { spawn } from 'node:child_process';
-import makeWASocket, { DisconnectReason, fetchLatestBaileysVersion, downloadMediaMessage } from '@whiskeysockets/baileys';
+import makeWASocket, {
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  downloadMediaMessage,
+  makeCacheableSignalKeyStore,
+} from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
@@ -25,7 +30,7 @@ import {
   listContactDisplayNames,
   upsertContactDisplayName,
 } from './db/index.js';
-import { cleanupAuthSignalSessions, useSqliteAuthState } from './db/authState.js';
+import { cleanupAuthSignalSessions, getAuthStateStorageStats, useSqliteAuthState } from './db/authState.js';
 import { getFlowBotType, loadFlows } from './engine/flowLoader.js';
 import { parseMessage } from './engine/messageParser.js';
 import {
@@ -68,6 +73,7 @@ import {
   toJidString,
 } from './runtime/contactUtils.js';
 import { createIngestionQueue } from './runtime/ingestionQueue.js';
+import { createReconnectController } from './runtime/reconnectController.js';
 import { createTaskScheduler } from './runtime/taskScheduler.js';
 
 let config;
@@ -98,6 +104,7 @@ let hasSavedConfigAtBoot = false;
 let requiresInitialSetup = false;
 let whatsappRuntimeStarted = false;
 let whatsappRuntimeStartPromise = null;
+let socketGeneration = 0;
 let dashboardAutoOpenAttempted = false;
 let ingestionQueue = null;
 let dispatchScheduler = null;
@@ -122,6 +129,9 @@ const ingestionRuntimeCounters = {
   mediaCaptured: 0,
   mediaCaptureFailed: 0,
   mediaQueueDropped: 0,
+  mediaTooLargeDropped: 0,
+  mediaDroppedByDegradedMode: 0,
+  postTasksDroppedByDegradedMode: 0,
 };
 
 function normalizePersistableContactName(name, jid) {
@@ -205,6 +215,293 @@ const HANDOFF_MEDIA_DIR = path.resolve('./data/handoff-media');
 const ALLOWED_INCOMING_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
 const FATAL_LOG_FILE = path.resolve('./fatal-error.log');
+const RUNTIME_LOCK_FILE = path.resolve('./data/runtime-single-instance.lock');
+const MINUTE_COUNTER_RETENTION = 24 * 60;
+const HEALTH_SAMPLE_MAX = 600;
+
+const disconnectReasonNameByCode = new Map(
+  Object.entries(DisconnectReason).map(([name, code]) => [Number(code), String(name)])
+);
+
+let reconnectController = null;
+let saveCredsImmediate = null;
+let saveCredsDebounceTimer = null;
+let mediaCleanupTimer = null;
+let runtimeLockHeld = false;
+let lastThroughputWarningAt = 0;
+
+const authPersistenceStats = {
+  updateEvents: 0,
+  debouncedFlushes: 0,
+  writeAttempts: 0,
+  writeErrors: 0,
+  totalWriteMs: 0,
+  lastWriteAt: 0,
+  lastFlushDurationMs: 0,
+  lastFlushReason: '',
+  lastError: '',
+};
+
+const authCleanupStats = {
+  runs: 0,
+  changedRows: 0,
+  deletedRows: 0,
+  removedSessions: 0,
+  lastSummary: null,
+  lastRunAt: 0,
+};
+
+const authStorageCache = {
+  snapshot: {
+    totalRows: 0,
+    totalValueBytes: 0,
+    sessionRows: 0,
+    sessionValueBytes: 0,
+    updatedAt: 0,
+  },
+  lastRefreshAt: 0,
+  refreshErrors: 0,
+};
+
+const runtimeGuardState = {
+  degradedMode: false,
+  reason: 'normal',
+  changedAt: Date.now(),
+  toggles: 0,
+  totalDegradedMs: 0,
+  lastEnteredAt: 0,
+  droppedPostTasks: 0,
+  droppedMediaTasks: 0,
+};
+
+const handoffMediaMaintenanceStats = {
+  runs: 0,
+  deletedFiles: 0,
+  deletedBytes: 0,
+  lastRunAt: 0,
+  lastDurationMs: 0,
+  lastError: '',
+  lastSummary: null,
+};
+
+const whatsappHealthState = {
+  startedAt: Date.now(),
+  connectedSince: 0,
+  lastConnectedAt: 0,
+  lastDisconnectedAt: 0,
+  totalConnectedMs: 0,
+  lastDisconnectDurationMs: 0,
+  disconnectCount: 0,
+  disconnectByStatusCode: {},
+  disconnectByCategory: {},
+  reconnectHistory: [],
+  successfulReconnectHistory: [],
+  events: {
+    connectionUpdate: 0,
+    messagesUpsert: 0,
+    credsUpdate: 0,
+  },
+  callback: {
+    calls: 0,
+    totalMs: 0,
+    maxMs: 0,
+    lastMs: 0,
+    samples: [],
+  },
+  queueLag: {
+    count: 0,
+    totalMs: 0,
+    maxMs: 0,
+    samples: [],
+  },
+  sendFailuresByCategory: {},
+  minuteCounters: {
+    incoming: new Map(),
+    outgoingTotal: new Map(),
+    outgoingService: new Map(),
+    outgoingBroadcast: new Map(),
+    events: new Map(),
+    messagesUpsert: new Map(),
+    connectionUpdate: new Map(),
+    credsUpdate: new Map(),
+  },
+};
+
+function incrementObjectCounter(target, key, delta = 1) {
+  const normalizedKey = String(key || 'unknown');
+  const safeDelta = Number.isFinite(Number(delta)) ? Number(delta) : 1;
+  target[normalizedKey] = Math.max(0, Number(target[normalizedKey] || 0) + safeDelta);
+}
+
+function pushSample(array, value, max = HEALTH_SAMPLE_MAX) {
+  if (!Array.isArray(array)) return;
+  array.push(Number(value) || 0);
+  while (array.length > max) {
+    array.shift();
+  }
+}
+
+function trimTimestampWindow(array, windowMs, nowTs = Date.now()) {
+  if (!Array.isArray(array)) return;
+  const minTs = nowTs - Math.max(0, Number(windowMs) || 0);
+  while (array.length > 0 && Number(array[0] || 0) < minTs) {
+    array.shift();
+  }
+}
+
+function toPercentile(samples, percentile = 0.95) {
+  if (!Array.isArray(samples) || samples.length === 0) return 0;
+  const sorted = [...samples].sort((a, b) => a - b);
+  const safePercentile = Math.min(1, Math.max(0, Number(percentile) || 0));
+  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * safePercentile)));
+  return Number(sorted[idx] || 0);
+}
+
+function bumpMinuteCounter(counter, timestamp = Date.now(), delta = 1) {
+  if (!(counter instanceof Map)) return;
+  const ts = Number(timestamp) || Date.now();
+  const bucket = Math.floor(ts / 60000);
+  counter.set(bucket, Math.max(0, Number(counter.get(bucket) || 0) + (Number(delta) || 1)));
+  const minBucket = bucket - MINUTE_COUNTER_RETENTION;
+  for (const key of counter.keys()) {
+    if (key < minBucket) {
+      counter.delete(key);
+    }
+  }
+}
+
+function readPerMinute(counter, minutes = 1) {
+  if (!(counter instanceof Map)) return 0;
+  const span = Math.max(1, Math.floor(Number(minutes) || 1));
+  const nowBucket = Math.floor(Date.now() / 60000);
+  const minBucket = nowBucket - (span - 1);
+  let total = 0;
+  for (const [bucket, value] of counter.entries()) {
+    if (bucket >= minBucket && bucket <= nowBucket) {
+      total += Math.max(0, Number(value) || 0);
+    }
+  }
+  return Number((total / span).toFixed(2));
+}
+
+function computeQueuePressurePercent(snapshot) {
+  const queued = Math.max(0, Number(snapshot?.queued) || 0);
+  const maxQueueSize = Math.max(1, Number(snapshot?.maxQueueSize) || 1);
+  return Math.min(100, Number(((queued / maxQueueSize) * 100).toFixed(2)));
+}
+
+function normalizeErrorCategory(error) {
+  const rawMessage = String(error?.message || '').toLowerCase();
+  if (rawMessage.includes('timed out') || rawMessage.includes('timeout')) return 'timeout';
+  if (rawMessage.includes('rate') && rawMessage.includes('limit')) return 'rate-limit';
+  if (rawMessage.includes('forbidden') || rawMessage.includes('not-authorized')) return 'forbidden';
+  if (rawMessage.includes('network') || rawMessage.includes('socket') || rawMessage.includes('econn')) return 'network';
+  if (rawMessage.includes('disconnect')) return 'disconnect';
+  return 'unknown';
+}
+
+function resolveDisconnectReasonName(statusCode) {
+  return disconnectReasonNameByCode.get(Number(statusCode) || 0) || 'unknown';
+}
+
+function classifyDisconnectCategory(statusCode) {
+  const reasonName = resolveDisconnectReasonName(statusCode).toLowerCase();
+  if (reasonName === 'loggedout') return 'persistent-auth';
+  if (reasonName === 'badsession' || reasonName === 'multidevicemismatch') return 'persistent-auth';
+  if (reasonName === 'restartrequired' || reasonName === 'connectionreplaced') return 'persistent-runtime';
+  if (reasonName === 'connectionclosed' || reasonName === 'connectionlost' || reasonName === 'timedout') {
+    return 'transient-network';
+  }
+  return 'unknown';
+}
+
+function maybeLogThroughputPressure() {
+  const nowTs = Date.now();
+  if (nowTs - lastThroughputWarningAt < 30 * 1000) return;
+
+  const inboundNow = readPerMinute(whatsappHealthState.minuteCounters.incoming, 1);
+  const serviceOutNow = readPerMinute(whatsappHealthState.minuteCounters.outgoingService, 1);
+  const broadcastOutNow = readPerMinute(whatsappHealthState.minuteCounters.outgoingBroadcast, 1);
+
+  const inboundLimit = Math.max(1, Number(config?.whatsappMaxInboundPerMinute ?? 600));
+  const serviceLimit = Math.max(1, Number(config?.whatsappMaxServiceOutboundPerMinute ?? 300));
+  const broadcastLimit = Math.max(1, Number(config?.whatsappMaxBroadcastOutboundPerMinute ?? 120));
+
+  const exceeds =
+    inboundNow >= inboundLimit ||
+    serviceOutNow >= serviceLimit ||
+    broadcastOutNow >= broadcastLimit;
+
+  if (!exceeds) return;
+  lastThroughputWarningAt = nowTs;
+
+  logger?.warn?.(
+    {
+      inboundPerMinute: inboundNow,
+      outboundServicePerMinute: serviceOutNow,
+      outboundBroadcastPerMinute: broadcastOutNow,
+      limits: {
+        inboundPerMinute: inboundLimit,
+        outboundServicePerMinute: serviceLimit,
+        outboundBroadcastPerMinute: broadcastLimit,
+      },
+    },
+    'WhatsApp throughput reached configured operational limit'
+  );
+}
+
+function isPidAlive(pid) {
+  const safePid = Number(pid);
+  if (!Number.isInteger(safePid) || safePid <= 0) return false;
+  try {
+    process.kill(safePid, 0);
+    return true;
+  } catch (error) {
+    return error?.code === 'EPERM';
+  }
+}
+
+function acquireRuntimeLock() {
+  fs.mkdirSync(path.dirname(RUNTIME_LOCK_FILE), { recursive: true });
+  if (fs.existsSync(RUNTIME_LOCK_FILE)) {
+    try {
+      const raw = fs.readFileSync(RUNTIME_LOCK_FILE, 'utf-8');
+      const parsed = JSON.parse(raw);
+      const previousPid = Number(parsed?.pid) || 0;
+      if (previousPid > 0 && previousPid !== process.pid && isPidAlive(previousPid)) {
+        throw new Error(`Outra instância do runtime está ativa (pid=${previousPid}).`);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('Outra instância')) {
+        throw error;
+      }
+    }
+  }
+  fs.writeFileSync(
+    RUNTIME_LOCK_FILE,
+    JSON.stringify({
+      pid: process.pid,
+      startedAt: Date.now(),
+      cwd: process.cwd(),
+    }),
+    'utf-8'
+  );
+  runtimeLockHeld = true;
+}
+
+function releaseRuntimeLock() {
+  if (!runtimeLockHeld) return;
+  runtimeLockHeld = false;
+  try {
+    if (!fs.existsSync(RUNTIME_LOCK_FILE)) return;
+    const raw = fs.readFileSync(RUNTIME_LOCK_FILE, 'utf-8');
+    const parsed = JSON.parse(raw);
+    if (Number(parsed?.pid) !== process.pid) return;
+    fs.unlinkSync(RUNTIME_LOCK_FILE);
+  } catch {
+    // ignore lock cleanup errors
+  }
+}
 
 function formatError(err) {
   if (!err) return 'Unknown error';
@@ -239,10 +536,171 @@ async function waitForEnter(message) {
   rl.close();
 }
 
+function refreshAuthStateStorageSnapshot({ force = false } = {}) {
+  const refreshEveryMs = Math.max(1000, Number(config?.authMetricsRefreshMs ?? 30_000));
+  const nowTs = Date.now();
+  if (!force && nowTs - authStorageCache.lastRefreshAt < refreshEveryMs) {
+    return authStorageCache.snapshot;
+  }
+
+  try {
+    authStorageCache.snapshot = getAuthStateStorageStats();
+    authStorageCache.lastRefreshAt = nowTs;
+  } catch {
+    authStorageCache.refreshErrors += 1;
+  }
+
+  return authStorageCache.snapshot;
+}
+
+function clearCredsDebounceTimer() {
+  if (!saveCredsDebounceTimer) return;
+  clearTimeout(saveCredsDebounceTimer);
+  saveCredsDebounceTimer = null;
+}
+
+function flushCredsNow(reason = 'manual') {
+  clearCredsDebounceTimer();
+  if (typeof saveCredsImmediate !== 'function') return false;
+
+  const startedAt = Date.now();
+  authPersistenceStats.writeAttempts += 1;
+  authPersistenceStats.lastFlushReason = String(reason || 'manual');
+  try {
+    saveCredsImmediate();
+    authPersistenceStats.lastWriteAt = Date.now();
+    authPersistenceStats.lastFlushDurationMs = Math.max(0, Date.now() - startedAt);
+    authPersistenceStats.totalWriteMs += authPersistenceStats.lastFlushDurationMs;
+    refreshAuthStateStorageSnapshot({ force: true });
+    return true;
+  } catch (error) {
+    authPersistenceStats.writeErrors += 1;
+    authPersistenceStats.lastError = String(error?.message || error);
+    return false;
+  }
+}
+
+function scheduleCredsSave(reason = 'update') {
+  authPersistenceStats.updateEvents += 1;
+
+  const delayMs = Math.max(0, Number(config?.authCredsDebounceMs ?? 250));
+  if (delayMs === 0) {
+    flushCredsNow(reason);
+    return;
+  }
+
+  if (saveCredsDebounceTimer) {
+    return;
+  }
+
+  authPersistenceStats.debouncedFlushes += 1;
+  saveCredsDebounceTimer = setTimeout(() => {
+    flushCredsNow('debounced-creds-update');
+  }, delayMs);
+
+  if (typeof saveCredsDebounceTimer.unref === 'function') {
+    saveCredsDebounceTimer.unref();
+  }
+}
+
+function setRuntimeDegradedMode(nextActive, reason = 'normal') {
+  const active = nextActive === true;
+  if (runtimeGuardState.degradedMode === active && runtimeGuardState.reason === reason) {
+    return;
+  }
+
+  const nowTs = Date.now();
+  if (runtimeGuardState.degradedMode && runtimeGuardState.lastEnteredAt > 0) {
+    runtimeGuardState.totalDegradedMs += Math.max(0, nowTs - runtimeGuardState.lastEnteredAt);
+  }
+
+  runtimeGuardState.degradedMode = active;
+  runtimeGuardState.reason = String(reason || (active ? 'pressure' : 'normal'));
+  runtimeGuardState.changedAt = nowTs;
+  runtimeGuardState.toggles += 1;
+  runtimeGuardState.lastEnteredAt = active ? nowTs : 0;
+
+  logger?.warn?.(
+    {
+      degradedMode: runtimeGuardState.degradedMode,
+      reason: runtimeGuardState.reason,
+      toggles: runtimeGuardState.toggles,
+    },
+    'Runtime degraded mode changed'
+  );
+}
+
+function evaluateRuntimeGuardState() {
+  const ingestionSnapshot = queueSnapshotOrFallback(ingestionQueue, {
+    queued: 0,
+    maxQueueSize: Number(config?.ingestionQueueMax ?? 5000),
+  });
+  const mediaSnapshot = queueSnapshotOrFallback(mediaPipelineQueue, {
+    queued: 0,
+    maxQueueSize: Number(config?.mediaPipelineQueueMax ?? 500),
+  });
+  const reconnectSnapshot = reconnectController?.getSnapshot?.() || { pending: false, nextReconnectAt: 0 };
+
+  const ingestionPressurePct = computeQueuePressurePercent(ingestionSnapshot);
+  const mediaPressurePct = computeQueuePressurePercent(mediaSnapshot);
+  const degradedThreshold = Math.max(50, Number(config?.runtimeDegradedQueueRatio ?? 90));
+  const reconnectPendingMs = reconnectSnapshot?.pending
+    ? Math.max(0, Number(reconnectSnapshot.nextReconnectAt || 0) - Date.now())
+    : 0;
+  const reconnectThresholdMs = Math.max(0, Number(config?.runtimeDegradedReconnectPendingMs ?? 20_000));
+
+  const shouldDegrade =
+    ingestionPressurePct >= degradedThreshold ||
+    mediaPressurePct >= degradedThreshold ||
+    reconnectPendingMs >= reconnectThresholdMs;
+
+  const reason = reconnectPendingMs >= reconnectThresholdMs
+    ? 'reconnect-pending'
+    : (ingestionPressurePct >= degradedThreshold ? 'ingestion-pressure' : (mediaPressurePct >= degradedThreshold ? 'media-pressure' : 'normal'));
+
+  setRuntimeDegradedMode(shouldDegrade, reason);
+}
+
+function noteSocketEvent(eventName) {
+  const normalizedName = String(eventName || 'unknown');
+  if (normalizedName === 'connection.update') {
+    whatsappHealthState.events.connectionUpdate += 1;
+    bumpMinuteCounter(whatsappHealthState.minuteCounters.connectionUpdate, Date.now());
+  } else if (normalizedName === 'messages.upsert') {
+    whatsappHealthState.events.messagesUpsert += 1;
+    bumpMinuteCounter(whatsappHealthState.minuteCounters.messagesUpsert, Date.now());
+  } else if (normalizedName === 'creds.update') {
+    whatsappHealthState.events.credsUpdate += 1;
+    bumpMinuteCounter(whatsappHealthState.minuteCounters.credsUpdate, Date.now());
+  }
+  bumpMinuteCounter(whatsappHealthState.minuteCounters.events, Date.now());
+}
+
+function noteSocketCallbackDuration(durationMs) {
+  const safeDuration = Math.max(0, Number(durationMs) || 0);
+  whatsappHealthState.callback.calls += 1;
+  whatsappHealthState.callback.totalMs += safeDuration;
+  whatsappHealthState.callback.maxMs = Math.max(whatsappHealthState.callback.maxMs, safeDuration);
+  whatsappHealthState.callback.lastMs = safeDuration;
+  pushSample(whatsappHealthState.callback.samples, safeDuration);
+}
+
+function noteQueueLag(durationMs) {
+  const safeDuration = Math.max(0, Number(durationMs) || 0);
+  whatsappHealthState.queueLag.count += 1;
+  whatsappHealthState.queueLag.totalMs += safeDuration;
+  whatsappHealthState.queueLag.maxMs = Math.max(whatsappHealthState.queueLag.maxMs, safeDuration);
+  pushSample(whatsappHealthState.queueLag.samples, safeDuration);
+}
+
 let exiting = false;
 async function handleFatal(prefix, err) {
   if (exiting) return;
   exiting = true;
+
+  flushCredsNow('fatal-error');
+  reconnectController?.close?.();
+  releaseRuntimeLock();
 
   appendFatalLog(prefix, err);
   console.error(`\nERROR: ${prefix}`);
@@ -258,6 +716,32 @@ process.on('unhandledRejection', reason => {
 
 process.on('uncaughtException', err => {
   void handleFatal('Uncaught Exception', err);
+});
+
+process.on('SIGINT', () => {
+  flushCredsNow('sigint');
+  reconnectController?.close?.();
+  releaseRuntimeLock();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  flushCredsNow('sigterm');
+  reconnectController?.close?.();
+  releaseRuntimeLock();
+  process.exit(0);
+});
+
+process.on('beforeExit', () => {
+  flushCredsNow('before-exit');
+  reconnectController?.close?.();
+  releaseRuntimeLock();
+});
+
+process.on('exit', () => {
+  flushCredsNow('exit');
+  reconnectController?.close?.();
+  releaseRuntimeLock();
 });
 
 const LIBSIGNAL_NOISE_PREFIXES = [
@@ -681,7 +1165,9 @@ async function captureIncomingImageForDashboard({ msg, sock, mimeType, fileName 
     if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
       return null;
     }
-    if (buffer.length > 8 * 1024 * 1024) {
+    const maxAllowedBytes = Math.max(64 * 1024, Number(config?.incomingMediaMaxBytes ?? (8 * 1024 * 1024)));
+    if (buffer.length > maxAllowedBytes) {
+      ingestionRuntimeCounters.mediaTooLargeDropped += 1;
       return null;
     }
 
@@ -698,6 +1184,13 @@ async function captureIncomingImageForDashboard({ msg, sock, mimeType, fileName 
 function cleanupSignalAuthState({ reason = 'manual', forceLog = false } = {}) {
   try {
     const summary = cleanupAuthSignalSessions();
+    authCleanupStats.runs += 1;
+    authCleanupStats.changedRows += Math.max(0, Number(summary?.changedRows) || 0);
+    authCleanupStats.deletedRows += Math.max(0, Number(summary?.deletedRows) || 0);
+    authCleanupStats.removedSessions += Math.max(0, Number(summary?.removedSessions) || 0);
+    authCleanupStats.lastSummary = summary;
+    authCleanupStats.lastRunAt = Date.now();
+
     const shouldLog =
       forceLog ||
       summary.changedRows > 0 ||
@@ -710,6 +1203,7 @@ function cleanupSignalAuthState({ reason = 'manual', forceLog = false } = {}) {
       );
     }
 
+    refreshAuthStateStorageSnapshot({ force: true });
     return summary;
   } catch (error) {
     console.error(`[AuthState] cleanup falhou (${reason}):`, error?.message || error);
@@ -738,14 +1232,25 @@ function attachOutgoingMessageLogger(sock) {
     const safeOptions = options && typeof options === 'object' ? { ...options } : {};
     const skipConversationLog = safeOptions.__skipConversationLog === true;
     const flowPath = String(safeOptions.__flowPath || '').trim();
+    const sendSource = String(safeOptions.__sendSource || 'service').trim().toLowerCase() === 'broadcast'
+      ? 'broadcast'
+      : 'service';
     delete safeOptions.__skipConversationLog;
     delete safeOptions.__flowPath;
+    delete safeOptions.__sendSource;
 
     const text = extractOutgoingMessageText(content);
     const kind = extractOutgoingKind(content);
 
     try {
       const result = await original(jid, content, safeOptions);
+      bumpMinuteCounter(whatsappHealthState.minuteCounters.outgoingTotal, Date.now());
+      if (sendSource === 'broadcast') {
+        bumpMinuteCounter(whatsappHealthState.minuteCounters.outgoingBroadcast, Date.now());
+      } else {
+        bumpMinuteCounter(whatsappHealthState.minuteCounters.outgoingService, Date.now());
+      }
+      maybeLogThroughputPressure();
       if (!skipConversationLog) {
         logConversationEventAsync({
           eventType: 'message-outgoing',
@@ -753,11 +1258,12 @@ function attachOutgoingMessageLogger(sock) {
           jid,
           flowPath,
           messageText: text,
-          metadata: { kind },
+          metadata: { kind, source: sendSource },
         }, { key: jid });
       }
       return result;
     } catch (err) {
+      incrementObjectCounter(whatsappHealthState.sendFailuresByCategory, normalizeErrorCategory(err));
       if (!skipConversationLog) {
         logConversationEventAsync({
           eventType: 'message-outgoing-error',
@@ -767,6 +1273,7 @@ function attachOutgoingMessageLogger(sock) {
           messageText: text,
           metadata: {
             kind,
+            source: sendSource,
             error: formatError(err),
           },
         }, { key: jid });
@@ -791,6 +1298,93 @@ function toPerSecond(count, startedAt) {
 function queueSnapshotOrFallback(queue, fallback = {}) {
   if (!queue || typeof queue.getSnapshot !== 'function') return { ...fallback };
   return queue.getSnapshot();
+}
+
+function getWhatsAppHealthSnapshot() {
+  const nowTs = Date.now();
+  trimTimestampWindow(whatsappHealthState.reconnectHistory, 24 * 60 * 60 * 1000, nowTs);
+  trimTimestampWindow(whatsappHealthState.successfulReconnectHistory, 24 * 60 * 60 * 1000, nowTs);
+  refreshAuthStateStorageSnapshot();
+
+  const connectedNow = whatsappHealthState.connectedSince > 0;
+  const totalConnectedMs = whatsappHealthState.totalConnectedMs + (
+    connectedNow ? Math.max(0, nowTs - whatsappHealthState.connectedSince) : 0
+  );
+  const degradedTotalMs = runtimeGuardState.totalDegradedMs + (
+    runtimeGuardState.degradedMode && runtimeGuardState.lastEnteredAt > 0
+      ? Math.max(0, nowTs - runtimeGuardState.lastEnteredAt)
+      : 0
+  );
+
+  return {
+    connected: connectedNow,
+    connectedSince: whatsappHealthState.connectedSince || 0,
+    uptimeConnectedMs: connectedNow ? Math.max(0, nowTs - whatsappHealthState.connectedSince) : 0,
+    totalConnectedMs,
+    lastConnectedAt: whatsappHealthState.lastConnectedAt || 0,
+    lastDisconnectedAt: whatsappHealthState.lastDisconnectedAt || 0,
+    lastDisconnectDurationMs: whatsappHealthState.lastDisconnectDurationMs || 0,
+    disconnectCount: whatsappHealthState.disconnectCount,
+    disconnectByStatusCode: { ...whatsappHealthState.disconnectByStatusCode },
+    disconnectByCategory: { ...whatsappHealthState.disconnectByCategory },
+    reconnectsScheduledLast24h: whatsappHealthState.reconnectHistory.length,
+    reconnectsSuccessfulLast24h: whatsappHealthState.successfulReconnectHistory.length,
+    reconnectController: reconnectController?.getSnapshot?.() || null,
+    eventVolumePerMinute: {
+      incoming: readPerMinute(whatsappHealthState.minuteCounters.incoming, 1),
+      outgoingTotal: readPerMinute(whatsappHealthState.minuteCounters.outgoingTotal, 1),
+      outgoingService: readPerMinute(whatsappHealthState.minuteCounters.outgoingService, 1),
+      outgoingBroadcast: readPerMinute(whatsappHealthState.minuteCounters.outgoingBroadcast, 1),
+      events: readPerMinute(whatsappHealthState.minuteCounters.events, 1),
+      messagesUpsert: readPerMinute(whatsappHealthState.minuteCounters.messagesUpsert, 1),
+      connectionUpdate: readPerMinute(whatsappHealthState.minuteCounters.connectionUpdate, 1),
+      credsUpdate: readPerMinute(whatsappHealthState.minuteCounters.credsUpdate, 1),
+    },
+    callback: {
+      calls: whatsappHealthState.callback.calls,
+      avgMs: safeAverage(whatsappHealthState.callback.totalMs, whatsappHealthState.callback.calls),
+      p95Ms: toPercentile(whatsappHealthState.callback.samples, 0.95),
+      maxMs: whatsappHealthState.callback.maxMs,
+      lastMs: whatsappHealthState.callback.lastMs,
+    },
+    processingLag: {
+      count: whatsappHealthState.queueLag.count,
+      avgMs: safeAverage(whatsappHealthState.queueLag.totalMs, whatsappHealthState.queueLag.count),
+      p95Ms: toPercentile(whatsappHealthState.queueLag.samples, 0.95),
+      maxMs: whatsappHealthState.queueLag.maxMs,
+    },
+    events: {
+      ...whatsappHealthState.events,
+    },
+    sendFailuresByCategory: { ...whatsappHealthState.sendFailuresByCategory },
+    authState: {
+      persistence: {
+        ...authPersistenceStats,
+        writeAvgMs: safeAverage(authPersistenceStats.totalWriteMs, authPersistenceStats.writeAttempts),
+        updateEventsPerMinute: readPerMinute(whatsappHealthState.minuteCounters.credsUpdate, 1),
+      },
+      cleanup: {
+        ...authCleanupStats,
+      },
+      storage: {
+        ...authStorageCache.snapshot,
+        refreshErrors: authStorageCache.refreshErrors,
+      },
+    },
+    mediaMaintenance: {
+      ...handoffMediaMaintenanceStats,
+    },
+    guard: {
+      active: runtimeGuardState.degradedMode,
+      reason: runtimeGuardState.reason,
+      changedAt: runtimeGuardState.changedAt,
+      toggles: runtimeGuardState.toggles,
+      totalDegradedMs: degradedTotalMs,
+      droppedPostTasks: runtimeGuardState.droppedPostTasks,
+      droppedMediaTasks: runtimeGuardState.droppedMediaTasks,
+    },
+    updatedAt: nowTs,
+  };
 }
 
 function getIngestionSnapshot() {
@@ -882,7 +1476,9 @@ function getIngestionSnapshot() {
     updatedAt: Date.now(),
   });
 
+  evaluateRuntimeGuardState();
   const engineStats = getEngineRuntimeStats();
+  const whatsappHealth = getWhatsAppHealthSnapshot();
 
   return {
     callback: {
@@ -915,8 +1511,17 @@ function getIngestionSnapshot() {
       captured: ingestionRuntimeCounters.mediaCaptured,
       failed: ingestionRuntimeCounters.mediaCaptureFailed,
       queueDropped: ingestionRuntimeCounters.mediaQueueDropped,
+      tooLargeDropped: ingestionRuntimeCounters.mediaTooLargeDropped,
+      droppedByDegradedMode: ingestionRuntimeCounters.mediaDroppedByDegradedMode,
       queue: mediaPipelineSnapshot,
     },
+    runtimeGuard: {
+      degradedMode: runtimeGuardState.degradedMode,
+      reason: runtimeGuardState.reason,
+      droppedPostTasks: ingestionRuntimeCounters.postTasksDroppedByDegradedMode,
+      droppedMediaTasks: ingestionRuntimeCounters.mediaDroppedByDegradedMode,
+    },
+    whatsappHealth,
     engine: engineStats,
     ingestionQueue: ingestionQueueSnapshot,
     dispatchScheduler: dispatchQueueSnapshot,
@@ -999,6 +1604,19 @@ function initializeRuntimeSchedulers(currentConfig) {
   });
 }
 
+function initializeReconnectPolicy(currentConfig) {
+  reconnectController?.close?.();
+  reconnectController = createReconnectController({
+    minDelayMs: Number(currentConfig?.whatsappReconnectBaseDelayMs ?? 3000),
+    maxDelayMs: Number(currentConfig?.whatsappReconnectMaxDelayMs ?? 60000),
+    backoffMultiplier: Number(currentConfig?.whatsappReconnectBackoffMultiplier ?? 2),
+    jitterRatio: Math.max(0, Number(currentConfig?.whatsappReconnectJitterPct ?? 20) / 100),
+    attemptWindowMs: Number(currentConfig?.whatsappReconnectAttemptsWindowMs ?? (10 * 60 * 1000)),
+    maxAttemptsPerWindow: Number(currentConfig?.whatsappReconnectMaxAttemptsPerWindow ?? 12),
+    cooldownMs: Number(currentConfig?.whatsappReconnectCooldownMs ?? (2 * 60 * 1000)),
+  });
+}
+
 function normalizeRuntimeInfo() {
   const dashboardFlow = getDashboardFlow();
   const flowFile = path.basename(String(dashboardFlow?.flowPath ?? config?.flowPath ?? ''));
@@ -1021,6 +1639,7 @@ function normalizeRuntimeInfo() {
       command: commandFlows.map(flow => flow.flowPath),
     },
     availableModes,
+    whatsapp: getWhatsAppHealthSnapshot(),
     ingestion: getIngestionSnapshot(),
   };
 }
@@ -1038,6 +1657,116 @@ function startDbSizeSnapshotMaintenance() {
 
   if (typeof dbSizeSnapshotMaintenanceTimer.unref === 'function') {
     dbSizeSnapshotMaintenanceTimer.unref();
+  }
+}
+
+function cleanupHandoffMediaFiles({ reason = 'manual' } = {}) {
+  const startedAt = Date.now();
+  const retentionMs = Math.max(60 * 1000, Number(config?.handoffMediaRetentionMinutes ?? 180) * 60 * 1000);
+  const maxStorageBytes = Math.max(32 * 1024 * 1024, Number(config?.handoffMediaMaxStorageMb ?? 512) * 1024 * 1024);
+
+  const summary = {
+    reason: String(reason || 'manual'),
+    scannedFiles: 0,
+    deletedFiles: 0,
+    deletedBytes: 0,
+    totalBytesAfter: 0,
+    durationMs: 0,
+  };
+
+  try {
+    fs.mkdirSync(HANDOFF_MEDIA_DIR, { recursive: true });
+    const nowTs = Date.now();
+    const entries = fs.readdirSync(HANDOFF_MEDIA_DIR, { withFileTypes: true });
+    const files = [];
+
+    for (const entry of entries) {
+      if (!entry?.isFile?.()) continue;
+      const fullPath = path.resolve(HANDOFF_MEDIA_DIR, entry.name);
+      try {
+        const stat = fs.statSync(fullPath);
+        if (!stat.isFile()) continue;
+        files.push({
+          fullPath,
+          size: Math.max(0, Number(stat.size) || 0),
+          mtimeMs: Math.max(0, Number(stat.mtimeMs) || 0),
+        });
+      } catch {
+        // ignore transient stat errors
+      }
+    }
+
+    summary.scannedFiles = files.length;
+    files.sort((a, b) => a.mtimeMs - b.mtimeMs);
+
+    let totalBytes = files.reduce((acc, item) => acc + item.size, 0);
+    const keep = [];
+
+    for (const file of files) {
+      const fileAgeMs = Math.max(0, nowTs - file.mtimeMs);
+      if (fileAgeMs > retentionMs) {
+        try {
+          fs.unlinkSync(file.fullPath);
+          summary.deletedFiles += 1;
+          summary.deletedBytes += file.size;
+          totalBytes -= file.size;
+        } catch {
+          keep.push(file);
+        }
+      } else {
+        keep.push(file);
+      }
+    }
+
+    for (const file of keep) {
+      if (totalBytes <= maxStorageBytes) break;
+      try {
+        fs.unlinkSync(file.fullPath);
+        summary.deletedFiles += 1;
+        summary.deletedBytes += file.size;
+        totalBytes -= file.size;
+      } catch {
+        // ignore unlink errors
+      }
+    }
+
+    summary.totalBytesAfter = Math.max(0, totalBytes);
+    summary.durationMs = Math.max(0, Date.now() - startedAt);
+
+    handoffMediaMaintenanceStats.runs += 1;
+    handoffMediaMaintenanceStats.deletedFiles += summary.deletedFiles;
+    handoffMediaMaintenanceStats.deletedBytes += summary.deletedBytes;
+    handoffMediaMaintenanceStats.lastRunAt = Date.now();
+    handoffMediaMaintenanceStats.lastDurationMs = summary.durationMs;
+    handoffMediaMaintenanceStats.lastSummary = summary;
+    handoffMediaMaintenanceStats.lastError = '';
+
+    if (summary.deletedFiles > 0) {
+      logger?.info?.(
+        {
+          reason: summary.reason,
+          deletedFiles: summary.deletedFiles,
+          deletedBytes: summary.deletedBytes,
+          totalBytesAfter: summary.totalBytesAfter,
+        },
+        'Handoff media cleanup removed transient files'
+      );
+    }
+  } catch (error) {
+    handoffMediaMaintenanceStats.lastError = String(error?.message || error);
+  }
+
+  return summary;
+}
+
+function startHandoffMediaMaintenance() {
+  if (mediaCleanupTimer) return;
+  const intervalMs = Math.max(60 * 1000, Number(config?.handoffMediaCleanupIntervalMinutes ?? 15) * 60 * 1000);
+  mediaCleanupTimer = setInterval(() => {
+    cleanupHandoffMediaFiles({ reason: 'interval' });
+  }, intervalMs);
+  if (typeof mediaCleanupTimer.unref === 'function') {
+    mediaCleanupTimer.unref();
   }
 }
 
@@ -1166,6 +1895,25 @@ function buildSetupConfigSnapshot() {
     postProcessQueueMax: Number(config?.postProcessQueueMax ?? 5000),
     mediaPipelineConcurrency: Number(config?.mediaPipelineConcurrency ?? 2),
     mediaPipelineQueueMax: Number(config?.mediaPipelineQueueMax ?? 500),
+    whatsappReconnectBaseDelayMs: Number(config?.whatsappReconnectBaseDelayMs ?? 3000),
+    whatsappReconnectMaxDelayMs: Number(config?.whatsappReconnectMaxDelayMs ?? 60000),
+    whatsappReconnectBackoffMultiplier: Number(config?.whatsappReconnectBackoffMultiplier ?? 2),
+    whatsappReconnectJitterPct: Number(config?.whatsappReconnectJitterPct ?? 20),
+    whatsappReconnectAttemptsWindowMs: Number(config?.whatsappReconnectAttemptsWindowMs ?? (10 * 60 * 1000)),
+    whatsappReconnectMaxAttemptsPerWindow: Number(config?.whatsappReconnectMaxAttemptsPerWindow ?? 12),
+    whatsappReconnectCooldownMs: Number(config?.whatsappReconnectCooldownMs ?? (2 * 60 * 1000)),
+    authCredsDebounceMs: Number(config?.authCredsDebounceMs ?? 250),
+    authMetricsRefreshMs: Number(config?.authMetricsRefreshMs ?? 30_000),
+    incomingMediaMaxBytes: Number(config?.incomingMediaMaxBytes ?? (8 * 1024 * 1024)),
+    handoffMediaRetentionMinutes: Number(config?.handoffMediaRetentionMinutes ?? 180),
+    handoffMediaCleanupIntervalMinutes: Number(config?.handoffMediaCleanupIntervalMinutes ?? 15),
+    handoffMediaMaxStorageMb: Number(config?.handoffMediaMaxStorageMb ?? 512),
+    whatsappMaxInboundPerMinute: Number(config?.whatsappMaxInboundPerMinute ?? 600),
+    whatsappMaxServiceOutboundPerMinute: Number(config?.whatsappMaxServiceOutboundPerMinute ?? 300),
+    whatsappMaxBroadcastOutboundPerMinute: Number(config?.whatsappMaxBroadcastOutboundPerMinute ?? 120),
+    runtimeDegradedQueueRatio: Number(config?.runtimeDegradedQueueRatio ?? 90),
+    runtimeDegradedReconnectPendingMs: Number(config?.runtimeDegradedReconnectPendingMs ?? 20_000),
+    runtimeDegradedDropConversationEvents: config?.runtimeDegradedDropConversationEvents !== false,
     testTargetMode: String(config?.testTargetMode || 'contacts-and-groups'),
     testJid: String(config?.testJid || ''),
     testJids: toTrimmedStringArray(config?.testJids),
@@ -1347,6 +2095,63 @@ function normalizeSetupPatch(input = {}) {
   if (input.mediaPipelineQueueMax !== undefined) {
     patch.mediaPipelineQueueMax = Number(input.mediaPipelineQueueMax);
   }
+  if (input.whatsappReconnectBaseDelayMs !== undefined) {
+    patch.whatsappReconnectBaseDelayMs = Number(input.whatsappReconnectBaseDelayMs);
+  }
+  if (input.whatsappReconnectMaxDelayMs !== undefined) {
+    patch.whatsappReconnectMaxDelayMs = Number(input.whatsappReconnectMaxDelayMs);
+  }
+  if (input.whatsappReconnectBackoffMultiplier !== undefined) {
+    patch.whatsappReconnectBackoffMultiplier = Number(input.whatsappReconnectBackoffMultiplier);
+  }
+  if (input.whatsappReconnectJitterPct !== undefined) {
+    patch.whatsappReconnectJitterPct = Number(input.whatsappReconnectJitterPct);
+  }
+  if (input.whatsappReconnectAttemptsWindowMs !== undefined) {
+    patch.whatsappReconnectAttemptsWindowMs = Number(input.whatsappReconnectAttemptsWindowMs);
+  }
+  if (input.whatsappReconnectMaxAttemptsPerWindow !== undefined) {
+    patch.whatsappReconnectMaxAttemptsPerWindow = Number(input.whatsappReconnectMaxAttemptsPerWindow);
+  }
+  if (input.whatsappReconnectCooldownMs !== undefined) {
+    patch.whatsappReconnectCooldownMs = Number(input.whatsappReconnectCooldownMs);
+  }
+  if (input.authCredsDebounceMs !== undefined) {
+    patch.authCredsDebounceMs = Number(input.authCredsDebounceMs);
+  }
+  if (input.authMetricsRefreshMs !== undefined) {
+    patch.authMetricsRefreshMs = Number(input.authMetricsRefreshMs);
+  }
+  if (input.incomingMediaMaxBytes !== undefined) {
+    patch.incomingMediaMaxBytes = Number(input.incomingMediaMaxBytes);
+  }
+  if (input.handoffMediaRetentionMinutes !== undefined) {
+    patch.handoffMediaRetentionMinutes = Number(input.handoffMediaRetentionMinutes);
+  }
+  if (input.handoffMediaCleanupIntervalMinutes !== undefined) {
+    patch.handoffMediaCleanupIntervalMinutes = Number(input.handoffMediaCleanupIntervalMinutes);
+  }
+  if (input.handoffMediaMaxStorageMb !== undefined) {
+    patch.handoffMediaMaxStorageMb = Number(input.handoffMediaMaxStorageMb);
+  }
+  if (input.whatsappMaxInboundPerMinute !== undefined) {
+    patch.whatsappMaxInboundPerMinute = Number(input.whatsappMaxInboundPerMinute);
+  }
+  if (input.whatsappMaxServiceOutboundPerMinute !== undefined) {
+    patch.whatsappMaxServiceOutboundPerMinute = Number(input.whatsappMaxServiceOutboundPerMinute);
+  }
+  if (input.whatsappMaxBroadcastOutboundPerMinute !== undefined) {
+    patch.whatsappMaxBroadcastOutboundPerMinute = Number(input.whatsappMaxBroadcastOutboundPerMinute);
+  }
+  if (input.runtimeDegradedQueueRatio !== undefined) {
+    patch.runtimeDegradedQueueRatio = Number(input.runtimeDegradedQueueRatio);
+  }
+  if (input.runtimeDegradedReconnectPendingMs !== undefined) {
+    patch.runtimeDegradedReconnectPendingMs = Number(input.runtimeDegradedReconnectPendingMs);
+  }
+  if (input.runtimeDegradedDropConversationEvents !== undefined) {
+    patch.runtimeDegradedDropConversationEvents = Boolean(input.runtimeDegradedDropConversationEvents);
+  }
   if (input.testTargetMode !== undefined) {
     patch.testTargetMode = String(input.testTargetMode || '').trim() || 'contacts-and-groups';
   }
@@ -1441,6 +2246,12 @@ async function applyRuntimeConfigFromDashboard(input = {}) {
     logger.level = config.logLevel;
   }
   initializeRuntimeSchedulers(config);
+  initializeReconnectPolicy(config);
+  if (mediaCleanupTimer) {
+    clearInterval(mediaCleanupTimer);
+    mediaCleanupTimer = null;
+  }
+  startHandoffMediaMaintenance();
   applyDatabaseRuntimeConfigFromAppConfig(config);
   startDatabaseMaintenanceScheduler();
 
@@ -1471,9 +2282,11 @@ async function ensureWhatsAppRuntimeStarted() {
 
   whatsappRuntimeStartPromise = (async () => {
     const { state, saveCreds } = useSqliteAuthState();
+    saveCredsImmediate = saveCreds;
+    refreshAuthStateStorageSnapshot({ force: true });
     const { version } = await fetchLatestBaileysVersion();
     console.log(`Versao Baileys: ${version.join('.')}\n`);
-    await connectToWhatsApp({ state, saveCreds, version });
+    await connectToWhatsApp({ state, version });
     whatsappRuntimeStarted = true;
   })();
 
@@ -2262,6 +3075,7 @@ async function start() {
   requiresInitialSetup = !hasSavedConfigAtBoot;
 
   config = await getConfig({ interactive: false });
+  acquireRuntimeLock();
 
   const suppressSignalNoise =
     config.runtimeMode === RUNTIME_MODE.PRODUCTION &&
@@ -2270,9 +3084,25 @@ async function start() {
 
   logger = createRuntimeLogger(config);
   initializeRuntimeSchedulers(config);
+  initializeReconnectPolicy(config);
   broadcastService = createBroadcastService({
     logger,
-    getSendDelayMs: () => Number(config?.broadcastSendIntervalMs ?? 250),
+    getSendDelayMs: () => {
+      const baseDelayMs = Math.max(0, Number(config?.broadcastSendIntervalMs ?? 250));
+      const broadcastLimitPerMinute = Math.max(1, Number(config?.whatsappMaxBroadcastOutboundPerMinute ?? 120));
+      const pacingDelayMs = Math.ceil(60_000 / broadcastLimitPerMinute);
+      const currentBroadcastRate = readPerMinute(whatsappHealthState.minuteCounters.outgoingBroadcast, 1);
+      const currentServiceRate = readPerMinute(whatsappHealthState.minuteCounters.outgoingService, 1);
+      const serviceLimitPerMinute = Math.max(1, Number(config?.whatsappMaxServiceOutboundPerMinute ?? 300));
+      const pressureRatio = Math.max(
+        currentBroadcastRate / broadcastLimitPerMinute,
+        currentServiceRate / serviceLimitPerMinute
+      );
+      const pressurePenaltyMs = pressureRatio >= 1
+        ? Math.ceil((pressureRatio - 1 + 1) * 500)
+        : (pressureRatio >= 0.8 ? 250 : 0);
+      return Math.max(baseDelayMs, pacingDelayMs + pressurePenaltyMs);
+    },
   });
 
   await initDb();
@@ -2283,7 +3113,9 @@ async function start() {
     console.log(`Cache de contatos restaurado do banco: ${hydratedContacts} registro(s)`);
   }
   cleanupSignalAuthState({ reason: 'startup', forceLog: true });
+  cleanupHandoffMediaFiles({ reason: 'startup' });
   startAuthStateMaintenance();
+  startHandoffMediaMaintenance();
   startDbSizeSnapshotMaintenance();
   startDatabaseMaintenanceScheduler();
 
@@ -2335,6 +3167,18 @@ function resolveQueueJidFromIncomingMessage(msg) {
 
 function enqueuePostProcessTask({ key = 'post', taskName = 'post-task', task }) {
   if (typeof task !== 'function') return;
+
+  const isConversationEventTask = String(taskName || '').startsWith('conversation-event:');
+  if (
+    runtimeGuardState.degradedMode &&
+    config?.runtimeDegradedDropConversationEvents !== false &&
+    isConversationEventTask
+  ) {
+    runtimeGuardState.droppedPostTasks += 1;
+    ingestionRuntimeCounters.postTasksDroppedByDegradedMode += 1;
+    return;
+  }
+
   ingestionRuntimeCounters.postTasksQueued += 1;
 
   if (!postProcessQueue) {
@@ -2419,6 +3263,12 @@ function enqueueIncomingMediaCapture({
   mediaFileName,
   flowPaths = [],
 }) {
+  if (runtimeGuardState.degradedMode) {
+    runtimeGuardState.droppedMediaTasks += 1;
+    ingestionRuntimeCounters.mediaDroppedByDegradedMode += 1;
+    return;
+  }
+
   ingestionRuntimeCounters.mediaQueued += 1;
   const queueKey = String(jid || 'media');
 
@@ -2740,7 +3590,10 @@ async function processIncomingUpsertMessage({ sock, msg, type }) {
 
 function enqueueIncomingUpsertMessage({ sock, msg, type }) {
   ingestionRuntimeCounters.received += 1;
+  bumpMinuteCounter(whatsappHealthState.minuteCounters.incoming, Date.now());
+  maybeLogThroughputPressure();
   if (!ingestionQueue) {
+    noteQueueLag(0);
     void processIncomingUpsertMessage({ sock, msg, type });
     return;
   }
@@ -2755,9 +3608,10 @@ function enqueueIncomingUpsertMessage({ sock, msg, type }) {
   const enqueueResult = ingestionQueue.enqueue({
     key: queueKey || 'unknown',
     priority: isLikelyMedia ? 'low' : 'high',
-    payload: { sock, msg, type },
+    payload: { sock, msg, type, receivedAt: Date.now() },
     handler: async (payload) => {
       try {
+        noteQueueLag(Math.max(0, Date.now() - Number(payload?.receivedAt || Date.now())));
         await processIncomingUpsertMessage(payload);
       } catch (error) {
         logger?.error?.(
@@ -2791,13 +3645,22 @@ function enqueueIncomingUpsertMessage({ sock, msg, type }) {
       );
     }
   }
+  evaluateRuntimeGuardState();
 }
 
-async function connectToWhatsApp({ state, saveCreds, version }) {
+async function connectToWhatsApp({ state, version }) {
+  if (!reconnectController) {
+    initializeReconnectPolicy(config || {});
+  }
+
+  const currentGeneration = ++socketGeneration;
   const sock = makeWASocket({
     version,
     logger,
-    auth: state,
+    auth: {
+      creds: state.creds,
+      keys: makeCacheableSignalKeyStore(state.keys, logger),
+    },
     printQRInTerminal: false,
     browser: ['WhatsApp Bot', 'Chrome', '120.0.0'],
     markOnlineOnConnect: false,
@@ -2806,25 +3669,38 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
   currentSocket = sock;
   attachOutgoingMessageLogger(sock);
 
-  sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('creds.update', () => {
+    if (currentGeneration !== socketGeneration) return;
+    noteSocketEvent('creds.update');
+    scheduleCredsSave('creds.update');
+  });
+
   sock.ev.on('messaging-history.set', ({ contacts, chats }) => {
+    if (currentGeneration !== socketGeneration) return;
     mergeContactList(contactCache, contacts);
     mergeChatsIntoContactCache(contactCache, chats);
   });
   sock.ev.on('contacts.upsert', contacts => {
+    if (currentGeneration !== socketGeneration) return;
     mergeContactList(contactCache, contacts);
   });
   sock.ev.on('contacts.update', updates => {
+    if (currentGeneration !== socketGeneration) return;
     mergeContactList(contactCache, updates);
   });
   sock.ev.on('chats.upsert', chats => {
+    if (currentGeneration !== socketGeneration) return;
     mergeChatsIntoContactCache(contactCache, chats);
   });
   sock.ev.on('chats.update', chats => {
+    if (currentGeneration !== socketGeneration) return;
     mergeChatsIntoContactCache(contactCache, chats);
   });
 
-  sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
+    noteSocketEvent('connection.update');
+    if (currentGeneration !== socketGeneration) return;
+
     if (qr) {
       console.log('\nEscaneie este codigo QR com o WhatsApp:\n');
       qrcode.generate(qr, { small: true });
@@ -2832,25 +3708,69 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
     }
 
     if (connection === 'close') {
+      flushCredsNow('connection-close');
+
       const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
+      const reasonName = resolveDisconnectReasonName(statusCode);
+      const category = classifyDisconnectCategory(statusCode);
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-      console.log(
-        shouldReconnect
-          ? `Conexao fechada (codigo ${statusCode}). Reconectando...`
-          : 'Desconectado. Delete as entradas auth_state do banco de dados para reautenticar.'
-      );
+      whatsappHealthState.disconnectCount += 1;
+      incrementObjectCounter(whatsappHealthState.disconnectByStatusCode, statusCode ?? 'unknown');
+      incrementObjectCounter(whatsappHealthState.disconnectByCategory, category);
+
+      if (whatsappHealthState.connectedSince > 0) {
+        whatsappHealthState.totalConnectedMs += Math.max(0, Date.now() - whatsappHealthState.connectedSince);
+        whatsappHealthState.connectedSince = 0;
+      }
+      whatsappHealthState.lastDisconnectedAt = Date.now();
 
       if (shouldReconnect) {
-        setTimeout(() => {
-          void connectToWhatsApp({ state, saveCreds, version });
-        }, 3000);
+        const scheduleResult = reconnectController.schedule({
+          reason: `${category}:${reasonName}`,
+          statusCode: Number(statusCode) || 0,
+          connect: async () => {
+            await connectToWhatsApp({ state, version });
+          },
+        });
+
+        if (scheduleResult?.scheduled) {
+          whatsappHealthState.reconnectHistory.push(Date.now());
+          console.log(
+            `Conexao fechada (codigo ${statusCode}, motivo ${reasonName}). Reconexao agendada em ${scheduleResult.delayMs}ms.`
+          );
+        } else {
+          console.log(
+            `Conexao fechada (codigo ${statusCode}, motivo ${reasonName}). Reconexao ja pendente.`
+          );
+        }
+      } else {
+        reconnectController?.close?.();
+        console.log('Desconectado. Delete as entradas auth_state do banco de dados para reautenticar.');
       }
+
+      if (currentSocket === sock) {
+        currentSocket = null;
+      }
+      evaluateRuntimeGuardState();
+      return;
     }
 
     if (connection === 'open') {
-      console.log('Conectado ao WhatsApp!\n');
+      const nowTs = Date.now();
+      const hadPreviousConnection = whatsappHealthState.lastConnectedAt > 0;
+      if (whatsappHealthState.lastDisconnectedAt > 0) {
+        whatsappHealthState.lastDisconnectDurationMs = Math.max(0, nowTs - whatsappHealthState.lastDisconnectedAt);
+      }
+      whatsappHealthState.connectedSince = nowTs;
+      whatsappHealthState.lastConnectedAt = nowTs;
+      if (hadPreviousConnection) {
+        whatsappHealthState.successfulReconnectHistory.push(nowTs);
+      }
+      reconnectController?.reset?.();
+      evaluateRuntimeGuardState();
 
+      console.log('Conectado ao WhatsApp!\n');
       runtimeSetupDone = true;
 
       startSessionCleanup(sock, getActiveFlows());
@@ -2869,20 +3789,35 @@ async function connectToWhatsApp({ state, saveCreds, version }) {
     }
   });
 
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-    if (reloadInProgress) return;
+  sock.ev.on('messages.upsert', ({ messages, type }) => {
+    const callbackStartedAt = Date.now();
+    noteSocketEvent('messages.upsert');
 
-    if (runtimeSetupPromise) {
-      try {
-        await runtimeSetupPromise;
-      } catch {
+    try {
+      if (currentGeneration !== socketGeneration) return;
+      if (type !== 'notify') return;
+      if (reloadInProgress) return;
+      if (!Array.isArray(messages) || messages.length === 0) return;
+
+      const enqueueAll = () => {
+        for (const msg of messages) {
+          enqueueIncomingUpsertMessage({ sock, msg, type });
+        }
+      };
+
+      if (runtimeSetupPromise) {
+        void runtimeSetupPromise
+          .then(() => {
+            if (currentGeneration !== socketGeneration) return;
+            enqueueAll();
+          })
+          .catch(() => {});
         return;
       }
-    }
 
-    for (const msg of messages) {
-      enqueueIncomingUpsertMessage({ sock, msg, type });
+      enqueueAll();
+    } finally {
+      noteSocketCallbackDuration(Math.max(0, Date.now() - callbackStartedAt));
     }
   });
 
