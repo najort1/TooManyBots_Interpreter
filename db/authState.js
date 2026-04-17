@@ -136,6 +136,26 @@ export function cleanupAuthSignalSessions() {
   return summary;
 }
 
+export function getAuthStateStorageStats() {
+  const db = getDb();
+  const row = db.prepare(
+    `SELECT
+      COUNT(*) AS total_rows,
+      COALESCE(SUM(LENGTH(value)), 0) AS total_value_bytes,
+      COALESCE(SUM(CASE WHEN key LIKE ? THEN 1 ELSE 0 END), 0) AS session_rows,
+      COALESCE(SUM(CASE WHEN key LIKE ? THEN LENGTH(value) ELSE 0 END), 0) AS session_value_bytes
+    FROM auth_state`
+  ).get(`${SESSION_KEY_PREFIX}%`, `${SESSION_KEY_PREFIX}%`);
+
+  return {
+    totalRows: Math.max(0, Number(row?.total_rows) || 0),
+    totalValueBytes: Math.max(0, Number(row?.total_value_bytes) || 0),
+    sessionRows: Math.max(0, Number(row?.session_rows) || 0),
+    sessionValueBytes: Math.max(0, Number(row?.session_value_bytes) || 0),
+    updatedAt: Date.now(),
+  };
+}
+
 export function useSqliteAuthState() {
   const db = getDb();
   const { getAuthState, setAuthState, deleteAuthState } = getStmts();
