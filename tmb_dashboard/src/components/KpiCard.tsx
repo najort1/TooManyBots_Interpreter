@@ -93,7 +93,7 @@ export function KpiCard({ title, value, icon, color = 'blue', formatValue }: Kpi
       </div>
       <div>
         <p className="text-xs font-bold uppercase tracking-wider text-[#6f8298]">{title}</p>
-        <p className="text-2xl font-extrabold text-[#112338] leading-none mt-1">{renderedValue}</p>
+        <p className="mt-1 text-2xl leading-none font-extrabold text-[#122033]">{renderedValue}</p>
       </div>
     </div>
   );

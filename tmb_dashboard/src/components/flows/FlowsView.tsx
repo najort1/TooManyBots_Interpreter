@@ -54,7 +54,7 @@ export function FlowsView({ onShowNotice }: FlowsViewProps) {
 
       <div className={panelClass}>
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <h2 className="text-base font-bold text-[#112338]">Arquivos de Fluxo</h2>
+          <h2 className="text-base font-bold text-slate-800">Arquivos de Fluxo</h2>
           <div className="relative w-full max-w-sm">
             <div className="pointer-events-none absolute inset-y-0 left-0 pl-3 flex items-center">
               <i className="fa-solid fa-search text-gray-400"></i>
@@ -70,11 +70,11 @@ export function FlowsView({ onShowNotice }: FlowsViewProps) {
         </div>
 
         {isLoading ? (
-          <div className="flex h-32 items-center justify-center text-[#6e85a3] text-sm font-semibold gap-2">
+          <div className="flex h-32 items-center justify-center text-slate-500 text-sm font-semibold gap-2">
             <i className="fa-solid fa-spinner animate-spin" /> Carregando...
           </div>
         ) : filteredBots.length === 0 ? (
-          <div className="flex h-32 flex-col items-center justify-center text-[#6e85a3] gap-2">
+          <div className="flex h-32 flex-col items-center justify-center text-slate-500 gap-2">
             <i className="fa-solid fa-folder-open text-2xl text-gray-300" />
             <p className="text-sm font-medium">Nenhum fluxo encontrado.</p>
           </div>
@@ -82,7 +82,7 @@ export function FlowsView({ onShowNotice }: FlowsViewProps) {
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm whitespace-nowrap">
               <thead>
-                <tr className="border-b border-gray-100 text-[#5c738f]">
+                <tr className="border-b border-gray-100 text-slate-500">
                   <th className="py-3 px-4 font-semibold uppercase tracking-wider text-[0.70rem]">Status</th>
                   <th className="py-3 px-4 font-semibold uppercase tracking-wider text-[0.70rem]">Arquivo</th>
                   <th className="py-3 px-4 font-semibold uppercase tracking-wider text-[0.70rem]">Tipo</th>
@@ -90,7 +90,7 @@ export function FlowsView({ onShowNotice }: FlowsViewProps) {
                   <th className="py-3 px-4 font-semibold uppercase tracking-wider text-[0.70rem]">Saúde da Sintaxe</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-[#f2f7ff]">
+              <tbody className="divide-y divide-slate-100">
                 {filteredBots.map(bot => {
                   let statusColor = 'bg-gray-100 text-gray-600';
                   let statusText = 'Inativo';
@@ -107,28 +107,28 @@ export function FlowsView({ onShowNotice }: FlowsViewProps) {
                   if (bot.botType === 'command') typeIcon = 'fa-solid fa-terminal';
 
                   return (
-                    <tr key={bot.flowPath} className="hover:bg-[#f9fcff] transition-colors">
+                    <tr key={bot.flowPath} className="hover:bg-slate-50 transition-colors">
                       <td className="py-3 px-4">
                         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold ${statusColor}`}>
                           {statusText}
                         </span>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="font-semibold text-[#112338] flex items-center gap-2">
+                        <div className="font-semibold text-slate-800 flex items-center gap-2">
                           <i className="fa-regular fa-file-code text-indigo-400" />
                           {bot.fileName}
                         </div>
-                        <div className="text-[11px] text-[#748bac] mt-0.5 truncate max-w-xs" title={bot.flowPath}>
+                        <div className="text-[11px] text-slate-500 mt-0.5 truncate max-w-xs" title={bot.flowPath}>
                           {bot.flowPath}
                         </div>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="flex items-center gap-1.5 text-[#4a617a] font-medium capitalize">
+                        <div className="flex items-center gap-1.5 text-slate-600 font-medium capitalize">
                           <i className={`${typeIcon} w-4 text-center text-gray-400`} />
                           {bot.botType}
                         </div>
                       </td>
-                      <td className="py-3 px-4 font-semibold text-[#273a52]">
+                      <td className="py-3 px-4 font-semibold text-slate-700">
                         {bot.totalBlocks}
                       </td>
                       <td className="py-3 px-4">

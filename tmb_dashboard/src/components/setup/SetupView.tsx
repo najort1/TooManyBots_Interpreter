@@ -307,7 +307,7 @@ export function SetupView({
                       key={bot.fileName}
                       className={[
                         'flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-sm',
-                        selected ? 'border-[#9ebeee] bg-[#eaf3ff]' : 'border-[#d9e6f6] bg-white',
+                        selected ? 'border-[#d9e6f6] bg-[#e6f0ff]' : 'border-[#d9e6f6] bg-white',
                         disabled ? 'cursor-not-allowed opacity-65' : '',
                       ].join(' ')}
                     >
@@ -450,7 +450,7 @@ export function SetupView({
                     const checkedWhitelist = selectedWhitelistSet.has(jid);
                     const participants = Math.max(0, Number(item.participants || 0));
                     return (
-                      <div key={`group-${jid}`} className="rounded-md border border-[#e7eef8] bg-[#fbfdff] p-2">
+                      <div key={`group-${jid}`} className="rounded-md border border-[#e7eef8] bg-white p-2">
                         <div className="mb-1">
                           <span className="block truncate text-xs font-semibold text-slate-700">{item.name || jid}</span>
                           <span className="block truncate text-[11px] text-slate-500">

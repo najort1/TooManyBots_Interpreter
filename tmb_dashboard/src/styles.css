@@ -71,12 +71,24 @@ html.theme-dark .text-slate-500 {
   color: #94a3b8 !important;
 }
 
+html.theme-dark .text-slate-600 {
+  color: #cbd5e1 !important;
+}
+
 html.theme-dark .text-slate-700 {
   color: #e2e8f0 !important;
 }
 
 html.theme-dark .text-slate-400 {
   color: #cbd5e1 !important;
+}
+
+html.theme-dark .text-slate-800 {
+  color: #f1f5f9 !important;
+}
+
+html.theme-dark .hover\:bg-slate-50:hover {
+  background-color: #1e293b !important;
 }
 
 html.theme-dark [class*='text-[#122033]'],
