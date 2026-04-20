@@ -941,7 +941,12 @@ export class DashboardServer {
       hourlyVolume,
       topUsers,
       apiHealth: info.apis && info.apis.length > 0
-        ? info.apis.map(api => ({ name: api.name, avgLatencyMs: 0, uptime: 1.0, status: 'healthy' }))
+        ? info.apis.map(api => ({
+            name: api.name,
+            avgLatencyMs: api.avgLatencyMs ?? 0,
+            uptime: api.uptime ?? 1.0,
+            status: api.status || 'unknown',
+          }))
         : [{ name: 'Bot Backend', avgLatencyMs: 0, uptime: 1.0, status: 'healthy' }],
       recentErrors,
     };

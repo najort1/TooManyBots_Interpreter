@@ -33,6 +33,7 @@ import {
 import { cleanupAuthSignalSessions, getAuthStateStorageStats, useSqliteAuthState } from './db/authState.js';
 import { getFlowBotType, loadFlows } from './engine/flowLoader.js';
 import { parseMessage } from './engine/messageParser.js';
+import { getApiMetrics, extractApiName } from './engine/apiMetrics.js';
 import {
   handleIncoming,
   getEngineRuntimeStats,
@@ -2553,10 +2554,17 @@ async function startDashboardServer() {
       apis: getActiveFlows()
         .flatMap(flow => flow.blocks || [])
         ?.filter(b => b.type === 'http-request')
-        .map(b => ({
-          name: extractApiHostFromTemplateUrl(b.config?.url),
-          url: b.config?.url || 'Desconhecida',
-        })) || []
+        .map(b => {
+          const apiName = extractApiHostFromTemplateUrl(b.config?.url);
+          const metrics = getApiMetrics(apiName);
+          return {
+            name: apiName,
+            url: b.config?.url || 'Desconhecida',
+            avgLatencyMs: metrics?.avgLatencyMs ?? 0,
+            uptime: metrics?.uptime ?? 1.0,
+            status: metrics ? (metrics.healthy ? 'healthy' : 'degraded') : 'unknown',
+          };
+        }) || []
     }),
     getFlowBlocks: () => getDashboardFlow()?.blocks ?? [],
     getContactName: (jid) => {
