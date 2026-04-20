@@ -1,14 +1,8 @@
+import { normalizeInt } from '../utils/normalization.js';
+
 function safeAverage(total, count) {
   if (!Number.isFinite(total) || !Number.isFinite(count) || count <= 0) return 0;
   return Number((total / count).toFixed(2));
-}
-
-function normalizeInt(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  const normalized = Math.floor(n);
-  if (normalized < min) return fallback;
-  return Math.min(normalized, max);
 }
 
 function decMapCounter(map, key) {
@@ -28,13 +22,17 @@ export function createTaskScheduler({
   warnThreshold = 5000,
   onWarn = null,
 } = {}) {
-  const normalizedGlobalConcurrency = normalizeInt(globalConcurrency, 16, { min: 1, max: 256 });
-  const normalizedMaxPerJid = normalizeInt(maxPerJid, 1, { min: 1, max: 64 });
-  const normalizedMaxPerFlowPath = normalizeInt(maxPerFlowPath, 4, { min: 1, max: 256 });
-  const normalizedMaxQueueSize = normalizeInt(maxQueueSize, 20000, { min: 1, max: 500000 });
+  const intOptions = { rounding: 'floor', clampMin: false, clampMax: true };
+  const normalizedGlobalConcurrency = normalizeInt(globalConcurrency, 16, { ...intOptions, min: 1, max: 256 });
+  const normalizedMaxPerJid = normalizeInt(maxPerJid, 1, { ...intOptions, min: 1, max: 64 });
+  const normalizedMaxPerFlowPath = normalizeInt(maxPerFlowPath, 4, { ...intOptions, min: 1, max: 256 });
+  const normalizedMaxQueueSize = normalizeInt(maxQueueSize, 20000, { ...intOptions, min: 1, max: 500000 });
   const normalizedWarnThreshold = Math.max(
     1,
-    Math.min(normalizedMaxQueueSize, normalizeInt(warnThreshold, 5000, { min: 1, max: normalizedMaxQueueSize }))
+    Math.min(
+      normalizedMaxQueueSize,
+      normalizeInt(warnThreshold, 5000, { ...intOptions, min: 1, max: normalizedMaxQueueSize })
+    )
   );
 
   const startedAt = Date.now();

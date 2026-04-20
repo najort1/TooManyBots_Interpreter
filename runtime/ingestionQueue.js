@@ -1,14 +1,18 @@
+import { normalizeInt } from '../utils/normalization.js';
+
 function safeAverage(total, count) {
   if (!Number.isFinite(total) || !Number.isFinite(count) || count <= 0) return 0;
   return Number((total / count).toFixed(2));
 }
 
 function normalizePositiveInt(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  const normalized = Math.floor(n);
-  if (normalized < min) return fallback;
-  return Math.min(normalized, max);
+  return normalizeInt(value, fallback, {
+    min,
+    max,
+    rounding: 'floor',
+    clampMin: false,
+    clampMax: true,
+  });
 }
 
 export function createIngestionQueue({

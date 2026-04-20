@@ -1,16 +1,11 @@
-function normalizePositiveInt(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  const normalized = Math.floor(n);
-  if (normalized < min || normalized > max) return fallback;
-  return normalized;
-}
+import { normalizeInt, normalizeNumberInRange } from '../utils/normalization.js';
 
-function normalizeNumberInRange(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  if (n < min || n > max) return fallback;
-  return n;
+function normalizePositiveInt(value, fallback, { min = 1, max = Number.MAX_SAFE_INTEGER } = {}) {
+  return normalizeInt(value, fallback, {
+    min,
+    max,
+    rounding: 'floor',
+  });
 }
 
 function applyJitter(delayMs, jitterRatio) {

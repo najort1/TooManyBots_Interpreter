@@ -1,4 +1,5 @@
 import { listConversationEvents, onConversationEvent } from '../db/index.js';
+import { delay } from '../utils/async.js';
 
 export function getMessageDebugInfo(msg, type) {
   const key = msg.key ?? {};
@@ -259,7 +260,7 @@ export function mergeChatsIntoContactCache(contactCache, chats) {
 export async function waitForContactCacheWarmup(contactCache, timeoutMs = 7000) {
   const started = Date.now();
   while (contactCache.size === 0 && (Date.now() - started) < timeoutMs) {
-    await new Promise(resolve => setTimeout(resolve, 250));
+    await delay(250);
   }
 }
 
