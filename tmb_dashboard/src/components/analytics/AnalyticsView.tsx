@@ -449,7 +449,7 @@ export function AnalyticsView({
                     <div key={`${item.name}-${index}`} className="flex items-start justify-between gap-3 border-b border-[#ebf1f8] py-2 last:border-b-0">
                       <div>
                         <strong className="block text-[0.85rem]">{item.name}</strong>
-                        <p className="mt-1 text-[0.76rem] text-slate-500">{item.avgLatencyMs}ms � {(item.uptime * 100).toFixed(0)}% uptime</p>
+                        <p className="mt-1 text-[0.76rem] text-slate-500">{item.avgLatencyMs}ms · {(item.uptime * 100).toFixed(0)}% uptime</p>
                       </div>
                       <span className={item.status === 'healthy' ? 'font-bold text-[#0f766e]' : 'font-bold text-[#c62828]'}>
                         {item.status === 'healthy' ? 'OK' : 'ALERTA'}
