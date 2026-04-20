@@ -165,7 +165,7 @@ export function ObservabilityView({
           <ChartCanvas config={wsChartConfig} height={260} />
         </article>
 
-        <article className={panelClass}>
+        <article className={`${panelClass} xl:col-start-3 xl:row-start-1`}>
           <header className="mb-3">
             <h3 className="text-base font-extrabold">Saude do runtime</h3>
           </header>
@@ -189,7 +189,7 @@ export function ObservabilityView({
           </div>
         </article>
 
-        <article className={panelClass}>
+        <article className={`${panelClass} xl:col-start-3 xl:row-start-2`}>
           <header className="mb-3">
             <h3 className="text-base font-extrabold">Filas e backlog</h3>
           </header>
@@ -209,11 +209,11 @@ export function ObservabilityView({
           </div>
         </article>
 
-        <article className={panelClass}>
+        <article className={`${panelClass} xl:col-start-3 xl:row-start-3`}>
           <header className="mb-3">
             <h3 className="text-base font-extrabold">Erros por subsistema</h3>
           </header>
-          <div className="max-h-[260px] overflow-auto">
+          <div className="max-h-[260px] overflow-auto xl:max-h-none">
             {handlers.length === 0 ? (
               <p className="text-sm text-slate-500">Sem erros por handler no nivel atual.</p>
             ) : (
@@ -227,11 +227,11 @@ export function ObservabilityView({
           </div>
         </article>
 
-        <article className={`${panelClass} xl:col-span-2`}>
+        <article className={`${panelClass} flex flex-col xl:col-span-2 xl:row-start-2 xl:row-span-2`}>
           <header className="mb-3">
             <h3 className="text-base font-extrabold">Saude do banco local</h3>
           </header>
-          <div className="max-h-[260px] overflow-auto rounded-xl border border-[#e5edf7]">
+          <div className="min-h-[260px] flex-1 overflow-auto rounded-xl border border-[#e5edf7]">
             <table className="w-full border-collapse text-[0.8rem]">
               <thead>
                 <tr>
