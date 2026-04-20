@@ -17,6 +17,18 @@ import path from 'path';
 import zlib from 'zlib';
 import { fileURLToPath } from 'url';
 import { SESSION_STATUS } from '../config/constants.js';
+import { createDbRuntimeState, normalizeDbRuntimeConfig } from './runtimeConfig.js';
+import {
+  mapBroadcastContactRow,
+  mapConversationEventRow,
+  mapSessionRow,
+  normalizeMetadata,
+  normalizePersistedDisplayName,
+  normalizeRecipientList,
+  normalizeSessionScope,
+  safeParseJson,
+  toJsonPath,
+} from './helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR   = path.join(__dirname, '..', 'data');
@@ -39,105 +51,7 @@ const conversationEventListeners = new Set();
 let eventBuffer = [];
 let eventFlushTimer = null;
 let eventInsertTx = null;
-const dbRuntimeState = {
-  config: {
-    splitDatabases: true,
-    eventBatchingEnabled: true,
-    eventBatchFlushMs: 1000,
-    eventBatchSize: 200,
-    retentionDays: 30,
-    retentionArchiveEnabled: true,
-    maintenanceEnabled: true,
-    maintenanceIntervalMinutes: 30,
-    maintenanceCheckpointMode: 'TRUNCATE',
-    maintenanceAnalyzeIntervalHours: 24,
-    maintenanceVacuumIntervalHours: 168,
-    maintenanceIntegrityCheckIntervalHours: 24,
-    pragmaBusyTimeoutMs: 5000,
-    pragmaWalAutoCheckpointPages: 1000,
-    pragmaTempStoreMemory: true,
-    pragmaCacheSizeKb: 65536,
-    pragmaMmapSizeMb: 256,
-    pragmaRuntimeSynchronous: 'NORMAL',
-    pragmaAnalyticsSynchronous: 'NORMAL',
-    maxVariablesBytesWarn: 524288,
-  },
-  maintenance: {
-    inProgress: false,
-    lastRunAt: 0,
-    lastRunReason: '',
-    lastDurationMs: 0,
-    lastStatus: 'never',
-    lastError: '',
-    lastSummary: null,
-    lastRetentionAt: 0,
-    lastAnalyzeAt: 0,
-    lastVacuumAt: 0,
-    lastIntegrityCheckAt: 0,
-  },
-};
-
-function normalizeBoolean(value, fallback = false) {
-  if (typeof value === 'boolean') return value;
-  if (typeof value === 'number') return value !== 0;
-  if (typeof value === 'string') {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on') return true;
-    if (normalized === 'false' || normalized === '0' || normalized === 'no' || normalized === 'off') return false;
-  }
-  return fallback;
-}
-
-function normalizeInt(value, fallback, { min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER } = {}) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  const normalized = Math.trunc(n);
-  if (normalized < min || normalized > max) return fallback;
-  return normalized;
-}
-
-function normalizeSynchronous(value, fallback = 'NORMAL') {
-  const normalized = String(value ?? fallback).trim().toUpperCase();
-  if (normalized === 'OFF' || normalized === 'NORMAL' || normalized === 'FULL' || normalized === 'EXTRA') {
-    return normalized;
-  }
-  return fallback;
-}
-
-function normalizeCheckpointMode(value, fallback = 'TRUNCATE') {
-  const normalized = String(value ?? fallback).trim().toUpperCase();
-  if (normalized === 'PASSIVE' || normalized === 'FULL' || normalized === 'RESTART' || normalized === 'TRUNCATE') {
-    return normalized;
-  }
-  return fallback;
-}
-
-function normalizeDbRuntimeConfig(input = {}) {
-  const base = dbRuntimeState.config;
-  const cfg = { ...base, ...(input && typeof input === 'object' ? input : {}) };
-  return {
-    splitDatabases: normalizeBoolean(cfg.splitDatabases, true),
-    eventBatchingEnabled: normalizeBoolean(cfg.eventBatchingEnabled, true),
-    eventBatchFlushMs: normalizeInt(cfg.eventBatchFlushMs, base.eventBatchFlushMs, { min: 100, max: 60000 }),
-    eventBatchSize: normalizeInt(cfg.eventBatchSize, base.eventBatchSize, { min: 10, max: 5000 }),
-    retentionDays: normalizeInt(cfg.retentionDays, base.retentionDays, { min: 1, max: 3650 }),
-    retentionArchiveEnabled: normalizeBoolean(cfg.retentionArchiveEnabled, true),
-    maintenanceEnabled: normalizeBoolean(cfg.maintenanceEnabled, true),
-    maintenanceIntervalMinutes: normalizeInt(cfg.maintenanceIntervalMinutes, base.maintenanceIntervalMinutes, { min: 5, max: 1440 }),
-    maintenanceCheckpointMode: normalizeCheckpointMode(cfg.maintenanceCheckpointMode, base.maintenanceCheckpointMode),
-    maintenanceAnalyzeIntervalHours: normalizeInt(cfg.maintenanceAnalyzeIntervalHours, base.maintenanceAnalyzeIntervalHours, { min: 1, max: 720 }),
-    maintenanceVacuumIntervalHours: normalizeInt(cfg.maintenanceVacuumIntervalHours, base.maintenanceVacuumIntervalHours, { min: 6, max: 2160 }),
-    maintenanceIntegrityCheckIntervalHours: normalizeInt(cfg.maintenanceIntegrityCheckIntervalHours, base.maintenanceIntegrityCheckIntervalHours, { min: 1, max: 720 }),
-    pragmaBusyTimeoutMs: normalizeInt(cfg.pragmaBusyTimeoutMs, base.pragmaBusyTimeoutMs, { min: 0, max: 120000 }),
-    pragmaWalAutoCheckpointPages: normalizeInt(cfg.pragmaWalAutoCheckpointPages, base.pragmaWalAutoCheckpointPages, { min: 100, max: 200000 }),
-    pragmaTempStoreMemory: normalizeBoolean(cfg.pragmaTempStoreMemory, true),
-    pragmaCacheSizeKb: normalizeInt(cfg.pragmaCacheSizeKb, base.pragmaCacheSizeKb, { min: 4096, max: 1048576 }),
-    pragmaMmapSizeMb: normalizeInt(cfg.pragmaMmapSizeMb, base.pragmaMmapSizeMb, { min: 0, max: 4096 }),
-    pragmaRuntimeSynchronous: normalizeSynchronous(cfg.pragmaRuntimeSynchronous, base.pragmaRuntimeSynchronous),
-    pragmaAnalyticsSynchronous: normalizeSynchronous(cfg.pragmaAnalyticsSynchronous, base.pragmaAnalyticsSynchronous),
-    maxVariablesBytesWarn: normalizeInt(cfg.maxVariablesBytesWarn, base.maxVariablesBytesWarn, { min: 65536, max: 10485760 }),
-  };
-}
+const dbRuntimeState = createDbRuntimeState();
 
 function safePragma(database, sql) {
   try {
@@ -239,48 +153,12 @@ function rebuildSessionsTableIfNeeded() {
   migrate();
 }
 
-function normalizeSessionScope(scope = null) {
-  if (typeof scope === 'string') {
-    return {
-      flowPath: String(scope || '').trim(),
-      botType: null,
-    };
-  }
-
-  if (scope && typeof scope === 'object') {
-    const flowPath = String(scope.flowPath ?? '').trim();
-    const botTypeRaw = String(scope.botType ?? '').trim().toLowerCase();
-    const botType = botTypeRaw === 'command' ? 'command' : (botTypeRaw ? 'conversation' : null);
-    return { flowPath, botType };
-  }
-
-  return { flowPath: '', botType: null };
-}
-
-function toJsonPath(key) {
-  const safe = String(key ?? '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  return `$."${safe}"`;
-}
-
 function getDynamicStatement(sql) {
   let stmt = dynamicStatementCache.get(sql);
   if (stmt) return stmt;
   stmt = db.prepare(sql);
   dynamicStatementCache.set(sql, stmt);
   return stmt;
-}
-
-function mapSessionRow(row) {
-  return {
-    jid: row.jid,
-    flowPath: row.flow_path,
-    botType: row.bot_type,
-    blockIndex: row.block_index,
-    variables: JSON.parse(row.variables),
-    status: row.status,
-    waitingFor: row.waiting_for,
-    updatedAt: Number(row.updated_at) || 0,
-  };
 }
 
 function applyMainPragmas() {
@@ -935,7 +813,7 @@ export function getStmts() {
 }
 
 export function configureDatabaseRuntime(input = {}) {
-  dbRuntimeState.config = normalizeDbRuntimeConfig(input);
+  dbRuntimeState.config = normalizeDbRuntimeConfig(input, dbRuntimeState.config);
   if (db) {
     applyMainPragmas();
     applyAnalyticsPragmas();
@@ -1509,19 +1387,6 @@ export function getActiveSessionsPage(scope = null, {
   return rows.map(mapSessionRow);
 }
 
-function safeParseJson(text, fallback = {}) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return fallback;
-  }
-}
-
-function normalizeMetadata(metadata) {
-  if (!metadata || typeof metadata !== 'object') return {};
-  return metadata;
-}
-
 export function addConversationEvent({
   occurredAt = Date.now(),
   eventType = 'message',
@@ -1568,19 +1433,6 @@ export function addConversationEvent({
       // ignore listener errors
     }
   }
-}
-
-function mapConversationEventRow(row) {
-  return {
-    id: row.id,
-    occurredAt: row.occurred_at,
-    eventType: row.event_type,
-    direction: row.direction,
-    jid: row.jid,
-    flowPath: row.flow_path,
-    messageText: row.message_text,
-    metadata: safeParseJson(row.metadata, {}),
-  };
 }
 
 export function listConversationEvents(limit = 200) {
@@ -1809,14 +1661,6 @@ export function listConversationSessionEndsByReason({ from, to, endReason, flowP
   return rows.map(row => Number(row.ended_at) || 0).filter(Boolean);
 }
 
-function mapBroadcastContactRow(row) {
-  return {
-    jid: String(row?.jid || '').trim(),
-    name: String(row?.display_name || '').trim(),
-    lastInteractionAt: Number(row?.last_interaction_at) || 0,
-  };
-}
-
 export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
   ensureEventBufferFlushedForRead();
   const normalizedLimit = Math.max(1, Math.min(5000, Number(limit) || 200));
@@ -1828,17 +1672,6 @@ export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
   return rows
     .map(mapBroadcastContactRow)
     .filter(row => row.jid);
-}
-
-function normalizePersistedDisplayName(value, fallbackJid = '') {
-  const raw = String(value ?? '').trim();
-  if (!raw) return '';
-  const cleaned = raw.replace(/^~+\s*/, '').trim();
-  const resolved = cleaned || raw;
-  if (!resolved) return '';
-  const normalizedJid = String(fallbackJid ?? '').trim();
-  if (normalizedJid && resolved === normalizedJid) return '';
-  return resolved.slice(0, 180);
 }
 
 export function upsertContactDisplayName({
@@ -1887,19 +1720,6 @@ export function listContactDisplayNames(limit = 5000) {
       };
     })
     .filter(Boolean);
-}
-
-function normalizeRecipientList(recipients = []) {
-  if (!Array.isArray(recipients)) return [];
-  const seen = new Set();
-  const result = [];
-  for (const item of recipients) {
-    const jid = String(item ?? '').trim();
-    if (!jid || seen.has(jid)) continue;
-    seen.add(jid);
-    result.push(jid);
-  }
-  return result;
 }
 
 export function createBroadcastDispatch({
