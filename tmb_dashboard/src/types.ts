@@ -1,6 +1,7 @@
 export type DashboardMode = 'CONVERSATION' | 'COMMAND';
+export type DashboardTelemetryLevel = 'minimum' | 'operational' | 'diagnostic' | 'verbose';
 
-export type DashboardView = 'setup' | 'analytics' | 'handoff' | 'broadcast' | 'sessions' | 'settings' | 'flows' | 'dbMaintenance';
+export type DashboardView = 'setup' | 'analytics' | 'observability' | 'handoff' | 'broadcast' | 'sessions' | 'settings' | 'flows' | 'dbMaintenance';
 
 export interface RuntimeHealth {
   status: string;
@@ -13,6 +14,100 @@ export interface RuntimeHealth {
   flowPathsByMode?: {
     conversation?: string[];
     command?: string[];
+  };
+}
+
+export interface ObservabilityRouteMetric {
+  route: string;
+  count: number;
+  errors: number;
+  avgMs: number;
+  p95Ms: number;
+  maxMs: number;
+  lastStatusCode: number;
+  lastAt: number;
+}
+
+export interface ObservabilityDbQueryMetric {
+  query: string;
+  count: number;
+  avgMs: number;
+  p95Ms: number;
+  maxMs: number;
+  lastAt: number;
+}
+
+export interface ObservabilityHandlerErrorMetric {
+  handlerType: string;
+  failed: number;
+  count: number;
+}
+
+export interface ObservabilitySnapshot {
+  now: number;
+  uptimeMs: number;
+  telemetryLevel: DashboardTelemetryLevel;
+  process: {
+    pid: number;
+    memory: {
+      rss: number;
+      heapTotal: number;
+      heapUsed: number;
+      external: number;
+      arrayBuffers?: number;
+    };
+    cpuUsageMicros: {
+      user: number;
+      system: number;
+    };
+    loadAverage: number[];
+    cpuCount: number;
+  };
+  http: {
+    totalRequests: number;
+    totalErrors: number;
+    routes: ObservabilityRouteMetric[];
+  };
+  sqlite: {
+    queries: ObservabilityDbQueryMetric[];
+  };
+  websocket: {
+    connectedClients: number;
+    peakConnectedClients: number;
+    connectionsOpened: number;
+    connectionsClosed: number;
+    eventsSent: number;
+    immediateEventsSent: number;
+    batchedEventsSent: number;
+    batchesSent: number;
+    bytesSent: number;
+    eventsPerMinute: number;
+    eventsPerMinuteSeries?: Array<{
+      minuteTs: number;
+      events: number;
+    }>;
+    lastSentAt: number;
+  };
+  runtime: {
+    messageLatencyAvgMs: number;
+    messageLatencyP95Ms: number;
+    sqliteQueryAvgMs: number;
+    backlog: {
+      ingestionQueue: number;
+      dispatchQueue: number;
+    };
+    sessionsActive: number;
+    errorsByHandler: ObservabilityHandlerErrorMetric[];
+    errorsByHandlerSummary?: {
+      totalFailed: number;
+      totalProcessed: number;
+    };
+    socketReconnectRatePerDay: number;
+    broadcastThroughputPerMinute: number;
+    reconnectPending: boolean;
+  };
+  dashboard?: {
+    isolationMode?: string;
   };
 }
 
@@ -161,6 +256,8 @@ export interface BroadcastSendProgress {
 export interface RuntimeSettings {
   autoReloadFlows: boolean;
   broadcastSendIntervalMs?: number;
+  dashboardTelemetryLevel?: DashboardTelemetryLevel;
+  dashboardIsolationMode?: string;
   runtimeMode?: string;
   dbMaintenanceEnabled?: boolean;
   dbMaintenanceIntervalMinutes?: number;
