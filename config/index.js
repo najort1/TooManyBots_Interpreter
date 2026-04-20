@@ -20,6 +20,8 @@ const MODE_LOG_LEVEL = {
 
 const VALID_MODES = new Set(Object.values(RUNTIME_MODE));
 const VALID_BOT_RUNTIME_MODES = new Set(Object.values(BOT_RUNTIME_MODE));
+const DASHBOARD_TELEMETRY_LEVELS = new Set(['minimum', 'operational', 'diagnostic', 'verbose']);
+const DASHBOARD_ISOLATION_MODES = new Set(['inline', 'process']);
 
 export const config = {
   botRuntimeMode: BOT_RUNTIME_MODE.SINGLE_FLOW,
@@ -28,6 +30,7 @@ export const config = {
   runtimeMode: RUNTIME_MODE.PRODUCTION,
   autoReloadFlows: true,
   broadcastSendIntervalMs: 250,
+  dashboardTelemetryLevel: 'operational',
   ingestionConcurrency: 8,
   ingestionQueueMax: 5000,
   ingestionQueueWarnThreshold: 1000,
@@ -71,6 +74,7 @@ export const config = {
   groupWhitelistJids: [],
   dashboardHost: '127.0.0.1',
   dashboardPort: 8787,
+  dashboardIsolationMode: 'inline',
 };
 
 const USER_CONFIG_FILE = path.resolve('./config.user.json');
@@ -99,6 +103,18 @@ function deriveRuntimeModeFromLegacy(input) {
   if (Boolean(input.testMode)) return RUNTIME_MODE.RESTRICTED_TEST;
   if (Boolean(input.debugMode)) return RUNTIME_MODE.DEVELOPMENT;
   return RUNTIME_MODE.PRODUCTION;
+}
+
+function normalizeDashboardTelemetryLevel(value) {
+  const level = String(value ?? '').trim().toLowerCase();
+  if (DASHBOARD_TELEMETRY_LEVELS.has(level)) return level;
+  return null;
+}
+
+function normalizeDashboardIsolationMode(value) {
+  const mode = String(value ?? '').trim().toLowerCase();
+  if (DASHBOARD_ISOLATION_MODES.has(mode)) return mode;
+  return null;
 }
 
 function toPortNumber(value, fallback) {
@@ -185,6 +201,9 @@ function normalizeConfigShape(input) {
     normalized.broadcastSendIntervalMs,
     config.broadcastSendIntervalMs
   );
+  normalized.dashboardTelemetryLevel =
+    normalizeDashboardTelemetryLevel(normalized.dashboardTelemetryLevel) ??
+    config.dashboardTelemetryLevel;
   normalized.ingestionConcurrency = toIntInRange(
     normalized.ingestionConcurrency,
     config.ingestionConcurrency,
@@ -363,6 +382,9 @@ function normalizeConfigShape(input) {
 
   normalized.dashboardHost = String(normalized.dashboardHost ?? config.dashboardHost).trim() || config.dashboardHost;
   normalized.dashboardPort = toPortNumber(normalized.dashboardPort, config.dashboardPort);
+  normalized.dashboardIsolationMode =
+    normalizeDashboardIsolationMode(normalized.dashboardIsolationMode) ??
+    config.dashboardIsolationMode;
 
   normalized.testMode = normalized.runtimeMode === RUNTIME_MODE.RESTRICTED_TEST;
   normalized.debugMode = normalized.runtimeMode === RUNTIME_MODE.DEVELOPMENT;
@@ -391,6 +413,7 @@ function sanitizeConfigForSave(input) {
     runtimeMode: normalized.runtimeMode,
     autoReloadFlows: normalized.autoReloadFlows,
     broadcastSendIntervalMs: normalized.broadcastSendIntervalMs,
+    dashboardTelemetryLevel: normalized.dashboardTelemetryLevel,
     ingestionConcurrency: normalized.ingestionConcurrency,
     ingestionQueueMax: normalized.ingestionQueueMax,
     ingestionQueueWarnThreshold: normalized.ingestionQueueWarnThreshold,
@@ -434,6 +457,7 @@ function sanitizeConfigForSave(input) {
     groupWhitelistJids: normalized.groupWhitelistJids,
     dashboardHost: normalized.dashboardHost,
     dashboardPort: normalized.dashboardPort,
+    dashboardIsolationMode: normalized.dashboardIsolationMode,
   };
 }
 
