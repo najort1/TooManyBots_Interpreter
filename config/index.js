@@ -1,5 +1,6 @@
 ﻿import fs from 'fs';
 import path from 'path';
+import { normalizeInt } from '../utils/normalization.js';
 
 export const RUNTIME_MODE = {
   PRODUCTION: 'production',
@@ -131,11 +132,11 @@ function toNonNegativeMs(value, fallback) {
 }
 
 function toIntInRange(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  const normalized = Math.floor(n);
-  if (normalized < min || normalized > max) return fallback;
-  return normalized;
+  return normalizeInt(value, fallback, {
+    min,
+    max,
+    rounding: 'floor',
+  });
 }
 
 function toNumberInRange(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER } = {}) {
