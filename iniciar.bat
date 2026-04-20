@@ -135,22 +135,16 @@ echo   OK: better-sqlite3 carregado com sucesso.
 goto :step5
 
 :: ============================================================
-::  ETAPA 5 - Verificar/compilar dashboard
+::  ETAPA 5 - Compilar dashboard (sempre)
 :: ============================================================
 :step5
 echo.
-echo [5/6] Verificando dashboard...
+echo [5/6] Compilando dashboard...
 
 set "DASHBOARD_DIR=%PROJECT_DIR%\tmb_dashboard"
 set "DASHBOARD_DIST=%DASHBOARD_DIR%\dist"
 
-if not exist "%DASHBOARD_DIST%\index.html" goto :dash_build
-echo   OK: Dashboard ja compilado.
-goto :step6
-
-:dash_build
-echo   Dashboard nao compilado. Preparando build...
-
+:: Instalar dependencias do dashboard se necessario
 if exist "%DASHBOARD_DIR%\node_modules" goto :dash_build_run
 
 echo   Instalando dependencias do dashboard...
@@ -162,7 +156,7 @@ if !DASH_INSTALL! neq 0 goto :err_dash_install
 echo   Dependencias do dashboard instaladas.
 
 :dash_build_run
-echo   Compilando dashboard ^(^vite build^)...
+echo   Executando build do dashboard ^(^vite build^)...
 pushd "%DASHBOARD_DIR%"
 call npm run build
 set "DASH_BUILD=!errorlevel!"
