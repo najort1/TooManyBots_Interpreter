@@ -27,6 +27,9 @@ interface BroadcastViewProps {
   onPickImage: (file: File) => void;
   onClearImage: () => void;
   onSend: () => void;
+  onPause: () => void;
+  onResume: () => void;
+  onCancel: () => void;
 }
 
 const buttonBase = buttonBaseClass;
@@ -75,6 +78,9 @@ export function BroadcastView({
   onPickImage,
   onClearImage,
   onSend,
+  onPause,
+  onResume,
+  onCancel,
 }: BroadcastViewProps) {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const selected = useMemo(() => new Set(selectedJids), [selectedJids]);
@@ -90,6 +96,22 @@ export function BroadcastView({
   const progressStatus = sendProgress?.status || 'idle';
   const progressSending = busySend || progressStatus === 'sending' || progressStatus === 'started';
   const progressCompleted = progressStatus === 'completed' && progressAttempted > 0;
+  const progressCancelled = Math.max(0, Number(sendProgress?.cancelled || 0));
+  const controlStatus = sendProgress?.controlStatus || (progressSending ? 'running' : (progressCompleted ? 'completed' : 'running'));
+  const isPausedCampaign = controlStatus === 'paused';
+  const isCancellingCampaign = controlStatus === 'cancelling';
+  const isActiveCampaign = progressSending || isPausedCampaign || isCancellingCampaign;
+  const controlStatusLabel = isCancellingCampaign
+    ? 'Cancelando...'
+    : isPausedCampaign
+      ? 'Pausada'
+      : progressSending
+        ? 'Em execução'
+        : controlStatus === 'cancelled'
+          ? 'Cancelada'
+          : progressCompleted
+            ? 'Concluída'
+            : 'Pronta';
   const currentCampaignId = Math.max(0, Number(sendProgress?.campaignId || 0));
   const progressTargetRatio = clamp01(progressPercent / 100);
   const progressRafRef = useRef<number | null>(null);
@@ -467,17 +489,94 @@ export function BroadcastView({
               </div>
             ) : null}
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
             <p className="broadcast-flight-pill">
               <strong>{progressSent}</strong> enviados
             </p>
             <p className="broadcast-flight-pill">
               <strong>{progressRemaining}</strong> faltando
             </p>
-            <p className="broadcast-flight-pill col-span-2 sm:col-span-1">
+            <p className="broadcast-flight-pill">
               <strong>{progressFailed}</strong> falhas
             </p>
+            <p className="broadcast-flight-pill">
+              <strong>{progressCancelled}</strong> cancelados
+            </p>
           </div>
+
+          {(isActiveCampaign || controlStatus === 'cancelled') ? (
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <span
+                className={[
+                  'inline-flex h-7 items-center rounded-full px-3 text-xs font-bold',
+                  isPausedCampaign
+                    ? 'bg-[#fff4cc] text-[#8a5a00]'
+                    : isCancellingCampaign || controlStatus === 'cancelled'
+                      ? 'bg-[#ffe0e3] text-[#9c1b25]'
+                      : 'bg-[#d8ebff] text-[#1d4e89]',
+                ].join(' ')}
+                title="Estado da campanha"
+              >
+                {controlStatusLabel}
+              </span>
+              <button
+                type="button"
+                className={`${buttonBase} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
+                onClick={onPause}
+                disabled={!progressSending || isPausedCampaign || isCancellingCampaign}
+              >
+                <i className="fa-solid fa-pause" aria-hidden="true" />
+                Pausar
+              </button>
+              <button
+                type="button"
+                className={`${buttonBase} border-[#b9d4a8] bg-[#eef9e5] text-[#2c6b0f] hover:bg-[#e0f2cf]`}
+                onClick={onResume}
+                disabled={!isPausedCampaign}
+              >
+                <i className="fa-solid fa-play" aria-hidden="true" />
+                Retomar
+              </button>
+              <button
+                type="button"
+                className={`${buttonBase} border-[#f2c4ca] bg-[#fff5f5] text-[#b4232c] hover:bg-[#ffe4e6]`}
+                onClick={onCancel}
+                disabled={!isActiveCampaign || isCancellingCampaign}
+              >
+                <i className="fa-solid fa-stop" aria-hidden="true" />
+                Cancelar
+              </button>
+            </div>
+          ) : null}
+
+          {sendProgress?.metrics && (progressSending || progressCompleted) ? (
+            <div className="mt-3 grid grid-cols-2 gap-2 rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-xs text-slate-600 sm:grid-cols-4">
+              <span>
+                <strong className="block text-[0.78rem] text-slate-700">
+                  {sendProgress.metrics.throughputPerSecond.toFixed(2)}/s
+                </strong>
+                throughput
+              </span>
+              <span>
+                <strong className="block text-[0.78rem] text-slate-700">
+                  {Math.round(sendProgress.metrics.avgSendMs)} ms
+                </strong>
+                latência média
+              </span>
+              <span>
+                <strong className="block text-[0.78rem] text-slate-700">
+                  {Math.round(sendProgress.metrics.p95SendMs)} ms
+                </strong>
+                p95 envio
+              </span>
+              <span>
+                <strong className="block text-[0.78rem] text-slate-700">
+                  {sendProgress.metrics.failuresPerMinute}
+                </strong>
+                falhas/min
+              </span>
+            </div>
+          ) : null}
         </section>
 
         <label className="mb-2 block text-xs font-bold uppercase tracking-[0.06em] text-slate-500" htmlFor="broadcast-message">

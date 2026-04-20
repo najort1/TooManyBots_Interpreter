@@ -21,6 +21,10 @@ import {
   postClearFlowSessions,
   postClearRuntimeCache,
   postBroadcastSend,
+  postBroadcastPause,
+  postBroadcastResume,
+  postBroadcastCancel,
+  fetchBroadcastStatus,
   postResetSessionByJid,
   postRuntimeSettings,
   postDbMaintenanceConfig,
@@ -194,6 +198,32 @@ function readMetadataNumber(log: EventLog, key: string, fallback = 0): number {
   return Number.isFinite(value) ? value : fallback;
 }
 
+function normalizeBroadcastControlStatus(raw: string): BroadcastSendProgress['controlStatus'] {
+  const value = String(raw || '').toLowerCase();
+  if (value === 'paused' || value === 'cancelling' || value === 'cancelled' || value === 'completed') {
+    return value;
+  }
+  return 'running';
+}
+
+function toBroadcastMetrics(raw: unknown): BroadcastSendProgress['metrics'] {
+  if (!raw || typeof raw !== 'object') return null;
+  const metrics = raw as Record<string, unknown>;
+  const numeric = (key: string): number => {
+    const value = Number(metrics[key]);
+    return Number.isFinite(value) ? value : 0;
+  };
+  return {
+    avgSendMs: numeric('avgSendMs'),
+    maxSendMs: numeric('maxSendMs'),
+    p95SendMs: numeric('p95SendMs'),
+    throughputPerSecond: numeric('throughputPerSecond'),
+    failuresPerMinute: numeric('failuresPerMinute'),
+    elapsedMs: numeric('elapsedMs'),
+    startedAt: numeric('startedAt'),
+  };
+}
+
 function toBroadcastProgress(log: EventLog): BroadcastSendProgress | null {
   if (String(log.eventType || '').trim().toLowerCase() !== 'broadcast-send-progress') {
     return null;
@@ -202,7 +232,8 @@ function toBroadcastProgress(log: EventLog): BroadcastSendProgress | null {
   const attempted = Math.max(0, readMetadataNumber(log, 'attempted', 0));
   const sent = Math.max(0, readMetadataNumber(log, 'sent', 0));
   const failed = Math.max(0, readMetadataNumber(log, 'failed', 0));
-  const processed = Math.max(0, Math.min(attempted, readMetadataNumber(log, 'processed', sent + failed)));
+  const cancelled = Math.max(0, readMetadataNumber(log, 'cancelled', 0));
+  const processed = Math.max(0, Math.min(attempted, readMetadataNumber(log, 'processed', sent + failed + cancelled)));
   const remaining = Math.max(0, readMetadataNumber(log, 'remaining', attempted - processed));
   const percent = attempted > 0
     ? Math.max(0, Math.min(100, readMetadataNumber(log, 'percent', Math.round((processed / attempted) * 100))))
@@ -218,6 +249,9 @@ function toBroadcastProgress(log: EventLog): BroadcastSendProgress | null {
       ? 'failed'
       : (recipientStatusRaw === 'sent' ? 'sent' : '');
   const jid = String(log.jid || '').trim();
+  const controlStatus = normalizeBroadcastControlStatus(readMetadataText(log, 'controlStatus'));
+  const metadata = (log.metadata && typeof log.metadata === 'object') ? log.metadata as Record<string, unknown> : null;
+  const metrics = toBroadcastMetrics(metadata?.metrics);
 
   return {
     campaignId: Math.max(0, readMetadataNumber(log, 'campaignId', 0)),
@@ -225,11 +259,14 @@ function toBroadcastProgress(log: EventLog): BroadcastSendProgress | null {
     processed,
     sent,
     failed,
+    cancelled,
     remaining,
     percent,
     status,
+    controlStatus,
     recipientStatus,
     jid: jid || '',
+    metrics,
   };
 }
 
@@ -740,6 +777,36 @@ function App() {
     };
   }, [broadcastSearch, loadBroadcastContacts, showNotice, view]);
 
+  // Reatacha ao estado de uma campanha ja em andamento (reload/outro navegador).
+  useEffect(() => {
+    if (view !== 'broadcast') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const response = await fetchBroadcastStatus();
+        if (cancelled) return;
+        if (response?.active && response.campaign) {
+          const campaign = response.campaign;
+          activeBroadcastCampaignIdRef.current = campaign.campaignId || null;
+          setBroadcastProgress(campaign);
+          const controlStatus = campaign.controlStatus || 'running';
+          const stillRunning =
+            controlStatus === 'running' ||
+            controlStatus === 'paused' ||
+            controlStatus === 'cancelling';
+          busyBroadcastSendRef.current = stillRunning;
+          setBusyBroadcastSend(stillRunning);
+        }
+      } catch (error) {
+        if (shouldIgnoreRequestError(error)) return;
+        // Falha silenciosa: status e nao critico.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [view]);
+
   useEffect(() => {
     if (view !== 'settings') return;
     void loadDbInfo().catch(error => {
@@ -1147,9 +1214,11 @@ function App() {
       processed: 0,
       sent: 0,
       failed: 0,
+      cancelled: 0,
       remaining: estimatedAttempted,
       percent: 0,
       status: 'started',
+      controlStatus: 'running',
       recipientStatus: '',
       jid: '',
     });
@@ -1166,20 +1235,32 @@ function App() {
       });
       activeBroadcastCampaignIdRef.current = result.campaignId || null;
       setBroadcastLastResult(result);
+      const cancelledCount = Math.max(0, Number(result.cancelled) || 0);
+      const processedCount = Math.max(0, Math.min(result.attempted, result.sent + result.failed + cancelledCount));
+      const finalControlStatus: BroadcastSendProgress['controlStatus'] = cancelledCount > 0 ? 'cancelled' : 'completed';
       setBroadcastProgress({
         campaignId: result.campaignId,
         attempted: result.attempted,
-        processed: result.attempted,
+        processed: processedCount,
         sent: result.sent,
         failed: result.failed,
-        remaining: 0,
-        percent: result.attempted > 0 ? 100 : 0,
+        cancelled: cancelledCount,
+        remaining: Math.max(0, result.attempted - processedCount),
+        percent: result.attempted > 0 ? Math.min(100, Math.round((processedCount / result.attempted) * 100)) : 0,
         status: 'completed',
+        controlStatus: finalControlStatus,
         recipientStatus: '',
         jid: '',
+        metrics: result.metrics ?? null,
       });
-      showNotice(`Campanha enviada: ${result.sent}/${result.attempted} entregas.`);
-      if (result.failed === 0) {
+      if (cancelledCount > 0) {
+        showNotice(
+          `Campanha cancelada: ${result.sent}/${result.attempted} enviados, ${cancelledCount} pendente(s) cancelado(s).`
+        );
+      } else {
+        showNotice(`Campanha enviada: ${result.sent}/${result.attempted} entregas.`);
+      }
+      if (result.failed === 0 && cancelledCount === 0) {
         setBroadcastMessage('');
         setBroadcastImageDataUrl('');
         setBroadcastImagePreviewUrl('');
@@ -1188,7 +1269,12 @@ function App() {
     } catch (error) {
       activeBroadcastCampaignIdRef.current = null;
       setBroadcastProgress(null);
-      showNotice(`Falha ao enviar anúncio: ${String((error as Error)?.message || error)}`);
+      const message = String((error as Error)?.message || error);
+      if (message.includes('campaign-in-progress')) {
+        showNotice('Ja existe uma campanha em andamento. Aguarde ou cancele antes de iniciar outra.');
+      } else {
+        showNotice(`Falha ao enviar anúncio: ${message}`);
+      }
     } finally {
       busyBroadcastSendRef.current = false;
       setBusyBroadcastSend(false);
@@ -1202,6 +1288,46 @@ function App() {
     selectedBroadcastJids,
     showNotice,
   ]);
+
+  const applyBroadcastControlResult = useCallback(
+    (campaign: BroadcastSendProgress | null | undefined, fallbackMessage: string) => {
+      if (campaign) {
+        activeBroadcastCampaignIdRef.current = campaign.campaignId || activeBroadcastCampaignIdRef.current;
+        setBroadcastProgress(campaign);
+      }
+      if (fallbackMessage) {
+        showNotice(fallbackMessage);
+      }
+    },
+    [showNotice]
+  );
+
+  const handlePauseBroadcast = useCallback(async () => {
+    try {
+      const response = await postBroadcastPause();
+      applyBroadcastControlResult(response?.campaign, 'Campanha pausada.');
+    } catch (error) {
+      showNotice(`Falha ao pausar campanha: ${String((error as Error)?.message || error)}`);
+    }
+  }, [applyBroadcastControlResult, showNotice]);
+
+  const handleResumeBroadcast = useCallback(async () => {
+    try {
+      const response = await postBroadcastResume();
+      applyBroadcastControlResult(response?.campaign, 'Campanha retomada.');
+    } catch (error) {
+      showNotice(`Falha ao retomar campanha: ${String((error as Error)?.message || error)}`);
+    }
+  }, [applyBroadcastControlResult, showNotice]);
+
+  const handleCancelBroadcast = useCallback(async () => {
+    try {
+      const response = await postBroadcastCancel();
+      applyBroadcastControlResult(response?.campaign, 'Cancelamento solicitado. Aguardando finalizar o envio em curso...');
+    } catch (error) {
+      showNotice(`Falha ao cancelar campanha: ${String((error as Error)?.message || error)}`);
+    }
+  }, [applyBroadcastControlResult, showNotice]);
 
   const handleToggleAutoReload = useCallback(async (value: boolean) => {
     setBusySaveSettings(true);
@@ -1675,6 +1801,15 @@ function App() {
               }}
               onSend={() => {
                 void openBroadcastSendModal();
+              }}
+              onPause={() => {
+                void handlePauseBroadcast();
+              }}
+              onResume={() => {
+                void handleResumeBroadcast();
+              }}
+              onCancel={() => {
+                void handleCancelBroadcast();
               }}
             />
           )}
