@@ -51,6 +51,7 @@ import {
   RUNTIME_MODE,
 } from './config/index.js';
 import { DashboardServer } from './dashboard/server.js';
+import { BROADCAST_LIMITS } from './config/constants.js';
 import { createBroadcastService } from './engine/broadcastService.js';
 import { buildBroadcastMessage } from './engine/broadcastMessageBuilder.js';
 import { sendImageMessage, sendTextMessage } from './engine/sender.js';
@@ -95,6 +96,9 @@ let reloadDebounceTimer = null;
 let flowWatchers = [];
 let terminalCommandInterface = null;
 let dashboardServer = null;
+let dashboardIsolatedProcess = null;
+let dashboardStateSyncTimer = null;
+let dashboardRpcHandlers = null;
 let removeConversationEventListener = null;
 let authStateMaintenanceTimer = null;
 let dbSizeSnapshotMaintenanceTimer = null;
@@ -111,6 +115,7 @@ let dispatchScheduler = null;
 let postProcessQueue = null;
 let mediaPipelineQueue = null;
 const runtimeStatsStartedAt = Date.now();
+const DASHBOARD_TELEMETRY_LEVELS = new Set(['minimum', 'operational', 'diagnostic', 'verbose']);
 const ingestionRuntimeCounters = {
   received: 0,
   parseDropped: 0,
@@ -1029,24 +1034,27 @@ function emitDashboardBroadcastProgress({
   processed = 0,
   sent = 0,
   failed = 0,
+  cancelled = 0,
   remaining = 0,
   percent = 0,
   status = 'sending',
+  controlStatus = 'running',
   jid = '',
   recipientStatus = '',
   error = '',
+  metrics = null,
 } = {}) {
-  if (!dashboardServer) return;
-
   const attemptedSafe = Math.max(0, Number(attempted) || 0);
   const processedSafe = Math.max(0, Math.min(attemptedSafe, Number(processed) || 0));
   const sentSafe = Math.max(0, Number(sent) || 0);
   const failedSafe = Math.max(0, Number(failed) || 0);
+  const cancelledSafe = Math.max(0, Number(cancelled) || 0);
   const remainingSafe = Math.max(0, Number(remaining) || 0);
   const percentSafe = Math.max(0, Math.min(100, Number(percent) || 0));
   const statusSafe = String(status || 'sending');
+  const controlStatusSafe = String(controlStatus || 'running');
 
-  dashboardServer.broadcast({
+  broadcastDashboardEvent({
     occurredAt: Date.now(),
     eventType: 'broadcast-send-progress',
     direction: 'system',
@@ -1062,11 +1070,22 @@ function emitDashboardBroadcastProgress({
       processed: processedSafe,
       sent: sentSafe,
       failed: failedSafe,
+      cancelled: cancelledSafe,
       remaining: remainingSafe,
       percent: percentSafe,
       status: statusSafe,
+      controlStatus: controlStatusSafe,
       recipientStatus: String(recipientStatus || ''),
       error: String(error || ''),
+      metrics: metrics && typeof metrics === 'object' ? {
+        avgSendMs: Number(metrics.avgSendMs) || 0,
+        maxSendMs: Number(metrics.maxSendMs) || 0,
+        p95SendMs: Number(metrics.p95SendMs) || 0,
+        throughputPerSecond: Number(metrics.throughputPerSecond) || 0,
+        failuresPerMinute: Number(metrics.failuresPerMinute) || 0,
+        elapsedMs: Number(metrics.elapsedMs) || 0,
+        startedAt: Number(metrics.startedAt) || 0,
+      } : null,
     },
   });
 }
@@ -1639,6 +1658,10 @@ function normalizeRuntimeInfo() {
       command: commandFlows.map(flow => flow.flowPath),
     },
     availableModes,
+    dashboard: {
+      telemetryLevel: normalizeDashboardTelemetryLevel(config?.dashboardTelemetryLevel) || 'operational',
+      isolationMode: resolveDashboardIsolationMode(),
+    },
     whatsapp: getWhatsAppHealthSnapshot(),
     ingestion: getIngestionSnapshot(),
   };
@@ -1774,6 +1797,12 @@ function normalizeBroadcastSendIntervalMs(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n < 0) return null;
   return Math.floor(n);
+}
+
+function normalizeDashboardTelemetryLevel(value) {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return null;
+  return DASHBOARD_TELEMETRY_LEVELS.has(normalized) ? normalized : null;
 }
 
 function normalizeDbMaintenanceIntervalMinutes(value) {
@@ -2196,6 +2225,214 @@ function openDashboardInBrowser(url) {
   }
 }
 
+function resolveDashboardIsolationMode() {
+  const envMode = String(process.env.TMB_DASHBOARD_ISOLATION_MODE || '').trim().toLowerCase();
+  if (envMode === 'process') return 'process';
+  if (envMode === 'inline') return 'inline';
+  return String(config?.dashboardIsolationMode || 'inline').trim().toLowerCase() === 'process'
+    ? 'process'
+    : 'inline';
+}
+
+function getDashboardPublicUrl() {
+  return `http://${config.dashboardHost}:${config.dashboardPort}`;
+}
+
+function stopDashboardStateSync() {
+  if (!dashboardStateSyncTimer) return;
+  clearInterval(dashboardStateSyncTimer);
+  dashboardStateSyncTimer = null;
+}
+
+function sendDashboardBridgeState() {
+  if (!dashboardIsolatedProcess || !dashboardIsolatedProcess.connected || !dashboardRpcHandlers) return;
+  try {
+    const runtimeInfo = typeof dashboardRpcHandlers.getRuntimeInfo === 'function'
+      ? dashboardRpcHandlers.getRuntimeInfo()
+      : {};
+    const flowBlocks = typeof dashboardRpcHandlers.getFlowBlocks === 'function'
+      ? dashboardRpcHandlers.getFlowBlocks()
+      : [];
+    dashboardIsolatedProcess.send({
+      type: 'dashboard-bridge-state',
+      payload: {
+        runtimeInfo: runtimeInfo || {},
+        flowBlocks: Array.isArray(flowBlocks) ? flowBlocks : [],
+      },
+    });
+  } catch (error) {
+    logger?.warn?.(
+      { error: String(error?.message || error || 'dashboard-bridge-state-failed') },
+      'Failed to sync dashboard bridge state'
+    );
+  }
+}
+
+function broadcastDashboardEvent(event = {}) {
+  if (dashboardServer) {
+    dashboardServer.broadcast(event);
+  }
+  if (dashboardIsolatedProcess && dashboardIsolatedProcess.connected) {
+    try {
+      dashboardIsolatedProcess.send({
+        type: 'dashboard-bridge-broadcast',
+        payload: event,
+      });
+    } catch {
+      // ignore bridge broadcast failures
+    }
+  }
+}
+
+async function handleDashboardProcessRpcRequest(message = {}) {
+  const processRef = dashboardIsolatedProcess;
+  if (!processRef || !processRef.connected) return;
+  const id = Number(message?.id);
+  const method = String(message?.method || '').trim();
+  const payload = message?.payload;
+  if (!Number.isFinite(id) || !method) return;
+
+  const handler = dashboardRpcHandlers?.[method];
+  if (typeof handler !== 'function') {
+    processRef.send({
+      type: 'dashboard-bridge-rpc-response',
+      id,
+      ok: false,
+      error: `unknown-method:${method}`,
+    });
+    return;
+  }
+
+  try {
+    const result = await handler(payload);
+    processRef.send({
+      type: 'dashboard-bridge-rpc-response',
+      id,
+      ok: true,
+      result,
+    });
+  } catch (error) {
+    processRef.send({
+      type: 'dashboard-bridge-rpc-response',
+      id,
+      ok: false,
+      error: String(error?.message || error || 'dashboard-rpc-failed'),
+    });
+  }
+}
+
+async function stopDashboardIsolatedProcess() {
+  stopDashboardStateSync();
+  const processRef = dashboardIsolatedProcess;
+  dashboardIsolatedProcess = null;
+  dashboardRpcHandlers = null;
+  if (!processRef) return;
+
+  await new Promise(resolve => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      resolve();
+    };
+
+    processRef.once('exit', finish);
+
+    try {
+      if (processRef.connected) {
+        processRef.send({ type: 'dashboard-bridge-stop' });
+      }
+    } catch {
+      // ignore
+    }
+
+    setTimeout(() => {
+      if (finished) return;
+      try {
+        processRef.kill();
+      } catch {
+        // ignore
+      }
+    }, 1500);
+
+    setTimeout(finish, 3000);
+  });
+}
+
+async function startDashboardIsolatedProcess(options = {}) {
+  await stopDashboardIsolatedProcess();
+  dashboardRpcHandlers = options;
+
+  const childScript = path.resolve('./dashboard/isolatedProcess.js');
+  const child = spawn(process.execPath, [childScript], {
+    env: {
+      ...process.env,
+      TMB_DASHBOARD_HOST: String(config.dashboardHost || '127.0.0.1'),
+      TMB_DASHBOARD_PORT: String(Number(config.dashboardPort || 8787)),
+    },
+    stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+  });
+  dashboardIsolatedProcess = child;
+
+  child.on('message', message => {
+    const type = String(message?.type || '').trim();
+    if (type === 'dashboard-bridge-rpc-request') {
+      void handleDashboardProcessRpcRequest(message);
+    }
+  });
+
+  child.on('exit', code => {
+    if (dashboardIsolatedProcess === child) {
+      dashboardIsolatedProcess = null;
+      stopDashboardStateSync();
+    }
+    logger?.warn?.(
+      { code: Number(code ?? 0) || 0 },
+      'Isolated dashboard process exited'
+    );
+  });
+
+  const readyUrl = await new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error('dashboard-bridge-timeout'));
+    }, 15000);
+    const onMessage = message => {
+      const type = String(message?.type || '').trim();
+      if (type === 'dashboard-bridge-ready') {
+        clearTimeout(timeout);
+        child.off('message', onMessage);
+        child.off('exit', onExit);
+        resolve(String(message?.url || getDashboardPublicUrl()));
+        return;
+      }
+      if (type === 'dashboard-bridge-fatal') {
+        clearTimeout(timeout);
+        child.off('message', onMessage);
+        child.off('exit', onExit);
+        reject(new Error(String(message?.error || 'dashboard-bridge-fatal')));
+      }
+    };
+    const onExit = code => {
+      clearTimeout(timeout);
+      child.off('message', onMessage);
+      reject(new Error(`dashboard-bridge-exit:${String(code ?? 'unknown')}`));
+    };
+
+    child.on('message', onMessage);
+    child.once('exit', onExit);
+  });
+
+  sendDashboardBridgeState();
+  dashboardStateSyncTimer = setInterval(() => {
+    sendDashboardBridgeState();
+  }, 1500);
+  if (typeof dashboardStateSyncTimer.unref === 'function') {
+    dashboardStateSyncTimer.unref();
+  }
+
+  return String(readyUrl || getDashboardPublicUrl());
+}
+
 async function applyRuntimeConfigFromDashboard(input = {}) {
   const patchOrError = normalizeSetupPatch(input);
   if (patchOrError == null) {
@@ -2304,8 +2541,9 @@ async function startDashboardServer() {
     await dashboardServer.stop();
     dashboardServer = null;
   }
+  await stopDashboardIsolatedProcess();
 
-  dashboardServer = new DashboardServer({
+  const dashboardOptions = {
     host: config.dashboardHost,
     port: config.dashboardPort,
     logger,
@@ -2480,7 +2718,10 @@ async function startDashboardServer() {
           },
         });
 
-        const sentSummaryText = `Campanha #${result.campaignId}: ${result.sent}/${result.attempted} envios`;
+        const cancelledCount = Math.max(0, Number(result?.cancelled) || 0);
+        const sentSummaryText = cancelledCount > 0
+          ? `Campanha #${result.campaignId}: ${result.sent}/${result.attempted} envios (cancelada, ${cancelledCount} pendente(s))`
+          : `Campanha #${result.campaignId}: ${result.sent}/${result.attempted} envios`;
         logConversationEvent({
           eventType: 'broadcast-dispatch',
           direction: 'system',
@@ -2492,7 +2733,9 @@ async function startDashboardServer() {
             attempted: result.attempted,
             sent: result.sent,
             failed: result.failed,
+            cancelled: cancelledCount,
             campaignId: result.campaignId,
+            metrics: result.metrics || null,
           },
         });
 
@@ -2513,6 +2756,34 @@ async function startDashboardServer() {
         return { ok: false, error: String(error?.message || 'broadcast-send-failed') };
       }
     },
+    onBroadcastStatus: async () => {
+      if (!broadcastService) {
+        return { active: false, campaign: null };
+      }
+      const snapshot = broadcastService.getActiveCampaign();
+      return {
+        active: Boolean(snapshot),
+        campaign: snapshot,
+      };
+    },
+    onBroadcastPause: async () => {
+      if (!broadcastService) {
+        return { ok: false, error: 'broadcast-service-not-ready' };
+      }
+      return broadcastService.pause();
+    },
+    onBroadcastResume: async () => {
+      if (!broadcastService) {
+        return { ok: false, error: 'broadcast-service-not-ready' };
+      }
+      return broadcastService.resume();
+    },
+    onBroadcastCancel: async () => {
+      if (!broadcastService) {
+        return { ok: false, error: 'broadcast-service-not-ready' };
+      }
+      return broadcastService.cancel();
+    },
     onGetSetupState: async () => ({
       needsInitialSetup: requiresInitialSetup,
       hasSavedConfig: hasSavedConfigAtBoot || !requiresInitialSetup,
@@ -2528,6 +2799,8 @@ async function startDashboardServer() {
     onGetSettings: async () => ({
       autoReloadFlows: config.autoReloadFlows !== false,
       broadcastSendIntervalMs: Number(config.broadcastSendIntervalMs ?? 250),
+      dashboardTelemetryLevel: normalizeDashboardTelemetryLevel(config.dashboardTelemetryLevel) || 'operational',
+      dashboardIsolationMode: resolveDashboardIsolationMode(),
       runtimeMode: String(config.runtimeMode || ''),
       dbMaintenanceEnabled: config.dbMaintenanceEnabled !== false,
       dbMaintenanceIntervalMinutes: Number(config.dbMaintenanceIntervalMinutes ?? 30),
@@ -2540,6 +2813,7 @@ async function startDashboardServer() {
     onUpdateSettings: async ({
       autoReloadFlows,
       broadcastSendIntervalMs,
+      dashboardTelemetryLevel,
       dbMaintenanceEnabled,
       dbMaintenanceIntervalMinutes,
       dbRetentionDays,
@@ -2550,6 +2824,7 @@ async function startDashboardServer() {
     }) => {
       const hasAutoReloadPatch = autoReloadFlows !== undefined;
       const hasBroadcastIntervalPatch = broadcastSendIntervalMs !== undefined;
+      const hasTelemetryLevelPatch = dashboardTelemetryLevel !== undefined;
       const hasDbMaintenanceEnabledPatch = dbMaintenanceEnabled !== undefined;
       const hasDbMaintenanceIntervalPatch = dbMaintenanceIntervalMinutes !== undefined;
       const hasDbRetentionDaysPatch = dbRetentionDays !== undefined;
@@ -2561,6 +2836,7 @@ async function startDashboardServer() {
       if (
         !hasAutoReloadPatch &&
         !hasBroadcastIntervalPatch &&
+        !hasTelemetryLevelPatch &&
         !hasDbMaintenanceEnabledPatch &&
         !hasDbMaintenanceIntervalPatch &&
         !hasDbRetentionDaysPatch &&
@@ -2580,6 +2856,12 @@ async function startDashboardServer() {
         : null;
       if (hasBroadcastIntervalPatch && normalizedBroadcastInterval == null) {
         return { ok: false, error: 'broadcastSendIntervalMs must be >= 0' };
+      }
+      const normalizedTelemetryLevel = hasTelemetryLevelPatch
+        ? normalizeDashboardTelemetryLevel(dashboardTelemetryLevel)
+        : null;
+      if (hasTelemetryLevelPatch && !normalizedTelemetryLevel) {
+        return { ok: false, error: 'dashboardTelemetryLevel must be one of: minimum, operational, diagnostic, verbose' };
       }
 
       const normalizedDbMaintenanceEnabled = hasDbMaintenanceEnabledPatch
@@ -2635,6 +2917,7 @@ async function startDashboardServer() {
         ...config,
         ...(hasAutoReloadPatch ? { autoReloadFlows } : {}),
         ...(hasBroadcastIntervalPatch ? { broadcastSendIntervalMs: normalizedBroadcastInterval } : {}),
+        ...(hasTelemetryLevelPatch ? { dashboardTelemetryLevel: normalizedTelemetryLevel } : {}),
         ...(hasDbMaintenanceEnabledPatch ? { dbMaintenanceEnabled: normalizedDbMaintenanceEnabled } : {}),
         ...(hasDbMaintenanceIntervalPatch ? { dbMaintenanceIntervalMinutes: normalizedDbMaintenanceInterval } : {}),
         ...(hasDbRetentionDaysPatch ? { dbRetentionDays: normalizedDbRetentionDays } : {}),
@@ -2650,6 +2933,7 @@ async function startDashboardServer() {
       logger?.info?.({
         ...(hasAutoReloadPatch ? { autoReloadFlows } : {}),
         ...(hasBroadcastIntervalPatch ? { broadcastSendIntervalMs: normalizedBroadcastInterval } : {}),
+        ...(hasTelemetryLevelPatch ? { dashboardTelemetryLevel: normalizedTelemetryLevel } : {}),
         ...(hasDbMaintenanceEnabledPatch ? { dbMaintenanceEnabled: normalizedDbMaintenanceEnabled } : {}),
         ...(hasDbMaintenanceIntervalPatch ? { dbMaintenanceIntervalMinutes: normalizedDbMaintenanceInterval } : {}),
         ...(hasDbRetentionDaysPatch ? { dbRetentionDays: normalizedDbRetentionDays } : {}),
@@ -2663,6 +2947,8 @@ async function startDashboardServer() {
         ok: true,
         autoReloadFlows: config.autoReloadFlows !== false,
         broadcastSendIntervalMs: Number(config.broadcastSendIntervalMs ?? 250),
+        dashboardTelemetryLevel: normalizeDashboardTelemetryLevel(config.dashboardTelemetryLevel) || 'operational',
+        dashboardIsolationMode: resolveDashboardIsolationMode(),
         runtimeMode: String(config.runtimeMode || ''),
         dbMaintenanceEnabled: config.dbMaintenanceEnabled !== false,
         dbMaintenanceIntervalMinutes: Number(config.dbMaintenanceIntervalMinutes ?? 30),
@@ -2896,19 +3182,38 @@ async function startDashboardServer() {
         sessionTimeoutMinutes: normalizedTimeout,
       };
     },
-  });
+  };
 
-  await dashboardServer.start();
+  dashboardRpcHandlers = dashboardOptions;
+  const isolationMode = resolveDashboardIsolationMode();
+  let dashboardUrl = getDashboardPublicUrl();
+  if (isolationMode === 'process') {
+    try {
+      dashboardUrl = await startDashboardIsolatedProcess(dashboardOptions);
+    } catch (error) {
+      await stopDashboardIsolatedProcess();
+      logger?.warn?.(
+        { error: String(error?.message || error || 'dashboard-bridge-start-failed') },
+        'Isolated dashboard process failed to start, falling back to inline mode'
+      );
+      dashboardServer = new DashboardServer(dashboardOptions);
+      await dashboardServer.start();
+    }
+  } else {
+    dashboardServer = new DashboardServer(dashboardOptions);
+    await dashboardServer.start();
+    sendDashboardBridgeState();
+  }
 
   if (removeConversationEventListener) {
     removeConversationEventListener();
   }
   removeConversationEventListener = onConversationEvent(event => {
-    dashboardServer?.broadcast(event);
+    broadcastDashboardEvent(event);
   });
 
-  console.log(`Dashboard HTTP: ${dashboardServer.getUrl()}`);
-  openDashboardInBrowser(dashboardServer.getUrl());
+  console.log(`Dashboard HTTP: ${dashboardUrl}`);
+  openDashboardInBrowser(dashboardUrl);
 }
 
 function stopFlowWatcher() {
@@ -3093,7 +3398,9 @@ async function start() {
       const pacingDelayMs = Math.ceil(60_000 / broadcastLimitPerMinute);
       const currentBroadcastRate = readPerMinute(whatsappHealthState.minuteCounters.outgoingBroadcast, 1);
       const currentServiceRate = readPerMinute(whatsappHealthState.minuteCounters.outgoingService, 1);
+      const currentInboundRate = readPerMinute(whatsappHealthState.minuteCounters.incoming, 1);
       const serviceLimitPerMinute = Math.max(1, Number(config?.whatsappMaxServiceOutboundPerMinute ?? 300));
+      const inboundLimitPerMinute = Math.max(1, Number(config?.whatsappMaxInboundPerMinute ?? 600));
       const pressureRatio = Math.max(
         currentBroadcastRate / broadcastLimitPerMinute,
         currentServiceRate / serviceLimitPerMinute
@@ -3101,7 +3408,23 @@ async function start() {
       const pressurePenaltyMs = pressureRatio >= 1
         ? Math.ceil((pressureRatio - 1 + 1) * 500)
         : (pressureRatio >= 0.8 ? 250 : 0);
-      return Math.max(baseDelayMs, pacingDelayMs + pressurePenaltyMs);
+
+      // Contrapressao por atendimento conversacional: se a fila de ingestao
+      // esta enchendo ou se estamos recebendo perto do limite de entrada,
+      // o broadcast cede espaco aplicando um delay adicional.
+      const ingestionSnapshot = ingestionQueue?.getSnapshot?.() || null;
+      const queuedRatio = ingestionSnapshot
+        ? Math.min(2, (Number(ingestionSnapshot.queued) || 0) / Math.max(1, Number(ingestionSnapshot.warnThreshold) || 1000))
+        : 0;
+      const inboundRatio = Math.min(2, currentInboundRate / inboundLimitPerMinute);
+      const conversationPressure = Math.max(queuedRatio, inboundRatio);
+      const conversationPenaltyMs = conversationPressure >= 1
+        ? BROADCAST_LIMITS.BACKPRESSURE_DELAY_MS * 2
+        : conversationPressure >= 0.6
+          ? BROADCAST_LIMITS.BACKPRESSURE_DELAY_MS
+          : 0;
+
+      return Math.max(baseDelayMs, pacingDelayMs + pressurePenaltyMs + conversationPenaltyMs);
     },
   });
 
