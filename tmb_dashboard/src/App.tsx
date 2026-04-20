@@ -9,12 +9,14 @@ import {
   fetchHandoffHistory,
   fetchHandoffSessions,
   fetchHealth,
+  fetchObservability,
   fetchLogs,
   fetchRuntimeSettings,
   fetchSetupState,
   fetchSetupTargets,
   fetchSessionFlows,
   fetchSessionOverview,
+  isAbortError,
   postClearAllActiveSessions,
   postClearFlowSessions,
   postClearRuntimeCache,
@@ -35,6 +37,7 @@ import { isLikelyErrorMessage } from './lib/format';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
+import { ObservabilityView } from './components/observability/ObservabilityView';
 import { BroadcastView } from './components/broadcast/BroadcastView';
 import { HandoffView } from './components/handoff/HandoffView';
 import { SessionManagementView } from './components/sessions/SessionManagementView';
@@ -64,6 +67,8 @@ import type {
   SetupTargetsResponse,
   DbMaintenanceConfig,
   DbMaintenanceStatus,
+  DashboardTelemetryLevel,
+  ObservabilitySnapshot,
 } from './types';
 
 const WS_REFRESH_EVENT_TYPES = new Set([
@@ -177,6 +182,10 @@ function mapMessageToTone(message: string): ToastTone {
   return 'info';
 }
 
+function shouldIgnoreRequestError(error: unknown): boolean {
+  return isAbortError(error);
+}
+
 function readMetadataNumber(log: EventLog, key: string, fallback = 0): number {
   const metadata = log.metadata;
   if (!metadata || typeof metadata !== 'object') return fallback;
@@ -279,6 +288,8 @@ function App() {
   });
   const [autoReloadFlows, setAutoReloadFlows] = useState(true);
   const [broadcastSendIntervalMs, setBroadcastSendIntervalMs] = useState(250);
+  const [dashboardTelemetryLevel, setDashboardTelemetryLevel] = useState<DashboardTelemetryLevel>('operational');
+  const [observabilitySnapshot, setObservabilitySnapshot] = useState<ObservabilitySnapshot | null>(null);
   const [dbInfo, setDbInfo] = useState<DatabaseInfo | null>(null);
   const [dbMaintenanceConfig, setDbMaintenanceConfig] = useState<DbMaintenanceConfig | null>(null);
   const [dbMaintenanceStatus, setDbMaintenanceStatus] = useState<DbMaintenanceStatus | null>(null);
@@ -303,6 +314,7 @@ function App() {
   const [busySetupTargets, setBusySetupTargets] = useState(false);
   const [busySetupSave, setBusySetupSave] = useState(false);
   const [setupTargets, setSetupTargets] = useState<SetupTargetsResponse | null>(null);
+  const [wsConnected, setWsConnected] = useState(false);
 
   const modeQuery = useMemo(() => modeToQuery(mode), [mode]);
   const prefersReducedMotion = useMemo(
@@ -320,6 +332,7 @@ function App() {
   const viewRef = useRef(view);
   const needsInitialSetupRef = useRef(needsInitialSetup);
   const busyBroadcastSendRef = useRef(busyBroadcastSend);
+  const wsConnectedRef = useRef(wsConnected);
   const activeBroadcastCampaignIdRef = useRef<number | null>(null);
   const refreshTimeoutRef = useRef<number | null>(null);
   const toastTimersRef = useRef<Map<string, number>>(new Map());
@@ -356,6 +369,10 @@ function App() {
   useEffect(() => {
     busyBroadcastSendRef.current = busyBroadcastSend;
   }, [busyBroadcastSend]);
+
+  useEffect(() => {
+    wsConnectedRef.current = wsConnected;
+  }, [wsConnected]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -470,6 +487,12 @@ function App() {
     const settings = await fetchRuntimeSettings();
     setAutoReloadFlows(settings.autoReloadFlows !== false);
     setBroadcastSendIntervalMs(Math.max(0, Math.floor(Number(settings.broadcastSendIntervalMs ?? 250) || 250)));
+    const nextTelemetryLevel = String(settings.dashboardTelemetryLevel || '').trim().toLowerCase();
+    if (nextTelemetryLevel === 'minimum' || nextTelemetryLevel === 'operational' || nextTelemetryLevel === 'diagnostic' || nextTelemetryLevel === 'verbose') {
+      setDashboardTelemetryLevel(nextTelemetryLevel);
+    } else {
+      setDashboardTelemetryLevel('operational');
+    }
   }, []);
 
   const loadSetupState = useCallback(async () => {
@@ -534,6 +557,15 @@ function App() {
       setLogs(trimLogs(sortHistory(ordered)));
     }
   }, [modeQuery]);
+
+  const refreshObservability = useCallback(async () => {
+    const snapshot = await fetchObservability();
+    setObservabilitySnapshot(snapshot);
+    const nextLevel = String(snapshot?.telemetryLevel || '').trim().toLowerCase();
+    if (nextLevel === 'minimum' || nextLevel === 'operational' || nextLevel === 'diagnostic' || nextLevel === 'verbose') {
+      setDashboardTelemetryLevel(nextLevel);
+    }
+  }, []);
 
   const refreshHandoffHistory = useCallback(async (jid: string) => {
     if (!jid) return;
@@ -629,7 +661,7 @@ function App() {
             await Promise.all([loadDbInfo(), loadDbMaintenance()]);
           }
           if (!cancelled) {
-            await Promise.all([refreshStats(), refreshHandoffQueue()]);
+            await Promise.all([refreshStats(), refreshHandoffQueue(), refreshObservability()]);
           }
         }
       } catch (error) {
@@ -641,7 +673,9 @@ function App() {
 
     void bootstrap();
 
+    let pollTick = 0;
     const pollTimer = window.setInterval(() => {
+      pollTick += 1;
       void loadHealth().catch(() => {});
       void loadSetupState().catch(() => {});
       if (needsInitialSetupRef.current || viewRef.current === 'setup') {
@@ -650,15 +684,22 @@ function App() {
       if (needsInitialSetupRef.current) {
         return;
       }
-      void refreshStats().catch(() => {});
-      void refreshHandoffQueue().catch(() => {});
+      const wsOnline = wsConnectedRef.current;
+      const shouldRunHeavyPolling = !wsOnline || (pollTick % 3 === 0);
+      if (shouldRunHeavyPolling) {
+        void refreshStats().catch(() => {});
+        void refreshHandoffQueue().catch(() => {});
+      }
+      if (viewRef.current === 'observability' || shouldRunHeavyPolling) {
+        void refreshObservability().catch(() => {});
+      }
       if (viewRef.current === 'sessions') {
         void refreshSessionManagement().catch(() => {});
       }
       if (viewRef.current === 'dbMaintenance') {
         void loadDbMaintenance().catch(() => {});
       }
-    }, 30000);
+    }, 10000);
 
     const toastTimers = toastTimersRef.current;
     return () => {
@@ -680,6 +721,7 @@ function App() {
     loadSetupTargets,
     refreshHandoffQueue,
     refreshSessionManagement,
+    refreshObservability,
     refreshStats,
     showNotice,
   ]);
@@ -688,6 +730,7 @@ function App() {
     if (view !== 'broadcast') return;
     const timeout = window.setTimeout(() => {
       void loadBroadcastContacts(broadcastSearch).catch(error => {
+        if (shouldIgnoreRequestError(error)) return;
         showNotice(`Falha ao carregar contatos para anúncio: ${String((error as Error)?.message || error)}`);
       });
     }, 220);
@@ -705,6 +748,14 @@ function App() {
   }, [loadDbInfo, showNotice, view]);
 
   useEffect(() => {
+    if (view !== 'observability') return;
+    void refreshObservability().catch(error => {
+      if (shouldIgnoreRequestError(error)) return;
+      showNotice(`Falha ao carregar observabilidade: ${String((error as Error)?.message || error)}`);
+    });
+  }, [refreshObservability, showNotice, view]);
+
+  useEffect(() => {
     if (view !== 'dbMaintenance') return;
     void loadDbMaintenance().catch(error => {
       showNotice(`Falha ao carregar política de manutenção: ${String((error as Error)?.message || error)}`);
@@ -714,6 +765,7 @@ function App() {
   useEffect(() => {
     if (view !== 'sessions') return;
     void refreshSessionManagement().catch(error => {
+      if (shouldIgnoreRequestError(error)) return;
       showNotice(`Falha ao carregar dados de sessões: ${String((error as Error)?.message || error)}`);
     });
   }, [refreshSessionManagement, showNotice, view]);
@@ -722,6 +774,7 @@ function App() {
     if (view !== 'sessions') return;
     const timeout = window.setTimeout(() => {
       void loadSessionActiveSessions(sessionSearch).catch(error => {
+        if (shouldIgnoreRequestError(error)) return;
         showNotice(`Falha ao buscar sessões ativas: ${String((error as Error)?.message || error)}`);
       });
     }, 240);
@@ -734,6 +787,7 @@ function App() {
     if (view !== 'setup' && !needsInitialSetup) return;
 
     void loadSetupTargets().catch(error => {
+      if (shouldIgnoreRequestError(error)) return;
       showNotice(`Falha ao carregar alvos do setup: ${String((error as Error)?.message || error)}`);
     });
 
@@ -749,104 +803,142 @@ function App() {
   useEffect(() => {
     let ws: WebSocket | null = null;
     let reconnectTimeout: number | null = null;
+    let closedByClient = false;
+
+    const processIncomingPayload = (payload: EventLog) => {
+      const eventType = String(payload.eventType || '');
+      const isTransientEvent = TRANSIENT_WS_EVENT_TYPES.has(eventType);
+      const isBroadcastProgressEvent = eventType === 'broadcast-send-progress';
+      if (!isBroadcastProgressEvent) {
+        const currentModeQuery = modeToQuery(mode);
+        const activeModeFlowPaths = flowPathsByModeRef.current[currentModeQuery] || [];
+        if (activeModeFlowPaths.length > 0) {
+          const payloadFlowPath = String(payload.flowPath || '');
+          if (!payloadFlowPath || !activeModeFlowPaths.includes(payloadFlowPath)) {
+            return;
+          }
+        } else if (flowPathRef.current && payload.flowPath && payload.flowPath !== flowPathRef.current) {
+          return;
+        }
+      }
+
+      if (isBroadcastProgressEvent) {
+        const progress = toBroadcastProgress(payload);
+        if (progress) {
+          const trackedCampaignId = activeBroadcastCampaignIdRef.current;
+          const campaignMatches = trackedCampaignId != null && trackedCampaignId > 0 && trackedCampaignId === progress.campaignId;
+          if (busyBroadcastSendRef.current || campaignMatches) {
+            if ((trackedCampaignId == null || trackedCampaignId <= 0) && progress.campaignId > 0) {
+              activeBroadcastCampaignIdRef.current = progress.campaignId;
+            }
+            setBroadcastProgress(progress);
+          }
+        }
+      }
+
+      if (!isTransientEvent) {
+        setLogs(previous => trimLogs(sortHistory([...previous, payload])));
+
+        if (selectedJidRef.current && payload.jid === selectedJidRef.current) {
+          setSelectedHandoffHistory(previous => trimLogs(sortHistory([...previous, payload]), 300));
+        }
+      }
+
+      const chatJidFromMetadata = readMetadataText(payload, 'chatJid');
+      const sessionJid = String(chatJidFromMetadata || payload.jid || '').trim();
+      const outgoingErrorByText =
+        eventType === 'message-outgoing' && isLikelyErrorMessage(String(payload.messageText || ''));
+      const shouldRefresh =
+        !isTransientEvent && (WS_REFRESH_EVENT_TYPES.has(eventType) || outgoingErrorByText || eventType.includes('human-handoff'));
+
+      if (eventType === 'human-handoff-requested') {
+        pushToast(
+          'Novo Atendimento Humano',
+          `${payload.jid || 'Usuário'} entrou na fila de atendimento.`,
+          'warning',
+          5200
+        );
+      }
+
+      if (eventType === 'engine-error' || eventType === 'flow-error' || eventType === 'message-outgoing-error') {
+        pushToast(
+          'Erro no Sistema',
+          String(payload.messageText || 'Ocorreu um erro durante o processamento.'),
+          'danger',
+          6200
+        );
+      }
+
+      if (eventType === 'message-incoming' && sessionJid) {
+        const inHandoffQueue = handoffSessionsRef.current.some(session => session.jid === sessionJid);
+        const focusedSession = selectedJidRef.current === sessionJid;
+        if (inHandoffQueue && !focusedSession) {
+          const nowTs = Date.now();
+          const lastToastAt = lastCustomerToastByJidRef.current.get(sessionJid) || 0;
+          if (nowTs - lastToastAt > 4000) {
+            lastCustomerToastByJidRef.current.set(sessionJid, nowTs);
+            pushToast(
+              'Nova Mensagem do Cliente',
+              `${sessionJid} enviou uma nova mensagem.`,
+              'info',
+              4500
+            );
+          }
+        }
+      }
+
+      if (eventType.includes('human-handoff')) {
+        void refreshHandoffQueue();
+      }
+
+      if (shouldRefresh) {
+        scheduleSoftRefresh();
+      }
+    };
 
     const connect = () => {
       const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
       ws = new WebSocket(`${protocol}://${window.location.host}/ws`);
 
+      ws.onopen = () => {
+        setWsConnected(true);
+        const currentModeQuery = modeToQuery(mode);
+        const modeFlowPaths = flowPathsByModeRef.current[currentModeQuery] || [];
+        const activeFlowPaths = modeFlowPaths.length > 0
+          ? modeFlowPaths
+          : (flowPathRef.current ? [flowPathRef.current] : []);
+        const lastEventId = logsRef.current.reduce((maxId, item) => (
+          Math.max(maxId, Number(item.id) || 0)
+        ), 0);
+
+        try {
+          ws?.send(JSON.stringify({
+            type: 'subscribe',
+            payload: {
+              mode: currentModeQuery,
+              flowPaths: activeFlowPaths,
+              channels: ['all'],
+              lastEventId,
+            },
+          }));
+        } catch {
+          // ignore subscribe send failures
+        }
+      };
+
       ws.onmessage = event => {
         try {
-          const incoming = JSON.parse(event.data) as { type?: string; payload?: EventLog };
-          if (incoming.type !== 'event' || !incoming.payload) return;
-
-          const payload = incoming.payload;
-          const eventType = String(payload.eventType || '');
-          const isTransientEvent = TRANSIENT_WS_EVENT_TYPES.has(eventType);
-          const isBroadcastProgressEvent = eventType === 'broadcast-send-progress';
-          if (!isBroadcastProgressEvent) {
-            const currentModeQuery = modeToQuery(mode);
-            const activeModeFlowPaths = flowPathsByModeRef.current[currentModeQuery] || [];
-            if (activeModeFlowPaths.length > 0) {
-              const payloadFlowPath = String(payload.flowPath || '');
-              if (!payloadFlowPath || !activeModeFlowPaths.includes(payloadFlowPath)) {
-                return;
-              }
-            } else if (flowPathRef.current && payload.flowPath && payload.flowPath !== flowPathRef.current) {
-              return;
+          const incoming = JSON.parse(event.data) as { type?: string; payload?: EventLog | EventLog[] };
+          const type = String(incoming?.type || '').trim().toLowerCase();
+          if (type === 'event' && incoming.payload && !Array.isArray(incoming.payload)) {
+            processIncomingPayload(incoming.payload);
+            return;
+          }
+          if (type === 'events' && Array.isArray(incoming.payload)) {
+            for (const payload of incoming.payload) {
+              if (!payload || typeof payload !== 'object') continue;
+              processIncomingPayload(payload);
             }
-          }
-
-          if (isBroadcastProgressEvent) {
-            const progress = toBroadcastProgress(payload);
-            if (progress) {
-              const trackedCampaignId = activeBroadcastCampaignIdRef.current;
-              const campaignMatches = trackedCampaignId != null && trackedCampaignId > 0 && trackedCampaignId === progress.campaignId;
-              if (busyBroadcastSendRef.current || campaignMatches) {
-                if ((trackedCampaignId == null || trackedCampaignId <= 0) && progress.campaignId > 0) {
-                  activeBroadcastCampaignIdRef.current = progress.campaignId;
-                }
-                setBroadcastProgress(progress);
-              }
-            }
-          }
-
-          if (!isTransientEvent) {
-            setLogs(previous => trimLogs(sortHistory([...previous, payload])));
-
-            if (selectedJidRef.current && payload.jid === selectedJidRef.current) {
-              setSelectedHandoffHistory(previous => trimLogs(sortHistory([...previous, payload]), 300));
-            }
-          }
-
-          const chatJidFromMetadata = readMetadataText(payload, 'chatJid');
-          const sessionJid = String(chatJidFromMetadata || payload.jid || '').trim();
-          const outgoingErrorByText =
-            eventType === 'message-outgoing' && isLikelyErrorMessage(String(payload.messageText || ''));
-          const shouldRefresh =
-            !isTransientEvent && (WS_REFRESH_EVENT_TYPES.has(eventType) || outgoingErrorByText || eventType.includes('human-handoff'));
-
-          if (eventType === 'human-handoff-requested') {
-            pushToast(
-              'Novo Atendimento Humano',
-              `${payload.jid || 'Usuário'} entrou na fila de atendimento.`,
-              'warning',
-              5200
-            );
-          }
-
-          if (eventType === 'engine-error' || eventType === 'flow-error' || eventType === 'message-outgoing-error') {
-            pushToast(
-              'Erro no Sistema',
-              String(payload.messageText || 'Ocorreu um erro durante o processamento.'),
-              'danger',
-              6200
-            );
-          }
-
-          if (eventType === 'message-incoming' && sessionJid) {
-            const inHandoffQueue = handoffSessionsRef.current.some(session => session.jid === sessionJid);
-            const focusedSession = selectedJidRef.current === sessionJid;
-            if (inHandoffQueue && !focusedSession) {
-              const nowTs = Date.now();
-              const lastToastAt = lastCustomerToastByJidRef.current.get(sessionJid) || 0;
-              if (nowTs - lastToastAt > 4000) {
-                lastCustomerToastByJidRef.current.set(sessionJid, nowTs);
-                pushToast(
-                  'Nova Mensagem do Cliente',
-                  `${sessionJid} enviou uma nova mensagem.`,
-                  'info',
-                  4500
-                );
-              }
-            }
-          }
-
-          if (eventType.includes('human-handoff')) {
-            void refreshHandoffQueue();
-          }
-
-          if (shouldRefresh) {
-            scheduleSoftRefresh();
           }
         } catch {
           // ignore malformed payloads
@@ -854,6 +946,8 @@ function App() {
       };
 
       ws.onclose = () => {
+        setWsConnected(false);
+        if (closedByClient) return;
         reconnectTimeout = window.setTimeout(connect, 3000);
       };
     };
@@ -861,6 +955,8 @@ function App() {
     connect();
 
     return () => {
+      closedByClient = true;
+      setWsConnected(false);
       if (reconnectTimeout) window.clearTimeout(reconnectTimeout);
       if (ws && ws.readyState < WebSocket.CLOSING) ws.close();
     };
@@ -872,6 +968,7 @@ function App() {
     try {
       await refreshHandoffHistory(jid);
     } catch (error) {
+      if (shouldIgnoreRequestError(error)) return;
       showNotice(`Falha ao carregar histórico: ${String((error as Error)?.message || error)}`);
     }
   }, [refreshHandoffHistory, showNotice]);
@@ -1136,6 +1233,25 @@ function App() {
     }
   }, [showNotice]);
 
+  const handleUpdateTelemetryLevel = useCallback(async (value: DashboardTelemetryLevel) => {
+    setBusySaveSettings(true);
+    try {
+      const updated = await postRuntimeSettings({ dashboardTelemetryLevel: value });
+      const nextLevel = String(updated.dashboardTelemetryLevel || '').trim().toLowerCase();
+      if (nextLevel === 'minimum' || nextLevel === 'operational' || nextLevel === 'diagnostic' || nextLevel === 'verbose') {
+        setDashboardTelemetryLevel(nextLevel);
+      } else {
+        setDashboardTelemetryLevel(value);
+      }
+      await refreshObservability();
+      showNotice(`Nivel de telemetria atualizado para ${value}.`);
+    } catch (error) {
+      showNotice(`Falha ao atualizar telemetria: ${String((error as Error)?.message || error)}`);
+    } finally {
+      setBusySaveSettings(false);
+    }
+  }, [refreshObservability, showNotice]);
+
   const handleClearRuntimeCache = useCallback(async () => {
     setBusyClearRuntimeCache(true);
     try {
@@ -1285,7 +1401,7 @@ function App() {
         if (viewRef.current === 'setup') {
           setView('analytics');
         }
-        await Promise.all([refreshStats(), refreshHandoffQueue()]);
+        await Promise.all([refreshStats(), refreshHandoffQueue(), refreshObservability()]);
         showNotice('Configuração aplicada com sucesso.');
       }
     } catch (error) {
@@ -1300,6 +1416,7 @@ function App() {
     loadSetupBots,
     loadSetupTargets,
     refreshHandoffQueue,
+    refreshObservability,
     refreshStats,
     showNotice,
   ]);
@@ -1478,6 +1595,23 @@ function App() {
               stats={stats}
               logs={logs}
               onExport={() => window.open('/api/export?format=csv', '_blank')}
+            />
+          )}
+
+          {renderedView === 'observability' && (
+            <ObservabilityView
+              snapshot={observabilitySnapshot}
+              telemetryLevel={dashboardTelemetryLevel}
+              busySaveSettings={busySaveSettings}
+              onTelemetryLevelChange={level => {
+                void handleUpdateTelemetryLevel(level);
+              }}
+              onRefresh={() => {
+                void refreshObservability().catch(error => {
+                  if (shouldIgnoreRequestError(error)) return;
+                  showNotice(`Falha ao atualizar observabilidade: ${String((error as Error)?.message || error)}`);
+                });
+              }}
             />
           )}
 
