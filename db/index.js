@@ -1603,6 +1603,58 @@ export function listConversationEventsByJid(jid, limit = 200) {
   return rows.map(mapConversationEventRow);
 }
 
+export function listConversationEventsByJids(jids = [], limitPerJid = 120) {
+  ensureEventBufferFlushedForRead();
+  const normalizedLimitPerJid = Math.max(1, Math.min(200, Number(limitPerJid) || 120));
+  const normalizedJids = [...new Set(
+    (Array.isArray(jids) ? jids : [])
+      .map(item => String(item ?? '').trim())
+      .filter(Boolean)
+  )];
+  if (normalizedJids.length === 0) return {};
+
+  const byJid = new Map();
+  const chunkSize = 250;
+  for (let offset = 0; offset < normalizedJids.length; offset += chunkSize) {
+    const chunk = normalizedJids.slice(offset, offset + chunkSize);
+    if (chunk.length === 0) continue;
+
+    const placeholders = chunk.map(() => '?').join(', ');
+    const sql = `
+      SELECT id, occurred_at, event_type, direction, jid, flow_path, message_text, metadata
+      FROM (
+        SELECT
+          id,
+          occurred_at,
+          event_type,
+          direction,
+          jid,
+          flow_path,
+          message_text,
+          metadata,
+          ROW_NUMBER() OVER (
+            PARTITION BY jid
+            ORDER BY occurred_at DESC, id DESC
+          ) AS rn
+        FROM ${ANALYTICS_SCHEMA}.conversation_events
+        WHERE jid IN (${placeholders})
+      ) ranked
+      WHERE rn <= ?
+      ORDER BY jid ASC, occurred_at DESC, id DESC
+    `;
+    const rows = getDynamicStatement(sql).all(...chunk, normalizedLimitPerJid);
+    for (const row of rows) {
+      const jid = String(row?.jid ?? '').trim();
+      if (!jid) continue;
+      const current = byJid.get(jid) ?? [];
+      current.push(mapConversationEventRow(row));
+      byJid.set(jid, current);
+    }
+  }
+
+  return Object.fromEntries(byJid.entries());
+}
+
 export function listConversationEventsSince(sinceTimestamp, limit = 500) {
   ensureEventBufferFlushedForRead();
   const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 500));
@@ -2037,4 +2089,3 @@ export function onConversationEvent(listener) {
     conversationEventListeners.delete(listener);
   };
 }
-
