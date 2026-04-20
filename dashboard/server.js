@@ -625,6 +625,10 @@ export class DashboardServer {
     onHumanEndSession = async () => ({ ok: false, error: 'not-implemented' }),
     onBroadcastListContacts = async () => ({ contacts: [] }),
     onBroadcastSend = async () => ({ ok: false, error: 'not-implemented' }),
+    onBroadcastStatus = async () => ({ ok: true, active: false, campaign: null }),
+    onBroadcastPause = async () => ({ ok: false, error: 'not-implemented' }),
+    onBroadcastResume = async () => ({ ok: false, error: 'not-implemented' }),
+    onBroadcastCancel = async () => ({ ok: false, error: 'not-implemented' }),
     onGetSetupState = async () => ({ needsInitialSetup: false, hasSavedConfig: true, config: {} }),
     onApplySetupState = async () => ({ ok: false, error: 'not-implemented' }),
     onListSetupTargets = async () => ({ contacts: [], groups: [], socketReady: false, updatedAt: Date.now() }),
@@ -656,6 +660,10 @@ export class DashboardServer {
     this.onHumanEndSession = onHumanEndSession;
     this.onBroadcastListContacts = onBroadcastListContacts;
     this.onBroadcastSend = onBroadcastSend;
+    this.onBroadcastStatus = onBroadcastStatus;
+    this.onBroadcastPause = onBroadcastPause;
+    this.onBroadcastResume = onBroadcastResume;
+    this.onBroadcastCancel = onBroadcastCancel;
     this.onGetSetupState = onGetSetupState;
     this.onApplySetupState = onApplySetupState;
     this.onListSetupTargets = onListSetupTargets;
@@ -1768,8 +1776,57 @@ export class DashboardServer {
           attempted: result?.attempted || 0,
           sent: result?.sent || 0,
           failed: result?.failed || 0,
+          cancelled: result?.cancelled || 0,
           failures: Array.isArray(result?.failures) ? result.failures : [],
         });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/broadcast/status') {
+        const quota = this.consumeRouteQuota(req, '/api/broadcast/status');
+        if (!quota.ok) {
+          sendJson(res, 429, {
+            error: 'rate-limit-exceeded',
+            retryAfterMs: quota.retryAfterMs,
+          });
+          return;
+        }
+        const status = await this.onBroadcastStatus();
+        sendJson(res, 200, {
+          ok: true,
+          active: Boolean(status?.active),
+          campaign: status?.campaign || null,
+        });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/broadcast/pause' && req.method === 'POST') {
+        const result = await this.onBroadcastPause();
+        if (!result?.ok) {
+          sendJson(res, 409, { error: result?.error || 'failed-to-pause-broadcast', status: result?.status || null });
+          return;
+        }
+        sendJson(res, 200, { ok: true, status: result?.status || null });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/broadcast/resume' && req.method === 'POST') {
+        const result = await this.onBroadcastResume();
+        if (!result?.ok) {
+          sendJson(res, 409, { error: result?.error || 'failed-to-resume-broadcast', status: result?.status || null });
+          return;
+        }
+        sendJson(res, 200, { ok: true, status: result?.status || null });
+        return;
+      }
+
+      if (requestUrl.pathname === '/api/broadcast/cancel' && req.method === 'POST') {
+        const result = await this.onBroadcastCancel();
+        if (!result?.ok) {
+          sendJson(res, 409, { error: result?.error || 'failed-to-cancel-broadcast', status: result?.status || null });
+          return;
+        }
+        sendJson(res, 200, { ok: true, status: result?.status || null });
         return;
       }
 
