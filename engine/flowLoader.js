@@ -11,6 +11,7 @@
 import fs from 'fs';
 import path from 'path';
 import { BLOCK_TYPE } from '../config/constants.js';
+import { toPositiveNumber } from '../utils/normalization.js';
 
 const REQUIRED_BLOCK_FIELDS = ['id', 'type', 'config'];
 
@@ -34,12 +35,6 @@ function normalizeBlockType(type) {
   }
 
   return raw;
-}
-
-function toPositiveNumber(value, fallback = 0) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return fallback;
-  return parsed;
 }
 
 function isPlainObject(value) {

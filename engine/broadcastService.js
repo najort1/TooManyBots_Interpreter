@@ -7,17 +7,8 @@ import {
 } from '../db/index.js';
 import { BROADCAST_LIMITS } from '../config/constants.js';
 import { createActiveSessionLookup, resolveBroadcastSelection } from './broadcastContactUtils.js';
-
-function delay(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
-function safeErrorMessage(error) {
-  if (error instanceof Error) {
-    return `${error.name}: ${error.message}`;
-  }
-  return String(error ?? 'Unknown error');
-}
+import { delay } from '../utils/async.js';
+import { safeErrorMessage } from '../utils/errors.js';
 
 // Controle interno do ciclo de vida de uma campanha em execucao.
 // controlStatus: 'running' | 'paused' | 'cancelling' | 'cancelled' | 'completed'
