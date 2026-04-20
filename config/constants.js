@@ -125,4 +125,22 @@ export const BROADCAST_LIMITS = {
   SEND_DELAY_MS: 250,
   ACTIVE_SESSION_CACHE_MAX: 4000,
   ACTIVE_SESSION_CACHE_TTL_MS: 20 * 1000,
+  // Intervalo de poll enquanto a campanha estiver pausada (ms). Mantem o
+  // processo responsivo para resume/cancel sem consumir CPU.
+  PAUSE_POLL_MS: 250,
+  // Penalidade de atraso aplicada quando o atendimento conversacional esta
+  // sob pressao (fila de ingestao ou taxa de entrada elevada). Garante que
+  // mensagens de clientes ativos tenham prioridade sobre broadcast.
+  BACKPRESSURE_DELAY_MS: 500,
+  // Tamanho maximo do buffer de resultados antes de persistir em lote no
+  // SQLite. Reduz o numero de fsyncs em campanhas grandes.
+  PERSIST_BATCH_SIZE: 25,
+  // Intervalo maximo (ms) entre persistencias em lote. Garante checkpoint
+  // mesmo quando o throughput e baixo, limitando janela de possivel perda
+  // em caso de crash.
+  PERSIST_FLUSH_MS: 1500,
+  // Intervalo minimo (ms) entre emissoes de progresso nao-criticas. Eventos
+  // criticos (start, failure, pause/resume/cancel, complete) nao sao
+  // throttled.
+  PROGRESS_THROTTLE_MS: 400,
 };
