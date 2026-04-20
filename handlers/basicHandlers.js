@@ -1,5 +1,6 @@
 import { sendTextMessage, sendListMessage } from '../engine/sender.js';
 import { interpolate, interpolateForDisplay } from '../engine/utils.js';
+import { delay } from '../utils/async.js';
 import {
   INTERNAL_VAR,
   SESSION_STATUS,
@@ -98,7 +99,7 @@ export async function handleRedirect({ block, session, flow }) {
 
 export async function handleDelay({ block, session }) {
   const ms = block.config.duration ?? 1000;
-  await new Promise(resolve => setTimeout(resolve, ms));
+  await delay(ms);
   return { nextBlockIndex: session.blockIndex + 1, sessionPatch: {}, done: false };
 }
 

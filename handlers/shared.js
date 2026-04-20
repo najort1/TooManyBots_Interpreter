@@ -1,5 +1,7 @@
 import { interpolate, safeParseJSON } from '../engine/utils.js';
 import { emitConversationEvent } from '../engine/conversationEvents.js';
+import { delay } from '../utils/async.js';
+import { stringifyError as stringifyErrorUtil } from '../utils/errors.js';
 import {
   BLOCK_TYPE,
   CONDITION_TYPE,
@@ -68,16 +70,7 @@ export function getIfStack(session) {
 }
 
 export function stringifyError(error) {
-  if (!error) return '';
-  if (error instanceof Error) {
-    return `${error.name}: ${error.message}`;
-  }
-
-  try {
-    return JSON.stringify(error);
-  } catch {
-    return String(error);
-  }
+  return stringifyErrorUtil(error);
 }
 
 export function logHandlerErrorEvent({ block, session, jid, flow, userMessage = '', error, stage = '' }) {
@@ -319,7 +312,7 @@ export async function executeWithRetry(executor, maxRetries, retryDelay) {
       lastError = error;
       if (attempts >= maxRetries) break;
       if (retryDelay > 0) {
-        await new Promise(resolve => setTimeout(resolve, retryDelay));
+        await delay(retryDelay);
       }
     }
     attempts++;

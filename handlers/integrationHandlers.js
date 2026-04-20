@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { sendTextMessage } from '../engine/sender.js';
 import { recordApiMetric, extractApiName } from '../engine/apiMetrics.js';
 import { interpolate, safeParseJSON } from '../engine/utils.js';
+import { delay } from '../utils/async.js';
 import { SESSION_STATUS } from '../config/constants.js';
 import {
   applyDataTransform,
@@ -455,7 +456,7 @@ async function executeStringOperation(cfg, variables) {
     case 'delay': {
       const delayMs = Math.max(0, toNumber(interpolateValue(cfg.delayMs, variables), 0));
       if (delayMs > 0) {
-        await new Promise(resolve => setTimeout(resolve, delayMs));
+        await delay(delayMs);
       }
       return inputRaw;
     }
