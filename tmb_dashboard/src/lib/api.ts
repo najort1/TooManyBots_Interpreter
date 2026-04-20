@@ -7,6 +7,7 @@ import type {
   SessionOverview,
   ActiveSessionManagementItem,
   BroadcastContact,
+  BroadcastSendProgress,
   BroadcastSendResult,
   HandoffBlock,
   HandoffSession,
@@ -250,6 +251,38 @@ export async function postBroadcastSend(payload: {
       agentId: 'dashboard-agent',
     }),
   });
+}
+
+export interface BroadcastStatusResponse {
+  ok: boolean;
+  active: boolean;
+  campaign: BroadcastSendProgress | null;
+}
+
+export async function fetchBroadcastStatus(): Promise<BroadcastStatusResponse> {
+  return requestJson<BroadcastStatusResponse>('/api/broadcast/status', undefined, {
+    requestKey: 'broadcast-status',
+  });
+}
+
+async function postBroadcastControl(action: 'pause' | 'resume' | 'cancel'): Promise<BroadcastStatusResponse> {
+  return requestJson<BroadcastStatusResponse>(`/api/broadcast/${action}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+}
+
+export function postBroadcastPause(): Promise<BroadcastStatusResponse> {
+  return postBroadcastControl('pause');
+}
+
+export function postBroadcastResume(): Promise<BroadcastStatusResponse> {
+  return postBroadcastControl('resume');
+}
+
+export function postBroadcastCancel(): Promise<BroadcastStatusResponse> {
+  return postBroadcastControl('cancel');
 }
 
 export async function fetchRuntimeSettings(): Promise<RuntimeSettings> {

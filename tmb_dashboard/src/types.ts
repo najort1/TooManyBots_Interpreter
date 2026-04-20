@@ -228,17 +228,36 @@ export interface BroadcastContact {
   hasActiveSession?: boolean;
 }
 
+export interface BroadcastSendMetrics {
+  avgSendMs: number;
+  maxSendMs: number;
+  p95SendMs: number;
+  throughputPerSecond: number;
+  failuresPerMinute: number;
+  elapsedMs: number;
+  startedAt: number;
+}
+
 export interface BroadcastSendResult {
   ok: boolean;
   campaignId: number;
   attempted: number;
   sent: number;
   failed: number;
+  cancelled?: number;
   failures: Array<{
     jid: string;
     error: string;
   }>;
+  metrics?: BroadcastSendMetrics | null;
 }
+
+export type BroadcastControlStatus =
+  | 'running'
+  | 'paused'
+  | 'cancelling'
+  | 'cancelled'
+  | 'completed';
 
 export interface BroadcastSendProgress {
   campaignId: number;
@@ -246,11 +265,18 @@ export interface BroadcastSendProgress {
   processed: number;
   sent: number;
   failed: number;
+  cancelled?: number;
   remaining: number;
   percent: number;
   status: 'started' | 'sending' | 'completed';
+  controlStatus?: BroadcastControlStatus;
   recipientStatus?: 'sent' | 'failed' | '';
   jid?: string;
+  actor?: string;
+  target?: 'all' | 'selected' | string;
+  startedAt?: number;
+  pausedAt?: number;
+  metrics?: BroadcastSendMetrics | null;
 }
 
 export interface RuntimeSettings {
