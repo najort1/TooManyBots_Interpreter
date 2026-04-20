@@ -365,6 +365,49 @@ export function applyDataTransform(sourceValue, cfg, sessionVariables) {
         return evaluateExpression(expressionToUse, scope, item);
       });
     }
+    case 'array_join': {
+      if (!Array.isArray(inputValue)) throw new Error('Fonte nao e um array para array_join.');
+      const expression = toText(cfg.mapExpression);
+      const jsonPathTemplate = toText(cfg.jsonPath);
+      const separator = cfg.joinSeparator ?? cfg.separator ?? '\n';
+      const includeNumbers = cfg.includeNumbers === true || toBool(cfg.includeNumbers);
+
+      let items;
+      if (!expression && jsonPathTemplate) {
+        items = inputValue.map((item, index, array) => {
+          const scope = { item, index, array, vars: sessionVariables, ...sessionVariables };
+          const resolvedPath = interpolate(jsonPathTemplate, scope);
+          return extractJsonPath(item, resolvedPath);
+        });
+      } else if (expression) {
+        items = inputValue.map((item, index, array) => {
+          const scope = { item, index, array, vars: sessionVariables };
+          if (expression.includes('{{') && expression.includes('}}')) {
+            return interpolate(expression, scope);
+          }
+          return evaluateExpression(expression, scope, item);
+        });
+      } else {
+        items = inputValue;
+      }
+
+      const renderedItems = items.map(item => {
+        if (item == null) return '';
+        if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+          return String(item);
+        }
+        try {
+          return JSON.stringify(item);
+        } catch {
+          return String(item);
+        }
+      });
+
+      if (includeNumbers) {
+        return renderedItems.map((item, index) => `${index + 1}. ${item}`).join(separator);
+      }
+      return renderedItems.join(separator);
+    }
     case 'array_filter': {
       if (!Array.isArray(inputValue)) throw new Error('Fonte nao e um array para array_filter.');
       const expression = toText(cfg.filterCondition) || 'Boolean(item)';

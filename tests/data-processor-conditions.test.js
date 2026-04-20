@@ -153,3 +153,76 @@ test('evaluateSingleCondition supports is_number and is_null operators', () => {
   assert.equal(nullCheck, true);
   assert.equal(notNullCheck, true);
 });
+
+test('data-processor array_join joins array items into string without numbers by default', async () => {
+  const { payload } = createCtx(
+    {
+      operation: 'array_join',
+      sourceVariable: 'foods_results',
+      outputVariable: 'lista_texto',
+      transformType: 'array_join',
+      jsonPath: 'descrição',
+      joinSeparator: '\n',
+      onError: 'stop',
+    },
+    {
+      foods_results: [
+        { descrição: 'ovo cozido' },
+        { descrição: 'ovo mexido' },
+        { descrição: 'ovo frito' },
+      ],
+    }
+  );
+
+  const result = await handleDataProcessor(payload);
+  assert.equal(result.done, false);
+  assert.equal(result.nextBlockIndex, 1);
+  assert.equal(result.sessionPatch.variables.lista_texto, 'ovo cozido\novo mexido\novo frito');
+});
+
+test('data-processor array_join supports includeNumbers for enumerated output', async () => {
+  const { payload } = createCtx(
+    {
+      operation: 'array_join',
+      sourceVariable: 'foods_results',
+      outputVariable: 'lista_enumerada',
+      transformType: 'array_join',
+      jsonPath: 'descrição',
+      joinSeparator: '\n',
+      includeNumbers: true,
+      onError: 'stop',
+    },
+    {
+      foods_results: [
+        { descrição: 'ovo cozido' },
+        { descrição: 'ovo mexido' },
+      ],
+    }
+  );
+
+  const result = await handleDataProcessor(payload);
+  assert.equal(result.done, false);
+  assert.equal(result.nextBlockIndex, 1);
+  assert.equal(result.sessionPatch.variables.lista_enumerada, '1. ovo cozido\n2. ovo mexido');
+});
+
+test('data-processor array_join works without jsonPath for simple arrays', async () => {
+  const { payload } = createCtx(
+    {
+      operation: 'array_join',
+      sourceVariable: 'simple_list',
+      outputVariable: 'joined_text',
+      transformType: 'array_join',
+      joinSeparator: ', ',
+      onError: 'stop',
+    },
+    {
+      simple_list: ['maçã', 'banana', 'laranja'],
+    }
+  );
+
+  const result = await handleDataProcessor(payload);
+  assert.equal(result.done, false);
+  assert.equal(result.nextBlockIndex, 1);
+  assert.equal(result.sessionPatch.variables.joined_text, 'maçã, banana, laranja');
+});
