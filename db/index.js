@@ -859,6 +859,11 @@ export async function initDb() {
        SET send_status = ?, error_message = ?, sent_at = ?, updated_at = ?
        WHERE campaign_id = ? AND jid = ?`
     ),
+    cancelPendingBroadcastRecipients: db.prepare(
+      `UPDATE ${ANALYTICS_SCHEMA}.broadcast_recipients
+       SET send_status = 'cancelled', error_message = ?, updated_at = ?
+       WHERE campaign_id = ? AND send_status = 'pending'`
+    ),
     listConversationEventsBefore: db.prepare(
       `SELECT id, occurred_at, event_type, direction, jid, flow_path, message_text, metadata
        FROM ${ANALYTICS_SCHEMA}.conversation_events
@@ -1961,6 +1966,60 @@ export function markBroadcastRecipientResult({
     normalizedCampaignId,
     normalizedJid
   );
+}
+
+export function markBroadcastRecipientResultsBatch({
+  campaignId,
+  results = [],
+} = {}) {
+  const normalizedCampaignId = Number(campaignId) || 0;
+  if (!normalizedCampaignId || !Array.isArray(results) || results.length === 0) return { applied: 0 };
+
+  const nowTs = Date.now();
+  const normalizedRows = [];
+  for (const row of results) {
+    const normalizedJid = String(row?.jid ?? '').trim();
+    if (!normalizedJid) continue;
+    const normalizedStatus = String(row?.status ?? '').trim().toLowerCase() === 'sent' ? 'sent' : 'failed';
+    normalizedRows.push({
+      jid: normalizedJid,
+      status: normalizedStatus,
+      errorMessage: String(row?.errorMessage || ''),
+      sentAt: normalizedStatus === 'sent' ? (Number(row?.sentAt) || nowTs) : null,
+    });
+  }
+
+  if (normalizedRows.length === 0) return { applied: 0 };
+
+  const applyTx = db.transaction((rows) => {
+    for (const row of rows) {
+      stmts.updateBroadcastRecipientResult.run(
+        row.status,
+        row.errorMessage,
+        row.sentAt,
+        nowTs,
+        normalizedCampaignId,
+        row.jid
+      );
+    }
+  });
+  applyTx(normalizedRows);
+  return { applied: normalizedRows.length };
+}
+
+export function cancelBroadcastPendingRecipients({
+  campaignId,
+  errorMessage = 'cancelled',
+} = {}) {
+  const normalizedCampaignId = Number(campaignId) || 0;
+  if (!normalizedCampaignId) return { cancelled: 0 };
+  const nowTs = Date.now();
+  const info = stmts.cancelPendingBroadcastRecipients.run(
+    String(errorMessage || 'cancelled'),
+    nowTs,
+    normalizedCampaignId
+  );
+  return { cancelled: Number(info?.changes) || 0 };
 }
 
 function fileSizeOrZero(filePath) {
