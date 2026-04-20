@@ -18,9 +18,12 @@ import type {
   DbMaintenanceConfig,
   DbMaintenanceInfo,
   DbMaintenanceRunResult,
+  ObservabilitySnapshot,
+  DashboardTelemetryLevel,
 } from '../types';
 
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').trim();
+const inflightByKey = new Map<string, AbortController>();
 
 function resolveApiUrl(url: string): string {
   if (!API_BASE_URL) return url;
@@ -33,10 +36,50 @@ function stripHtmlPreview(raw: string): string {
   return compact.slice(0, 120);
 }
 
-async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+interface RequestJsonOptions {
+  requestKey?: string;
+}
+
+export function isAbortError(error: unknown): boolean {
+  if (!error) return false;
+  const maybeError = error as { name?: string; message?: string };
+  if (String(maybeError?.name || '').toLowerCase() === 'aborterror') return true;
+  const message = String(maybeError?.message || '').toLowerCase();
+  return message.includes('aborted') || message.includes('aborterror');
+}
+
+async function requestJson<T>(url: string, init?: RequestInit, options?: RequestJsonOptions): Promise<T> {
   const resolvedUrl = resolveApiUrl(url);
-  const response = await fetch(resolvedUrl, init);
+  const requestKey = String(options?.requestKey || '').trim();
+  let controller: AbortController | null = null;
+  if (requestKey) {
+    const previous = inflightByKey.get(requestKey);
+    if (previous) {
+      previous.abort();
+    }
+    controller = new AbortController();
+    inflightByKey.set(requestKey, controller);
+  }
+
+  const signal = init?.signal ?? controller?.signal;
+  let response: Response;
+  try {
+    response = await fetch(resolvedUrl, { ...(init || {}), signal });
+  } catch (error) {
+    if (controller && inflightByKey.get(requestKey) === controller) {
+      inflightByKey.delete(requestKey);
+    }
+    if (isAbortError(error)) {
+      const abortError = new Error('request-aborted');
+      abortError.name = 'AbortError';
+      throw abortError;
+    }
+    throw error;
+  }
   const text = await response.text().catch(() => '');
+  if (controller && inflightByKey.get(requestKey) === controller) {
+    inflightByKey.delete(requestKey);
+  }
 
   if (!response.ok) {
     throw new Error(text || `Request failed: ${response.status}`);
@@ -82,11 +125,27 @@ export async function fetchBots(): Promise<BotInfo[]> {
 }
 
 export async function fetchStats(mode: 'conversation' | 'command'): Promise<DashboardStats> {
-  return requestJson<DashboardStats>(`/api/stats?mode=${mode}&period=today`);
+  return requestJson<DashboardStats>(
+    `/api/stats?mode=${mode}&period=today`,
+    undefined,
+    { requestKey: `stats:${mode}` }
+  );
+}
+
+export async function fetchObservability(): Promise<ObservabilitySnapshot> {
+  return requestJson<ObservabilitySnapshot>(
+    '/api/observability',
+    undefined,
+    { requestKey: 'observability' }
+  );
 }
 
 export async function fetchLogs(mode: 'conversation' | 'command', limit = 50): Promise<EventLog[]> {
-  const data = await requestJson<{ logs?: EventLog[] }>(`/api/logs?mode=${mode}&limit=${limit}`);
+  const data = await requestJson<{ logs?: EventLog[] }>(
+    `/api/logs?mode=${mode}&limit=${limit}`,
+    undefined,
+    { requestKey: `logs:${mode}` }
+  );
   return Array.isArray(data.logs) ? data.logs : [];
 }
 
@@ -96,13 +155,21 @@ export async function fetchHandoffBlocks(): Promise<HandoffBlock[]> {
 }
 
 export async function fetchHandoffSessions(): Promise<HandoffSession[]> {
-  const data = await requestJson<{ sessions?: HandoffSession[] }>('/api/handoff/sessions');
+  const data = await requestJson<{ sessions?: HandoffSession[] }>(
+    '/api/handoff/sessions',
+    undefined,
+    { requestKey: 'handoff-sessions' }
+  );
   return Array.isArray(data.sessions) ? data.sessions : [];
 }
 
 export async function fetchHandoffHistory(jid: string, limit = 200): Promise<EventLog[]> {
   const params = new URLSearchParams({ jid, limit: String(limit) });
-  const data = await requestJson<{ logs?: EventLog[] }>(`/api/handoff/history?${params.toString()}`);
+  const data = await requestJson<{ logs?: EventLog[] }>(
+    `/api/handoff/history?${params.toString()}`,
+    undefined,
+    { requestKey: `handoff-history:${jid}` }
+  );
   return Array.isArray(data.logs) ? data.logs : [];
 }
 
@@ -154,7 +221,11 @@ export async function fetchBroadcastContacts(search = '', limit = 200): Promise<
     search: String(search || ''),
     limit: String(limit),
   });
-  const data = await requestJson<{ contacts?: BroadcastContact[] }>(`/api/broadcast/contacts?${params.toString()}`);
+  const data = await requestJson<{ contacts?: BroadcastContact[] }>(
+    `/api/broadcast/contacts?${params.toString()}`,
+    undefined,
+    { requestKey: 'broadcast-contacts' }
+  );
   return Array.isArray(data.contacts) ? data.contacts : [];
 }
 
@@ -202,12 +273,17 @@ export async function fetchSetupTargets(search = '', limit = 300): Promise<Setup
     search: String(search || ''),
     limit: String(limit),
   });
-  return requestJson<SetupTargetsResponse>(`/api/setup/targets?${params.toString()}`);
+  return requestJson<SetupTargetsResponse>(
+    `/api/setup/targets?${params.toString()}`,
+    undefined,
+    { requestKey: 'setup-targets' }
+  );
 }
 
 export async function postRuntimeSettings(input: {
   autoReloadFlows?: boolean;
   broadcastSendIntervalMs?: number;
+  dashboardTelemetryLevel?: DashboardTelemetryLevel;
   dbMaintenanceEnabled?: boolean;
   dbMaintenanceIntervalMinutes?: number;
   dbRetentionDays?: number;
@@ -223,6 +299,9 @@ export async function postRuntimeSettings(input: {
       ...(input.autoReloadFlows !== undefined ? { autoReloadFlows: input.autoReloadFlows } : {}),
       ...(input.broadcastSendIntervalMs !== undefined
         ? { broadcastSendIntervalMs: input.broadcastSendIntervalMs }
+        : {}),
+      ...(input.dashboardTelemetryLevel !== undefined
+        ? { dashboardTelemetryLevel: input.dashboardTelemetryLevel }
         : {}),
       ...(input.dbMaintenanceEnabled !== undefined
         ? { dbMaintenanceEnabled: input.dbMaintenanceEnabled }
@@ -315,7 +394,11 @@ export async function fetchActiveSessionsForManagement(search = '', limit = 200)
     search: String(search || ''),
     limit: String(limit),
   });
-  const data = await requestJson<{ sessions?: ActiveSessionManagementItem[] }>(`/api/sessions/active?${params.toString()}`);
+  const data = await requestJson<{ sessions?: ActiveSessionManagementItem[] }>(
+    `/api/sessions/active?${params.toString()}`,
+    undefined,
+    { requestKey: 'sessions-active' }
+  );
   return Array.isArray(data.sessions) ? data.sessions : [];
 }
 
