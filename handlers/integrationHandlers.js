@@ -1,5 +1,7 @@
 import crypto from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import { sendTextMessage } from '../engine/sender.js';
+import { recordApiMetric, extractApiName } from '../engine/apiMetrics.js';
 import { interpolate, safeParseJSON } from '../engine/utils.js';
 import { SESSION_STATUS } from '../config/constants.js';
 import {
@@ -649,9 +651,15 @@ export async function handleHttpRequest({ block, session, sock, jid, flow }) {
     if (bodyType === 'form-urlencoded') headers['Content-Type'] = 'application/x-www-form-urlencoded';
   }
 
+  const apiName = extractApiName(url);
   const requestFn = async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort('timeout'), timeout);
+    const startTime = performance.now();
+    let success = false;
+    let status = null;
+    let isTimeout = false;
+
     try {
       const response = await fetch(url, {
         method,
@@ -660,6 +668,7 @@ export async function handleHttpRequest({ block, session, sock, jid, flow }) {
         signal: controller.signal,
       });
 
+      status = response.status;
       const responseText = await response.text();
       const contentType = response.headers.get('content-type');
       const responseData = parseHttpResponseBody(responseText, contentType);
@@ -671,9 +680,23 @@ export async function handleHttpRequest({ block, session, sock, jid, flow }) {
         throw error;
       }
 
+      success = true;
       return { response, responseData };
+    } catch (err) {
+      isTimeout = err.name === 'AbortError' && controller.signal.aborted;
+      throw err;
     } finally {
       clearTimeout(timer);
+      const endTime = performance.now();
+      const latencyMs = Math.round(endTime - startTime);
+
+      recordApiMetric({
+        apiName,
+        latencyMs,
+        success,
+        status,
+        timeout: isTimeout,
+      });
     }
   };
 
@@ -696,6 +719,7 @@ export async function handleHttpRequest({ block, session, sock, jid, flow }) {
       done: false,
     };
   } catch (error) {
+    // Se não foi timeout, registra como falha (já registrado no finally do requestFn)
     const hasCustomErrorMessage = Object.prototype.hasOwnProperty.call(cfg, 'errorMessage');
     const errorTemplate = hasCustomErrorMessage ? cfg.errorMessage : 'Erro ao fazer requisicao HTTP.';
     const errorMessage = interpolate(toText(errorTemplate), session.variables);
