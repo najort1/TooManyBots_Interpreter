@@ -1,11 +1,8 @@
-import http from 'node:http';
 import os from 'node:os';
-import { URL } from 'node:url';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import WebSocket, { WebSocketServer } from 'ws';
 import {
   getActiveSessions,
   getConversationDashboardStats,
@@ -20,7 +17,27 @@ import {
   listConversationEventsSinceByFlowPath,
 } from '../db/index.js';
 import { normalizeInt } from '../utils/normalization.js';
-import { dispatchDashboardApiRoute } from './apiRouter.js';
+import { createDashboardHttpServer } from './httpServer.js';
+import { setupDashboardWebsocketServer, broadcastDashboardPayload, stopDashboardWebsocketServer } from './websocketManager.js';
+import { sendJson, sendText, decodePathComponent, isPathInsideRoot, tryServePublicAsset, readJsonBody } from './staticFileHandler.js';
+import {
+  buildConversationFunnel,
+  buildRecentErrors,
+  buildStatsCacheKey,
+  buildWeeklyTrend,
+  defaultWsClientState,
+  formatActorLabel,
+  inferEventChannel,
+  normalizeActorJidFromEvent,
+  normalizeChatJidFromEvent,
+  normalizeTelemetryLevel,
+  normalizeWsChannels,
+  normalizeWsMode,
+  readFreshCacheEntry,
+  resolveClientAddress,
+  safeAverage,
+  toPercentile,
+} from './serverMetricsUtils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,14 +71,6 @@ const STATS_CACHE_TTL_MS = 1500;
 const HANDOFF_SESSIONS_CACHE_TTL_MS = 1000;
 const WS_BATCH_FLUSH_MS = 250;
 const WS_BATCH_MAX_EVENTS = 60;
-const WS_IMMEDIATE_EVENT_TYPES = new Set([
-  'engine-error',
-  'flow-error',
-  'message-outgoing-error',
-  'human-handoff-requested',
-  'human-handoff-resolved',
-  'human-handoff-ended',
-]);
 const ROUTE_RATE_LIMITS = new Map([
   ['/api/stats', { windowMs: 1000, max: 8 }],
   ['/api/logs', { windowMs: 1000, max: 10 }],
@@ -69,12 +78,6 @@ const ROUTE_RATE_LIMITS = new Map([
   ['/api/handoff/sessions', { windowMs: 1000, max: 6 }],
   ['/api/setup/targets', { windowMs: 1000, max: 6 }],
   ['/api/broadcast/contacts', { windowMs: 1000, max: 6 }],
-]);
-const DASHBOARD_TELEMETRY_LEVELS = new Set([
-  'minimum',
-  'operational',
-  'diagnostic',
-  'verbose',
 ]);
 const TELEMETRY_SAMPLE_CAP_BY_LEVEL = {
   minimum: 0,
@@ -97,72 +100,6 @@ function getTodayBounds(now = new Date()) {
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1).getTime();
   return { start, end };
-}
-
-function sendJson(res, statusCode, payload) {
-  res.statusCode = statusCode;
-  res.setHeader('Content-Type', 'application/json; charset=utf-8');
-  res.end(JSON.stringify(payload));
-}
-
-function sendText(res, statusCode, text) {
-  res.statusCode = statusCode;
-  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-  res.end(text);
-}
-
-function decodePathComponent(value) {
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
-
-function isPathInsideRoot(rootPath, candidatePath) {
-  const relative = path.relative(rootPath, candidatePath);
-  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
-}
-
-function tryServePublicAsset(pathname, res) {
-  if (!pathname.startsWith('/assets/')) return false;
-
-  const decodedPath = decodePathComponent(pathname);
-  const absolutePath = path.resolve(PUBLIC_DIR, `.${decodedPath}`);
-  if (!isPathInsideRoot(PUBLIC_DIR, absolutePath)) {
-    sendText(res, 403, 'Forbidden');
-    return true;
-  }
-
-  if (!fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) {
-    sendText(res, 404, 'Not found');
-    return true;
-  }
-
-  const ext = path.extname(absolutePath).toLowerCase();
-  const contentType = STATIC_MIME_TYPES[ext] || 'application/octet-stream';
-  res.statusCode = 200;
-  res.setHeader('Content-Type', contentType);
-  res.setHeader('Cache-Control', 'public, max-age=300');
-  res.end(fs.readFileSync(absolutePath));
-  return true;
-}
-
-async function readJsonBody(req) {
-  const chunks = [];
-  for await (const chunk of req) {
-    chunks.push(chunk);
-  }
-
-  if (chunks.length === 0) return {};
-  const rawBody = Buffer.concat(chunks).toString('utf-8').trim();
-  if (!rawBody) return {};
-
-  try {
-    return JSON.parse(rawBody);
-  } catch {
-    throw new Error('Invalid JSON body');
-  }
 }
 
 function sanitizeFileName(value) {
@@ -350,263 +287,6 @@ function resolveBlockIndex(targetBlockIndex, targetBlockId, flowBlocks = []) {
   return matched ? matched.index : -1;
 }
 
-function pad2(value) {
-  return String(value).padStart(2, '0');
-}
-
-function toDateKeyLocal(ts) {
-  const d = new Date(Number(ts) || 0);
-  const y = d.getFullYear();
-  const m = pad2(d.getMonth() + 1);
-  const day = pad2(d.getDate());
-  return `${y}-${m}-${day}`;
-}
-
-function startOfDayTsLocal(date) {
-  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
-}
-
-function weekdayShortPtBr(date) {
-  const names = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab'];
-  return names[date.getDay()] || 'Dia';
-}
-
-function buildWeeklyTrend({ now = new Date(), days = 7, startedTimestamps = [], abandonedTimestamps = [] } = {}) {
-  const safeDays = Math.max(1, Math.min(30, Number(days) || 7));
-  const todayStart = startOfDayTsLocal(now);
-  const firstDayStart = todayStart - (safeDays - 1) * 24 * 60 * 60 * 1000;
-
-  const buckets = new Map();
-  for (let i = 0; i < safeDays; i++) {
-    const dayStart = firstDayStart + i * 24 * 60 * 60 * 1000;
-    const key = toDateKeyLocal(dayStart);
-    buckets.set(key, {
-      date: weekdayShortPtBr(new Date(dayStart)),
-      started: 0,
-      abandoned: 0,
-    });
-  }
-
-  for (const ts of startedTimestamps) {
-    const key = toDateKeyLocal(ts);
-    const bucket = buckets.get(key);
-    if (bucket) bucket.started += 1;
-  }
-
-  for (const ts of abandonedTimestamps) {
-    const key = toDateKeyLocal(ts);
-    const bucket = buckets.get(key);
-    if (bucket) bucket.abandoned += 1;
-  }
-
-  return [...buckets.values()];
-}
-
-function buildConversationFunnel({ started = 0, abandoned = 0, completed = 0 } = {}) {
-  const startedSafe = Math.max(0, Number(started) || 0);
-  const abandonedSafe = Math.max(0, Number(abandoned) || 0);
-  const nonAbandoned = Math.max(0, startedSafe - abandonedSafe);
-  const completedSafe = Math.max(0, Math.min(Number(completed) || 0, nonAbandoned));
-
-  return [
-    { step: 'start', count: startedSafe, label: 'Início' },
-    { step: 'retained', count: nonAbandoned, label: 'Sem Abandono' },
-    { step: 'completed', count: completedSafe, label: 'Concluídas' },
-  ];
-}
-
-function normalizeActorJidFromEvent(event) {
-  const actorFromMetadata = String(event?.metadata?.actorJid ?? '').trim();
-  if (actorFromMetadata) return actorFromMetadata;
-  return String(event?.jid ?? '').trim();
-}
-
-function extractPhoneFromJid(jid) {
-  const normalized = String(jid ?? '').trim();
-  if (!normalized.endsWith('@s.whatsapp.net')) return '';
-  const raw = normalized.split('@')[0] ?? '';
-  const digits = raw.replace(/\D+/g, '');
-  return digits || '';
-}
-
-function formatActorLabel(getContactName, jid) {
-  const normalizedJid = String(jid ?? '').trim();
-  const name = String(getContactName(normalizedJid) ?? '').trim();
-  if (name) return name.replace(/^~+\s*/, '').trim() || name;
-
-  const phone = extractPhoneFromJid(normalizedJid);
-  if (phone) return phone;
-
-  if (normalizedJid.endsWith('@g.us')) {
-    return `Grupo ${normalizedJid.split('@')[0]}`;
-  }
-
-  return normalizedJid.split('@')[0] || normalizedJid || 'Desconhecido';
-}
-
-function normalizeChatJidFromEvent(event) {
-  const metadataChatJid = String(event?.metadata?.chatJid ?? '').trim();
-  if (metadataChatJid) return metadataChatJid;
-  return String(event?.jid ?? '').trim();
-}
-
-function extractCommandToken(text) {
-  const normalized = String(text ?? '').trim();
-  if (!normalized.startsWith('/')) return '';
-  const token = normalized.split(/\s+/)[0] ?? '';
-  return token.trim().slice(0, 24);
-}
-
-function normalizeCommandName(command) {
-  const normalized = String(command ?? '').trim();
-  if (!normalized) return 'N/A';
-  if (normalized.toLowerCase() === 'n/a') return 'N/A';
-  if (normalized.startsWith('/')) return normalized;
-  return `/${normalized}`;
-}
-
-function looksLikeErrorMessage(text) {
-  const normalized = String(text ?? '').trim();
-  if (!normalized) return false;
-  return /^(erro|falha|exception|timeout)\b/i.test(normalized);
-}
-
-function buildRecentErrors(events = []) {
-  const grouped = new Map();
-  const lastCommandByChat = new Map();
-
-  for (const ev of events) {
-    const chatJid = normalizeChatJidFromEvent(ev);
-    if (ev.direction === 'incoming') {
-      const cmd = extractCommandToken(ev.messageText);
-      if (chatJid && cmd) {
-        lastCommandByChat.set(chatJid, cmd);
-      }
-    }
-
-    const eventType = String(ev?.eventType ?? '').toLowerCase();
-    const metadata = ev?.metadata && typeof ev.metadata === 'object' ? ev.metadata : {};
-    const messageText = String(ev?.messageText ?? '').trim();
-
-    const isStructuredError = eventType.includes('error');
-    const isOutgoingErrorMessage = ev.direction === 'outgoing' && looksLikeErrorMessage(messageText);
-    if (!isStructuredError && !isOutgoingErrorMessage) continue;
-
-    const commandFromMetadata = String(metadata.command ?? '').trim();
-    const command = normalizeCommandName(commandFromMetadata || lastCommandByChat.get(chatJid) || '');
-    const resolvedErrorSource =
-      metadata.userMessage ??
-      metadata.errorMessage ??
-      (messageText || metadata.error || ev?.eventType || 'Erro desconhecido');
-    const errorText = String(resolvedErrorSource).trim() || 'Erro desconhecido';
-
-    const key = `${command}||${errorText}`;
-    const current = grouped.get(key) ?? { command, error: errorText, count: 0, lastAt: 0 };
-    current.count += 1;
-    current.lastAt = Math.max(current.lastAt, Number(ev?.occurredAt) || 0);
-    grouped.set(key, current);
-  }
-
-  return [...grouped.values()]
-    .sort((a, b) => b.count - a.count || b.lastAt - a.lastAt)
-    .slice(0, 8)
-    .map(item => ({ command: item.command, error: item.error, count: item.count }));
-}
-
-function buildStatsCacheKey({ mode, flowPaths = [], dayStart = 0 }) {
-  const normalizedMode = normalizeModeParam(mode, 'conversation');
-  const normalizedFlowPaths = toFlowPathArray(flowPaths).sort();
-  const flowPathKey = normalizedFlowPaths.length > 0 ? normalizedFlowPaths.join('|') : 'all';
-  return `${normalizedMode}:${flowPathKey}:${Number(dayStart) || 0}`;
-}
-
-function readFreshCacheEntry(entry, nowTs = Date.now()) {
-  if (!entry) return null;
-  const expiresAt = Number(entry.expiresAt) || 0;
-  if (expiresAt <= nowTs) return null;
-  return entry.value;
-}
-
-function resolveClientAddress(req) {
-  const forwarded = String(req?.headers?.['x-forwarded-for'] ?? '').trim();
-  if (forwarded) {
-    const first = forwarded.split(',')[0]?.trim();
-    if (first) return first;
-  }
-  const socketAddress = String(req?.socket?.remoteAddress ?? '').trim();
-  return socketAddress || 'local';
-}
-
-function safeAverage(total, count) {
-  if (!Number.isFinite(total) || !Number.isFinite(count) || count <= 0) return 0;
-  return Number((total / count).toFixed(2));
-}
-
-function toPercentile(samples = [], percentile = 0.95) {
-  if (!Array.isArray(samples) || samples.length === 0) return 0;
-  const ordered = [...samples].map(item => Number(item) || 0).sort((a, b) => a - b);
-  const p = Math.min(1, Math.max(0, Number(percentile) || 0));
-  const index = Math.min(ordered.length - 1, Math.floor((ordered.length - 1) * p));
-  return Number(ordered[index] || 0);
-}
-
-function normalizeTelemetryLevel(value, fallback = 'operational') {
-  const normalized = String(value ?? fallback).trim().toLowerCase();
-  if (DASHBOARD_TELEMETRY_LEVELS.has(normalized)) return normalized;
-  return fallback;
-}
-
-function defaultWsClientState() {
-  return {
-    mode: 'all',
-    flowPaths: new Set(),
-    channels: new Set(['all']),
-    lastEventId: 0,
-    batch: [],
-    batchTimer: null,
-  };
-}
-
-function normalizeWsMode(value, fallback = 'all') {
-  const normalized = String(value ?? fallback).trim().toLowerCase();
-  if (normalized === 'conversation' || normalized === 'command') return normalized;
-  return 'all';
-}
-
-function normalizeWsChannels(input = []) {
-  const values = Array.isArray(input) ? input : [];
-  const result = new Set();
-  for (const item of values) {
-    const normalized = String(item ?? '').trim().toLowerCase();
-    if (!normalized) continue;
-    if (
-      normalized === 'all' ||
-      normalized === 'logs' ||
-      normalized === 'stats' ||
-      normalized === 'handoff' ||
-      normalized === 'broadcast'
-    ) {
-      result.add(normalized);
-    }
-  }
-  if (result.size === 0) result.add('all');
-  return result;
-}
-
-function inferEventChannel(payload = {}) {
-  const eventType = String(payload?.eventType ?? '').trim().toLowerCase();
-  if (!eventType) return 'logs';
-  if (eventType.startsWith('broadcast-')) return 'broadcast';
-  if (eventType.includes('human-handoff') || eventType.startsWith('human-')) return 'handoff';
-  if (eventType.includes('session-')) return 'stats';
-  if (eventType.includes('error')) return 'stats';
-  return 'logs';
-}
-
-function isWsImmediateEvent(payload = {}) {
-  const eventType = String(payload?.eventType ?? '').trim().toLowerCase();
-  return WS_IMMEDIATE_EVENT_TYPES.has(eventType);
-}
 
 export class DashboardServer {
   constructor({
@@ -1393,115 +1073,35 @@ export class DashboardServer {
   async start() {
     if (this.server) return;
 
-    this.server = http.createServer(async (req, res) => {
-      try {
-      const requestUrl = new URL(req.url || '/', `http://${req.headers.host || '127.0.0.1'}`);
-      const requestStartedAt = Date.now();
-      const requestPath = requestUrl.pathname;
-      res.once('finish', () => {
-        this.recordHttpRoute(requestPath, Date.now() - requestStartedAt, { statusCode: res.statusCode || 0 });
-      });
-
-      if (requestUrl.pathname === '/') {
-        const indexPath = path.join(PUBLIC_DIR, 'index.html');
-        if (!fs.existsSync(indexPath)) {
-          sendText(res, 503, 'Dashboard frontend build not found. Run: npm --prefix tmb_dashboard run build');
-          return;
-        }
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.end(fs.readFileSync(indexPath));
-        return;
-      }
-
-      if (tryServePublicAsset(requestUrl.pathname, res)) {
-        return;
-      }
-
-      const apiHandled = await dispatchDashboardApiRoute({
-        server: this,
-        req,
-        res,
-        requestUrl,
-        helpers: {
-          sendJson,
-          sendText,
-          readJsonBody,
-          normalizeFlowBlocks,
-          normalizeFlowPath,
-          normalizeModeParam,
-          resolveFlowPathsForMode,
-          toInt,
-          normalizeActor,
-          listModeEvents,
-          parseDataUrlImage,
-          saveHandoffMedia,
-          decodePathComponent,
-          isPathInsideRoot,
-          resolveBlockIndex,
-        },
-        context: {
-          __dirname,
-          HANDOFF_MEDIA_DIR,
-          STATIC_MIME_TYPES,
-        },
-      });
-      if (apiHandled) {
-        return;
-      }
-
-      sendJson(res, 404, { error: 'Not found' });
-      } catch (error) {
-        this.logger?.error?.(
-          {
-            err: {
-              name: error?.name || 'Error',
-              message: error?.message || 'Internal server error',
-              stack: error?.stack || '',
-            },
-            method: req?.method || 'GET',
-            url: req?.url || '',
-          },
-          'Dashboard HTTP request failed'
-        );
-        if (!res.headersSent) {
-          sendJson(res, 500, { error: error?.message || 'Internal server error' });
-        } else {
-          try {
-            res.end();
-          } catch {
-            // ignore
-          }
-        }
-      }
+    this.server = createDashboardHttpServer({
+      server: this,
+      publicDir: PUBLIC_DIR,
+      handoffMediaDir: HANDOFF_MEDIA_DIR,
+      staticMimeTypes: STATIC_MIME_TYPES,
+      helpers: {
+        sendJson,
+        sendText,
+        readJsonBody,
+        normalizeFlowBlocks,
+        normalizeFlowPath,
+        normalizeModeParam,
+        resolveFlowPathsForMode,
+        toInt,
+        normalizeActor,
+        listModeEvents,
+        parseDataUrlImage,
+        saveHandoffMedia,
+        decodePathComponent,
+        isPathInsideRoot,
+        resolveBlockIndex,
+        tryServePublicAsset,
+      },
+      context: {
+        __dirname,
+      },
     });
 
-    this.wss = new WebSocketServer({ server: this.server, path: '/ws' });
-    this.wss.on('connection', ws => {
-      this.observability.ws.connectionsOpened += 1;
-      this.getWsClientState(ws);
-      ws.send(JSON.stringify({
-        type: 'hello',
-        now: Date.now(),
-        capabilities: {
-          subscribe: true,
-          batchedEvents: true,
-        },
-      }));
-
-      ws.on('message', rawMessage => {
-        this.handleWsIncomingMessage(ws, rawMessage);
-      });
-
-      ws.on('close', () => {
-        this.observability.ws.connectionsClosed += 1;
-        const state = this.wsClientState.get(ws);
-        if (state?.batchTimer) {
-          clearTimeout(state.batchTimer);
-          state.batchTimer = null;
-        }
-      });
-    });
+    setupDashboardWebsocketServer(this, this.server);
 
     await new Promise((resolve, reject) => {
       this.server.once('error', reject);
@@ -1513,44 +1113,11 @@ export class DashboardServer {
   }
 
   broadcast(payload) {
-    if (!this.wss) return;
-    const safePayload = payload && typeof payload === 'object' ? payload : {};
-    const immediate = isWsImmediateEvent(safePayload);
-    for (const client of this.wss.clients) {
-      if (client.readyState !== WebSocket.OPEN) continue;
-      const state = this.getWsClientState(client);
-      if (!this.shouldDeliverWsPayload(state, safePayload)) continue;
-      if (immediate) {
-        this.flushWsClientBatch(client);
-        try {
-          const wire = JSON.stringify({ type: 'event', payload: safePayload });
-          client.send(wire);
-          this.recordWsSend({
-            bytes: Buffer.byteLength(wire, 'utf8'),
-            events: 1,
-            immediate: true,
-          });
-        } catch {
-          // ignore socket send failures
-        }
-        continue;
-      }
-      this.queueWsPayload(client, safePayload);
-    }
+    broadcastDashboardPayload(this, payload);
   }
 
   async stop() {
-    if (this.wss) {
-      for (const client of this.wss.clients) {
-        const state = this.wsClientState.get(client);
-        if (state?.batchTimer) {
-          clearTimeout(state.batchTimer);
-          state.batchTimer = null;
-        }
-      }
-      this.wss.close();
-      this.wss = null;
-    }
+    stopDashboardWebsocketServer(this);
 
     if (!this.server) return;
 
