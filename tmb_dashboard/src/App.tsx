@@ -1,4 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useToastManager } from './hooks/useToastManager';
+import { useHandoffActions } from './hooks/useHandoffActions';
+import { useBroadcastActions } from './hooks/useBroadcastActions';
+import { useSettingsActions } from './hooks/useSettingsActions';
+import { useSessionManagementActions } from './hooks/useSessionManagementActions';
 import {
   fetchActiveSessionsForManagement,
   fetchBots,
@@ -16,27 +21,21 @@ import {
   fetchSetupTargets,
   fetchSessionFlows,
   fetchSessionOverview,
-  isAbortError,
-  postClearAllActiveSessions,
-  postClearFlowSessions,
-  postClearRuntimeCache,
-  postBroadcastSend,
-  postBroadcastPause,
-  postBroadcastResume,
-  postBroadcastCancel,
   fetchBroadcastStatus,
-  postResetSessionByJid,
-  postRuntimeSettings,
-  postDbMaintenanceConfig,
-  postRunDbMaintenance,
   postSetupState,
   fetchStats,
-  postHandoffEnd,
-  postHandoffImage,
-  postHandoffMessage,
-  postHandoffResume,
-  postUpdateFlowSessionTimeout,
 } from './lib/api';
+import {
+  WS_REFRESH_EVENT_TYPES,
+  TRANSIENT_WS_EVENT_TYPES,
+  modeToQuery,
+  readMetadataText,
+  shouldIgnoreRequestError,
+  sortHistory,
+  toBroadcastProgress,
+  toDashboardMode,
+  trimLogs,
+} from './lib/appUtils';
 import { isLikelyErrorMessage } from './lib/format';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
@@ -51,7 +50,6 @@ import { DbMaintenanceView } from './components/settings/DbMaintenanceView';
 import { SetupView } from './components/setup/SetupView';
 import { Modal } from './components/Modal';
 import { ToastCenter } from './components/feedback/ToastCenter';
-import type { ToastItem, ToastTone } from './components/feedback/ToastCenter';
 import type {
   DashboardMode,
   DashboardStats,
@@ -74,201 +72,6 @@ import type {
   DashboardTelemetryLevel,
   ObservabilitySnapshot,
 } from './types';
-
-const WS_REFRESH_EVENT_TYPES = new Set([
-  'session-start',
-  'session-end',
-  'command-executed',
-  'flow-error',
-  'engine-error',
-  'message-outgoing-error',
-  'message-outgoing',
-  'human-message-outgoing',
-  'human-image-outgoing',
-]);
-const TRANSIENT_WS_EVENT_TYPES = new Set(['broadcast-send-progress']);
-
-function toDashboardMode(mode: string): DashboardMode {
-  return String(mode).toLowerCase() === 'command' ? 'COMMAND' : 'CONVERSATION';
-}
-
-function modeToQuery(mode: DashboardMode): 'conversation' | 'command' {
-  return mode === 'COMMAND' ? 'command' : 'conversation';
-}
-
-function trimLogs(logs: EventLog[], max = 200): EventLog[] {
-  if (logs.length <= max) return logs;
-  return logs.slice(logs.length - max);
-}
-
-function readMetadataText(log: EventLog, key: string): string {
-  const metadata = log.metadata;
-  if (!metadata || typeof metadata !== 'object') return '';
-  const value = (metadata as Record<string, unknown>)[key];
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function getEventDedupKey(log: EventLog): string {
-  if (Number.isFinite(log.id)) return `db:${log.id}`;
-
-  const messageId = readMetadataText(log, 'id');
-  if (messageId) {
-    return `wa:${messageId}:${log.eventType || ''}:${log.jid || ''}`;
-  }
-
-  const actorJid = readMetadataText(log, 'actorJid');
-  const chatJid = readMetadataText(log, 'chatJid');
-  const listId = readMetadataText(log, 'listId');
-
-  return [
-    log.occurredAt || 0,
-    log.eventType || '',
-    log.direction || '',
-    log.jid || '',
-    log.messageText || '',
-    actorJid,
-    chatJid,
-    listId,
-  ].join('|');
-}
-
-function dedupeLogs(logs: EventLog[]): EventLog[] {
-  const deduped = new Map<string, EventLog>();
-  for (const log of logs) {
-    const key = getEventDedupKey(log);
-    const existing = deduped.get(key);
-    if (!existing) {
-      deduped.set(key, log);
-      continue;
-    }
-
-    const existingScore = Number(existing.id) || 0;
-    const nextScore = Number(log.id) || 0;
-    if (nextScore > existingScore) {
-      deduped.set(key, log);
-    }
-  }
-  return [...deduped.values()];
-}
-
-function sortHistory(logs: EventLog[]): EventLog[] {
-  return dedupeLogs([...logs]).sort((a, b) => {
-    const aTime = Number(a.occurredAt) || 0;
-    const bTime = Number(b.occurredAt) || 0;
-    if (aTime !== bTime) return aTime - bTime;
-    return (Number(a.id) || 0) - (Number(b.id) || 0);
-  });
-}
-
-function fileToDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== 'string' || !result.startsWith('data:')) {
-        reject(new Error('Falha ao converter imagem para envio.'));
-        return;
-      }
-      resolve(result);
-    };
-    reader.onerror = () => {
-      reject(new Error('Falha ao ler o arquivo selecionado.'));
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-function mapMessageToTone(message: string): ToastTone {
-  const normalized = String(message || '').toLowerCase();
-  if (normalized.includes('sucesso')) return 'success';
-  if (normalized.includes('erro') || normalized.includes('falha')) return 'danger';
-  if (normalized.includes('aten') || normalized.includes('aguardando')) return 'warning';
-  return 'info';
-}
-
-function shouldIgnoreRequestError(error: unknown): boolean {
-  return isAbortError(error);
-}
-
-function readMetadataNumber(log: EventLog, key: string, fallback = 0): number {
-  const metadata = log.metadata;
-  if (!metadata || typeof metadata !== 'object') return fallback;
-  const raw = (metadata as Record<string, unknown>)[key];
-  const value = Number(raw);
-  return Number.isFinite(value) ? value : fallback;
-}
-
-function normalizeBroadcastControlStatus(raw: string): BroadcastSendProgress['controlStatus'] {
-  const value = String(raw || '').toLowerCase();
-  if (value === 'paused' || value === 'cancelling' || value === 'cancelled' || value === 'completed') {
-    return value;
-  }
-  return 'running';
-}
-
-function toBroadcastMetrics(raw: unknown): BroadcastSendProgress['metrics'] {
-  if (!raw || typeof raw !== 'object') return null;
-  const metrics = raw as Record<string, unknown>;
-  const numeric = (key: string): number => {
-    const value = Number(metrics[key]);
-    return Number.isFinite(value) ? value : 0;
-  };
-  return {
-    avgSendMs: numeric('avgSendMs'),
-    maxSendMs: numeric('maxSendMs'),
-    p95SendMs: numeric('p95SendMs'),
-    throughputPerSecond: numeric('throughputPerSecond'),
-    failuresPerMinute: numeric('failuresPerMinute'),
-    elapsedMs: numeric('elapsedMs'),
-    startedAt: numeric('startedAt'),
-  };
-}
-
-function toBroadcastProgress(log: EventLog): BroadcastSendProgress | null {
-  if (String(log.eventType || '').trim().toLowerCase() !== 'broadcast-send-progress') {
-    return null;
-  }
-
-  const attempted = Math.max(0, readMetadataNumber(log, 'attempted', 0));
-  const sent = Math.max(0, readMetadataNumber(log, 'sent', 0));
-  const failed = Math.max(0, readMetadataNumber(log, 'failed', 0));
-  const cancelled = Math.max(0, readMetadataNumber(log, 'cancelled', 0));
-  const processed = Math.max(0, Math.min(attempted, readMetadataNumber(log, 'processed', sent + failed + cancelled)));
-  const remaining = Math.max(0, readMetadataNumber(log, 'remaining', attempted - processed));
-  const percent = attempted > 0
-    ? Math.max(0, Math.min(100, readMetadataNumber(log, 'percent', Math.round((processed / attempted) * 100))))
-    : 0;
-  const statusRaw = readMetadataText(log, 'status').toLowerCase();
-  const status: BroadcastSendProgress['status'] =
-    statusRaw === 'completed'
-      ? 'completed'
-      : (statusRaw === 'started' ? 'started' : 'sending');
-  const recipientStatusRaw = readMetadataText(log, 'recipientStatus').toLowerCase();
-  const recipientStatus: BroadcastSendProgress['recipientStatus'] =
-    recipientStatusRaw === 'failed'
-      ? 'failed'
-      : (recipientStatusRaw === 'sent' ? 'sent' : '');
-  const jid = String(log.jid || '').trim();
-  const controlStatus = normalizeBroadcastControlStatus(readMetadataText(log, 'controlStatus'));
-  const metadata = (log.metadata && typeof log.metadata === 'object') ? log.metadata as Record<string, unknown> : null;
-  const metrics = toBroadcastMetrics(metadata?.metrics);
-
-  return {
-    campaignId: Math.max(0, readMetadataNumber(log, 'campaignId', 0)),
-    attempted,
-    processed,
-    sent,
-    failed,
-    cancelled,
-    remaining,
-    percent,
-    status,
-    controlStatus,
-    recipientStatus,
-    jid: jid || '',
-    metrics,
-  };
-}
 
 type PendingConfirmAction =
   | 'clear-runtime-cache'
@@ -294,7 +97,6 @@ function App() {
   const [uptimeMs, setUptimeMs] = useState(0);
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [logs, setLogs] = useState<EventLog[]>([]);
-  const [toasts, setToasts] = useState<ToastItem[]>([]);
   const [handoffBlocks, setHandoffBlocks] = useState<HandoffBlock[]>([]);
   const [handoffSessions, setHandoffSessions] = useState<HandoffSession[]>([]);
   const [selectedHandoffJid, setSelectedHandoffJid] = useState('');
@@ -372,8 +174,8 @@ function App() {
   const wsConnectedRef = useRef(wsConnected);
   const activeBroadcastCampaignIdRef = useRef<number | null>(null);
   const refreshTimeoutRef = useRef<number | null>(null);
-  const toastTimersRef = useRef<Map<string, number>>(new Map());
   const lastCustomerToastByJidRef = useRef<Map<string, number>>(new Map());
+  const { toasts, dismissToast, pushToast, showNotice } = useToastManager();
 
   useEffect(() => {
     flowPathRef.current = flowPath;
@@ -452,28 +254,6 @@ function App() {
       setView('setup');
     }
   }, [needsInitialSetup, view]);
-
-  const dismissToast = useCallback((id: string) => {
-    setToasts(previous => previous.filter(item => item.id !== id));
-    const timer = toastTimersRef.current.get(id);
-    if (timer) {
-      window.clearTimeout(timer);
-      toastTimersRef.current.delete(id);
-    }
-  }, []);
-
-  const pushToast = useCallback((title: string, message: string, tone: ToastTone = 'info', ttlMs = 4200) => {
-    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-    setToasts(previous => [...previous.slice(-4), { id, title, message, tone }]);
-    const timer = window.setTimeout(() => {
-      dismissToast(id);
-    }, ttlMs);
-    toastTimersRef.current.set(id, timer);
-  }, [dismissToast]);
-
-  const showNotice = useCallback((message: string) => {
-    pushToast('Notificação', message, mapMessageToTone(message));
-  }, [pushToast]);
 
   const markSessionAsResponded = useCallback((jid: string, text: string, eventType: string) => {
     const nowTs = Date.now();
@@ -738,15 +518,10 @@ function App() {
       }
     }, 10000);
 
-    const toastTimers = toastTimersRef.current;
     return () => {
       cancelled = true;
       window.clearInterval(pollTimer);
       if (refreshTimeoutRef.current) window.clearTimeout(refreshTimeoutRef.current);
-      for (const timer of toastTimers.values()) {
-        window.clearTimeout(timer);
-      }
-      toastTimers.clear();
     };
   }, [
     loadDbInfo,
@@ -1029,486 +804,110 @@ function App() {
     };
   }, [mode, pushToast, refreshHandoffQueue, scheduleSoftRefresh]);
 
-  const handleSelectHandoffSession = useCallback(async (jid: string) => {
-    setSelectedHandoffJid(jid);
-    setResumeBlockId('');
-    try {
-      await refreshHandoffHistory(jid);
-    } catch (error) {
-      if (shouldIgnoreRequestError(error)) return;
-      showNotice(`Falha ao carregar histórico: ${String((error as Error)?.message || error)}`);
-    }
-  }, [refreshHandoffHistory, showNotice]);
+  const {
+    handleSelectHandoffSession,
+    handleSendHandoff,
+    handleSendHandoffImage,
+    handleResumeHandoff,
+    handleEndHandoff,
+    openEndSessionModal,
+  } = useHandoffActions({
+    selectedJidRef,
+    handoffMessage,
+    resumeBlockId,
+    setBusySend,
+    setBusySendImage,
+    setBusyResume,
+    setBusyEnd,
+    setHandoffMessage,
+    setSelectedHandoffJid,
+    setSelectedHandoffHistory,
+    setResumeBlockId,
+    setConfirmEndOpen,
+    refreshHandoffHistory,
+    refreshHandoffQueue,
+    refreshStats,
+    markSessionAsResponded,
+    showNotice,
+  });
 
-  const handleSendHandoff = useCallback(async () => {
-    const jid = selectedJidRef.current;
-    const text = handoffMessage.trim();
-    if (!jid || !text) return;
+  const {
+    openBroadcastSendModal,
+    handleToggleBroadcastRecipient,
+    handleSelectAllBroadcastVisible,
+    handlePickBroadcastImage,
+    handleSendBroadcast,
+    handlePauseBroadcast,
+    handleResumeBroadcast,
+    handleCancelBroadcast,
+  } = useBroadcastActions({
+    broadcastMessage,
+    broadcastImageDataUrl,
+    broadcastImageFileName,
+    broadcastRecipientMode,
+    selectedBroadcastJids,
+    broadcastContacts,
+    setPendingConfirmAction,
+    setSelectedBroadcastJids,
+    setBroadcastImageDataUrl,
+    setBroadcastImagePreviewUrl,
+    setBroadcastImageFileName,
+    setBroadcastProgress,
+    setBroadcastLastResult,
+    setBusyBroadcastSend,
+    setBroadcastMessage,
+    activeBroadcastCampaignIdRef,
+    busyBroadcastSendRef,
+    showNotice,
+  });
 
-    setBusySend(true);
-    try {
-      await postHandoffMessage(jid, text);
-      setHandoffMessage('');
-      markSessionAsResponded(jid, text, 'human-message-outgoing');
-      await refreshHandoffHistory(jid);
-      await refreshHandoffQueue();
-    } catch (error) {
-      showNotice(`Não foi possível enviar a mensagem: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusySend(false);
-    }
-  }, [handoffMessage, markSessionAsResponded, refreshHandoffHistory, refreshHandoffQueue, showNotice]);
+  const {
+    handleToggleAutoReload,
+    handleUpdateBroadcastSendInterval,
+    handleUpdateTelemetryLevel,
+    handleClearRuntimeCache,
+    handleSaveDbMaintenance,
+    handleRunDbMaintenanceNow,
+  } = useSettingsActions({
+    loadRuntimeSettings,
+    loadDbInfo,
+    loadDbMaintenance,
+    refreshObservability,
+    setAutoReloadFlows,
+    setBroadcastSendIntervalMs,
+    setDashboardTelemetryLevel,
+    setDbMaintenanceConfig,
+    setDbMaintenanceStatus,
+    setBusySaveSettings,
+    setBusyClearRuntimeCache,
+    setBusySaveDbMaintenance,
+    setBusyRunDbMaintenance,
+    showNotice,
+  });
 
-  const handleSendHandoffImage = useCallback(async (file: File) => {
-    const jid = selectedJidRef.current;
-    if (!jid) return;
-
-    if (!file.type.startsWith('image/')) {
-      showNotice('Selecione um arquivo de imagem válido.');
-      return;
-    }
-
-    setBusySendImage(true);
-    try {
-      const imageDataUrl = await fileToDataUrl(file);
-      const caption = handoffMessage.trim();
-      await postHandoffImage(jid, imageDataUrl, {
-        caption,
-        fileName: file.name,
-        mimeType: file.type,
-      });
-      setHandoffMessage('');
-      markSessionAsResponded(jid, caption || `[Imagem] ${file.name}`, 'human-image-outgoing');
-      await refreshHandoffHistory(jid);
-      await refreshHandoffQueue();
-    } catch (error) {
-      showNotice(`Não foi possível enviar a imagem: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusySendImage(false);
-    }
-  }, [handoffMessage, markSessionAsResponded, refreshHandoffHistory, refreshHandoffQueue, showNotice]);
-
-  const handleResumeHandoff = useCallback(async () => {
-    const jid = selectedJidRef.current;
-    if (!jid) return;
-    if (!resumeBlockId.trim()) {
-      showNotice('Selecione um bloco para retomar a sessão.');
-      return;
-    }
-
-    setBusyResume(true);
-    try {
-      await postHandoffResume(jid, resumeBlockId);
-      await refreshHandoffQueue();
-      await refreshStats();
-      showNotice('Sessão retomada com sucesso.');
-    } catch (error) {
-      showNotice(`Não foi possível retomar a sessão: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusyResume(false);
-    }
-  }, [refreshHandoffQueue, refreshStats, resumeBlockId, showNotice]);
-
-  const handleEndHandoff = useCallback(async () => {
-    const jid = selectedJidRef.current;
-    if (!jid) return;
-
-    setBusyEnd(true);
-    try {
-      await postHandoffEnd(jid);
-      setSelectedHandoffJid('');
-      setSelectedHandoffHistory([]);
-      setResumeBlockId('');
-      setConfirmEndOpen(false);
-      await Promise.all([refreshHandoffQueue(), refreshStats()]);
-      showNotice('Sessão encerrada com sucesso.');
-    } catch (error) {
-      showNotice(`Não foi possível encerrar a sessão: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusyEnd(false);
-    }
-  }, [refreshHandoffQueue, refreshStats, showNotice]);
-
-  const openEndSessionModal = useCallback(() => {
-    if (!selectedJidRef.current) return;
-    setConfirmEndOpen(true);
-  }, []);
+  const {
+    handleSelectSessionFlow,
+    handleClearAllSessions,
+    handleClearSessionsByFlow,
+    handleResetSessionByJid,
+    handleUpdateSessionTimeout,
+  } = useSessionManagementActions({
+    sessionFlows,
+    sessionSelectedFlowPath,
+    sessionTimeoutInputMinutes,
+    sessionResetJidInput,
+    refreshSessionManagement,
+    setSessionSelectedFlowPath,
+    setSessionTimeoutInputMinutes,
+    setBusySessionAction,
+    setSessionResetJidInput,
+    setSessionFlows,
+    showNotice,
+  });
 
   const openConfirmAction = useCallback((action: PendingConfirmAction) => {
     setPendingConfirmAction(action);
   }, []);
-
-  const openBroadcastSendModal = useCallback(() => {
-    const hasText = broadcastMessage.trim().length > 0;
-    const hasImage = broadcastImageDataUrl.length > 0;
-    if (!hasText && !hasImage) {
-      showNotice('Informe texto ou imagem para enviar o anúncio.');
-      return;
-    }
-
-    if (broadcastRecipientMode === 'selected' && selectedBroadcastJids.length === 0) {
-      showNotice('Selecione ao menos um destinatário.');
-      return;
-    }
-
-    setPendingConfirmAction('send-broadcast');
-  }, [broadcastImageDataUrl, broadcastMessage, broadcastRecipientMode, selectedBroadcastJids.length, showNotice]);
-
-  const handleToggleBroadcastRecipient = useCallback((jid: string) => {
-    setSelectedBroadcastJids(previous => {
-      if (previous.includes(jid)) {
-        return previous.filter(item => item !== jid);
-      }
-      return [...previous, jid];
-    });
-  }, []);
-
-  const handleSelectAllBroadcastVisible = useCallback(() => {
-    setSelectedBroadcastJids(previous => {
-      const merged = new Set(previous);
-      for (const contact of broadcastContacts) {
-        merged.add(contact.jid);
-      }
-      return [...merged];
-    });
-  }, [broadcastContacts]);
-
-  const handlePickBroadcastImage = useCallback(async (file: File) => {
-    if (!file.type.startsWith('image/')) {
-      showNotice('Selecione um arquivo de imagem válido para o anúncio.');
-      return;
-    }
-
-    try {
-      const dataUrl = await fileToDataUrl(file);
-      setBroadcastImageDataUrl(dataUrl);
-      setBroadcastImagePreviewUrl(dataUrl);
-      setBroadcastImageFileName(file.name);
-    } catch (error) {
-      showNotice(`Não foi possível ler a imagem: ${String((error as Error)?.message || error)}`);
-    }
-  }, [showNotice]);
-
-  const handleSendBroadcast = useCallback(async () => {
-    const hasText = broadcastMessage.trim().length > 0;
-    const hasImage = broadcastImageDataUrl.length > 0;
-    if (!hasText && !hasImage) {
-      showNotice('Informe texto ou imagem para enviar o anúncio.');
-      return;
-    }
-
-    if (broadcastRecipientMode === 'selected' && selectedBroadcastJids.length === 0) {
-      showNotice('Selecione ao menos um destinatário.');
-      return;
-    }
-
-    const estimatedAttempted = Math.max(
-      0,
-      broadcastRecipientMode === 'all' ? broadcastContacts.length : selectedBroadcastJids.length
-    );
-
-    activeBroadcastCampaignIdRef.current = null;
-    setBroadcastProgress({
-      campaignId: 0,
-      attempted: estimatedAttempted,
-      processed: 0,
-      sent: 0,
-      failed: 0,
-      cancelled: 0,
-      remaining: estimatedAttempted,
-      percent: 0,
-      status: 'started',
-      controlStatus: 'running',
-      recipientStatus: '',
-      jid: '',
-    });
-    setBroadcastLastResult(null);
-    busyBroadcastSendRef.current = true;
-    setBusyBroadcastSend(true);
-    try {
-      const result = await postBroadcastSend({
-        target: broadcastRecipientMode,
-        jids: selectedBroadcastJids,
-        text: broadcastMessage,
-        imageDataUrl: broadcastImageDataUrl || '',
-        fileName: broadcastImageFileName || '',
-      });
-      activeBroadcastCampaignIdRef.current = result.campaignId || null;
-      setBroadcastLastResult(result);
-      const cancelledCount = Math.max(0, Number(result.cancelled) || 0);
-      const processedCount = Math.max(0, Math.min(result.attempted, result.sent + result.failed + cancelledCount));
-      const finalControlStatus: BroadcastSendProgress['controlStatus'] = cancelledCount > 0 ? 'cancelled' : 'completed';
-      setBroadcastProgress({
-        campaignId: result.campaignId,
-        attempted: result.attempted,
-        processed: processedCount,
-        sent: result.sent,
-        failed: result.failed,
-        cancelled: cancelledCount,
-        remaining: Math.max(0, result.attempted - processedCount),
-        percent: result.attempted > 0 ? Math.min(100, Math.round((processedCount / result.attempted) * 100)) : 0,
-        status: 'completed',
-        controlStatus: finalControlStatus,
-        recipientStatus: '',
-        jid: '',
-        metrics: result.metrics ?? null,
-      });
-      if (cancelledCount > 0) {
-        showNotice(
-          `Campanha cancelada: ${result.sent}/${result.attempted} enviados, ${cancelledCount} pendente(s) cancelado(s).`
-        );
-      } else {
-        showNotice(`Campanha enviada: ${result.sent}/${result.attempted} entregas.`);
-      }
-      if (result.failed === 0 && cancelledCount === 0) {
-        setBroadcastMessage('');
-        setBroadcastImageDataUrl('');
-        setBroadcastImagePreviewUrl('');
-        setBroadcastImageFileName('');
-      }
-    } catch (error) {
-      activeBroadcastCampaignIdRef.current = null;
-      setBroadcastProgress(null);
-      const message = String((error as Error)?.message || error);
-      if (message.includes('campaign-in-progress')) {
-        showNotice('Ja existe uma campanha em andamento. Aguarde ou cancele antes de iniciar outra.');
-      } else {
-        showNotice(`Falha ao enviar anúncio: ${message}`);
-      }
-    } finally {
-      busyBroadcastSendRef.current = false;
-      setBusyBroadcastSend(false);
-    }
-  }, [
-    broadcastContacts.length,
-    broadcastImageDataUrl,
-    broadcastImageFileName,
-    broadcastMessage,
-    broadcastRecipientMode,
-    selectedBroadcastJids,
-    showNotice,
-  ]);
-
-  const applyBroadcastControlResult = useCallback(
-    (campaign: BroadcastSendProgress | null | undefined, fallbackMessage: string) => {
-      if (campaign) {
-        activeBroadcastCampaignIdRef.current = campaign.campaignId || activeBroadcastCampaignIdRef.current;
-        setBroadcastProgress(campaign);
-      }
-      if (fallbackMessage) {
-        showNotice(fallbackMessage);
-      }
-    },
-    [showNotice]
-  );
-
-  const handlePauseBroadcast = useCallback(async () => {
-    try {
-      const response = await postBroadcastPause();
-      applyBroadcastControlResult(response?.campaign, 'Campanha pausada.');
-    } catch (error) {
-      showNotice(`Falha ao pausar campanha: ${String((error as Error)?.message || error)}`);
-    }
-  }, [applyBroadcastControlResult, showNotice]);
-
-  const handleResumeBroadcast = useCallback(async () => {
-    try {
-      const response = await postBroadcastResume();
-      applyBroadcastControlResult(response?.campaign, 'Campanha retomada.');
-    } catch (error) {
-      showNotice(`Falha ao retomar campanha: ${String((error as Error)?.message || error)}`);
-    }
-  }, [applyBroadcastControlResult, showNotice]);
-
-  const handleCancelBroadcast = useCallback(async () => {
-    try {
-      const response = await postBroadcastCancel();
-      applyBroadcastControlResult(response?.campaign, 'Cancelamento solicitado. Aguardando finalizar o envio em curso...');
-    } catch (error) {
-      showNotice(`Falha ao cancelar campanha: ${String((error as Error)?.message || error)}`);
-    }
-  }, [applyBroadcastControlResult, showNotice]);
-
-  const handleToggleAutoReload = useCallback(async (value: boolean) => {
-    setBusySaveSettings(true);
-    try {
-      const updated = await postRuntimeSettings({ autoReloadFlows: value });
-      setAutoReloadFlows(updated.autoReloadFlows !== false);
-      setBroadcastSendIntervalMs(Math.max(0, Math.floor(Number(updated.broadcastSendIntervalMs ?? 250) || 250)));
-      showNotice(`Auto-reload ${updated.autoReloadFlows ? 'habilitado' : 'desabilitado'} com sucesso.`);
-    } catch (error) {
-      showNotice(`Falha ao atualizar auto-reload: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusySaveSettings(false);
-    }
-  }, [showNotice]);
-
-  const handleUpdateBroadcastSendInterval = useCallback(async (value: number) => {
-    const normalized = Math.max(0, Math.floor(Number(value) || 0));
-    setBusySaveSettings(true);
-    try {
-      const updated = await postRuntimeSettings({ broadcastSendIntervalMs: normalized });
-      setAutoReloadFlows(updated.autoReloadFlows !== false);
-      const effective = Math.max(0, Math.floor(Number(updated.broadcastSendIntervalMs ?? normalized) || normalized));
-      setBroadcastSendIntervalMs(effective);
-      showNotice(`Intervalo do anúncio em massa atualizado para ${effective} ms.`);
-    } catch (error) {
-      showNotice(`Falha ao atualizar intervalo do anúncio em massa: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusySaveSettings(false);
-    }
-  }, [showNotice]);
-
-  const handleUpdateTelemetryLevel = useCallback(async (value: DashboardTelemetryLevel) => {
-    setBusySaveSettings(true);
-    try {
-      const updated = await postRuntimeSettings({ dashboardTelemetryLevel: value });
-      const nextLevel = String(updated.dashboardTelemetryLevel || '').trim().toLowerCase();
-      if (nextLevel === 'minimum' || nextLevel === 'operational' || nextLevel === 'diagnostic' || nextLevel === 'verbose') {
-        setDashboardTelemetryLevel(nextLevel);
-      } else {
-        setDashboardTelemetryLevel(value);
-      }
-      await refreshObservability();
-      showNotice(`Nivel de telemetria atualizado para ${value}.`);
-    } catch (error) {
-      showNotice(`Falha ao atualizar telemetria: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusySaveSettings(false);
-    }
-  }, [refreshObservability, showNotice]);
-
-  const handleClearRuntimeCache = useCallback(async () => {
-    setBusyClearRuntimeCache(true);
-    try {
-      await postClearRuntimeCache();
-      showNotice('Cache runtime limpo com sucesso.');
-    } catch (error) {
-      showNotice(`Falha ao limpar cache runtime: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusyClearRuntimeCache(false);
-    }
-  }, [showNotice]);
-
-  const handleSaveDbMaintenance = useCallback(async (input: Partial<DbMaintenanceConfig>) => {
-    setBusySaveDbMaintenance(true);
-    try {
-      const result = await postDbMaintenanceConfig(input);
-      setDbMaintenanceConfig(result?.config || null);
-      setDbMaintenanceStatus(result?.maintenanceStatus || null);
-      await Promise.all([loadRuntimeSettings(), loadDbInfo()]);
-      showNotice('Política de manutenção do DB atualizada com sucesso.');
-    } catch (error) {
-      showNotice(`Falha ao atualizar manutenção do DB: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusySaveDbMaintenance(false);
-    }
-  }, [loadDbInfo, loadRuntimeSettings, showNotice]);
-
-  const handleRunDbMaintenanceNow = useCallback(async () => {
-    setBusyRunDbMaintenance(true);
-    try {
-      const result = await postRunDbMaintenance(true);
-      if (!result?.ok) {
-        throw new Error(String(result?.error || 'db-maintenance-failed'));
-      }
-      setDbMaintenanceStatus(result?.status || null);
-      await Promise.all([loadDbInfo(), loadDbMaintenance()]);
-      const durationMs = Number(result?.durationMs) || 0;
-      showNotice(`Manutenção do DB executada (${durationMs} ms).`);
-    } catch (error) {
-      showNotice(`Falha ao executar manutenção do DB: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusyRunDbMaintenance(false);
-    }
-  }, [loadDbInfo, loadDbMaintenance, showNotice]);
-
-  const handleSelectSessionFlow = useCallback((flowPath: string) => {
-    setSessionSelectedFlowPath(flowPath);
-    const flow = sessionFlows.find(item => item.flowPath === flowPath);
-    setSessionTimeoutInputMinutes(flow ? String(flow.sessionTimeoutMinutes) : '');
-  }, [sessionFlows]);
-
-  const handleClearAllSessions = useCallback(async () => {
-    setBusySessionAction(true);
-    try {
-      const result = await postClearAllActiveSessions();
-      showNotice(`Sessões ativas removidas: ${result.removed}.`);
-      await refreshSessionManagement();
-    } catch (error) {
-      showNotice(`Falha ao limpar sessões ativas: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusySessionAction(false);
-    }
-  }, [refreshSessionManagement, showNotice]);
-
-  const handleClearSessionsByFlow = useCallback(async () => {
-    const flowPath = sessionSelectedFlowPath.trim();
-    if (!flowPath) {
-      showNotice('Selecione um flow para limpar sessões.');
-      return;
-    }
-    setBusySessionAction(true);
-    try {
-      const result = await postClearFlowSessions(flowPath);
-      showNotice(`Sessões removidas do flow selecionado: ${result.removed}.`);
-      await refreshSessionManagement();
-    } catch (error) {
-      showNotice(`Falha ao limpar sessões do flow: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusySessionAction(false);
-    }
-  }, [refreshSessionManagement, sessionSelectedFlowPath, showNotice]);
-
-  const handleResetSessionByJid = useCallback(async () => {
-    const jid = sessionResetJidInput.trim();
-    if (!jid) {
-      showNotice('Informe um JID válido.');
-      return;
-    }
-    setBusySessionAction(true);
-    try {
-      const result = await postResetSessionByJid(jid);
-      showNotice(`Sessões removidas para o JID informado: ${result.removed}.`);
-      setSessionResetJidInput('');
-      await refreshSessionManagement();
-    } catch (error) {
-      showNotice(`Falha ao resetar sessão por JID: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusySessionAction(false);
-    }
-  }, [refreshSessionManagement, sessionResetJidInput, showNotice]);
-
-  const handleUpdateSessionTimeout = useCallback(async () => {
-    const flowPath = sessionSelectedFlowPath.trim();
-    if (!flowPath) {
-      showNotice('Selecione um flow para atualizar timeout.');
-      return;
-    }
-    const timeoutValue = Number(sessionTimeoutInputMinutes);
-    if (!Number.isFinite(timeoutValue) || timeoutValue < 0) {
-      showNotice('Informe um timeout válido (>= 0).');
-      return;
-    }
-    setBusySessionAction(true);
-    try {
-      const result = await postUpdateFlowSessionTimeout(flowPath, Math.floor(timeoutValue));
-      setSessionFlows(previous =>
-        previous.map(flow =>
-          flow.flowPath === result.flowPath
-            ? { ...flow, sessionTimeoutMinutes: result.sessionTimeoutMinutes }
-            : flow
-        )
-      );
-      setSessionTimeoutInputMinutes(String(result.sessionTimeoutMinutes));
-      showNotice(`Timeout atualizado para ${result.sessionTimeoutMinutes} min em ${result.flowPath}.`);
-      await refreshSessionManagement();
-    } catch (error) {
-      showNotice(`Falha ao atualizar timeout do flow: ${String((error as Error)?.message || error)}`);
-    } finally {
-      setBusySessionAction(false);
-    }
-  }, [refreshSessionManagement, sessionSelectedFlowPath, sessionTimeoutInputMinutes, showNotice]);
 
   const handleSaveSetup = useCallback(async (input: Partial<RuntimeSetupConfig>) => {
     setBusySetupSave(true);
@@ -1955,3 +1354,5 @@ function App() {
 }
 
 export default App;
+
+
