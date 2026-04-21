@@ -1,16 +1,10 @@
 import fs from 'fs';
 import path from 'path';
-import readline from 'readline';
-import { spawn } from 'node:child_process';
-import makeWASocket, {
+import {
   DisconnectReason,
   fetchLatestBaileysVersion,
   downloadMediaMessage,
-  makeCacheableSignalKeyStore,
 } from '@whiskeysockets/baileys';
-import { Boom } from '@hapi/boom';
-import pino from 'pino';
-import qrcode from 'qrcode-terminal';
 
 import {
   initDb,
@@ -77,6 +71,45 @@ import {
 import { createIngestionQueue } from './runtime/ingestionQueue.js';
 import { createReconnectController } from './runtime/reconnectController.js';
 import { createTaskScheduler } from './runtime/taskScheduler.js';
+import {
+  PersistentContactCache,
+  normalizePersistableContactName,
+} from './runtime/persistentContactCache.js';
+import {
+  HEALTH_SAMPLE_MAX,
+  MINUTE_COUNTER_RETENTION,
+  incrementObjectCounter,
+  pushSample,
+  trimTimestampWindow,
+  toPercentile,
+  bumpMinuteCounter,
+  readPerMinute,
+  computeQueuePressurePercent,
+} from './runtime/healthMetrics.js';
+import { createInstanceLock } from './runtime/instanceLock.js';
+import {
+  createDashboardBridgeController,
+  openDashboardInBrowser as launchDashboardInBrowser,
+} from './runtime/dashboardBridge.js';
+import { createIngestionPipelineController } from './runtime/ingestionPipeline.js';
+import { createWhatsAppRuntimeController } from './runtime/whatsappRuntime.js';
+import { createDashboardSettingsSessionHandlers } from './runtime/dashboardSettingsSessionHandlers.js';
+import { createDashboardInteractionHandlers } from './runtime/dashboardInteractionHandlers.js';
+import { createFlowRuntimeManager } from './runtime/flowRuntimeManager.js';
+import { createSetupConfigController } from './runtime/setupConfigController.js';
+import { createSetupRuntimeStateController } from './runtime/setupRuntimeState.js';
+import { createRuntimeInfoController } from './runtime/runtimeInfoController.js';
+import { createMaintenanceController } from './runtime/maintenanceController.js';
+import { createDatabaseMaintenanceController } from './runtime/databaseMaintenanceController.js';
+import { createHandoffMediaCaptureController } from './runtime/handoffMediaCapture.js';
+import { createAuthStateController } from './runtime/authStateController.js';
+import { createFlowSessionController } from './runtime/flowSessionController.js';
+import { createRuntimeGuardController } from './runtime/runtimeGuardController.js';
+import { createRuntimeDiagnosticsController } from './runtime/runtimeDiagnosticsController.js';
+import { createRuntimeLoggingController } from './runtime/runtimeLoggingController.js';
+import { createFatalLifecycleController } from './runtime/fatalLifecycleController.js';
+import { createFlowRegistryController } from './runtime/flowRegistryController.js';
+import { createMessageTelemetryController } from './runtime/messageTelemetryController.js';
 
 let config;
 let logger;
@@ -91,15 +124,7 @@ let currentSocket = null;
 let runtimeSetupPromise = null;
 let runtimeSetupDone = false;
 let warnedMissingTestTargets = false;
-let reloadInProgress = false;
-let pendingReload = false;
-let reloadDebounceTimer = null;
-let flowWatchers = [];
-let terminalCommandInterface = null;
 let dashboardServer = null;
-let dashboardIsolatedProcess = null;
-let dashboardStateSyncTimer = null;
-let dashboardRpcHandlers = null;
 let removeConversationEventListener = null;
 let authStateMaintenanceTimer = null;
 let dbSizeSnapshotMaintenanceTimer = null;
@@ -140,72 +165,6 @@ const ingestionRuntimeCounters = {
   postTasksDroppedByDegradedMode: 0,
 };
 
-function normalizePersistableContactName(name, jid) {
-  const normalizedJid = String(jid ?? '').trim();
-  const rawName = String(name ?? '').trim();
-  if (!rawName) return '';
-  const cleaned = rawName.replace(/^~+\s*/, '').trim() || rawName;
-  if (!cleaned) return '';
-  if (normalizedJid && cleaned === normalizedJid) return '';
-  const jidLocal = normalizedJid.split('@')[0] || '';
-  if (jidLocal && cleaned === jidLocal) return '';
-  return cleaned.slice(0, 180);
-}
-
-class PersistentContactCache extends Map {
-  constructor({ onPersistName = null } = {}) {
-    super();
-    this.onPersistName = typeof onPersistName === 'function' ? onPersistName : null;
-    this.persistedNames = new Map();
-    this.hydrating = false;
-  }
-
-  hydrate(entries = []) {
-    this.hydrating = true;
-    try {
-      for (const entry of entries) {
-        const jid = String(entry?.jid ?? '').trim();
-        const name = String(entry?.name ?? '').trim();
-        if (!jid) continue;
-        const normalizedName = normalizePersistableContactName(name, jid) || jid;
-        this.persistedNames.set(jid, normalizedName);
-        super.set(jid, { jid, name: normalizedName });
-      }
-    } finally {
-      this.hydrating = false;
-    }
-  }
-
-  set(key, value) {
-    const normalizedJid = String(key ?? value?.jid ?? '').trim();
-    if (!normalizedJid) return this;
-
-    const normalizedValue =
-      value && typeof value === 'object'
-        ? { ...value, jid: normalizedJid, name: String(value?.name ?? normalizedJid).trim() || normalizedJid }
-        : { jid: normalizedJid, name: normalizedJid };
-
-    const result = super.set(normalizedJid, normalizedValue);
-
-    if (!this.hydrating && this.onPersistName) {
-      const normalizedName = normalizePersistableContactName(normalizedValue.name, normalizedJid);
-      if (normalizedName) {
-        const previousPersistedName = this.persistedNames.get(normalizedJid) || '';
-        if (previousPersistedName !== normalizedName) {
-          this.persistedNames.set(normalizedJid, normalizedName);
-          this.onPersistName({ jid: normalizedJid, name: normalizedName });
-        }
-      }
-    }
-
-    return result;
-  }
-
-  clear() {
-    super.clear();
-    this.persistedNames.clear();
-  }
-}
 
 const contactCache = new PersistentContactCache({
   onPersistName: ({ jid, name }) => {
@@ -220,10 +179,9 @@ const contactCache = new PersistentContactCache({
 const HANDOFF_MEDIA_DIR = path.resolve('./data/handoff-media');
 const ALLOWED_INCOMING_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
 
+
 const FATAL_LOG_FILE = path.resolve('./fatal-error.log');
 const RUNTIME_LOCK_FILE = path.resolve('./data/runtime-single-instance.lock');
-const MINUTE_COUNTER_RETENTION = 24 * 60;
-const HEALTH_SAMPLE_MAX = 600;
 
 const disconnectReasonNameByCode = new Map(
   Object.entries(DisconnectReason).map(([name, code]) => [Number(code), String(name)])
@@ -233,8 +191,176 @@ let reconnectController = null;
 let saveCredsImmediate = null;
 let saveCredsDebounceTimer = null;
 let mediaCleanupTimer = null;
-let runtimeLockHeld = false;
-let lastThroughputWarningAt = 0;
+
+// Single-instance lock — protects against multiple concurrent runtimes.
+const instanceLock = createInstanceLock(RUNTIME_LOCK_FILE);
+const dashboardBridge = createDashboardBridgeController({
+  getLogger: () => logger,
+});
+const ingestionPipeline = createIngestionPipelineController({
+  getConfig: () => config,
+  getLogger: () => logger,
+  getRuntimeGuardState: () => runtimeGuardState,
+  getIngestionRuntimeCounters: () => ingestionRuntimeCounters,
+  getPostProcessQueue: () => postProcessQueue,
+  getMediaPipelineQueue: () => mediaPipelineQueue,
+  getDispatchScheduler: () => dispatchScheduler,
+  getIngestionQueue: () => ingestionQueue,
+  getContactCache: () => contactCache,
+  getWhatsappHealthState: () => whatsappHealthState,
+  getWarnedMissingTestTargets: () => warnedMissingTestTargets,
+  setWarnedMissingTestTargets: next => {
+    warnedMissingTestTargets = Boolean(next);
+  },
+  maybeLogThroughputPressure,
+  noteQueueLag,
+  evaluateRuntimeGuardState,
+  logConversationEvent,
+  captureIncomingImageForDashboard,
+  mergeContactCacheEntry,
+  parseMessage,
+  getMessageDebugInfo,
+  resolveIncomingActorJid,
+  getGroupWhitelistJids,
+  getAllowedTestJids,
+  normalizeInteractionScope,
+  isGroupWhitelistScope,
+  shouldProcessByInteractionScope,
+  getFlowBotType,
+  getSession,
+  getActiveFlows,
+  handleIncoming,
+  formatError,
+  bumpMinuteCounter,
+});
+const flowRegistryController = createFlowRegistryController({
+  getCurrentFlowRegistry: () => currentFlowRegistry,
+  getConfig: () => config,
+  loadFlows,
+  runtimeModeDevelopment: RUNTIME_MODE.DEVELOPMENT,
+});
+const flowRuntimeManager = createFlowRuntimeManager({
+  getConfig: () => config,
+  isDevelopmentMode,
+  getActiveFlows,
+  resetActiveSessions,
+  loadFlowRegistryFromConfig,
+  applyFlowSessionTimeoutOverrides,
+  setCurrentFlowRegistry: registry => {
+    currentFlowRegistry = registry;
+  },
+  setWarnedMissingTestTargets: next => {
+    warnedMissingTestTargets = Boolean(next);
+  },
+  getCurrentSocket: () => currentSocket,
+  startSessionCleanup,
+  logConversationEvent,
+  currentPrimaryFlowPathForLogs,
+});
+const setupRuntimeStateController = createSetupRuntimeStateController({
+  getConfig: () => config,
+  runtimeModeProduction: RUNTIME_MODE.PRODUCTION,
+  toTrimmedStringArray,
+  listContactDisplayNames,
+  contactCache,
+  getContactDisplayName,
+  fetchSelectableContacts,
+  fetchSelectableGroups,
+  getCurrentSocket: () => currentSocket,
+  fetchSavedTestTargetJidsFromDb,
+  isUserJid,
+  isGroupJid,
+});
+const setupConfigController = createSetupConfigController({
+  getConfig: () => config,
+  setConfig: nextConfig => {
+    config = nextConfig;
+  },
+  setCurrentFlowRegistry: registry => {
+    currentFlowRegistry = registry;
+  },
+  setWarnedMissingTestTargets: next => {
+    warnedMissingTestTargets = Boolean(next);
+  },
+  setRuntimeSetupDone: next => {
+    runtimeSetupDone = Boolean(next);
+  },
+  saveUserConfig,
+  normalizeUserConfig,
+  applyFlowSessionTimeoutOverrides,
+  loadFlowRegistryFromConfig,
+  isGroupWhitelistScope,
+  getGroupWhitelistJids,
+  getAllowedTestJids,
+  installLibSignalNoiseFilter,
+  getLogger: () => logger,
+  initializeRuntimeSchedulers,
+  initializeReconnectPolicy,
+  getMediaCleanupTimer: () => mediaCleanupTimer,
+  setMediaCleanupTimer: next => {
+    mediaCleanupTimer = next;
+  },
+  startHandoffMediaMaintenance,
+  applyDatabaseRuntimeConfigFromAppConfig,
+  startDatabaseMaintenanceScheduler,
+  getCurrentSocket: () => currentSocket,
+  startSessionCleanup,
+  getActiveFlows,
+  setupFlowWatcher: () => flowRuntimeManager.setupFlowWatcher(),
+  setRequiresInitialSetup: next => {
+    requiresInitialSetup = Boolean(next);
+  },
+  setHasSavedConfigAtBoot: next => {
+    hasSavedConfigAtBoot = Boolean(next);
+  },
+  ensureWhatsAppRuntimeStarted,
+  buildSetupConfigSnapshot,
+  toTrimmedStringArray,
+  normalizeBroadcastSendIntervalMs,
+  runtimeModeProduction: RUNTIME_MODE.PRODUCTION,
+});
+const whatsappRuntime = createWhatsAppRuntimeController({
+  initializeReconnectPolicy,
+  getReconnectController: () => reconnectController,
+  getConfig: () => config,
+  incrementSocketGeneration: () => {
+    socketGeneration += 1;
+    return socketGeneration;
+  },
+  getSocketGeneration: () => socketGeneration,
+  getLogger: () => logger,
+  setCurrentSocket: sock => {
+    currentSocket = sock;
+  },
+  getCurrentSocket: () => currentSocket,
+  attachOutgoingMessageLogger,
+  noteSocketEvent,
+  scheduleCredsSave,
+  mergeContactList,
+  mergeChatsIntoContactCache,
+  getContactCache: () => contactCache,
+  flushCredsNow,
+  resolveDisconnectReasonName,
+  classifyDisconnectCategory,
+  isLoggedOutDisconnect: statusCode => statusCode === DisconnectReason.loggedOut,
+  getWhatsappHealthState: () => whatsappHealthState,
+  incrementObjectCounter,
+  evaluateRuntimeGuardState,
+  setRuntimeSetupDone: next => {
+    runtimeSetupDone = Boolean(next);
+  },
+  startSessionCleanup,
+  getActiveFlows,
+  initializeTerminalCommands,
+  getAllowedTestJids,
+  getGroupWhitelistJids,
+  enqueueIncomingUpsertMessage: payload => {
+    ingestionPipeline.enqueueIncomingUpsertMessage(payload);
+  },
+  isReloadInProgress: () => flowRuntimeManager.isReloadInProgress(),
+  getRuntimeSetupPromise: () => runtimeSetupPromise,
+  noteSocketCallbackDuration,
+});
 
 const authPersistenceStats = {
   updateEvents: 0,
@@ -279,6 +405,16 @@ const runtimeGuardState = {
   droppedPostTasks: 0,
   droppedMediaTasks: 0,
 };
+const runtimeGuardController = createRuntimeGuardController({
+  getRuntimeGuardState: () => runtimeGuardState,
+  getConfig: () => config,
+  getLogger: () => logger,
+  queueSnapshotOrFallback,
+  getIngestionQueue: () => ingestionQueue,
+  getMediaPipelineQueue: () => mediaPipelineQueue,
+  getReconnectController: () => reconnectController,
+  computeQueuePressurePercent,
+});
 
 const handoffMediaMaintenanceStats = {
   runs: 0,
@@ -332,679 +468,253 @@ const whatsappHealthState = {
     credsUpdate: new Map(),
   },
 };
+const runtimeDiagnosticsController = createRuntimeDiagnosticsController({
+  disconnectReasonNameByCode,
+  getConfig: () => config,
+  getLogger: () => logger,
+  getWhatsappHealthState: () => whatsappHealthState,
+  readPerMinute,
+  bumpMinuteCounter,
+  pushSample,
+});
+const runtimeLoggingController = createRuntimeLoggingController({
+  runtimeModeProduction: RUNTIME_MODE.PRODUCTION,
+});
+const fatalLifecycleController = createFatalLifecycleController({
+  fatalLogFile: FATAL_LOG_FILE,
+  flushCredsNow: reason => flushCredsNow(reason),
+  closeReconnectController: () => reconnectController?.close?.(),
+  releaseInstanceLock: () => instanceLock.release(),
+});
+const authStateController = createAuthStateController({
+  getConfig: () => config,
+  getAuthStorageCache: () => authStorageCache,
+  getAuthStateStorageStats,
+  getSaveCredsDebounceTimer: () => saveCredsDebounceTimer,
+  setSaveCredsDebounceTimer: next => {
+    saveCredsDebounceTimer = next;
+  },
+  getSaveCredsImmediate: () => saveCredsImmediate,
+  getAuthPersistenceStats: () => authPersistenceStats,
+  cleanupAuthSignalSessions,
+  getAuthCleanupStats: () => authCleanupStats,
+  getAuthStateMaintenanceTimer: () => authStateMaintenanceTimer,
+  setAuthStateMaintenanceTimer: next => {
+    authStateMaintenanceTimer = next;
+  },
+});
+const runtimeInfoController = createRuntimeInfoController({
+  getConfig: () => config,
+  runtimeModeProduction: RUNTIME_MODE.PRODUCTION,
+  getDashboardFlow,
+  getConversationFlow,
+  getCommandFlows,
+  normalizeDashboardTelemetryLevel,
+  resolveDashboardIsolationMode,
+  getWhatsAppHealthState: () => whatsappHealthState,
+  getRuntimeGuardState: () => runtimeGuardState,
+  refreshAuthStateStorageSnapshot,
+  getReconnectController: () => reconnectController,
+  trimTimestampWindow,
+  readPerMinute,
+  toPercentile,
+  getAuthPersistenceStats: () => authPersistenceStats,
+  getAuthCleanupStats: () => authCleanupStats,
+  getAuthStorageCache: () => authStorageCache,
+  getHandoffMediaMaintenanceStats: () => handoffMediaMaintenanceStats,
+  evaluateRuntimeGuardState,
+  getEngineRuntimeStats,
+  getIngestionRuntimeCounters: () => ingestionRuntimeCounters,
+  getRuntimeStatsStartedAt: () => runtimeStatsStartedAt,
+  queueSnapshotOrFallback,
+  getIngestionQueue: () => ingestionQueue,
+  getDispatchScheduler: () => dispatchScheduler,
+  getPostProcessQueue: () => postProcessQueue,
+  getMediaPipelineQueue: () => mediaPipelineQueue,
+});
+const maintenanceController = createMaintenanceController({
+  handoffMediaDir: HANDOFF_MEDIA_DIR,
+  getConfig: () => config,
+  getLogger: () => logger,
+  getDatabaseInfo,
+  getDbSizeSnapshotMaintenanceTimer: () => dbSizeSnapshotMaintenanceTimer,
+  setDbSizeSnapshotMaintenanceTimer: next => {
+    dbSizeSnapshotMaintenanceTimer = next;
+  },
+  getMediaCleanupTimer: () => mediaCleanupTimer,
+  setMediaCleanupTimer: next => {
+    mediaCleanupTimer = next;
+  },
+  getHandoffMediaMaintenanceStats: () => handoffMediaMaintenanceStats,
+});
+const databaseMaintenanceController = createDatabaseMaintenanceController({
+  getConfig: () => config,
+  configureDatabaseRuntime,
+  runDatabaseMaintenance,
+  getLogger: () => logger,
+  getDbMaintenanceTimer: () => dbMaintenanceTimer,
+  setDbMaintenanceTimer: next => {
+    dbMaintenanceTimer = next;
+  },
+  dashboardTelemetryLevels: DASHBOARD_TELEMETRY_LEVELS,
+});
+const handoffMediaCaptureController = createHandoffMediaCaptureController({
+  handoffMediaDir: HANDOFF_MEDIA_DIR,
+  allowedIncomingImageMime: ALLOWED_INCOMING_IMAGE_MIME,
+  downloadMediaMessage,
+  getLogger: () => logger,
+  getConfig: () => config,
+  getIngestionRuntimeCounters: () => ingestionRuntimeCounters,
+});
+const flowSessionController = createFlowSessionController({
+  getActiveSessions,
+  getActiveFlows,
+  getFlowBotType,
+  resolveContactDisplayName,
+});
+const messageTelemetryController = createMessageTelemetryController({
+  addConversationEvent,
+  currentPrimaryFlowPathForLogs: () => currentPrimaryFlowPathForLogs(),
+  broadcastDashboardEvent: event => broadcastDashboardEvent(event),
+});
 
-function incrementObjectCounter(target, key, delta = 1) {
-  const normalizedKey = String(key || 'unknown');
-  const safeDelta = Number.isFinite(Number(delta)) ? Number(delta) : 1;
-  target[normalizedKey] = Math.max(0, Number(target[normalizedKey] || 0) + safeDelta);
-}
-
-function pushSample(array, value, max = HEALTH_SAMPLE_MAX) {
-  if (!Array.isArray(array)) return;
-  array.push(Number(value) || 0);
-  while (array.length > max) {
-    array.shift();
-  }
-}
-
-function trimTimestampWindow(array, windowMs, nowTs = Date.now()) {
-  if (!Array.isArray(array)) return;
-  const minTs = nowTs - Math.max(0, Number(windowMs) || 0);
-  while (array.length > 0 && Number(array[0] || 0) < minTs) {
-    array.shift();
-  }
-}
-
-function toPercentile(samples, percentile = 0.95) {
-  if (!Array.isArray(samples) || samples.length === 0) return 0;
-  const sorted = [...samples].sort((a, b) => a - b);
-  const safePercentile = Math.min(1, Math.max(0, Number(percentile) || 0));
-  const idx = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * safePercentile)));
-  return Number(sorted[idx] || 0);
-}
-
-function bumpMinuteCounter(counter, timestamp = Date.now(), delta = 1) {
-  if (!(counter instanceof Map)) return;
-  const ts = Number(timestamp) || Date.now();
-  const bucket = Math.floor(ts / 60000);
-  counter.set(bucket, Math.max(0, Number(counter.get(bucket) || 0) + (Number(delta) || 1)));
-  const minBucket = bucket - MINUTE_COUNTER_RETENTION;
-  for (const key of counter.keys()) {
-    if (key < minBucket) {
-      counter.delete(key);
-    }
-  }
-}
-
-function readPerMinute(counter, minutes = 1) {
-  if (!(counter instanceof Map)) return 0;
-  const span = Math.max(1, Math.floor(Number(minutes) || 1));
-  const nowBucket = Math.floor(Date.now() / 60000);
-  const minBucket = nowBucket - (span - 1);
-  let total = 0;
-  for (const [bucket, value] of counter.entries()) {
-    if (bucket >= minBucket && bucket <= nowBucket) {
-      total += Math.max(0, Number(value) || 0);
-    }
-  }
-  return Number((total / span).toFixed(2));
-}
-
-function computeQueuePressurePercent(snapshot) {
-  const queued = Math.max(0, Number(snapshot?.queued) || 0);
-  const maxQueueSize = Math.max(1, Number(snapshot?.maxQueueSize) || 1);
-  return Math.min(100, Number(((queued / maxQueueSize) * 100).toFixed(2)));
-}
 
 function normalizeErrorCategory(error) {
-  const rawMessage = String(error?.message || '').toLowerCase();
-  if (rawMessage.includes('timed out') || rawMessage.includes('timeout')) return 'timeout';
-  if (rawMessage.includes('rate') && rawMessage.includes('limit')) return 'rate-limit';
-  if (rawMessage.includes('forbidden') || rawMessage.includes('not-authorized')) return 'forbidden';
-  if (rawMessage.includes('network') || rawMessage.includes('socket') || rawMessage.includes('econn')) return 'network';
-  if (rawMessage.includes('disconnect')) return 'disconnect';
-  return 'unknown';
+  return runtimeDiagnosticsController.normalizeErrorCategory(error);
 }
 
 function resolveDisconnectReasonName(statusCode) {
-  return disconnectReasonNameByCode.get(Number(statusCode) || 0) || 'unknown';
+  return runtimeDiagnosticsController.resolveDisconnectReasonName(statusCode);
 }
 
 function classifyDisconnectCategory(statusCode) {
-  const reasonName = resolveDisconnectReasonName(statusCode).toLowerCase();
-  if (reasonName === 'loggedout') return 'persistent-auth';
-  if (reasonName === 'badsession' || reasonName === 'multidevicemismatch') return 'persistent-auth';
-  if (reasonName === 'restartrequired' || reasonName === 'connectionreplaced') return 'persistent-runtime';
-  if (reasonName === 'connectionclosed' || reasonName === 'connectionlost' || reasonName === 'timedout') {
-    return 'transient-network';
-  }
-  return 'unknown';
+  return runtimeDiagnosticsController.classifyDisconnectCategory(statusCode);
 }
 
 function maybeLogThroughputPressure() {
-  const nowTs = Date.now();
-  if (nowTs - lastThroughputWarningAt < 30 * 1000) return;
-
-  const inboundNow = readPerMinute(whatsappHealthState.minuteCounters.incoming, 1);
-  const serviceOutNow = readPerMinute(whatsappHealthState.minuteCounters.outgoingService, 1);
-  const broadcastOutNow = readPerMinute(whatsappHealthState.minuteCounters.outgoingBroadcast, 1);
-
-  const inboundLimit = Math.max(1, Number(config?.whatsappMaxInboundPerMinute ?? 600));
-  const serviceLimit = Math.max(1, Number(config?.whatsappMaxServiceOutboundPerMinute ?? 300));
-  const broadcastLimit = Math.max(1, Number(config?.whatsappMaxBroadcastOutboundPerMinute ?? 120));
-
-  const exceeds =
-    inboundNow >= inboundLimit ||
-    serviceOutNow >= serviceLimit ||
-    broadcastOutNow >= broadcastLimit;
-
-  if (!exceeds) return;
-  lastThroughputWarningAt = nowTs;
-
-  logger?.warn?.(
-    {
-      inboundPerMinute: inboundNow,
-      outboundServicePerMinute: serviceOutNow,
-      outboundBroadcastPerMinute: broadcastOutNow,
-      limits: {
-        inboundPerMinute: inboundLimit,
-        outboundServicePerMinute: serviceLimit,
-        outboundBroadcastPerMinute: broadcastLimit,
-      },
-    },
-    'WhatsApp throughput reached configured operational limit'
-  );
+  runtimeDiagnosticsController.maybeLogThroughputPressure();
 }
 
-function isPidAlive(pid) {
-  const safePid = Number(pid);
-  if (!Number.isInteger(safePid) || safePid <= 0) return false;
-  try {
-    process.kill(safePid, 0);
-    return true;
-  } catch (error) {
-    return error?.code === 'EPERM';
-  }
-}
-
-function acquireRuntimeLock() {
-  fs.mkdirSync(path.dirname(RUNTIME_LOCK_FILE), { recursive: true });
-  if (fs.existsSync(RUNTIME_LOCK_FILE)) {
-    try {
-      const raw = fs.readFileSync(RUNTIME_LOCK_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      const previousPid = Number(parsed?.pid) || 0;
-      if (previousPid > 0 && previousPid !== process.pid && isPidAlive(previousPid)) {
-        throw new Error(`Outra instância do runtime está ativa (pid=${previousPid}).`);
-      }
-    } catch (error) {
-      if (error instanceof Error && error.message.includes('Outra instância')) {
-        throw error;
-      }
-    }
-  }
-  fs.writeFileSync(
-    RUNTIME_LOCK_FILE,
-    JSON.stringify({
-      pid: process.pid,
-      startedAt: Date.now(),
-      cwd: process.cwd(),
-    }),
-    'utf-8'
-  );
-  runtimeLockHeld = true;
-}
-
-function releaseRuntimeLock() {
-  if (!runtimeLockHeld) return;
-  runtimeLockHeld = false;
-  try {
-    if (!fs.existsSync(RUNTIME_LOCK_FILE)) return;
-    const raw = fs.readFileSync(RUNTIME_LOCK_FILE, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (Number(parsed?.pid) !== process.pid) return;
-    fs.unlinkSync(RUNTIME_LOCK_FILE);
-  } catch {
-    // ignore lock cleanup errors
-  }
-}
 
 function formatError(err) {
-  if (!err) return 'Unknown error';
-  if (err instanceof Error) {
-    return `${err.name}: ${err.message}\n${err.stack ?? ''}`;
-  }
-  try {
-    return JSON.stringify(err, null, 2);
-  } catch {
-    return String(err);
-  }
+  return fatalLifecycleController.formatError(err);
 }
 
 function appendFatalLog(prefix, err) {
-  const payload = [
-    '============================================================',
-    `[${new Date().toISOString()}] ${prefix}`,
-    formatError(err),
-    '',
-  ].join('\n');
-  try {
-    fs.appendFileSync(FATAL_LOG_FILE, payload, 'utf-8');
-  } catch {
-    // ignore
-  }
+  fatalLifecycleController.appendFatalLog(prefix, err);
 }
 
 async function waitForEnter(message) {
-  if (!process.stdin.isTTY) return;
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  await new Promise(resolve => rl.question(message, () => resolve()));
-  rl.close();
+  await fatalLifecycleController.waitForEnter(message);
 }
 
 function refreshAuthStateStorageSnapshot({ force = false } = {}) {
-  const refreshEveryMs = Math.max(1000, Number(config?.authMetricsRefreshMs ?? 30_000));
-  const nowTs = Date.now();
-  if (!force && nowTs - authStorageCache.lastRefreshAt < refreshEveryMs) {
-    return authStorageCache.snapshot;
-  }
-
-  try {
-    authStorageCache.snapshot = getAuthStateStorageStats();
-    authStorageCache.lastRefreshAt = nowTs;
-  } catch {
-    authStorageCache.refreshErrors += 1;
-  }
-
-  return authStorageCache.snapshot;
+  return authStateController.refreshAuthStateStorageSnapshot({ force });
 }
 
 function clearCredsDebounceTimer() {
-  if (!saveCredsDebounceTimer) return;
-  clearTimeout(saveCredsDebounceTimer);
-  saveCredsDebounceTimer = null;
+  authStateController.clearCredsDebounceTimer();
 }
 
 function flushCredsNow(reason = 'manual') {
-  clearCredsDebounceTimer();
-  if (typeof saveCredsImmediate !== 'function') return false;
-
-  const startedAt = Date.now();
-  authPersistenceStats.writeAttempts += 1;
-  authPersistenceStats.lastFlushReason = String(reason || 'manual');
-  try {
-    saveCredsImmediate();
-    authPersistenceStats.lastWriteAt = Date.now();
-    authPersistenceStats.lastFlushDurationMs = Math.max(0, Date.now() - startedAt);
-    authPersistenceStats.totalWriteMs += authPersistenceStats.lastFlushDurationMs;
-    refreshAuthStateStorageSnapshot({ force: true });
-    return true;
-  } catch (error) {
-    authPersistenceStats.writeErrors += 1;
-    authPersistenceStats.lastError = String(error?.message || error);
-    return false;
-  }
+  return authStateController.flushCredsNow(reason);
 }
 
 function scheduleCredsSave(reason = 'update') {
-  authPersistenceStats.updateEvents += 1;
-
-  const delayMs = Math.max(0, Number(config?.authCredsDebounceMs ?? 250));
-  if (delayMs === 0) {
-    flushCredsNow(reason);
-    return;
-  }
-
-  if (saveCredsDebounceTimer) {
-    return;
-  }
-
-  authPersistenceStats.debouncedFlushes += 1;
-  saveCredsDebounceTimer = setTimeout(() => {
-    flushCredsNow('debounced-creds-update');
-  }, delayMs);
-
-  if (typeof saveCredsDebounceTimer.unref === 'function') {
-    saveCredsDebounceTimer.unref();
-  }
+  authStateController.scheduleCredsSave(reason);
 }
 
 function setRuntimeDegradedMode(nextActive, reason = 'normal') {
-  const active = nextActive === true;
-  if (runtimeGuardState.degradedMode === active && runtimeGuardState.reason === reason) {
-    return;
-  }
-
-  const nowTs = Date.now();
-  if (runtimeGuardState.degradedMode && runtimeGuardState.lastEnteredAt > 0) {
-    runtimeGuardState.totalDegradedMs += Math.max(0, nowTs - runtimeGuardState.lastEnteredAt);
-  }
-
-  runtimeGuardState.degradedMode = active;
-  runtimeGuardState.reason = String(reason || (active ? 'pressure' : 'normal'));
-  runtimeGuardState.changedAt = nowTs;
-  runtimeGuardState.toggles += 1;
-  runtimeGuardState.lastEnteredAt = active ? nowTs : 0;
-
-  logger?.warn?.(
-    {
-      degradedMode: runtimeGuardState.degradedMode,
-      reason: runtimeGuardState.reason,
-      toggles: runtimeGuardState.toggles,
-    },
-    'Runtime degraded mode changed'
-  );
+  runtimeGuardController.setRuntimeDegradedMode(nextActive, reason);
 }
 
 function evaluateRuntimeGuardState() {
-  const ingestionSnapshot = queueSnapshotOrFallback(ingestionQueue, {
-    queued: 0,
-    maxQueueSize: Number(config?.ingestionQueueMax ?? 5000),
-  });
-  const mediaSnapshot = queueSnapshotOrFallback(mediaPipelineQueue, {
-    queued: 0,
-    maxQueueSize: Number(config?.mediaPipelineQueueMax ?? 500),
-  });
-  const reconnectSnapshot = reconnectController?.getSnapshot?.() || { pending: false, nextReconnectAt: 0 };
-
-  const ingestionPressurePct = computeQueuePressurePercent(ingestionSnapshot);
-  const mediaPressurePct = computeQueuePressurePercent(mediaSnapshot);
-  const degradedThreshold = Math.max(50, Number(config?.runtimeDegradedQueueRatio ?? 90));
-  const reconnectPendingMs = reconnectSnapshot?.pending
-    ? Math.max(0, Number(reconnectSnapshot.nextReconnectAt || 0) - Date.now())
-    : 0;
-  const reconnectThresholdMs = Math.max(0, Number(config?.runtimeDegradedReconnectPendingMs ?? 20_000));
-
-  const shouldDegrade =
-    ingestionPressurePct >= degradedThreshold ||
-    mediaPressurePct >= degradedThreshold ||
-    reconnectPendingMs >= reconnectThresholdMs;
-
-  const reason = reconnectPendingMs >= reconnectThresholdMs
-    ? 'reconnect-pending'
-    : (ingestionPressurePct >= degradedThreshold ? 'ingestion-pressure' : (mediaPressurePct >= degradedThreshold ? 'media-pressure' : 'normal'));
-
-  setRuntimeDegradedMode(shouldDegrade, reason);
+  runtimeGuardController.evaluateRuntimeGuardState();
 }
 
 function noteSocketEvent(eventName) {
-  const normalizedName = String(eventName || 'unknown');
-  if (normalizedName === 'connection.update') {
-    whatsappHealthState.events.connectionUpdate += 1;
-    bumpMinuteCounter(whatsappHealthState.minuteCounters.connectionUpdate, Date.now());
-  } else if (normalizedName === 'messages.upsert') {
-    whatsappHealthState.events.messagesUpsert += 1;
-    bumpMinuteCounter(whatsappHealthState.minuteCounters.messagesUpsert, Date.now());
-  } else if (normalizedName === 'creds.update') {
-    whatsappHealthState.events.credsUpdate += 1;
-    bumpMinuteCounter(whatsappHealthState.minuteCounters.credsUpdate, Date.now());
-  }
-  bumpMinuteCounter(whatsappHealthState.minuteCounters.events, Date.now());
+  runtimeDiagnosticsController.noteSocketEvent(eventName);
 }
 
 function noteSocketCallbackDuration(durationMs) {
-  const safeDuration = Math.max(0, Number(durationMs) || 0);
-  whatsappHealthState.callback.calls += 1;
-  whatsappHealthState.callback.totalMs += safeDuration;
-  whatsappHealthState.callback.maxMs = Math.max(whatsappHealthState.callback.maxMs, safeDuration);
-  whatsappHealthState.callback.lastMs = safeDuration;
-  pushSample(whatsappHealthState.callback.samples, safeDuration);
+  runtimeDiagnosticsController.noteSocketCallbackDuration(durationMs);
 }
 
 function noteQueueLag(durationMs) {
-  const safeDuration = Math.max(0, Number(durationMs) || 0);
-  whatsappHealthState.queueLag.count += 1;
-  whatsappHealthState.queueLag.totalMs += safeDuration;
-  whatsappHealthState.queueLag.maxMs = Math.max(whatsappHealthState.queueLag.maxMs, safeDuration);
-  pushSample(whatsappHealthState.queueLag.samples, safeDuration);
+  runtimeDiagnosticsController.noteQueueLag(durationMs);
 }
 
-let exiting = false;
 async function handleFatal(prefix, err) {
-  if (exiting) return;
-  exiting = true;
-
-  flushCredsNow('fatal-error');
-  reconnectController?.close?.();
-  releaseRuntimeLock();
-
-  appendFatalLog(prefix, err);
-  console.error(`\nERROR: ${prefix}`);
-  console.error(formatError(err));
-  console.error(`\n(Log salvo em: ${FATAL_LOG_FILE})\n`);
-  await waitForEnter('Pressione Enter para sair...');
-  process.exit(1);
+  await fatalLifecycleController.handleFatal(prefix, err);
 }
-
-process.on('unhandledRejection', reason => {
-  void handleFatal('Unhandled Promise Rejection', reason);
-});
-
-process.on('uncaughtException', err => {
-  void handleFatal('Uncaught Exception', err);
-});
-
-process.on('SIGINT', () => {
-  flushCredsNow('sigint');
-  reconnectController?.close?.();
-  releaseRuntimeLock();
-  process.exit(0);
-});
-
-process.on('SIGTERM', () => {
-  flushCredsNow('sigterm');
-  reconnectController?.close?.();
-  releaseRuntimeLock();
-  process.exit(0);
-});
-
-process.on('beforeExit', () => {
-  flushCredsNow('before-exit');
-  reconnectController?.close?.();
-  releaseRuntimeLock();
-});
-
-process.on('exit', () => {
-  flushCredsNow('exit');
-  reconnectController?.close?.();
-  releaseRuntimeLock();
-});
-
-const LIBSIGNAL_NOISE_PREFIXES = [
-  'Failed to decrypt message with any known session',
-  'Session error:',
-  'Closing open session in favor of incoming prekey bundle',
-  'Closing session:',
-  'Decrypted message with closed session.',
-];
-
-let libSignalNoiseFilterInstalled = false;
-
-function shouldSuppressLibSignalConsoleNoise(args) {
-  const firstText = args.find(arg => typeof arg === 'string');
-  if (!firstText) return false;
-  return LIBSIGNAL_NOISE_PREFIXES.some(prefix => firstText.startsWith(prefix));
-}
+fatalLifecycleController.registerProcessHandlers();
 
 function installLibSignalNoiseFilter(enabled) {
-  if (!enabled || libSignalNoiseFilterInstalled) return;
-  libSignalNoiseFilterInstalled = true;
-
-  const original = {
-    error: console.error.bind(console),
-    warn: console.warn.bind(console),
-    info: console.info.bind(console),
-  };
-
-  console.error = (...args) => {
-    if (shouldSuppressLibSignalConsoleNoise(args)) return;
-    original.error(...args);
-  };
-
-  console.warn = (...args) => {
-    if (shouldSuppressLibSignalConsoleNoise(args)) return;
-    original.warn(...args);
-  };
-
-  console.info = (...args) => {
-    if (shouldSuppressLibSignalConsoleNoise(args)) return;
-    original.info(...args);
-  };
-}
-
-function shouldSuppressBaileysDecryptNoise(args) {
-  const msg = [...args].reverse().find(arg => typeof arg === 'string') || '';
-  if (msg !== 'failed to decrypt message') return false;
-
-  const meta = args.find(arg => arg && typeof arg === 'object' && !Array.isArray(arg));
-  const err = meta?.err ?? {};
-  const errName = String(err?.name ?? err?.type ?? '');
-  const errMessage = String(err?.message ?? '');
-
-  return errName === 'SessionError' && errMessage.includes('No matching sessions found for message');
+  runtimeLoggingController.installLibSignalNoiseFilter(enabled);
 }
 
 function createRuntimeLogger(currentConfig) {
-  const suppressDecryptNoise =
-    currentConfig.runtimeMode === RUNTIME_MODE.PRODUCTION &&
-    String(process.env.TMB_SUPPRESS_SIGNAL_NOISE ?? '1') !== '0';
-
-  const pinoOptions = currentConfig.prettyLogs
-    ? { transport: { target: 'pino-pretty', options: { colorize: true } } }
-    : {};
-
-  if (suppressDecryptNoise) {
-    pinoOptions.hooks = {
-      logMethod(args, method) {
-        if (shouldSuppressBaileysDecryptNoise(args)) return;
-        method.apply(this, args);
-      },
-    };
-  }
-
-  const runtimeLogger = pino(pinoOptions);
-  runtimeLogger.level = currentConfig.logLevel;
-  return runtimeLogger;
+  return runtimeLoggingController.createRuntimeLogger(currentConfig);
 }
 
 function isDevelopmentMode(currentConfig) {
-  return String(currentConfig?.runtimeMode ?? '').toLowerCase() === RUNTIME_MODE.DEVELOPMENT;
+  return flowRegistryController.isDevelopmentMode(currentConfig);
 }
 
 function getActiveFlows() {
-  return Array.isArray(currentFlowRegistry?.all) ? currentFlowRegistry.all : [];
+  return flowRegistryController.getActiveFlows();
 }
 
 function getConversationFlow() {
-  return currentFlowRegistry?.conversationFlow ?? null;
+  return flowRegistryController.getConversationFlow();
 }
 
 function getCommandFlows() {
-  return Array.isArray(currentFlowRegistry?.commandFlows) ? currentFlowRegistry.commandFlows : [];
+  return flowRegistryController.getCommandFlows();
 }
 
 function getDashboardFlow() {
-  const conversationFlow = getConversationFlow();
-  if (conversationFlow) return conversationFlow;
-  return getActiveFlows()[0] ?? null;
+  return flowRegistryController.getDashboardFlow();
 }
 
 function currentPrimaryFlowPathForLogs() {
-  return getDashboardFlow()?.flowPath ?? String(config?.flowPath ?? '');
+  return flowRegistryController.currentPrimaryFlowPathForLogs();
 }
 
 function resolveConfiguredFlowPaths(currentConfig) {
-  const selectedPaths = Array.isArray(currentConfig?.flowPaths) ? currentConfig.flowPaths : [];
-  const fallback = String(currentConfig?.flowPath ?? '').trim();
-  const unique = new Set();
-  const result = [];
-
-  for (const item of selectedPaths) {
-    const value = String(item ?? '').trim();
-    if (!value || unique.has(value)) continue;
-    unique.add(value);
-    result.push(value);
-  }
-
-  if (!result.length && fallback) {
-    result.push(fallback);
-  }
-
-  return result;
+  return flowRegistryController.resolveConfiguredFlowPaths(currentConfig);
 }
 
 function loadFlowRegistryFromConfig(currentConfig) {
-  const flowPaths = resolveConfiguredFlowPaths(currentConfig);
-  return loadFlows(flowPaths);
+  return flowRegistryController.loadFlowRegistryFromConfig(currentConfig);
 }
 
 function normalizeTimeoutMinutes(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return Math.floor(n);
+  return flowSessionController.normalizeTimeoutMinutes(value);
 }
 
 function applyFlowSessionTimeoutOverrides(registry, currentConfig) {
-  if (!registry || !Array.isArray(registry.all)) return registry;
-  const overrides = currentConfig?.flowSessionTimeoutOverrides && typeof currentConfig.flowSessionTimeoutOverrides === 'object'
-    ? currentConfig.flowSessionTimeoutOverrides
-    : {};
-
-  for (const flow of registry.all) {
-    const flowPath = String(flow?.flowPath ?? '').trim();
-    if (!flowPath) continue;
-    const override = normalizeTimeoutMinutes(overrides[flowPath]);
-    if (override == null) continue;
-    if (!flow.runtimeConfig || typeof flow.runtimeConfig !== 'object') {
-      flow.runtimeConfig = {};
-    }
-    if (!flow.runtimeConfig.sessionLimits || typeof flow.runtimeConfig.sessionLimits !== 'object') {
-      flow.runtimeConfig.sessionLimits = {};
-    }
-    flow.runtimeConfig.sessionLimits.sessionTimeoutMinutes = override;
-  }
-
-  return registry;
+  return flowSessionController.applyFlowSessionTimeoutOverrides(registry, currentConfig);
 }
 
 function getFlowSessionTimeoutMinutes(flow) {
-  const value = Number(flow?.runtimeConfig?.sessionLimits?.sessionTimeoutMinutes);
-  if (!Number.isFinite(value) || value < 0) return 0;
-  return Math.floor(value);
+  return flowSessionController.getFlowSessionTimeoutMinutes(flow);
 }
 
 function parseHumanHandoff(value) {
-  if (value && typeof value === 'object' && !Array.isArray(value)) return value;
-  if (typeof value !== 'string' || !value.trim()) return {};
-  try {
-    const parsed = JSON.parse(value);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
+  return flowSessionController.parseHumanHandoff(value);
 }
 
 function buildSessionManagementOverview() {
-  const activeSessions = getActiveSessions({ botType: 'conversation' });
-  const nowTs = Date.now();
-
-  let handoffSessions = 0;
-  let durationTotal = 0;
-  let durationCount = 0;
-
-  const flowCounts = new Map();
-  for (const session of activeSessions) {
-    const waitingForHuman = String(session?.waitingFor || '').trim().toLowerCase() === 'human';
-    const handoff = parseHumanHandoff(session?.variables?.__humanHandoff);
-    if (waitingForHuman || handoff.active === true) {
-      handoffSessions += 1;
-    }
-
-    const startedAt = Number(session?.variables?.__sessionStartedAt) || 0;
-    if (startedAt > 0 && startedAt <= nowTs) {
-      durationTotal += nowTs - startedAt;
-      durationCount += 1;
-    }
-
-    const flowPath = String(session?.flowPath || '').trim() || '(sem-flow)';
-    flowCounts.set(flowPath, (flowCounts.get(flowPath) || 0) + 1);
-  }
-
-  const averageSessionDurationMs = durationCount > 0 ? Math.round(durationTotal / durationCount) : 0;
-  return {
-    activeSessions: activeSessions.length,
-    handoffSessions,
-    averageSessionDurationMs,
-    byFlow: [...flowCounts.entries()]
-      .map(([flowPath, activeCount]) => ({ flowPath, activeCount }))
-      .sort((a, b) => b.activeCount - a.activeCount),
-  };
+  return flowSessionController.buildSessionManagementOverview();
 }
 
 function listSessionManagementFlows() {
-  return getActiveFlows()
-    .filter(flow => getFlowBotType(flow) === 'conversation')
-    .map(flow => ({
-    flowPath: flow.flowPath,
-    botType: getFlowBotType(flow),
-    sessionTimeoutMinutes: getFlowSessionTimeoutMinutes(flow),
-  }));
+  return flowSessionController.listSessionManagementFlows();
 }
 
 function listActiveSessionsForManagement({ search = '', limit = 200 } = {}) {
-  const normalizedSearch = String(search ?? '').trim().toLowerCase();
-  const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 200));
-  const nowTs = Date.now();
-
-  const rows = getActiveSessions({ botType: 'conversation' })
-    .filter(session => {
-      if (!normalizedSearch) return true;
-      const jid = String(session?.jid || '').toLowerCase();
-      const flowPath = String(session?.flowPath || '').toLowerCase();
-      const displayName = resolveContactDisplayName(session?.jid).toLowerCase();
-      return jid.includes(normalizedSearch) || flowPath.includes(normalizedSearch) || displayName.includes(normalizedSearch);
-    })
-    .slice(0, normalizedLimit)
-    .map(session => {
-      const startedAt = Number(session?.variables?.__sessionStartedAt) || 0;
-      const lastActivityAt = Number(session?.variables?.__sessionLastActivityAt) || 0;
-      const handoff = parseHumanHandoff(session?.variables?.__humanHandoff);
-      const waitingForHuman = String(session?.waitingFor || '').trim().toLowerCase() === 'human';
-      return {
-        jid: session.jid,
-        flowPath: session.flowPath,
-        botType: session.botType,
-        waitingFor: session.waitingFor,
-        blockIndex: session.blockIndex,
-        displayName: resolveContactDisplayName(session.jid),
-        startedAt,
-        lastActivityAt,
-        durationMs: startedAt > 0 && startedAt <= nowTs ? nowTs - startedAt : 0,
-        handoffActive: waitingForHuman || handoff.active === true,
-      };
-    });
-
-  return rows;
+  return flowSessionController.listActiveSessionsForManagement({ search, limit });
 }
 
 function logConversationEvent({
@@ -1016,12 +726,12 @@ function logConversationEvent({
   messageText = '',
   metadata = {},
 }) {
-  addConversationEvent({
-    occurredAt: Number(occurredAt) || Date.now(),
+  messageTelemetryController.logConversationEvent({
+    occurredAt,
     eventType,
     direction,
     jid,
-    flowPath: String(flowPath || '').trim() || currentPrimaryFlowPathForLogs(),
+    flowPath,
     messageText,
     metadata,
   });
@@ -1045,203 +755,57 @@ function emitDashboardBroadcastProgress({
   error = '',
   metrics = null,
 } = {}) {
-  const attemptedSafe = Math.max(0, Number(attempted) || 0);
-  const processedSafe = Math.max(0, Math.min(attemptedSafe, Number(processed) || 0));
-  const sentSafe = Math.max(0, Number(sent) || 0);
-  const failedSafe = Math.max(0, Number(failed) || 0);
-  const cancelledSafe = Math.max(0, Number(cancelled) || 0);
-  const remainingSafe = Math.max(0, Number(remaining) || 0);
-  const percentSafe = Math.max(0, Math.min(100, Number(percent) || 0));
-  const statusSafe = String(status || 'sending');
-  const controlStatusSafe = String(controlStatus || 'running');
-
-  broadcastDashboardEvent({
-    occurredAt: Date.now(),
-    eventType: 'broadcast-send-progress',
-    direction: 'system',
-    jid: String(jid || 'system'),
-    flowPath: currentPrimaryFlowPathForLogs(),
-    messageText: `Broadcast ${sentSafe}/${attemptedSafe}`,
-    metadata: {
-      source: 'dashboard-broadcast',
-      actor: String(actor || 'dashboard-agent'),
-      target: String(target || 'all'),
-      campaignId: Number(campaignId) || 0,
-      attempted: attemptedSafe,
-      processed: processedSafe,
-      sent: sentSafe,
-      failed: failedSafe,
-      cancelled: cancelledSafe,
-      remaining: remainingSafe,
-      percent: percentSafe,
-      status: statusSafe,
-      controlStatus: controlStatusSafe,
-      recipientStatus: String(recipientStatus || ''),
-      error: String(error || ''),
-      metrics: metrics && typeof metrics === 'object' ? {
-        avgSendMs: Number(metrics.avgSendMs) || 0,
-        maxSendMs: Number(metrics.maxSendMs) || 0,
-        p95SendMs: Number(metrics.p95SendMs) || 0,
-        throughputPerSecond: Number(metrics.throughputPerSecond) || 0,
-        failuresPerMinute: Number(metrics.failuresPerMinute) || 0,
-        elapsedMs: Number(metrics.elapsedMs) || 0,
-        startedAt: Number(metrics.startedAt) || 0,
-      } : null,
-    },
+  messageTelemetryController.emitDashboardBroadcastProgress({
+    actor,
+    target,
+    campaignId,
+    attempted,
+    processed,
+    sent,
+    failed,
+    cancelled,
+    remaining,
+    percent,
+    status,
+    controlStatus,
+    jid,
+    recipientStatus,
+    error,
+    metrics,
   });
 }
 
 function extractOutgoingMessageText(content) {
-  if (!content || typeof content !== 'object') return '';
-  if (typeof content.text === 'string' && content.text.trim()) return content.text;
-  if (content.image?.caption) return String(content.image.caption);
-  if (content.image) return '[imagem]';
-  if (content.react?.text) return `[react] ${content.react.text}`;
-  if (content.listMessage?.description) return content.listMessage.description;
-  if (content.listMessage?.title) return content.listMessage.title;
-  if (content.buttonsMessage?.contentText) return content.buttonsMessage.contentText;
-  return '';
+  return messageTelemetryController.extractOutgoingMessageText(content);
 }
 
 function extractOutgoingKind(content) {
-  if (!content || typeof content !== 'object') return 'unknown';
-  if (content.text) return 'text';
-  if (content.image) return 'image';
-  if (content.react) return 'reaction';
-  if (content.listMessage) return 'list';
-  if (content.buttons) return 'buttons';
-  return Object.keys(content)[0] || 'unknown';
+  return messageTelemetryController.extractOutgoingKind(content);
 }
 
 function extractApiHostFromTemplateUrl(rawUrl) {
-  const input = String(rawUrl ?? '').trim();
-  if (!input) return 'host-desconhecido';
-
-  const normalized = input.replace(/\{\{[^}]+\}\}/g, 'x');
-
-  try {
-    const parsed = new URL(normalized);
-    return parsed.host || parsed.hostname || 'host-desconhecido';
-  } catch {
-    try {
-      const parsedWithBase = new URL(normalized, 'http://localhost');
-      if (parsedWithBase.host && parsedWithBase.host !== 'localhost') {
-        return parsedWithBase.host;
-      }
-    } catch {
-      // ignore
-    }
-
-    const match = normalized.match(/^(?:[a-z]+:\/\/)?([^\/\s?#]+)/i);
-    return String(match?.[1] ?? 'host-desconhecido');
-  }
-}
-
-function sanitizeMediaFileName(value) {
-  return String(value ?? '')
-    .replace(/[^\w.-]+/g, '_')
-    .replace(/_+/g, '_')
-    .replace(/^_+|_+$/g, '')
-    .slice(0, 90);
-}
-
-function extensionFromMimeType(mimeType) {
-  if (mimeType === 'image/jpeg') return '.jpg';
-  if (mimeType === 'image/png') return '.png';
-  if (mimeType === 'image/webp') return '.webp';
-  if (mimeType === 'image/gif') return '.gif';
-  return '.bin';
+  return messageTelemetryController.extractApiHostFromTemplateUrl(rawUrl);
 }
 
 function saveIncomingHandoffImage({ buffer, mimeType, fileName = '' }) {
-  fs.mkdirSync(HANDOFF_MEDIA_DIR, { recursive: true });
-  const ext = extensionFromMimeType(mimeType);
-  const base = sanitizeMediaFileName(fileName).replace(/\.[^.]+$/, '') || 'incoming';
-  const mediaId = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}-${base}${ext}`;
-  const mediaPath = path.resolve(HANDOFF_MEDIA_DIR, mediaId);
-  fs.writeFileSync(mediaPath, buffer);
-  return {
-    mediaId,
-    mediaPath,
-    mediaUrl: `/api/handoff/media/${encodeURIComponent(mediaId)}`,
-  };
+  return handoffMediaCaptureController.saveIncomingHandoffImage({ buffer, mimeType, fileName });
 }
 
 async function captureIncomingImageForDashboard({ msg, sock, mimeType, fileName }) {
-  const normalizedMime = String(mimeType || '').toLowerCase();
-  if (!ALLOWED_INCOMING_IMAGE_MIME.has(normalizedMime)) return null;
-
-  try {
-    const buffer = await downloadMediaMessage(
-      msg,
-      'buffer',
-      {},
-      {
-        logger,
-        reuploadRequest: sock?.updateMediaMessage,
-      }
-    );
-
-    if (!buffer || !Buffer.isBuffer(buffer) || buffer.length === 0) {
-      return null;
-    }
-    const maxAllowedBytes = Math.max(64 * 1024, Number(config?.incomingMediaMaxBytes ?? (8 * 1024 * 1024)));
-    if (buffer.length > maxAllowedBytes) {
-      ingestionRuntimeCounters.mediaTooLargeDropped += 1;
-      return null;
-    }
-
-    return saveIncomingHandoffImage({
-      buffer,
-      mimeType: normalizedMime,
-      fileName,
-    });
-  } catch {
-    return null;
-  }
+  return handoffMediaCaptureController.captureIncomingImageForDashboard({
+    msg,
+    sock,
+    mimeType,
+    fileName,
+  });
 }
 
 function cleanupSignalAuthState({ reason = 'manual', forceLog = false } = {}) {
-  try {
-    const summary = cleanupAuthSignalSessions();
-    authCleanupStats.runs += 1;
-    authCleanupStats.changedRows += Math.max(0, Number(summary?.changedRows) || 0);
-    authCleanupStats.deletedRows += Math.max(0, Number(summary?.deletedRows) || 0);
-    authCleanupStats.removedSessions += Math.max(0, Number(summary?.removedSessions) || 0);
-    authCleanupStats.lastSummary = summary;
-    authCleanupStats.lastRunAt = Date.now();
-
-    const shouldLog =
-      forceLog ||
-      summary.changedRows > 0 ||
-      summary.deletedRows > 0 ||
-      summary.removedSessions > 0;
-
-    if (shouldLog) {
-      console.log(
-        `[AuthState] cleanup(${reason}) rows=${summary.scannedRows} changed=${summary.changedRows} deleted=${summary.deletedRows} removedSessions=${summary.removedSessions}`
-      );
-    }
-
-    refreshAuthStateStorageSnapshot({ force: true });
-    return summary;
-  } catch (error) {
-    console.error(`[AuthState] cleanup falhou (${reason}):`, error?.message || error);
-    return null;
-  }
+  return authStateController.cleanupSignalAuthState({ reason, forceLog });
 }
 
 function startAuthStateMaintenance() {
-  if (authStateMaintenanceTimer) return;
-
-  const intervalMs = Math.max(60_000, Number(process.env.TMB_AUTH_CLEANUP_INTERVAL_MS) || (10 * 60 * 1000));
-  authStateMaintenanceTimer = setInterval(() => {
-    cleanupSignalAuthState({ reason: 'interval' });
-  }, intervalMs);
-
-  if (typeof authStateMaintenanceTimer.unref === 'function') {
-    authStateMaintenanceTimer.unref();
-  }
+  authStateController.startAuthStateMaintenance();
 }
 
 function attachOutgoingMessageLogger(sock) {
@@ -1305,247 +869,17 @@ function attachOutgoingMessageLogger(sock) {
   sock.__tmbSendMessageWrapped = true;
 }
 
-function safeAverage(total, count) {
-  if (!Number.isFinite(total) || !Number.isFinite(count) || count <= 0) return 0;
-  return Number((total / count).toFixed(2));
-}
-
-function toPerSecond(count, startedAt) {
-  const uptimeSeconds = Math.max(1, (Date.now() - Number(startedAt || Date.now())) / 1000);
-  return Number(((Number(count) || 0) / uptimeSeconds).toFixed(2));
-}
-
 function queueSnapshotOrFallback(queue, fallback = {}) {
   if (!queue || typeof queue.getSnapshot !== 'function') return { ...fallback };
   return queue.getSnapshot();
 }
 
 function getWhatsAppHealthSnapshot() {
-  const nowTs = Date.now();
-  trimTimestampWindow(whatsappHealthState.reconnectHistory, 24 * 60 * 60 * 1000, nowTs);
-  trimTimestampWindow(whatsappHealthState.successfulReconnectHistory, 24 * 60 * 60 * 1000, nowTs);
-  refreshAuthStateStorageSnapshot();
-
-  const connectedNow = whatsappHealthState.connectedSince > 0;
-  const totalConnectedMs = whatsappHealthState.totalConnectedMs + (
-    connectedNow ? Math.max(0, nowTs - whatsappHealthState.connectedSince) : 0
-  );
-  const degradedTotalMs = runtimeGuardState.totalDegradedMs + (
-    runtimeGuardState.degradedMode && runtimeGuardState.lastEnteredAt > 0
-      ? Math.max(0, nowTs - runtimeGuardState.lastEnteredAt)
-      : 0
-  );
-
-  return {
-    connected: connectedNow,
-    connectedSince: whatsappHealthState.connectedSince || 0,
-    uptimeConnectedMs: connectedNow ? Math.max(0, nowTs - whatsappHealthState.connectedSince) : 0,
-    totalConnectedMs,
-    lastConnectedAt: whatsappHealthState.lastConnectedAt || 0,
-    lastDisconnectedAt: whatsappHealthState.lastDisconnectedAt || 0,
-    lastDisconnectDurationMs: whatsappHealthState.lastDisconnectDurationMs || 0,
-    disconnectCount: whatsappHealthState.disconnectCount,
-    disconnectByStatusCode: { ...whatsappHealthState.disconnectByStatusCode },
-    disconnectByCategory: { ...whatsappHealthState.disconnectByCategory },
-    reconnectsScheduledLast24h: whatsappHealthState.reconnectHistory.length,
-    reconnectsSuccessfulLast24h: whatsappHealthState.successfulReconnectHistory.length,
-    reconnectController: reconnectController?.getSnapshot?.() || null,
-    eventVolumePerMinute: {
-      incoming: readPerMinute(whatsappHealthState.minuteCounters.incoming, 1),
-      outgoingTotal: readPerMinute(whatsappHealthState.minuteCounters.outgoingTotal, 1),
-      outgoingService: readPerMinute(whatsappHealthState.minuteCounters.outgoingService, 1),
-      outgoingBroadcast: readPerMinute(whatsappHealthState.minuteCounters.outgoingBroadcast, 1),
-      events: readPerMinute(whatsappHealthState.minuteCounters.events, 1),
-      messagesUpsert: readPerMinute(whatsappHealthState.minuteCounters.messagesUpsert, 1),
-      connectionUpdate: readPerMinute(whatsappHealthState.minuteCounters.connectionUpdate, 1),
-      credsUpdate: readPerMinute(whatsappHealthState.minuteCounters.credsUpdate, 1),
-    },
-    callback: {
-      calls: whatsappHealthState.callback.calls,
-      avgMs: safeAverage(whatsappHealthState.callback.totalMs, whatsappHealthState.callback.calls),
-      p95Ms: toPercentile(whatsappHealthState.callback.samples, 0.95),
-      maxMs: whatsappHealthState.callback.maxMs,
-      lastMs: whatsappHealthState.callback.lastMs,
-    },
-    processingLag: {
-      count: whatsappHealthState.queueLag.count,
-      avgMs: safeAverage(whatsappHealthState.queueLag.totalMs, whatsappHealthState.queueLag.count),
-      p95Ms: toPercentile(whatsappHealthState.queueLag.samples, 0.95),
-      maxMs: whatsappHealthState.queueLag.maxMs,
-    },
-    events: {
-      ...whatsappHealthState.events,
-    },
-    sendFailuresByCategory: { ...whatsappHealthState.sendFailuresByCategory },
-    authState: {
-      persistence: {
-        ...authPersistenceStats,
-        writeAvgMs: safeAverage(authPersistenceStats.totalWriteMs, authPersistenceStats.writeAttempts),
-        updateEventsPerMinute: readPerMinute(whatsappHealthState.minuteCounters.credsUpdate, 1),
-      },
-      cleanup: {
-        ...authCleanupStats,
-      },
-      storage: {
-        ...authStorageCache.snapshot,
-        refreshErrors: authStorageCache.refreshErrors,
-      },
-    },
-    mediaMaintenance: {
-      ...handoffMediaMaintenanceStats,
-    },
-    guard: {
-      active: runtimeGuardState.degradedMode,
-      reason: runtimeGuardState.reason,
-      changedAt: runtimeGuardState.changedAt,
-      toggles: runtimeGuardState.toggles,
-      totalDegradedMs: degradedTotalMs,
-      droppedPostTasks: runtimeGuardState.droppedPostTasks,
-      droppedMediaTasks: runtimeGuardState.droppedMediaTasks,
-    },
-    updatedAt: nowTs,
-  };
+  return runtimeInfoController.getWhatsAppHealthSnapshot();
 }
 
 function getIngestionSnapshot() {
-  const ingestionQueueSnapshot = queueSnapshotOrFallback(ingestionQueue, {
-    concurrency: Number(config?.ingestionConcurrency ?? 8),
-    maxQueueSize: Number(config?.ingestionQueueMax ?? 5000),
-    warnThreshold: Number(config?.ingestionQueueWarnThreshold ?? 1000),
-    queued: 0,
-    running: 0,
-    activeKeys: 0,
-    accepted: 0,
-    rejected: 0,
-    started: 0,
-    completed: 0,
-    failed: 0,
-    maxQueuedObserved: 0,
-    avgWaitMs: 0,
-    avgProcessMs: 0,
-    acceptedPerSecond: 0,
-    processedPerSecond: 0,
-    droppedPerSecond: 0,
-    startedAt: Date.now(),
-    updatedAt: Date.now(),
-  });
-  const dispatchQueueSnapshot = queueSnapshotOrFallback(dispatchScheduler, {
-    globalConcurrency: Number(config?.schedulerGlobalConcurrency ?? 16),
-    maxPerJid: Number(config?.schedulerPerJidConcurrency ?? 1),
-    maxPerFlowPath: Number(config?.schedulerPerFlowPathConcurrency ?? 4),
-    maxQueueSize: 20000,
-    warnThreshold: 5000,
-    queued: 0,
-    running: 0,
-    runningJids: 0,
-    runningFlowPaths: 0,
-    accepted: 0,
-    rejected: 0,
-    started: 0,
-    completed: 0,
-    failed: 0,
-    maxQueuedObserved: 0,
-    avgWaitMs: 0,
-    avgProcessMs: 0,
-    acceptedPerSecond: 0,
-    processedPerSecond: 0,
-    droppedPerSecond: 0,
-    startedAt: Date.now(),
-    updatedAt: Date.now(),
-  });
-  const postProcessSnapshot = queueSnapshotOrFallback(postProcessQueue, {
-    concurrency: Number(config?.postProcessConcurrency ?? 2),
-    maxQueueSize: Number(config?.postProcessQueueMax ?? 5000),
-    warnThreshold: Math.min(Number(config?.postProcessQueueMax ?? 5000), 1000),
-    queued: 0,
-    running: 0,
-    activeKeys: 0,
-    accepted: 0,
-    rejected: 0,
-    started: 0,
-    completed: 0,
-    failed: 0,
-    maxQueuedObserved: 0,
-    avgWaitMs: 0,
-    avgProcessMs: 0,
-    acceptedPerSecond: 0,
-    processedPerSecond: 0,
-    droppedPerSecond: 0,
-    startedAt: Date.now(),
-    updatedAt: Date.now(),
-  });
-  const mediaPipelineSnapshot = queueSnapshotOrFallback(mediaPipelineQueue, {
-    concurrency: Number(config?.mediaPipelineConcurrency ?? 2),
-    maxQueueSize: Number(config?.mediaPipelineQueueMax ?? 500),
-    warnThreshold: Math.min(Number(config?.mediaPipelineQueueMax ?? 500), 100),
-    queued: 0,
-    running: 0,
-    activeKeys: 0,
-    accepted: 0,
-    rejected: 0,
-    started: 0,
-    completed: 0,
-    failed: 0,
-    maxQueuedObserved: 0,
-    avgWaitMs: 0,
-    avgProcessMs: 0,
-    acceptedPerSecond: 0,
-    processedPerSecond: 0,
-    droppedPerSecond: 0,
-    startedAt: Date.now(),
-    updatedAt: Date.now(),
-  });
-
-  evaluateRuntimeGuardState();
-  const engineStats = getEngineRuntimeStats();
-  const whatsappHealth = getWhatsAppHealthSnapshot();
-
-  return {
-    callback: {
-      received: ingestionRuntimeCounters.received,
-      parseDropped: ingestionRuntimeCounters.parseDropped,
-      filteredOut: ingestionRuntimeCounters.filteredOut,
-      queueOverflowDropped: ingestionRuntimeCounters.queueOverflowDropped,
-      duplicateDropped: Number(engineStats?.duplicateDropped || 0),
-      processedMessages: ingestionRuntimeCounters.processedMessages,
-      processingFailed: ingestionRuntimeCounters.processingFailed,
-      parseAvgMs: safeAverage(ingestionRuntimeCounters.parseMsTotal, ingestionRuntimeCounters.processedMessages + ingestionRuntimeCounters.parseDropped),
-      routingAvgMs: safeAverage(ingestionRuntimeCounters.routingMsTotal, ingestionRuntimeCounters.processedMessages),
-      totalAvgMs: safeAverage(ingestionRuntimeCounters.totalMsTotal, ingestionRuntimeCounters.processedMessages),
-      receivedPerSecond: toPerSecond(ingestionRuntimeCounters.received, runtimeStatsStartedAt),
-      processedPerSecond: toPerSecond(ingestionRuntimeCounters.processedMessages, runtimeStatsStartedAt),
-      droppedPerSecond: toPerSecond(
-        ingestionRuntimeCounters.queueOverflowDropped + ingestionRuntimeCounters.parseDropped + ingestionRuntimeCounters.filteredOut + Number(engineStats?.duplicateDropped || 0),
-        runtimeStatsStartedAt
-      ),
-      updatedAt: Date.now(),
-    },
-    postProcessing: {
-      queued: ingestionRuntimeCounters.postTasksQueued,
-      dropped: ingestionRuntimeCounters.postTasksDropped,
-      failed: ingestionRuntimeCounters.postTasksFailed,
-      queue: postProcessSnapshot,
-    },
-    media: {
-      queued: ingestionRuntimeCounters.mediaQueued,
-      captured: ingestionRuntimeCounters.mediaCaptured,
-      failed: ingestionRuntimeCounters.mediaCaptureFailed,
-      queueDropped: ingestionRuntimeCounters.mediaQueueDropped,
-      tooLargeDropped: ingestionRuntimeCounters.mediaTooLargeDropped,
-      droppedByDegradedMode: ingestionRuntimeCounters.mediaDroppedByDegradedMode,
-      queue: mediaPipelineSnapshot,
-    },
-    runtimeGuard: {
-      degradedMode: runtimeGuardState.degradedMode,
-      reason: runtimeGuardState.reason,
-      droppedPostTasks: ingestionRuntimeCounters.postTasksDroppedByDegradedMode,
-      droppedMediaTasks: ingestionRuntimeCounters.mediaDroppedByDegradedMode,
-    },
-    whatsappHealth,
-    engine: engineStats,
-    ingestionQueue: ingestionQueueSnapshot,
-    dispatchScheduler: dispatchQueueSnapshot,
-  };
+  return runtimeInfoController.getIngestionSnapshot();
 }
 
 function initializeRuntimeSchedulers(currentConfig) {
@@ -1638,260 +972,63 @@ function initializeReconnectPolicy(currentConfig) {
 }
 
 function normalizeRuntimeInfo() {
-  const dashboardFlow = getDashboardFlow();
-  const flowFile = path.basename(String(dashboardFlow?.flowPath ?? config?.flowPath ?? ''));
-  const runtimeMode = String(config?.runtimeMode ?? RUNTIME_MODE.PRODUCTION);
-  const conversationFlow = getConversationFlow();
-  const commandFlows = getCommandFlows();
-  const availableModes = [
-    ...(conversationFlow ? ['conversation'] : []),
-    ...(commandFlows.length > 0 ? ['command'] : []),
-  ];
-  const mode = conversationFlow ? 'conversation' : (commandFlows.length > 0 ? 'command' : 'conversation');
-  const flowPath = dashboardFlow?.flowPath ?? path.resolve(String(config?.flowPath ?? ''));
-  return {
-    flowFile,
-    mode,
-    runtimeMode,
-    flowPath,
-    flowPathsByMode: {
-      conversation: conversationFlow ? [conversationFlow.flowPath] : [],
-      command: commandFlows.map(flow => flow.flowPath),
-    },
-    availableModes,
-    dashboard: {
-      telemetryLevel: normalizeDashboardTelemetryLevel(config?.dashboardTelemetryLevel) || 'operational',
-      isolationMode: resolveDashboardIsolationMode(),
-    },
-    whatsapp: getWhatsAppHealthSnapshot(),
-    ingestion: getIngestionSnapshot(),
-  };
+  return runtimeInfoController.normalizeRuntimeInfo();
 }
 
 function startDbSizeSnapshotMaintenance() {
-  if (dbSizeSnapshotMaintenanceTimer) return;
-  const intervalMs = Math.max(60 * 60 * 1000, Number(process.env.TMB_DB_SIZE_SNAPSHOT_INTERVAL_MS) || (60 * 60 * 1000));
-  dbSizeSnapshotMaintenanceTimer = setInterval(() => {
-    try {
-      getDatabaseInfo();
-    } catch {
-      // ignore snapshot maintenance failures
-    }
-  }, intervalMs);
-
-  if (typeof dbSizeSnapshotMaintenanceTimer.unref === 'function') {
-    dbSizeSnapshotMaintenanceTimer.unref();
-  }
+  maintenanceController.startDbSizeSnapshotMaintenance();
 }
 
 function cleanupHandoffMediaFiles({ reason = 'manual' } = {}) {
-  const startedAt = Date.now();
-  const retentionMs = Math.max(60 * 1000, Number(config?.handoffMediaRetentionMinutes ?? 180) * 60 * 1000);
-  const maxStorageBytes = Math.max(32 * 1024 * 1024, Number(config?.handoffMediaMaxStorageMb ?? 512) * 1024 * 1024);
-
-  const summary = {
-    reason: String(reason || 'manual'),
-    scannedFiles: 0,
-    deletedFiles: 0,
-    deletedBytes: 0,
-    totalBytesAfter: 0,
-    durationMs: 0,
-  };
-
-  try {
-    fs.mkdirSync(HANDOFF_MEDIA_DIR, { recursive: true });
-    const nowTs = Date.now();
-    const entries = fs.readdirSync(HANDOFF_MEDIA_DIR, { withFileTypes: true });
-    const files = [];
-
-    for (const entry of entries) {
-      if (!entry?.isFile?.()) continue;
-      const fullPath = path.resolve(HANDOFF_MEDIA_DIR, entry.name);
-      try {
-        const stat = fs.statSync(fullPath);
-        if (!stat.isFile()) continue;
-        files.push({
-          fullPath,
-          size: Math.max(0, Number(stat.size) || 0),
-          mtimeMs: Math.max(0, Number(stat.mtimeMs) || 0),
-        });
-      } catch {
-        // ignore transient stat errors
-      }
-    }
-
-    summary.scannedFiles = files.length;
-    files.sort((a, b) => a.mtimeMs - b.mtimeMs);
-
-    let totalBytes = files.reduce((acc, item) => acc + item.size, 0);
-    const keep = [];
-
-    for (const file of files) {
-      const fileAgeMs = Math.max(0, nowTs - file.mtimeMs);
-      if (fileAgeMs > retentionMs) {
-        try {
-          fs.unlinkSync(file.fullPath);
-          summary.deletedFiles += 1;
-          summary.deletedBytes += file.size;
-          totalBytes -= file.size;
-        } catch {
-          keep.push(file);
-        }
-      } else {
-        keep.push(file);
-      }
-    }
-
-    for (const file of keep) {
-      if (totalBytes <= maxStorageBytes) break;
-      try {
-        fs.unlinkSync(file.fullPath);
-        summary.deletedFiles += 1;
-        summary.deletedBytes += file.size;
-        totalBytes -= file.size;
-      } catch {
-        // ignore unlink errors
-      }
-    }
-
-    summary.totalBytesAfter = Math.max(0, totalBytes);
-    summary.durationMs = Math.max(0, Date.now() - startedAt);
-
-    handoffMediaMaintenanceStats.runs += 1;
-    handoffMediaMaintenanceStats.deletedFiles += summary.deletedFiles;
-    handoffMediaMaintenanceStats.deletedBytes += summary.deletedBytes;
-    handoffMediaMaintenanceStats.lastRunAt = Date.now();
-    handoffMediaMaintenanceStats.lastDurationMs = summary.durationMs;
-    handoffMediaMaintenanceStats.lastSummary = summary;
-    handoffMediaMaintenanceStats.lastError = '';
-
-    if (summary.deletedFiles > 0) {
-      logger?.info?.(
-        {
-          reason: summary.reason,
-          deletedFiles: summary.deletedFiles,
-          deletedBytes: summary.deletedBytes,
-          totalBytesAfter: summary.totalBytesAfter,
-        },
-        'Handoff media cleanup removed transient files'
-      );
-    }
-  } catch (error) {
-    handoffMediaMaintenanceStats.lastError = String(error?.message || error);
-  }
-
-  return summary;
+  return maintenanceController.cleanupHandoffMediaFiles({ reason });
 }
 
 function startHandoffMediaMaintenance() {
-  if (mediaCleanupTimer) return;
-  const intervalMs = Math.max(60 * 1000, Number(config?.handoffMediaCleanupIntervalMinutes ?? 15) * 60 * 1000);
-  mediaCleanupTimer = setInterval(() => {
-    cleanupHandoffMediaFiles({ reason: 'interval' });
-  }, intervalMs);
-  if (typeof mediaCleanupTimer.unref === 'function') {
-    mediaCleanupTimer.unref();
-  }
+  maintenanceController.startHandoffMediaMaintenance();
 }
 
 function normalizeBroadcastSendIntervalMs(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n) || n < 0) return null;
-  return Math.floor(n);
+  return databaseMaintenanceController.normalizeBroadcastSendIntervalMs(value);
 }
 
 function normalizeDashboardTelemetryLevel(value) {
-  const normalized = String(value ?? '').trim().toLowerCase();
-  if (!normalized) return null;
-  return DASHBOARD_TELEMETRY_LEVELS.has(normalized) ? normalized : null;
+  return databaseMaintenanceController.normalizeDashboardTelemetryLevel(value);
 }
 
 function normalizeDbMaintenanceIntervalMinutes(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  const normalized = Math.floor(n);
-  if (normalized < 5 || normalized > 1440) return null;
-  return normalized;
+  return databaseMaintenanceController.normalizeDbMaintenanceIntervalMinutes(value);
 }
 
 function normalizeDbRetentionDays(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  const normalized = Math.floor(n);
-  if (normalized < 1 || normalized > 3650) return null;
-  return normalized;
+  return databaseMaintenanceController.normalizeDbRetentionDays(value);
 }
 
 function normalizeDbEventBatchFlushMs(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  const normalized = Math.floor(n);
-  if (normalized < 100 || normalized > 60000) return null;
-  return normalized;
+  return databaseMaintenanceController.normalizeDbEventBatchFlushMs(value);
 }
 
 function normalizeDbEventBatchSize(value) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return null;
-  const normalized = Math.floor(n);
-  if (normalized < 10 || normalized > 5000) return null;
-  return normalized;
+  return databaseMaintenanceController.normalizeDbEventBatchSize(value);
 }
 
 function toBooleanOrNull(value) {
-  if (typeof value === 'boolean') return value;
-  return null;
+  return databaseMaintenanceController.toBooleanOrNull(value);
 }
 
 function buildDatabaseRuntimeConfigFromCurrentConfig(currentConfig = config) {
-  return {
-    maintenanceEnabled: currentConfig?.dbMaintenanceEnabled !== false,
-    maintenanceIntervalMinutes: Number(currentConfig?.dbMaintenanceIntervalMinutes ?? 30),
-    retentionDays: Number(currentConfig?.dbRetentionDays ?? 30),
-    retentionArchiveEnabled: currentConfig?.dbRetentionArchiveEnabled !== false,
-    eventBatchingEnabled: currentConfig?.dbEventBatchEnabled !== false,
-    eventBatchFlushMs: Number(currentConfig?.dbEventBatchFlushMs ?? 1000),
-    eventBatchSize: Number(currentConfig?.dbEventBatchSize ?? 200),
-  };
+  return databaseMaintenanceController.buildDatabaseRuntimeConfigFromCurrentConfig(currentConfig);
 }
 
 function applyDatabaseRuntimeConfigFromAppConfig(currentConfig = config) {
-  return configureDatabaseRuntime(buildDatabaseRuntimeConfigFromCurrentConfig(currentConfig));
+  return databaseMaintenanceController.applyDatabaseRuntimeConfigFromAppConfig(currentConfig);
 }
 
 function stopDatabaseMaintenanceScheduler() {
-  if (!dbMaintenanceTimer) return;
-  clearInterval(dbMaintenanceTimer);
-  dbMaintenanceTimer = null;
+  databaseMaintenanceController.stopDatabaseMaintenanceScheduler();
 }
 
 function startDatabaseMaintenanceScheduler() {
-  stopDatabaseMaintenanceScheduler();
-
-  if (config?.dbMaintenanceEnabled === false) return;
-  const intervalMinutes = Math.max(5, Number(config?.dbMaintenanceIntervalMinutes) || 30);
-  const intervalMs = intervalMinutes * 60 * 1000;
-
-  dbMaintenanceTimer = setInterval(() => {
-    try {
-      const result = runDatabaseMaintenance({ reason: 'scheduled', force: false, runRetention: true });
-      if (!result?.ok && !result?.skipped) {
-        logger?.warn?.(
-          { error: String(result?.error || 'db-maintenance-failed') },
-          'Scheduled DB maintenance failed'
-        );
-      }
-    } catch (error) {
-      logger?.warn?.(
-        { error: String(error?.message || 'db-maintenance-failed') },
-        'Scheduled DB maintenance failed'
-      );
-    }
-  }, intervalMs);
-
-  if (typeof dbMaintenanceTimer.unref === 'function') {
-    dbMaintenanceTimer.unref();
-  }
+  databaseMaintenanceController.startDatabaseMaintenanceScheduler();
 }
 
 function toTrimmedStringArray(value) {
@@ -1908,322 +1045,29 @@ function toTrimmedStringArray(value) {
 }
 
 function buildSetupConfigSnapshot() {
-  return {
-    botRuntimeMode: String(config?.botRuntimeMode || 'single-flow'),
-    flowPath: String(config?.flowPath || ''),
-    flowPaths: toTrimmedStringArray(config?.flowPaths),
-    runtimeMode: String(config?.runtimeMode || RUNTIME_MODE.PRODUCTION),
-    autoReloadFlows: config?.autoReloadFlows !== false,
-    broadcastSendIntervalMs: Number(config?.broadcastSendIntervalMs ?? 250),
-    ingestionConcurrency: Number(config?.ingestionConcurrency ?? 8),
-    ingestionQueueMax: Number(config?.ingestionQueueMax ?? 5000),
-    ingestionQueueWarnThreshold: Number(config?.ingestionQueueWarnThreshold ?? 1000),
-    schedulerGlobalConcurrency: Number(config?.schedulerGlobalConcurrency ?? 16),
-    schedulerPerJidConcurrency: Number(config?.schedulerPerJidConcurrency ?? 1),
-    schedulerPerFlowPathConcurrency: Number(config?.schedulerPerFlowPathConcurrency ?? 4),
-    postProcessConcurrency: Number(config?.postProcessConcurrency ?? 2),
-    postProcessQueueMax: Number(config?.postProcessQueueMax ?? 5000),
-    mediaPipelineConcurrency: Number(config?.mediaPipelineConcurrency ?? 2),
-    mediaPipelineQueueMax: Number(config?.mediaPipelineQueueMax ?? 500),
-    whatsappReconnectBaseDelayMs: Number(config?.whatsappReconnectBaseDelayMs ?? 3000),
-    whatsappReconnectMaxDelayMs: Number(config?.whatsappReconnectMaxDelayMs ?? 60000),
-    whatsappReconnectBackoffMultiplier: Number(config?.whatsappReconnectBackoffMultiplier ?? 2),
-    whatsappReconnectJitterPct: Number(config?.whatsappReconnectJitterPct ?? 20),
-    whatsappReconnectAttemptsWindowMs: Number(config?.whatsappReconnectAttemptsWindowMs ?? (10 * 60 * 1000)),
-    whatsappReconnectMaxAttemptsPerWindow: Number(config?.whatsappReconnectMaxAttemptsPerWindow ?? 12),
-    whatsappReconnectCooldownMs: Number(config?.whatsappReconnectCooldownMs ?? (2 * 60 * 1000)),
-    authCredsDebounceMs: Number(config?.authCredsDebounceMs ?? 250),
-    authMetricsRefreshMs: Number(config?.authMetricsRefreshMs ?? 30_000),
-    incomingMediaMaxBytes: Number(config?.incomingMediaMaxBytes ?? (8 * 1024 * 1024)),
-    handoffMediaRetentionMinutes: Number(config?.handoffMediaRetentionMinutes ?? 180),
-    handoffMediaCleanupIntervalMinutes: Number(config?.handoffMediaCleanupIntervalMinutes ?? 15),
-    handoffMediaMaxStorageMb: Number(config?.handoffMediaMaxStorageMb ?? 512),
-    whatsappMaxInboundPerMinute: Number(config?.whatsappMaxInboundPerMinute ?? 600),
-    whatsappMaxServiceOutboundPerMinute: Number(config?.whatsappMaxServiceOutboundPerMinute ?? 300),
-    whatsappMaxBroadcastOutboundPerMinute: Number(config?.whatsappMaxBroadcastOutboundPerMinute ?? 120),
-    runtimeDegradedQueueRatio: Number(config?.runtimeDegradedQueueRatio ?? 90),
-    runtimeDegradedReconnectPendingMs: Number(config?.runtimeDegradedReconnectPendingMs ?? 20_000),
-    runtimeDegradedDropConversationEvents: config?.runtimeDegradedDropConversationEvents !== false,
-    testTargetMode: String(config?.testTargetMode || 'contacts-and-groups'),
-    testJid: String(config?.testJid || ''),
-    testJids: toTrimmedStringArray(config?.testJids),
-    groupWhitelistJids: toTrimmedStringArray(config?.groupWhitelistJids),
-    dashboardHost: String(config?.dashboardHost || '127.0.0.1'),
-    dashboardPort: Number(config?.dashboardPort || 8787),
-  };
-}
-
-function normalizeSetupSearch(value) {
-  return String(value ?? '').trim().toLowerCase();
+  return setupRuntimeStateController.buildSetupConfigSnapshot();
 }
 
 function hydrateContactCacheFromDb(limit = 10000) {
-  const rows = listContactDisplayNames(limit);
-  if (!Array.isArray(rows) || rows.length === 0) return 0;
-  contactCache.hydrate(
-    rows.map(item => ({
-      jid: item?.jid,
-      name: item?.name,
-    }))
-  );
-  return rows.length;
+  return setupRuntimeStateController.hydrateContactCacheFromDb(limit);
 }
 
 function resolveContactDisplayName(jid) {
-  const normalizedJid = String(jid ?? '').trim();
-  if (!normalizedJid) return '';
-  const raw = String(contactCache.get(normalizedJid)?.name ?? '').trim();
-  if (raw) return raw.replace(/^~+\s*/, '').trim() || raw;
-  const persisted = getContactDisplayName(normalizedJid);
-  if (persisted) {
-    contactCache.hydrate([{ jid: normalizedJid, name: persisted }]);
-    return persisted;
-  }
-  return normalizedJid;
-}
-
-function targetMatchesSearch(target, normalizedSearch) {
-  if (!normalizedSearch) return true;
-  const jid = String(target?.jid ?? '').toLowerCase();
-  const name = String(target?.name ?? '').toLowerCase();
-  return jid.includes(normalizedSearch) || name.includes(normalizedSearch);
+  return setupRuntimeStateController.resolveContactDisplayName(jid);
 }
 
 async function listSetupSelectableTargets({ search = '', limit = 300 } = {}) {
-  const normalizedSearch = normalizeSetupSearch(search);
-  const maxLimit = Math.max(1, Math.min(1000, Number(limit) || 300));
-
-  const contactsFromCache = await fetchSelectableContacts(contactCache);
-  const groupsFromSocket = currentSocket
-    ? await fetchSelectableGroups(currentSocket).catch(() => [])
-    : [];
-  const recoveredFromDb = fetchSavedTestTargetJidsFromDb(contactCache, 2500);
-
-  const contactsByJid = new Map();
-  const groupsByJid = new Map();
-
-  for (const contact of contactsFromCache) {
-    const jid = String(contact?.jid ?? '').trim();
-    if (!isUserJid(jid)) continue;
-    contactsByJid.set(jid, {
-      jid,
-      name: String(contact?.name ?? jid).trim() || jid,
-      source: 'cache',
-    });
-  }
-
-  for (const group of groupsFromSocket) {
-    const jid = String(group?.jid ?? '').trim();
-    if (!isGroupJid(jid)) continue;
-    groupsByJid.set(jid, {
-      jid,
-      name: String(group?.name ?? jid).trim() || jid,
-      participants: Math.max(0, Number(group?.participants) || 0),
-      source: 'socket',
-    });
-  }
-
-  for (const entry of recoveredFromDb) {
-    const jid = String(entry?.jid ?? '').trim();
-    if (!jid) continue;
-
-    if (isUserJid(jid)) {
-      if (!contactsByJid.has(jid)) {
-        contactsByJid.set(jid, {
-          jid,
-          name: String(entry?.name ?? jid).trim() || jid,
-          source: 'db',
-        });
-      }
-      continue;
-    }
-
-    if (isGroupJid(jid) && !groupsByJid.has(jid)) {
-      groupsByJid.set(jid, {
-        jid,
-        name: String(entry?.name ?? jid).trim() || jid,
-        participants: 0,
-        source: 'db',
-      });
-    }
-  }
-
-  const contacts = [...contactsByJid.values()]
-    .filter(target => targetMatchesSearch(target, normalizedSearch))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, maxLimit);
-
-  const groups = [...groupsByJid.values()]
-    .filter(target => targetMatchesSearch(target, normalizedSearch))
-    .sort((a, b) => a.name.localeCompare(b.name))
-    .slice(0, maxLimit);
-
-  return {
-    contacts,
-    groups,
-    socketReady: Boolean(currentSocket),
-    updatedAt: Date.now(),
-  };
+  return setupRuntimeStateController.listSetupSelectableTargets({ search, limit });
 }
 
 function normalizeSetupPatch(input = {}) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    return null;
-  }
-
-  const patch = {};
-
-  if (input.botRuntimeMode !== undefined) {
-    patch.botRuntimeMode = String(input.botRuntimeMode || '').trim();
-  }
-  if (input.flowPath !== undefined) {
-    patch.flowPath = String(input.flowPath || '').trim();
-  }
-  if (input.flowPaths !== undefined) {
-    patch.flowPaths = toTrimmedStringArray(input.flowPaths);
-  }
-  if (input.runtimeMode !== undefined) {
-    patch.runtimeMode = String(input.runtimeMode || '').trim();
-  }
-  if (input.autoReloadFlows !== undefined) {
-    patch.autoReloadFlows = Boolean(input.autoReloadFlows);
-  }
-  if (input.broadcastSendIntervalMs !== undefined) {
-    const normalizedBroadcastInterval = normalizeBroadcastSendIntervalMs(input.broadcastSendIntervalMs);
-    if (normalizedBroadcastInterval == null) {
-      return { error: 'broadcastSendIntervalMs must be >= 0' };
-    }
-    patch.broadcastSendIntervalMs = normalizedBroadcastInterval;
-  }
-  if (input.ingestionConcurrency !== undefined) {
-    patch.ingestionConcurrency = Number(input.ingestionConcurrency);
-  }
-  if (input.ingestionQueueMax !== undefined) {
-    patch.ingestionQueueMax = Number(input.ingestionQueueMax);
-  }
-  if (input.ingestionQueueWarnThreshold !== undefined) {
-    patch.ingestionQueueWarnThreshold = Number(input.ingestionQueueWarnThreshold);
-  }
-  if (input.schedulerGlobalConcurrency !== undefined) {
-    patch.schedulerGlobalConcurrency = Number(input.schedulerGlobalConcurrency);
-  }
-  if (input.schedulerPerJidConcurrency !== undefined) {
-    patch.schedulerPerJidConcurrency = Number(input.schedulerPerJidConcurrency);
-  }
-  if (input.schedulerPerFlowPathConcurrency !== undefined) {
-    patch.schedulerPerFlowPathConcurrency = Number(input.schedulerPerFlowPathConcurrency);
-  }
-  if (input.postProcessConcurrency !== undefined) {
-    patch.postProcessConcurrency = Number(input.postProcessConcurrency);
-  }
-  if (input.postProcessQueueMax !== undefined) {
-    patch.postProcessQueueMax = Number(input.postProcessQueueMax);
-  }
-  if (input.mediaPipelineConcurrency !== undefined) {
-    patch.mediaPipelineConcurrency = Number(input.mediaPipelineConcurrency);
-  }
-  if (input.mediaPipelineQueueMax !== undefined) {
-    patch.mediaPipelineQueueMax = Number(input.mediaPipelineQueueMax);
-  }
-  if (input.whatsappReconnectBaseDelayMs !== undefined) {
-    patch.whatsappReconnectBaseDelayMs = Number(input.whatsappReconnectBaseDelayMs);
-  }
-  if (input.whatsappReconnectMaxDelayMs !== undefined) {
-    patch.whatsappReconnectMaxDelayMs = Number(input.whatsappReconnectMaxDelayMs);
-  }
-  if (input.whatsappReconnectBackoffMultiplier !== undefined) {
-    patch.whatsappReconnectBackoffMultiplier = Number(input.whatsappReconnectBackoffMultiplier);
-  }
-  if (input.whatsappReconnectJitterPct !== undefined) {
-    patch.whatsappReconnectJitterPct = Number(input.whatsappReconnectJitterPct);
-  }
-  if (input.whatsappReconnectAttemptsWindowMs !== undefined) {
-    patch.whatsappReconnectAttemptsWindowMs = Number(input.whatsappReconnectAttemptsWindowMs);
-  }
-  if (input.whatsappReconnectMaxAttemptsPerWindow !== undefined) {
-    patch.whatsappReconnectMaxAttemptsPerWindow = Number(input.whatsappReconnectMaxAttemptsPerWindow);
-  }
-  if (input.whatsappReconnectCooldownMs !== undefined) {
-    patch.whatsappReconnectCooldownMs = Number(input.whatsappReconnectCooldownMs);
-  }
-  if (input.authCredsDebounceMs !== undefined) {
-    patch.authCredsDebounceMs = Number(input.authCredsDebounceMs);
-  }
-  if (input.authMetricsRefreshMs !== undefined) {
-    patch.authMetricsRefreshMs = Number(input.authMetricsRefreshMs);
-  }
-  if (input.incomingMediaMaxBytes !== undefined) {
-    patch.incomingMediaMaxBytes = Number(input.incomingMediaMaxBytes);
-  }
-  if (input.handoffMediaRetentionMinutes !== undefined) {
-    patch.handoffMediaRetentionMinutes = Number(input.handoffMediaRetentionMinutes);
-  }
-  if (input.handoffMediaCleanupIntervalMinutes !== undefined) {
-    patch.handoffMediaCleanupIntervalMinutes = Number(input.handoffMediaCleanupIntervalMinutes);
-  }
-  if (input.handoffMediaMaxStorageMb !== undefined) {
-    patch.handoffMediaMaxStorageMb = Number(input.handoffMediaMaxStorageMb);
-  }
-  if (input.whatsappMaxInboundPerMinute !== undefined) {
-    patch.whatsappMaxInboundPerMinute = Number(input.whatsappMaxInboundPerMinute);
-  }
-  if (input.whatsappMaxServiceOutboundPerMinute !== undefined) {
-    patch.whatsappMaxServiceOutboundPerMinute = Number(input.whatsappMaxServiceOutboundPerMinute);
-  }
-  if (input.whatsappMaxBroadcastOutboundPerMinute !== undefined) {
-    patch.whatsappMaxBroadcastOutboundPerMinute = Number(input.whatsappMaxBroadcastOutboundPerMinute);
-  }
-  if (input.runtimeDegradedQueueRatio !== undefined) {
-    patch.runtimeDegradedQueueRatio = Number(input.runtimeDegradedQueueRatio);
-  }
-  if (input.runtimeDegradedReconnectPendingMs !== undefined) {
-    patch.runtimeDegradedReconnectPendingMs = Number(input.runtimeDegradedReconnectPendingMs);
-  }
-  if (input.runtimeDegradedDropConversationEvents !== undefined) {
-    patch.runtimeDegradedDropConversationEvents = Boolean(input.runtimeDegradedDropConversationEvents);
-  }
-  if (input.testTargetMode !== undefined) {
-    patch.testTargetMode = String(input.testTargetMode || '').trim() || 'contacts-and-groups';
-  }
-  if (input.testJid !== undefined) {
-    patch.testJid = String(input.testJid || '').trim();
-  }
-  if (input.testJids !== undefined) {
-    patch.testJids = toTrimmedStringArray(input.testJids);
-  }
-  if (input.groupWhitelistJids !== undefined) {
-    patch.groupWhitelistJids = toTrimmedStringArray(input.groupWhitelistJids);
-  }
-  if (input.dashboardHost !== undefined) {
-    patch.dashboardHost = String(input.dashboardHost || '').trim();
-  }
-  if (input.dashboardPort !== undefined) {
-    patch.dashboardPort = Number(input.dashboardPort);
-  }
-
-  return patch;
+  return setupConfigController.normalizeSetupPatch(input);
 }
 
 function openDashboardInBrowser(url) {
   if (dashboardAutoOpenAttempted) return;
   dashboardAutoOpenAttempted = true;
-
-  if (String(process.env.TMB_DASHBOARD_AUTO_OPEN ?? '1') === '0') return;
-  if (!process.stdout?.isTTY) return;
-
-  try {
-    if (process.platform === 'win32') {
-      spawn('cmd', ['/c', 'start', '', url], { detached: true, stdio: 'ignore' }).unref();
-      return;
-    }
-    if (process.platform === 'darwin') {
-      spawn('open', [url], { detached: true, stdio: 'ignore' }).unref();
-      return;
-    }
-    spawn('xdg-open', [url], { detached: true, stdio: 'ignore' }).unref();
-  } catch {
-    // ignore auto-open failures
-  }
+  launchDashboardInBrowser(url);
 }
 
 function resolveDashboardIsolationMode() {
@@ -2240,275 +1084,33 @@ function getDashboardPublicUrl() {
 }
 
 function stopDashboardStateSync() {
-  if (!dashboardStateSyncTimer) return;
-  clearInterval(dashboardStateSyncTimer);
-  dashboardStateSyncTimer = null;
+  dashboardBridge.stopDashboardStateSync();
 }
 
 function sendDashboardBridgeState() {
-  if (!dashboardIsolatedProcess || !dashboardIsolatedProcess.connected || !dashboardRpcHandlers) return;
-  try {
-    const runtimeInfo = typeof dashboardRpcHandlers.getRuntimeInfo === 'function'
-      ? dashboardRpcHandlers.getRuntimeInfo()
-      : {};
-    const flowBlocks = typeof dashboardRpcHandlers.getFlowBlocks === 'function'
-      ? dashboardRpcHandlers.getFlowBlocks()
-      : [];
-    dashboardIsolatedProcess.send({
-      type: 'dashboard-bridge-state',
-      payload: {
-        runtimeInfo: runtimeInfo || {},
-        flowBlocks: Array.isArray(flowBlocks) ? flowBlocks : [],
-      },
-    });
-  } catch (error) {
-    logger?.warn?.(
-      { error: String(error?.message || error || 'dashboard-bridge-state-failed') },
-      'Failed to sync dashboard bridge state'
-    );
-  }
+  dashboardBridge.sendDashboardBridgeState();
 }
 
 function broadcastDashboardEvent(event = {}) {
-  if (dashboardServer) {
-    dashboardServer.broadcast(event);
-  }
-  if (dashboardIsolatedProcess && dashboardIsolatedProcess.connected) {
-    try {
-      dashboardIsolatedProcess.send({
-        type: 'dashboard-bridge-broadcast',
-        payload: event,
-      });
-    } catch {
-      // ignore bridge broadcast failures
-    }
-  }
-}
-
-async function handleDashboardProcessRpcRequest(message = {}) {
-  const processRef = dashboardIsolatedProcess;
-  if (!processRef || !processRef.connected) return;
-  const id = Number(message?.id);
-  const method = String(message?.method || '').trim();
-  const payload = message?.payload;
-  if (!Number.isFinite(id) || !method) return;
-
-  const handler = dashboardRpcHandlers?.[method];
-  if (typeof handler !== 'function') {
-    processRef.send({
-      type: 'dashboard-bridge-rpc-response',
-      id,
-      ok: false,
-      error: `unknown-method:${method}`,
-    });
-    return;
-  }
-
-  try {
-    const result = await handler(payload);
-    processRef.send({
-      type: 'dashboard-bridge-rpc-response',
-      id,
-      ok: true,
-      result,
-    });
-  } catch (error) {
-    processRef.send({
-      type: 'dashboard-bridge-rpc-response',
-      id,
-      ok: false,
-      error: String(error?.message || error || 'dashboard-rpc-failed'),
-    });
-  }
+  dashboardBridge.broadcastDashboardEvent(event, dashboardServer);
 }
 
 async function stopDashboardIsolatedProcess() {
-  stopDashboardStateSync();
-  const processRef = dashboardIsolatedProcess;
-  dashboardIsolatedProcess = null;
-  dashboardRpcHandlers = null;
-  if (!processRef) return;
-
-  await new Promise(resolve => {
-    let finished = false;
-    const finish = () => {
-      if (finished) return;
-      finished = true;
-      resolve();
-    };
-
-    processRef.once('exit', finish);
-
-    try {
-      if (processRef.connected) {
-        processRef.send({ type: 'dashboard-bridge-stop' });
-      }
-    } catch {
-      // ignore
-    }
-
-    setTimeout(() => {
-      if (finished) return;
-      try {
-        processRef.kill();
-      } catch {
-        // ignore
-      }
-    }, 1500);
-
-    setTimeout(finish, 3000);
-  });
+  await dashboardBridge.stopDashboardIsolatedProcess();
 }
 
 async function startDashboardIsolatedProcess(options = {}) {
-  await stopDashboardIsolatedProcess();
-  dashboardRpcHandlers = options;
-
-  const childScript = path.resolve('./dashboard/isolatedProcess.js');
-  const child = spawn(process.execPath, [childScript], {
-    env: {
-      ...process.env,
-      TMB_DASHBOARD_HOST: String(config.dashboardHost || '127.0.0.1'),
-      TMB_DASHBOARD_PORT: String(Number(config.dashboardPort || 8787)),
-    },
-    stdio: ['ignore', 'inherit', 'inherit', 'ipc'],
+  return dashboardBridge.startDashboardIsolatedProcess({
+    handlers: options,
+    host: config.dashboardHost,
+    port: config.dashboardPort,
+    childScript: path.resolve('./dashboard/isolatedProcess.js'),
+    publicUrl: getDashboardPublicUrl(),
   });
-  dashboardIsolatedProcess = child;
-
-  child.on('message', message => {
-    const type = String(message?.type || '').trim();
-    if (type === 'dashboard-bridge-rpc-request') {
-      void handleDashboardProcessRpcRequest(message);
-    }
-  });
-
-  child.on('exit', code => {
-    if (dashboardIsolatedProcess === child) {
-      dashboardIsolatedProcess = null;
-      stopDashboardStateSync();
-    }
-    logger?.warn?.(
-      { code: Number(code ?? 0) || 0 },
-      'Isolated dashboard process exited'
-    );
-  });
-
-  const readyUrl = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      reject(new Error('dashboard-bridge-timeout'));
-    }, 15000);
-    const onMessage = message => {
-      const type = String(message?.type || '').trim();
-      if (type === 'dashboard-bridge-ready') {
-        clearTimeout(timeout);
-        child.off('message', onMessage);
-        child.off('exit', onExit);
-        resolve(String(message?.url || getDashboardPublicUrl()));
-        return;
-      }
-      if (type === 'dashboard-bridge-fatal') {
-        clearTimeout(timeout);
-        child.off('message', onMessage);
-        child.off('exit', onExit);
-        reject(new Error(String(message?.error || 'dashboard-bridge-fatal')));
-      }
-    };
-    const onExit = code => {
-      clearTimeout(timeout);
-      child.off('message', onMessage);
-      reject(new Error(`dashboard-bridge-exit:${String(code ?? 'unknown')}`));
-    };
-
-    child.on('message', onMessage);
-    child.once('exit', onExit);
-  });
-
-  sendDashboardBridgeState();
-  dashboardStateSyncTimer = setInterval(() => {
-    sendDashboardBridgeState();
-  }, 1500);
-  if (typeof dashboardStateSyncTimer.unref === 'function') {
-    dashboardStateSyncTimer.unref();
-  }
-
-  return String(readyUrl || getDashboardPublicUrl());
 }
 
 async function applyRuntimeConfigFromDashboard(input = {}) {
-  const patchOrError = normalizeSetupPatch(input);
-  if (patchOrError == null) {
-    return { ok: false, error: 'invalid setup payload' };
-  }
-  if (patchOrError.error) {
-    return { ok: false, error: patchOrError.error };
-  }
-
-  const nextConfig = normalizeUserConfig({
-    ...config,
-    ...patchOrError,
-  });
-
-  let nextRegistry;
-  try {
-    nextRegistry = applyFlowSessionTimeoutOverrides(loadFlowRegistryFromConfig(nextConfig), nextConfig);
-  } catch (error) {
-    return { ok: false, error: String(error?.message || 'invalid-flow-selection') };
-  }
-
-  const hasGroupWhitelistScopeFlow = nextRegistry.all.some(flow => isGroupWhitelistScope(flow));
-  if (hasGroupWhitelistScopeFlow && getGroupWhitelistJids(nextConfig).size === 0) {
-    return {
-      ok: false,
-      error: 'Selecione ao menos 1 grupo na whitelist para flows com escopo group-whitelist.',
-    };
-  }
-
-  if (nextConfig.testMode && getAllowedTestJids(nextConfig).size === 0) {
-    return {
-      ok: false,
-      error: 'Modo Teste restrito exige ao menos 1 contato/grupo permitido.',
-    };
-  }
-
-  config = nextConfig;
-  currentFlowRegistry = nextRegistry;
-  warnedMissingTestTargets = false;
-  runtimeSetupDone = true;
-  saveUserConfig(config);
-
-  const suppressSignalNoise =
-    config.runtimeMode === RUNTIME_MODE.PRODUCTION &&
-    String(process.env.TMB_SUPPRESS_SIGNAL_NOISE ?? '1') !== '0';
-  installLibSignalNoiseFilter(suppressSignalNoise);
-  if (logger) {
-    logger.level = config.logLevel;
-  }
-  initializeRuntimeSchedulers(config);
-  initializeReconnectPolicy(config);
-  if (mediaCleanupTimer) {
-    clearInterval(mediaCleanupTimer);
-    mediaCleanupTimer = null;
-  }
-  startHandoffMediaMaintenance();
-  applyDatabaseRuntimeConfigFromAppConfig(config);
-  startDatabaseMaintenanceScheduler();
-
-  if (currentSocket) {
-    startSessionCleanup(currentSocket, getActiveFlows());
-  }
-
-  setupFlowWatcher();
-  requiresInitialSetup = false;
-  hasSavedConfigAtBoot = true;
-
-  await ensureWhatsAppRuntimeStarted();
-
-  return {
-    ok: true,
-    needsInitialSetup: requiresInitialSetup,
-    hasSavedConfig: true,
-    config: buildSetupConfigSnapshot(),
-  };
+  return setupConfigController.applyRuntimeConfigFromDashboard(input);
 }
 
 async function ensureWhatsAppRuntimeStarted() {
@@ -2548,651 +1150,67 @@ async function startDashboardServer() {
     host: config.dashboardHost,
     port: config.dashboardPort,
     logger,
-    getRuntimeInfo: () => ({
-      ...normalizeRuntimeInfo(),
-      needsInitialSetup: requiresInitialSetup,
-      apis: getActiveFlows()
-        .flatMap(flow => flow.blocks || [])
-        ?.filter(b => b.type === 'http-request')
-        .map(b => {
-          const apiName = extractApiHostFromTemplateUrl(b.config?.url);
-          const metrics = getApiMetrics(apiName);
-          return {
-            name: apiName,
-            url: b.config?.url || 'Desconhecida',
-            avgLatencyMs: metrics?.avgLatencyMs ?? 0,
-            uptime: metrics?.uptime ?? 1.0,
-            status: metrics ? (metrics.healthy ? 'healthy' : 'degraded') : 'unknown',
-          };
-        }) || []
+    ...createDashboardInteractionHandlers({
+      normalizeRuntimeInfo,
+      getRequiresInitialSetup: () => requiresInitialSetup,
+      getActiveFlows,
+      extractApiHostFromTemplateUrl,
+      getApiMetrics,
+      getDashboardFlow,
+      resolveContactDisplayName,
+      reloadFlow,
+      getCurrentSocket: () => currentSocket,
+      sendTextMessage,
+      sendImageMessage,
+      logConversationEvent,
+      resumeSessionFromHumanHandoff,
+      endSessionFromDashboard,
+      getBroadcastService: () => broadcastService,
+      buildBroadcastMessage,
+      emitDashboardBroadcastProgress,
+      getLogger: () => logger,
+      getHasSavedConfigAtBoot: () => hasSavedConfigAtBoot,
+      buildSetupConfigSnapshot,
+      applyRuntimeConfigFromDashboard,
+      listSetupSelectableTargets,
     }),
-    getFlowBlocks: () => getDashboardFlow()?.blocks ?? [],
-    getContactName: (jid) => {
-      const name = resolveContactDisplayName(jid);
-      return name || null;
-    },
-    onReload: async () => await reloadFlow({ source: 'dashboard' }),
-    onHumanSendMessage: async ({ jid, text, actor }) => {
-      const sock = currentSocket;
-      if (!sock) {
-        return { ok: false, error: 'socket-not-ready' };
-      }
-
-      try {
-        await sendTextMessage(sock, jid, text, { __skipConversationLog: true });
-        logConversationEvent({
-          eventType: 'human-message-outgoing',
-          direction: 'outgoing',
-          jid,
-          messageText: text,
-          metadata: {
-            kind: 'text',
-            actor,
-            source: 'dashboard-human-support',
-          },
-        });
-        return { ok: true };
-      } catch (error) {
-        return { ok: false, error: String(error?.message || error || 'send-failed') };
-      }
-    },
-    onHumanSendImage: async ({ jid, actor, caption, imageBuffer, mimeType, mediaId, mediaUrl, fileName }) => {
-      const sock = currentSocket;
-      if (!sock) {
-        return { ok: false, error: 'socket-not-ready' };
-      }
-
-      try {
-        await sendImageMessage(sock, jid, {
-          imageBuffer,
-          caption: String(caption || '').trim() || undefined,
-          mimeType: mimeType || '',
-        }, { __skipConversationLog: true });
-
-        logConversationEvent({
-          eventType: 'human-image-outgoing',
-          direction: 'outgoing',
-          jid,
-          messageText: String(caption || '').trim() || `[Imagem] ${fileName || mediaId || ''}`.trim(),
-          metadata: {
-            kind: 'image',
-            actor,
-            source: 'dashboard-human-support',
-            mediaId: mediaId || null,
-            mediaUrl: mediaUrl || null,
-            mediaType: mimeType || null,
-            fileName: fileName || null,
-          },
-        });
-        return { ok: true };
-      } catch (error) {
-        return { ok: false, error: String(error?.message || error || 'send-image-failed') };
-      }
-    },
-    onHumanResumeSession: async ({ jid, targetBlockIndex, targetBlockId, actor }) => {
-      const sock = currentSocket;
-      const flow = getDashboardFlow();
-      if (!sock || !flow) {
-        return { ok: false, error: 'runtime-not-ready' };
-      }
-
-      const result = await resumeSessionFromHumanHandoff({
-        sock,
-        jid,
-        flow,
-        targetBlockIndex,
-        actor,
-      });
-
-      if (!result?.ok) return result;
-
-      logConversationEvent({
-        eventType: 'human-handoff-resume-request',
-        direction: 'system',
-        jid,
-        messageText: `Retomada solicitada para bloco ${targetBlockId || targetBlockIndex}`,
-        metadata: {
-          actor,
-          targetBlockId: targetBlockId || null,
-          targetBlockIndex,
-          source: 'dashboard-human-support',
-        },
-      });
-
-      return result;
-    },
-    onHumanEndSession: async ({ jid, reason, actor }) => {
-      const flow = getDashboardFlow();
-      if (!flow) {
-        return { ok: false, error: 'runtime-not-ready' };
-      }
-
-      const result = await endSessionFromDashboard({ jid, flow, reason, actor });
-      if (!result?.ok) return result;
-
-      logConversationEvent({
-        eventType: 'human-handoff-ended',
-        direction: 'system',
-        jid,
-        messageText: 'Sessao encerrada manualmente pela equipe',
-        metadata: {
-          actor,
-          reason,
-          source: 'dashboard-human-support',
-        },
-      });
-
-      return result;
-    },
-    onBroadcastListContacts: async ({ search, limit }) => {
-      if (!broadcastService) {
-        return [];
-      }
-      const contacts = broadcastService.listContacts({ search, limit });
-      return contacts.map(contact => ({
-        ...contact,
-        name: String(contact?.name || '').trim() || resolveContactDisplayName(contact?.jid),
-      }));
-    },
-    onBroadcastSend: async ({ actor, target, selectedJids, message }) => {
-      const sock = currentSocket;
-      if (!sock) {
-        return { ok: false, error: 'socket-not-ready' };
-      }
-      if (!broadcastService) {
-        return { ok: false, error: 'broadcast-service-not-ready' };
-      }
-
-      try {
-        const builtMessage = buildBroadcastMessage({
-          text: message?.text ?? '',
-          imageDataUrl: message?.imageDataUrl ?? '',
-          mimeType: message?.mimeType ?? '',
-          fileName: message?.fileName ?? '',
-        });
-
-        const result = await broadcastService.send({
-          sock,
-          actor,
-          target,
-          selectedJids,
-          message: builtMessage,
-          onProgress: (progress) => {
-            emitDashboardBroadcastProgress({
-              actor,
-              target,
-              ...progress,
-            });
-          },
-        });
-
-        const cancelledCount = Math.max(0, Number(result?.cancelled) || 0);
-        const sentSummaryText = cancelledCount > 0
-          ? `Campanha #${result.campaignId}: ${result.sent}/${result.attempted} envios (cancelada, ${cancelledCount} pendente(s))`
-          : `Campanha #${result.campaignId}: ${result.sent}/${result.attempted} envios`;
-        logConversationEvent({
-          eventType: 'broadcast-dispatch',
-          direction: 'system',
-          jid: 'system',
-          messageText: sentSummaryText,
-          metadata: {
-            actor,
-            target: result.target,
-            attempted: result.attempted,
-            sent: result.sent,
-            failed: result.failed,
-            cancelled: cancelledCount,
-            campaignId: result.campaignId,
-            metrics: result.metrics || null,
-          },
-        });
-
-        return { ok: true, ...result };
-      } catch (error) {
-        logger?.error?.(
-          {
-            err: {
-              name: error?.name || 'Error',
-              message: error?.message || 'broadcast-send-failed',
-              stack: error?.stack || '',
-            },
-            actor,
-            target,
-          },
-          'Broadcast send failed'
-        );
-        return { ok: false, error: String(error?.message || 'broadcast-send-failed') };
-      }
-    },
-    onBroadcastStatus: async () => {
-      if (!broadcastService) {
-        return { active: false, campaign: null };
-      }
-      const snapshot = broadcastService.getActiveCampaign();
-      return {
-        active: Boolean(snapshot),
-        campaign: snapshot,
-      };
-    },
-    onBroadcastPause: async () => {
-      if (!broadcastService) {
-        return { ok: false, error: 'broadcast-service-not-ready' };
-      }
-      return broadcastService.pause();
-    },
-    onBroadcastResume: async () => {
-      if (!broadcastService) {
-        return { ok: false, error: 'broadcast-service-not-ready' };
-      }
-      return broadcastService.resume();
-    },
-    onBroadcastCancel: async () => {
-      if (!broadcastService) {
-        return { ok: false, error: 'broadcast-service-not-ready' };
-      }
-      return broadcastService.cancel();
-    },
-    onGetSetupState: async () => ({
-      needsInitialSetup: requiresInitialSetup,
-      hasSavedConfig: hasSavedConfigAtBoot || !requiresInitialSetup,
-      config: buildSetupConfigSnapshot(),
-    }),
-    onApplySetupState: async (input) => {
-      const result = await applyRuntimeConfigFromDashboard(input);
-      return result;
-    },
-    onListSetupTargets: async ({ search, limit }) => (
-      listSetupSelectableTargets({ search, limit })
-    ),
-    onGetSettings: async () => ({
-      autoReloadFlows: config.autoReloadFlows !== false,
-      broadcastSendIntervalMs: Number(config.broadcastSendIntervalMs ?? 250),
-      dashboardTelemetryLevel: normalizeDashboardTelemetryLevel(config.dashboardTelemetryLevel) || 'operational',
-      dashboardIsolationMode: resolveDashboardIsolationMode(),
-      runtimeMode: String(config.runtimeMode || ''),
-      dbMaintenanceEnabled: config.dbMaintenanceEnabled !== false,
-      dbMaintenanceIntervalMinutes: Number(config.dbMaintenanceIntervalMinutes ?? 30),
-      dbRetentionDays: Number(config.dbRetentionDays ?? 30),
-      dbRetentionArchiveEnabled: config.dbRetentionArchiveEnabled !== false,
-      dbEventBatchEnabled: config.dbEventBatchEnabled !== false,
-      dbEventBatchFlushMs: Number(config.dbEventBatchFlushMs ?? 1000),
-      dbEventBatchSize: Number(config.dbEventBatchSize ?? 200),
-    }),
-    onUpdateSettings: async ({
-      autoReloadFlows,
-      broadcastSendIntervalMs,
-      dashboardTelemetryLevel,
-      dbMaintenanceEnabled,
-      dbMaintenanceIntervalMinutes,
-      dbRetentionDays,
-      dbRetentionArchiveEnabled,
-      dbEventBatchEnabled,
-      dbEventBatchFlushMs,
-      dbEventBatchSize,
-    }) => {
-      const hasAutoReloadPatch = autoReloadFlows !== undefined;
-      const hasBroadcastIntervalPatch = broadcastSendIntervalMs !== undefined;
-      const hasTelemetryLevelPatch = dashboardTelemetryLevel !== undefined;
-      const hasDbMaintenanceEnabledPatch = dbMaintenanceEnabled !== undefined;
-      const hasDbMaintenanceIntervalPatch = dbMaintenanceIntervalMinutes !== undefined;
-      const hasDbRetentionDaysPatch = dbRetentionDays !== undefined;
-      const hasDbRetentionArchivePatch = dbRetentionArchiveEnabled !== undefined;
-      const hasDbEventBatchEnabledPatch = dbEventBatchEnabled !== undefined;
-      const hasDbEventBatchFlushMsPatch = dbEventBatchFlushMs !== undefined;
-      const hasDbEventBatchSizePatch = dbEventBatchSize !== undefined;
-
-      if (
-        !hasAutoReloadPatch &&
-        !hasBroadcastIntervalPatch &&
-        !hasTelemetryLevelPatch &&
-        !hasDbMaintenanceEnabledPatch &&
-        !hasDbMaintenanceIntervalPatch &&
-        !hasDbRetentionDaysPatch &&
-        !hasDbRetentionArchivePatch &&
-        !hasDbEventBatchEnabledPatch &&
-        !hasDbEventBatchFlushMsPatch &&
-        !hasDbEventBatchSizePatch
-      ) {
-        return { ok: false, error: 'at least one setting must be provided' };
-      }
-
-      if (hasAutoReloadPatch && typeof autoReloadFlows !== 'boolean') {
-        return { ok: false, error: 'autoReloadFlows must be boolean' };
-      }
-      const normalizedBroadcastInterval = hasBroadcastIntervalPatch
-        ? normalizeBroadcastSendIntervalMs(broadcastSendIntervalMs)
-        : null;
-      if (hasBroadcastIntervalPatch && normalizedBroadcastInterval == null) {
-        return { ok: false, error: 'broadcastSendIntervalMs must be >= 0' };
-      }
-      const normalizedTelemetryLevel = hasTelemetryLevelPatch
-        ? normalizeDashboardTelemetryLevel(dashboardTelemetryLevel)
-        : null;
-      if (hasTelemetryLevelPatch && !normalizedTelemetryLevel) {
-        return { ok: false, error: 'dashboardTelemetryLevel must be one of: minimum, operational, diagnostic, verbose' };
-      }
-
-      const normalizedDbMaintenanceEnabled = hasDbMaintenanceEnabledPatch
-        ? toBooleanOrNull(dbMaintenanceEnabled)
-        : null;
-      if (hasDbMaintenanceEnabledPatch && normalizedDbMaintenanceEnabled == null) {
-        return { ok: false, error: 'dbMaintenanceEnabled must be boolean' };
-      }
-
-      const normalizedDbMaintenanceInterval = hasDbMaintenanceIntervalPatch
-        ? normalizeDbMaintenanceIntervalMinutes(dbMaintenanceIntervalMinutes)
-        : null;
-      if (hasDbMaintenanceIntervalPatch && normalizedDbMaintenanceInterval == null) {
-        return { ok: false, error: 'dbMaintenanceIntervalMinutes must be between 5 and 1440' };
-      }
-
-      const normalizedDbRetentionDays = hasDbRetentionDaysPatch
-        ? normalizeDbRetentionDays(dbRetentionDays)
-        : null;
-      if (hasDbRetentionDaysPatch && normalizedDbRetentionDays == null) {
-        return { ok: false, error: 'dbRetentionDays must be between 1 and 3650' };
-      }
-
-      const normalizedDbRetentionArchiveEnabled = hasDbRetentionArchivePatch
-        ? toBooleanOrNull(dbRetentionArchiveEnabled)
-        : null;
-      if (hasDbRetentionArchivePatch && normalizedDbRetentionArchiveEnabled == null) {
-        return { ok: false, error: 'dbRetentionArchiveEnabled must be boolean' };
-      }
-
-      const normalizedDbEventBatchEnabled = hasDbEventBatchEnabledPatch
-        ? toBooleanOrNull(dbEventBatchEnabled)
-        : null;
-      if (hasDbEventBatchEnabledPatch && normalizedDbEventBatchEnabled == null) {
-        return { ok: false, error: 'dbEventBatchEnabled must be boolean' };
-      }
-
-      const normalizedDbEventBatchFlushMs = hasDbEventBatchFlushMsPatch
-        ? normalizeDbEventBatchFlushMs(dbEventBatchFlushMs)
-        : null;
-      if (hasDbEventBatchFlushMsPatch && normalizedDbEventBatchFlushMs == null) {
-        return { ok: false, error: 'dbEventBatchFlushMs must be between 100 and 60000' };
-      }
-
-      const normalizedDbEventBatchSize = hasDbEventBatchSizePatch
-        ? normalizeDbEventBatchSize(dbEventBatchSize)
-        : null;
-      if (hasDbEventBatchSizePatch && normalizedDbEventBatchSize == null) {
-        return { ok: false, error: 'dbEventBatchSize must be between 10 and 5000' };
-      }
-
-      config = {
-        ...config,
-        ...(hasAutoReloadPatch ? { autoReloadFlows } : {}),
-        ...(hasBroadcastIntervalPatch ? { broadcastSendIntervalMs: normalizedBroadcastInterval } : {}),
-        ...(hasTelemetryLevelPatch ? { dashboardTelemetryLevel: normalizedTelemetryLevel } : {}),
-        ...(hasDbMaintenanceEnabledPatch ? { dbMaintenanceEnabled: normalizedDbMaintenanceEnabled } : {}),
-        ...(hasDbMaintenanceIntervalPatch ? { dbMaintenanceIntervalMinutes: normalizedDbMaintenanceInterval } : {}),
-        ...(hasDbRetentionDaysPatch ? { dbRetentionDays: normalizedDbRetentionDays } : {}),
-        ...(hasDbRetentionArchivePatch ? { dbRetentionArchiveEnabled: normalizedDbRetentionArchiveEnabled } : {}),
-        ...(hasDbEventBatchEnabledPatch ? { dbEventBatchEnabled: normalizedDbEventBatchEnabled } : {}),
-        ...(hasDbEventBatchFlushMsPatch ? { dbEventBatchFlushMs: normalizedDbEventBatchFlushMs } : {}),
-        ...(hasDbEventBatchSizePatch ? { dbEventBatchSize: normalizedDbEventBatchSize } : {}),
-      };
-      saveUserConfig(config);
-      setupFlowWatcher();
-      applyDatabaseRuntimeConfigFromAppConfig(config);
-      startDatabaseMaintenanceScheduler();
-      logger?.info?.({
-        ...(hasAutoReloadPatch ? { autoReloadFlows } : {}),
-        ...(hasBroadcastIntervalPatch ? { broadcastSendIntervalMs: normalizedBroadcastInterval } : {}),
-        ...(hasTelemetryLevelPatch ? { dashboardTelemetryLevel: normalizedTelemetryLevel } : {}),
-        ...(hasDbMaintenanceEnabledPatch ? { dbMaintenanceEnabled: normalizedDbMaintenanceEnabled } : {}),
-        ...(hasDbMaintenanceIntervalPatch ? { dbMaintenanceIntervalMinutes: normalizedDbMaintenanceInterval } : {}),
-        ...(hasDbRetentionDaysPatch ? { dbRetentionDays: normalizedDbRetentionDays } : {}),
-        ...(hasDbRetentionArchivePatch ? { dbRetentionArchiveEnabled: normalizedDbRetentionArchiveEnabled } : {}),
-        ...(hasDbEventBatchEnabledPatch ? { dbEventBatchEnabled: normalizedDbEventBatchEnabled } : {}),
-        ...(hasDbEventBatchFlushMsPatch ? { dbEventBatchFlushMs: normalizedDbEventBatchFlushMs } : {}),
-        ...(hasDbEventBatchSizePatch ? { dbEventBatchSize: normalizedDbEventBatchSize } : {}),
-      }, 'Settings updated');
-
-      return {
-        ok: true,
-        autoReloadFlows: config.autoReloadFlows !== false,
-        broadcastSendIntervalMs: Number(config.broadcastSendIntervalMs ?? 250),
-        dashboardTelemetryLevel: normalizeDashboardTelemetryLevel(config.dashboardTelemetryLevel) || 'operational',
-        dashboardIsolationMode: resolveDashboardIsolationMode(),
-        runtimeMode: String(config.runtimeMode || ''),
-        dbMaintenanceEnabled: config.dbMaintenanceEnabled !== false,
-        dbMaintenanceIntervalMinutes: Number(config.dbMaintenanceIntervalMinutes ?? 30),
-        dbRetentionDays: Number(config.dbRetentionDays ?? 30),
-        dbRetentionArchiveEnabled: config.dbRetentionArchiveEnabled !== false,
-        dbEventBatchEnabled: config.dbEventBatchEnabled !== false,
-        dbEventBatchFlushMs: Number(config.dbEventBatchFlushMs ?? 1000),
-        dbEventBatchSize: Number(config.dbEventBatchSize ?? 200),
-      };
-    },
-    onClearRuntimeCache: async () => {
-      try {
-        clearEngineRuntimeCaches();
-        contactCache.clear();
-        logger?.info?.('Runtime caches cleared from dashboard settings');
-        return { ok: true };
-      } catch (error) {
-        logger?.error?.(
-          {
-            err: {
-              name: error?.name || 'Error',
-              message: error?.message || 'clear-runtime-cache-failed',
-              stack: error?.stack || '',
-            },
-          },
-          'Failed to clear runtime cache'
-        );
-        return { ok: false, error: String(error?.message || 'clear-runtime-cache-failed') };
-      }
-    },
-    onGetDbInfo: async () => getDatabaseInfo(),
-    onGetDbMaintenance: async () => ({
-      ok: true,
-      config: {
-        dbMaintenanceEnabled: config.dbMaintenanceEnabled !== false,
-        dbMaintenanceIntervalMinutes: Number(config.dbMaintenanceIntervalMinutes ?? 30),
-        dbRetentionDays: Number(config.dbRetentionDays ?? 30),
-        dbRetentionArchiveEnabled: config.dbRetentionArchiveEnabled !== false,
-        dbEventBatchEnabled: config.dbEventBatchEnabled !== false,
-        dbEventBatchFlushMs: Number(config.dbEventBatchFlushMs ?? 1000),
-        dbEventBatchSize: Number(config.dbEventBatchSize ?? 200),
+    ...createDashboardSettingsSessionHandlers({
+      getConfig: () => config,
+      setConfig: nextConfig => {
+        config = nextConfig;
       },
-      runtimeConfig: getDatabaseRuntimeConfig(),
-      maintenanceStatus: getDatabaseMaintenanceStatus(),
+      saveUserConfig,
+      setupFlowWatcher,
+      applyDatabaseRuntimeConfigFromAppConfig,
+      startDatabaseMaintenanceScheduler,
+      normalizeDashboardTelemetryLevel,
+      resolveDashboardIsolationMode,
+      normalizeBroadcastSendIntervalMs,
+      normalizeDbMaintenanceIntervalMinutes,
+      normalizeDbRetentionDays,
+      normalizeDbEventBatchFlushMs,
+      normalizeDbEventBatchSize,
+      toBooleanOrNull,
+      clearEngineRuntimeCaches,
+      getContactCache: () => contactCache,
+      getLogger: () => logger,
+      getDatabaseInfo,
+      getDatabaseRuntimeConfig,
+      getDatabaseMaintenanceStatus,
+      runDatabaseMaintenance,
+      buildSessionManagementOverview,
+      listSessionManagementFlows,
+      listActiveSessionsForManagement,
+      clearActiveSessions,
+      clearActiveSessionsByFlowPath,
+      getActiveSessions,
+      deleteSession,
+      normalizeTimeoutMinutes,
+      getActiveFlows,
     }),
-    onUpdateDbMaintenance: async (input = {}) => {
-      const normalizedEnabled = input.dbMaintenanceEnabled === undefined
-        ? null
-        : toBooleanOrNull(input.dbMaintenanceEnabled);
-      if (input.dbMaintenanceEnabled !== undefined && normalizedEnabled == null) {
-        return { ok: false, error: 'dbMaintenanceEnabled must be boolean' };
-      }
-
-      const normalizedInterval = input.dbMaintenanceIntervalMinutes === undefined
-        ? null
-        : normalizeDbMaintenanceIntervalMinutes(input.dbMaintenanceIntervalMinutes);
-      if (input.dbMaintenanceIntervalMinutes !== undefined && normalizedInterval == null) {
-        return { ok: false, error: 'dbMaintenanceIntervalMinutes must be between 5 and 1440' };
-      }
-
-      const normalizedRetentionDays = input.dbRetentionDays === undefined
-        ? null
-        : normalizeDbRetentionDays(input.dbRetentionDays);
-      if (input.dbRetentionDays !== undefined && normalizedRetentionDays == null) {
-        return { ok: false, error: 'dbRetentionDays must be between 1 and 3650' };
-      }
-
-      const normalizedRetentionArchive = input.dbRetentionArchiveEnabled === undefined
-        ? null
-        : toBooleanOrNull(input.dbRetentionArchiveEnabled);
-      if (input.dbRetentionArchiveEnabled !== undefined && normalizedRetentionArchive == null) {
-        return { ok: false, error: 'dbRetentionArchiveEnabled must be boolean' };
-      }
-
-      const normalizedBatchEnabled = input.dbEventBatchEnabled === undefined
-        ? null
-        : toBooleanOrNull(input.dbEventBatchEnabled);
-      if (input.dbEventBatchEnabled !== undefined && normalizedBatchEnabled == null) {
-        return { ok: false, error: 'dbEventBatchEnabled must be boolean' };
-      }
-
-      const normalizedBatchFlushMs = input.dbEventBatchFlushMs === undefined
-        ? null
-        : normalizeDbEventBatchFlushMs(input.dbEventBatchFlushMs);
-      if (input.dbEventBatchFlushMs !== undefined && normalizedBatchFlushMs == null) {
-        return { ok: false, error: 'dbEventBatchFlushMs must be between 100 and 60000' };
-      }
-
-      const normalizedBatchSize = input.dbEventBatchSize === undefined
-        ? null
-        : normalizeDbEventBatchSize(input.dbEventBatchSize);
-      if (input.dbEventBatchSize !== undefined && normalizedBatchSize == null) {
-        return { ok: false, error: 'dbEventBatchSize must be between 10 and 5000' };
-      }
-
-      const hasAnyPatch =
-        normalizedEnabled !== null ||
-        normalizedInterval !== null ||
-        normalizedRetentionDays !== null ||
-        normalizedRetentionArchive !== null ||
-        normalizedBatchEnabled !== null ||
-        normalizedBatchFlushMs !== null ||
-        normalizedBatchSize !== null;
-
-      if (!hasAnyPatch) {
-        return { ok: false, error: 'at least one maintenance field must be provided' };
-      }
-
-      config = {
-        ...config,
-        ...(normalizedEnabled !== null ? { dbMaintenanceEnabled: normalizedEnabled } : {}),
-        ...(normalizedInterval !== null ? { dbMaintenanceIntervalMinutes: normalizedInterval } : {}),
-        ...(normalizedRetentionDays !== null ? { dbRetentionDays: normalizedRetentionDays } : {}),
-        ...(normalizedRetentionArchive !== null ? { dbRetentionArchiveEnabled: normalizedRetentionArchive } : {}),
-        ...(normalizedBatchEnabled !== null ? { dbEventBatchEnabled: normalizedBatchEnabled } : {}),
-        ...(normalizedBatchFlushMs !== null ? { dbEventBatchFlushMs: normalizedBatchFlushMs } : {}),
-        ...(normalizedBatchSize !== null ? { dbEventBatchSize: normalizedBatchSize } : {}),
-      };
-
-      saveUserConfig(config);
-      const runtimeConfig = applyDatabaseRuntimeConfigFromAppConfig(config);
-      startDatabaseMaintenanceScheduler();
-
-      return {
-        ok: true,
-        config: {
-          dbMaintenanceEnabled: config.dbMaintenanceEnabled !== false,
-          dbMaintenanceIntervalMinutes: Number(config.dbMaintenanceIntervalMinutes ?? 30),
-          dbRetentionDays: Number(config.dbRetentionDays ?? 30),
-          dbRetentionArchiveEnabled: config.dbRetentionArchiveEnabled !== false,
-          dbEventBatchEnabled: config.dbEventBatchEnabled !== false,
-          dbEventBatchFlushMs: Number(config.dbEventBatchFlushMs ?? 1000),
-          dbEventBatchSize: Number(config.dbEventBatchSize ?? 200),
-        },
-        runtimeConfig,
-        maintenanceStatus: getDatabaseMaintenanceStatus(),
-      };
-    },
-    onRunDbMaintenance: async ({ force = true } = {}) => {
-      const result = runDatabaseMaintenance({
-        reason: 'dashboard-manual',
-        force: Boolean(force),
-        runRetention: true,
-      });
-      return result;
-    },
-    onGetSessionManagementOverview: async () => buildSessionManagementOverview(),
-    onListSessionManagementFlows: async () => listSessionManagementFlows(),
-    onListActiveSessionsForManagement: async ({ search, limit }) => (
-      listActiveSessionsForManagement({ search, limit })
-    ),
-    onClearActiveSessionsAll: async () => {
-      try {
-        const removed = clearActiveSessions();
-        logger?.info?.({ removed: removed.length }, 'Cleared all active sessions');
-        return { ok: true, removed: removed.length };
-      } catch (error) {
-        return { ok: false, error: String(error?.message || 'failed-to-clear-active-sessions') };
-      }
-    },
-    onClearActiveSessionsByFlow: async ({ flowPath }) => {
-      const normalizedFlowPath = String(flowPath ?? '').trim();
-      if (!normalizedFlowPath) {
-        return { ok: false, error: 'flowPath is required' };
-      }
-      try {
-        const removed = clearActiveSessionsByFlowPath(normalizedFlowPath);
-        logger?.info?.({ flowPath: normalizedFlowPath, removed: removed.length }, 'Cleared active sessions by flow');
-        return { ok: true, removed: removed.length };
-      } catch (error) {
-        return { ok: false, error: String(error?.message || 'failed-to-clear-flow-sessions') };
-      }
-    },
-    onResetSessionsByJid: async ({ jid }) => {
-      const normalizedJid = String(jid ?? '').trim();
-      if (!normalizedJid) {
-        return { ok: false, error: 'jid is required' };
-      }
-
-      try {
-        const active = getActiveSessions({ botType: 'conversation' })
-          .filter(session => String(session?.jid || '').trim() === normalizedJid);
-        for (const session of active) {
-          deleteSession(normalizedJid, {
-            flowPath: session.flowPath,
-            botType: session.botType,
-          });
-        }
-        logger?.info?.({ jid: normalizedJid, removed: active.length }, 'Reset sessions by JID');
-        return { ok: true, removed: active.length };
-      } catch (error) {
-        return { ok: false, error: String(error?.message || 'failed-to-reset-session-by-jid') };
-      }
-    },
-    onUpdateFlowSessionTimeout: async ({ flowPath, sessionTimeoutMinutes }) => {
-      const normalizedFlowPath = String(flowPath ?? '').trim();
-      const normalizedTimeout = normalizeTimeoutMinutes(sessionTimeoutMinutes);
-      if (!normalizedFlowPath) {
-        return { ok: false, error: 'flowPath is required' };
-      }
-      if (normalizedTimeout == null) {
-        return { ok: false, error: 'sessionTimeoutMinutes must be >= 0' };
-      }
-
-      const flow = getActiveFlows().find(item => String(item.flowPath) === normalizedFlowPath);
-      if (!flow) {
-        return { ok: false, error: 'flow-not-found' };
-      }
-
-      if (!flow.runtimeConfig || typeof flow.runtimeConfig !== 'object') {
-        flow.runtimeConfig = {};
-      }
-      if (!flow.runtimeConfig.sessionLimits || typeof flow.runtimeConfig.sessionLimits !== 'object') {
-        flow.runtimeConfig.sessionLimits = {};
-      }
-      flow.runtimeConfig.sessionLimits.sessionTimeoutMinutes = normalizedTimeout;
-
-      config = {
-        ...config,
-        flowSessionTimeoutOverrides: {
-          ...(config.flowSessionTimeoutOverrides || {}),
-          [normalizedFlowPath]: normalizedTimeout,
-        },
-      };
-      saveUserConfig(config);
-      logger?.info?.({ flowPath: normalizedFlowPath, sessionTimeoutMinutes: normalizedTimeout }, 'Updated flow timeout');
-
-      return {
-        ok: true,
-        flowPath: normalizedFlowPath,
-        sessionTimeoutMinutes: normalizedTimeout,
-      };
-    },
   };
 
-  dashboardRpcHandlers = dashboardOptions;
+  dashboardBridge.setRpcHandlers(dashboardOptions);
   const isolationMode = resolveDashboardIsolationMode();
   let dashboardUrl = getDashboardPublicUrl();
   if (isolationMode === 'process') {
@@ -3225,159 +1243,25 @@ async function startDashboardServer() {
 }
 
 function stopFlowWatcher() {
-  if (!Array.isArray(flowWatchers) || flowWatchers.length === 0) return;
-  for (const watcher of flowWatchers) {
-    try {
-      watcher?.close?.();
-    } catch {
-      // ignore
-    }
-  }
-  flowWatchers = [];
-}
-
-function scheduleFlowReload(source) {
-  clearTimeout(reloadDebounceTimer);
-  reloadDebounceTimer = setTimeout(() => {
-    void reloadFlow({ source });
-  }, 350);
+  flowRuntimeManager.stopFlowWatcher();
 }
 
 function setupFlowWatcher() {
-  stopFlowWatcher();
-  clearTimeout(reloadDebounceTimer);
-
-  if (!isDevelopmentMode(config) || config.autoReloadFlows === false) return;
-
-  const flowPaths = getActiveFlows().map(flow => path.resolve(flow.flowPath));
-  const byDirectory = new Map();
-
-  for (const absoluteFlowPath of flowPaths) {
-    const flowDir = path.dirname(absoluteFlowPath);
-    const fileSet = byDirectory.get(flowDir) ?? new Set();
-    fileSet.add(path.basename(absoluteFlowPath).toLowerCase());
-    byDirectory.set(flowDir, fileSet);
-  }
-
-  for (const [flowDir, fileSet] of byDirectory.entries()) {
-    try {
-      const watcher = fs.watch(flowDir, { persistent: true }, (eventType, filename) => {
-        const normalizedFilename = String(filename ?? '').trim().toLowerCase();
-        if (normalizedFilename && !fileSet.has(normalizedFilename)) return;
-        scheduleFlowReload(`watch:${eventType || 'change'}`);
-      });
-
-      watcher.on('error', err => {
-        console.error('Falha no watcher de hot-reload:', err.message || err);
-      });
-
-      flowWatchers.push(watcher);
-    } catch (err) {
-      console.error('Nao foi possivel iniciar hot-reload no dev mode:', err.message || err);
-    }
-  }
-
-  for (const flowPath of flowPaths) {
-    console.log(`Hot-reload ativo (dev mode) para: ${flowPath}`);
-  }
+  flowRuntimeManager.setupFlowWatcher();
 }
 
 async function reloadFlow({ source = 'manual' } = {}) {
-  if (reloadInProgress) {
-    pendingReload = true;
-    return;
-  }
-
-  reloadInProgress = true;
-
-  try {
-    const previousFlows = getActiveFlows();
-    let endedSessions = 0;
-    for (const flow of previousFlows) {
-      endedSessions += await resetActiveSessions('flow-reload', flow);
-    }
-
-    const nextRegistry = loadFlowRegistryFromConfig(config);
-    currentFlowRegistry = applyFlowSessionTimeoutOverrides(nextRegistry, config);
-    warnedMissingTestTargets = false;
-
-    if (currentSocket) {
-      startSessionCleanup(currentSocket, getActiveFlows());
-    }
-
-    logConversationEvent({
-      eventType: 'flow-reload',
-      direction: 'system',
-      jid: 'system',
-      flowPath: currentPrimaryFlowPathForLogs(),
-      messageText: `Reload aplicado via ${source}`,
-      metadata: {
-        source,
-        flowPaths: getActiveFlows().map(flow => flow.flowPath),
-        endedSessions,
-      },
-    });
-
-    console.log(`Reload concluido (${source}). Sessoes reiniciadas: ${endedSessions}.`);
-  } catch (err) {
-    console.error(`Falha ao recarregar fluxo (${source}):`, err.message || err);
-  } finally {
-    reloadInProgress = false;
-    if (pendingReload) {
-      pendingReload = false;
-      scheduleFlowReload('pending');
-    }
-  }
-}
-
-function printTerminalCommandHelp() {
-  console.log('Comandos de terminal disponiveis:');
-  console.log('  /reload   recarrega o .tmb atual sem reiniciar processo');
-  console.log('  /help     mostra esta ajuda');
-}
-
-async function handleTerminalCommand(rawLine) {
-  const input = String(rawLine ?? '').trim();
-  if (!input) return;
-
-  const command = input.toLowerCase();
-
-  if (command === '/reload' || command === 'reload') {
-    await reloadFlow({ source: 'terminal' });
-    return;
-  }
-
-  if (command === '/help' || command === 'help') {
-    printTerminalCommandHelp();
-    return;
-  }
-
-  console.log(`Comando desconhecido: ${input}`);
-  printTerminalCommandHelp();
+  await flowRuntimeManager.reloadFlow({ source });
 }
 
 function initializeTerminalCommands() {
-  if (!process.stdin.isTTY) return;
-  if (terminalCommandInterface) return;
-
-  terminalCommandInterface = readline.createInterface({
-    input: process.stdin,
-    output: process.stdout,
-    terminal: true,
-  });
-
-  terminalCommandInterface.on('line', line => {
-    void handleTerminalCommand(line).catch(err => {
-      console.error('Erro ao processar comando de terminal:', err.message || err);
-    });
-  });
-
-  printTerminalCommandHelp();
+  flowRuntimeManager.initializeTerminalCommands();
 }
 
 async function start() {
   console.log('Iniciando Interpretador de Bot WhatsApp...\n');
 
+  flowRuntimeManager.resetState();
   runtimeSetupPromise = null;
   runtimeSetupDone = false;
   warnedMissingTestTargets = false;
@@ -3388,7 +1272,7 @@ async function start() {
   requiresInitialSetup = !hasSavedConfigAtBoot;
 
   config = await getConfig({ interactive: false });
-  acquireRuntimeLock();
+  instanceLock.acquire();
 
   const suppressSignalNoise =
     config.runtimeMode === RUNTIME_MODE.PRODUCTION &&
@@ -3485,677 +1369,19 @@ async function start() {
   await ensureWhatsAppRuntimeStarted();
 }
 
-function resolveQueueJidFromIncomingMessage(msg) {
-  const messageKey = msg?.key && typeof msg.key === 'object' ? msg.key : {};
-  const remoteJid = String(messageKey.remoteJid ?? messageKey.remote_jid ?? '').trim();
-  if (!remoteJid) return '';
-  const senderPn = String(messageKey.senderPn ?? messageKey.sender_pn ?? '').trim();
-  if (remoteJid.endsWith('@lid') && senderPn) {
-    return senderPn;
-  }
-  return remoteJid;
-}
-
-function enqueuePostProcessTask({ key = 'post', taskName = 'post-task', task }) {
-  if (typeof task !== 'function') return;
-
-  const isConversationEventTask = String(taskName || '').startsWith('conversation-event:');
-  if (
-    runtimeGuardState.degradedMode &&
-    config?.runtimeDegradedDropConversationEvents !== false &&
-    isConversationEventTask
-  ) {
-    runtimeGuardState.droppedPostTasks += 1;
-    ingestionRuntimeCounters.postTasksDroppedByDegradedMode += 1;
-    return;
-  }
-
-  ingestionRuntimeCounters.postTasksQueued += 1;
-
-  if (!postProcessQueue) {
-    try {
-      task();
-    } catch (error) {
-      ingestionRuntimeCounters.postTasksFailed += 1;
-      logger?.error?.(
-        {
-          taskName,
-          err: {
-            name: error?.name || 'Error',
-            message: error?.message || 'post-task-failed',
-            stack: error?.stack || '',
-          },
-        },
-        'Post-process task failed (direct execution)'
-      );
-    }
-    return;
-  }
-
-  const result = postProcessQueue.enqueue({
-    key: String(key || 'post'),
-    priority: 'low',
-    payload: null,
-    handler: async () => {
-      try {
-        await task();
-      } catch (error) {
-        ingestionRuntimeCounters.postTasksFailed += 1;
-        logger?.error?.(
-          {
-            taskName,
-            err: {
-              name: error?.name || 'Error',
-              message: error?.message || 'post-task-failed',
-              stack: error?.stack || '',
-            },
-          },
-          'Post-process task failed'
-        );
-      }
-    },
-  });
-
-  if (!result?.accepted) {
-    ingestionRuntimeCounters.postTasksDropped += 1;
-    const dropped = ingestionRuntimeCounters.postTasksDropped;
-    if (dropped === 1 || dropped % 100 === 0) {
-      logger?.warn?.(
-        {
-          taskName,
-          dropped,
-          queued: Number(result?.snapshot?.queued ?? 0),
-          maxQueueSize: Number(result?.snapshot?.maxQueueSize ?? 0),
-        },
-        'Post-process task dropped due to queue overflow'
-      );
-    }
-  }
-}
-
-function logConversationEventAsync(event, { key = '' } = {}) {
-  const queueKey = String(key || event?.jid || 'post');
-  enqueuePostProcessTask({
-    key: queueKey,
-    taskName: `conversation-event:${String(event?.eventType || 'unknown')}`,
-    task: () => {
-      logConversationEvent(event);
-    },
-  });
-}
-
-function enqueueIncomingMediaCapture({
-  sock,
-  msg,
-  jid,
-  actorJid,
-  id,
-  mediaMimeType,
-  mediaFileName,
-  flowPaths = [],
-}) {
-  if (runtimeGuardState.degradedMode) {
-    runtimeGuardState.droppedMediaTasks += 1;
-    ingestionRuntimeCounters.mediaDroppedByDegradedMode += 1;
-    return;
-  }
-
-  ingestionRuntimeCounters.mediaQueued += 1;
-  const queueKey = String(jid || 'media');
-
-  if (!mediaPipelineQueue) {
-    void (async () => {
-      try {
-        const media = await captureIncomingImageForDashboard({
-          msg,
-          sock,
-          mimeType: mediaMimeType,
-          fileName: mediaFileName || `incoming-${id || Date.now()}`,
-        });
-        if (!media) return;
-        ingestionRuntimeCounters.mediaCaptured += 1;
-        for (const flowPath of flowPaths) {
-          logConversationEventAsync({
-            eventType: 'message-media-captured',
-            direction: 'system',
-            jid: actorJid || jid,
-            flowPath,
-            messageText: '[Imagem armazenada para dashboard]',
-            metadata: {
-              id: id || null,
-              actorJid: actorJid || null,
-              chatJid: jid,
-              mediaType: mediaMimeType || null,
-              mediaUrl: media.mediaUrl || null,
-              mediaId: media.mediaId || null,
-            },
-          }, { key: jid });
-        }
-      } catch {
-        ingestionRuntimeCounters.mediaCaptureFailed += 1;
-      }
-    })();
-    return;
-  }
-
-  const enqueueResult = mediaPipelineQueue.enqueue({
-    key: queueKey,
-    priority: 'low',
-    payload: null,
-    handler: async () => {
-      try {
-        const media = await captureIncomingImageForDashboard({
-          msg,
-          sock,
-          mimeType: mediaMimeType,
-          fileName: mediaFileName || `incoming-${id || Date.now()}`,
-        });
-        if (!media) return;
-        ingestionRuntimeCounters.mediaCaptured += 1;
-        for (const flowPath of flowPaths) {
-          logConversationEventAsync({
-            eventType: 'message-media-captured',
-            direction: 'system',
-            jid: actorJid || jid,
-            flowPath,
-            messageText: '[Imagem armazenada para dashboard]',
-            metadata: {
-              id: id || null,
-              actorJid: actorJid || null,
-              chatJid: jid,
-              mediaType: mediaMimeType || null,
-              mediaUrl: media.mediaUrl || null,
-              mediaId: media.mediaId || null,
-            },
-          }, { key: jid });
-        }
-      } catch {
-        ingestionRuntimeCounters.mediaCaptureFailed += 1;
-      }
-    },
-  });
-
-  if (!enqueueResult?.accepted) {
-    ingestionRuntimeCounters.mediaQueueDropped += 1;
-    const dropped = ingestionRuntimeCounters.mediaQueueDropped;
-    if (dropped === 1 || dropped % 50 === 0) {
-      logger?.warn?.(
-        {
-          dropped,
-          queued: Number(enqueueResult?.snapshot?.queued ?? 0),
-          maxQueueSize: Number(enqueueResult?.snapshot?.maxQueueSize ?? 0),
-        },
-        'Incoming media capture dropped due to media pipeline queue overflow'
-      );
-    }
-  }
-}
-
-function resolveDispatchPriority({ messageType }) {
-  if (messageType === 'unknown') return 'low';
-  return 'high';
-}
-
-async function processIncomingUpsertMessage({ sock, msg, type }) {
-  const totalStartedAt = Date.now();
-  const rawMessageKey = msg?.key && typeof msg.key === 'object' ? msg.key : {};
-  mergeContactCacheEntry(contactCache, {
-    ...msg,
-    key: rawMessageKey,
-    notify:
-      rawMessageKey.notify ??
-      rawMessageKey.Notify ??
-      msg?.notify ??
-      msg?.Notify ??
-      msg?.pushName ??
-      msg?.pushname ??
-      '',
-    verifiedName:
-      rawMessageKey.verifiedBizName ??
-      rawMessageKey.verifiedName ??
-      msg?.verifiedBizName ??
-      msg?.verifiedName ??
-      '',
-  });
-
-  const activeFlows = getActiveFlows();
-  if (activeFlows.length === 0) return;
-
-  if (config.debugMode) {
-    console.log('Incoming raw', getMessageDebugInfo(msg, type));
-  }
-
-  const parseStartedAt = Date.now();
-  const parsed = parseMessage(msg);
-  ingestionRuntimeCounters.parseMsTotal += Math.max(0, Date.now() - parseStartedAt);
-  if (!parsed) {
-    ingestionRuntimeCounters.parseDropped += 1;
-    if (config.debugMode) {
-      console.log('Dropped by parser', getMessageDebugInfo(msg, type));
-    }
-    return;
-  }
-
-  const { id, jid, text, listId, isGroup, messageKey, messageType, mediaMimeType, mediaFileName } = parsed;
-  const actorJid = resolveIncomingActorJid(parsed);
-
-  const groupWhitelist = getGroupWhitelistJids(config);
-  const allowedTestJids = getAllowedTestJids(config);
-
-  if (config.testMode) {
-    if (allowedTestJids.size === 0) {
-      if (!warnedMissingTestTargets) {
-        console.warn('testMode ativo, mas nenhum contato/grupo permitido foi selecionado.');
-        warnedMissingTestTargets = true;
-      }
-      ingestionRuntimeCounters.filteredOut += 1;
-      return;
-    }
-    if (!allowedTestJids.has(jid)) {
-      ingestionRuntimeCounters.filteredOut += 1;
-      return;
-    }
-  }
-
-  const incomingText = String(text ?? '').trim();
-  const hasCommandPrefix = incomingText.startsWith('/');
-  const dispatchFlows = [];
-  const routingStartedAt = Date.now();
-
-  for (const flow of activeFlows) {
-    const interactionScope = normalizeInteractionScope(flow);
-    const requiresGroupWhitelist = isGroupWhitelistScope(flow);
-    if (!shouldProcessByInteractionScope(isGroup, flow)) {
-      continue;
-    }
-
-    if (requiresGroupWhitelist && isGroup) {
-      if (groupWhitelist.size === 0) continue;
-      if (!groupWhitelist.has(jid)) continue;
-    }
-
-    const scope = { flowPath: flow.flowPath, botType: getFlowBotType(flow) };
-    const existingSession = getSession(jid, scope);
-    const hasActiveSession = existingSession?.status === 'active';
-    const botType = getFlowBotType(flow);
-
-    if (botType === 'command') {
-      if (!hasActiveSession && !hasCommandPrefix) continue;
-      dispatchFlows.push(flow);
-      continue;
-    }
-
-    if (hasActiveSession || !hasCommandPrefix) {
-      dispatchFlows.push(flow);
-    }
-
-    if (config.debugMode) {
-      console.log('Decision', {
-        id,
-        jid,
-        flowPath: flow.flowPath,
-        botType,
-        actorJid: actorJid || null,
-        textLength: incomingText.length,
-        listId,
-        isGroup,
-        interactionScope,
-        requiresGroupWhitelist,
-        hasActiveSession,
-        groupWhitelistCount: groupWhitelist.size,
-        testMode: config.testMode,
-        testJidsCount: allowedTestJids.size,
-        passesTestMode: !config.testMode || allowedTestJids.has(jid),
-      });
-    }
-  }
-  ingestionRuntimeCounters.routingMsTotal += Math.max(0, Date.now() - routingStartedAt);
-
-  if (dispatchFlows.length === 0) {
-    ingestionRuntimeCounters.filteredOut += 1;
-    return;
-  }
-
-  if (messageType === 'image') {
-    enqueueIncomingMediaCapture({
-      sock,
-      msg,
-      jid,
-      actorJid,
-      id,
-      mediaMimeType,
-      mediaFileName,
-      flowPaths: dispatchFlows.map(item => item.flowPath),
-    });
-  }
-
-  const resolvedMessageText =
-    incomingText ||
-    (messageType === 'image' ? '[Imagem recebida]' : '');
-
-  const mediaState = messageType === 'image' ? 'queued' : 'none';
-  for (const flow of dispatchFlows) {
-    logConversationEventAsync({
-      eventType: 'message-incoming',
-      direction: 'incoming',
-      jid: actorJid || jid,
-      flowPath: flow.flowPath,
-      messageText: resolvedMessageText,
-      metadata: {
-        id,
-        listId: listId ?? null,
-        isGroup,
-        actorJid: actorJid || null,
-        chatJid: jid,
-        kind: messageType || 'unknown',
-        mediaType: messageType === 'image' ? mediaMimeType || null : null,
-        mediaState,
-        mediaUrl: null,
-        mediaId: null,
-        routedFlowPath: flow.flowPath,
-        routedFlowBotType: getFlowBotType(flow),
-        routedFlowPaths: dispatchFlows.map(item => item.flowPath),
-      },
-    }, { key: jid });
-  }
-
-  if (config.debugMode) {
-    console.log(`Mensagem de ${jid}: "${text}" ${listId ? `(listId: ${listId})` : ''} [ID msg: ${id || 'unknown'}]`);
-  }
-
-  const dispatchPriority = resolveDispatchPriority({ messageType });
-  const taskPromises = [];
-  for (const flow of dispatchFlows) {
-    if (!dispatchScheduler) {
-      taskPromises.push(handleIncoming(sock, jid, text, listId, flow, id, messageKey));
-      continue;
-    }
-
-    const scheduled = dispatchScheduler.enqueue({
-      jid,
-      flowPath: flow.flowPath,
-      priority: dispatchPriority,
-      payload: null,
-      handler: async () => {
-        await handleIncoming(sock, jid, text, listId, flow, id, messageKey);
-      },
-    });
-
-    if (!scheduled?.accepted) {
-      logger?.warn?.(
-        {
-          jid,
-          flowPath: flow.flowPath,
-          queued: Number(scheduled?.snapshot?.queued ?? 0),
-          maxQueueSize: Number(scheduled?.snapshot?.maxQueueSize ?? 0),
-        },
-        'Dispatch task dropped due to scheduler overflow'
-      );
-      continue;
-    }
-    taskPromises.push(scheduled.promise);
-  }
-
-  try {
-    await Promise.all(taskPromises);
-    ingestionRuntimeCounters.processedMessages += 1;
-  } catch (err) {
-    ingestionRuntimeCounters.processingFailed += 1;
-    console.error(`Erro no motor para ${jid}:`, err);
-    logConversationEventAsync({
-      eventType: 'engine-error',
-      direction: 'system',
-      jid,
-      messageText: 'Erro no motor ao processar mensagem',
-      metadata: {
-        id,
-        actorJid: actorJid || null,
-        chatJid: jid,
-        error: formatError(err),
-      },
-    }, { key: jid });
-  } finally {
-    ingestionRuntimeCounters.totalMsTotal += Math.max(0, Date.now() - totalStartedAt);
-  }
-}
-
-function enqueueIncomingUpsertMessage({ sock, msg, type }) {
-  ingestionRuntimeCounters.received += 1;
-  bumpMinuteCounter(whatsappHealthState.minuteCounters.incoming, Date.now());
-  maybeLogThroughputPressure();
-  if (!ingestionQueue) {
-    noteQueueLag(0);
-    void processIncomingUpsertMessage({ sock, msg, type });
-    return;
-  }
-
-  const queueKey = resolveQueueJidFromIncomingMessage(msg);
-  const quickMessage = msg?.message && typeof msg.message === 'object' ? msg.message : {};
-  const isLikelyMedia = Boolean(
-    quickMessage.imageMessage ||
-    quickMessage.videoMessage ||
-    quickMessage.documentMessage
-  );
-  const enqueueResult = ingestionQueue.enqueue({
-    key: queueKey || 'unknown',
-    priority: isLikelyMedia ? 'low' : 'high',
-    payload: { sock, msg, type, receivedAt: Date.now() },
-    handler: async (payload) => {
-      try {
-        noteQueueLag(Math.max(0, Date.now() - Number(payload?.receivedAt || Date.now())));
-        await processIncomingUpsertMessage(payload);
-      } catch (error) {
-        logger?.error?.(
-          {
-            queueKey: queueKey || 'unknown',
-            err: {
-              name: error?.name || 'Error',
-              message: error?.message || 'ingestion-queue-task-failed',
-              stack: error?.stack || '',
-            },
-          },
-          'Ingestion queue task failed'
-        );
-        throw error;
-      }
-    },
-  });
-
-  if (!enqueueResult?.accepted) {
-    ingestionRuntimeCounters.queueOverflowDropped += 1;
-    const rejectedCount = Number(enqueueResult?.snapshot?.rejected ?? 0);
-    if (rejectedCount === 1 || rejectedCount % 100 === 0) {
-      logger?.warn?.(
-        {
-          queueKey: queueKey || 'unknown',
-          rejected: rejectedCount,
-          queued: Number(enqueueResult?.snapshot?.queued ?? 0),
-          maxQueueSize: Number(enqueueResult?.snapshot?.maxQueueSize ?? 0),
-        },
-        'Incoming message dropped due to ingestion queue overflow'
-      );
-    }
-  }
-  evaluateRuntimeGuardState();
+function logConversationEventAsync(event, options = {}) {
+  ingestionPipeline.logConversationEventAsync(event, options);
 }
 
 async function connectToWhatsApp({ state, version }) {
-  if (!reconnectController) {
-    initializeReconnectPolicy(config || {});
-  }
-
-  const currentGeneration = ++socketGeneration;
-  const sock = makeWASocket({
-    version,
-    logger,
-    auth: {
-      creds: state.creds,
-      keys: makeCacheableSignalKeyStore(state.keys, logger),
-    },
-    printQRInTerminal: false,
-    browser: ['WhatsApp Bot', 'Chrome', '120.0.0'],
-    markOnlineOnConnect: false,
-  });
-
-  currentSocket = sock;
-  attachOutgoingMessageLogger(sock);
-
-  sock.ev.on('creds.update', () => {
-    if (currentGeneration !== socketGeneration) return;
-    noteSocketEvent('creds.update');
-    scheduleCredsSave('creds.update');
-  });
-
-  sock.ev.on('messaging-history.set', ({ contacts, chats }) => {
-    if (currentGeneration !== socketGeneration) return;
-    mergeContactList(contactCache, contacts);
-    mergeChatsIntoContactCache(contactCache, chats);
-  });
-  sock.ev.on('contacts.upsert', contacts => {
-    if (currentGeneration !== socketGeneration) return;
-    mergeContactList(contactCache, contacts);
-  });
-  sock.ev.on('contacts.update', updates => {
-    if (currentGeneration !== socketGeneration) return;
-    mergeContactList(contactCache, updates);
-  });
-  sock.ev.on('chats.upsert', chats => {
-    if (currentGeneration !== socketGeneration) return;
-    mergeChatsIntoContactCache(contactCache, chats);
-  });
-  sock.ev.on('chats.update', chats => {
-    if (currentGeneration !== socketGeneration) return;
-    mergeChatsIntoContactCache(contactCache, chats);
-  });
-
-  sock.ev.on('connection.update', ({ connection, lastDisconnect, qr }) => {
-    noteSocketEvent('connection.update');
-    if (currentGeneration !== socketGeneration) return;
-
-    if (qr) {
-      console.log('\nEscaneie este codigo QR com o WhatsApp:\n');
-      qrcode.generate(qr, { small: true });
-      console.log('');
-    }
-
-    if (connection === 'close') {
-      flushCredsNow('connection-close');
-
-      const statusCode = new Boom(lastDisconnect?.error)?.output?.statusCode;
-      const reasonName = resolveDisconnectReasonName(statusCode);
-      const category = classifyDisconnectCategory(statusCode);
-      const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-
-      whatsappHealthState.disconnectCount += 1;
-      incrementObjectCounter(whatsappHealthState.disconnectByStatusCode, statusCode ?? 'unknown');
-      incrementObjectCounter(whatsappHealthState.disconnectByCategory, category);
-
-      if (whatsappHealthState.connectedSince > 0) {
-        whatsappHealthState.totalConnectedMs += Math.max(0, Date.now() - whatsappHealthState.connectedSince);
-        whatsappHealthState.connectedSince = 0;
-      }
-      whatsappHealthState.lastDisconnectedAt = Date.now();
-
-      if (shouldReconnect) {
-        const scheduleResult = reconnectController.schedule({
-          reason: `${category}:${reasonName}`,
-          statusCode: Number(statusCode) || 0,
-          connect: async () => {
-            await connectToWhatsApp({ state, version });
-          },
-        });
-
-        if (scheduleResult?.scheduled) {
-          whatsappHealthState.reconnectHistory.push(Date.now());
-          console.log(
-            `Conexao fechada (codigo ${statusCode}, motivo ${reasonName}). Reconexao agendada em ${scheduleResult.delayMs}ms.`
-          );
-        } else {
-          console.log(
-            `Conexao fechada (codigo ${statusCode}, motivo ${reasonName}). Reconexao ja pendente.`
-          );
-        }
-      } else {
-        reconnectController?.close?.();
-        console.log('Desconectado. Delete as entradas auth_state do banco de dados para reautenticar.');
-      }
-
-      if (currentSocket === sock) {
-        currentSocket = null;
-      }
-      evaluateRuntimeGuardState();
-      return;
-    }
-
-    if (connection === 'open') {
-      const nowTs = Date.now();
-      const hadPreviousConnection = whatsappHealthState.lastConnectedAt > 0;
-      if (whatsappHealthState.lastDisconnectedAt > 0) {
-        whatsappHealthState.lastDisconnectDurationMs = Math.max(0, nowTs - whatsappHealthState.lastDisconnectedAt);
-      }
-      whatsappHealthState.connectedSince = nowTs;
-      whatsappHealthState.lastConnectedAt = nowTs;
-      if (hadPreviousConnection) {
-        whatsappHealthState.successfulReconnectHistory.push(nowTs);
-      }
-      reconnectController?.reset?.();
-      evaluateRuntimeGuardState();
-
-      console.log('Conectado ao WhatsApp!\n');
-      runtimeSetupDone = true;
-
-      startSessionCleanup(sock, getActiveFlows());
-      initializeTerminalCommands();
-
-      if (config.debugMode) {
-        const testJids = Array.from(getAllowedTestJids(config));
-        const groupWhitelist = Array.from(getGroupWhitelistJids(config));
-        console.log('Debug mode ativo', {
-          runtimeMode: config.runtimeMode,
-          testMode: config.testMode,
-          testJidsCount: testJids.length,
-          groupWhitelistCount: groupWhitelist.length,
-        });
-      }
-    }
-  });
-
-  sock.ev.on('messages.upsert', ({ messages, type }) => {
-    const callbackStartedAt = Date.now();
-    noteSocketEvent('messages.upsert');
-
-    try {
-      if (currentGeneration !== socketGeneration) return;
-      if (type !== 'notify') return;
-      if (reloadInProgress) return;
-      if (!Array.isArray(messages) || messages.length === 0) return;
-
-      const enqueueAll = () => {
-        for (const msg of messages) {
-          enqueueIncomingUpsertMessage({ sock, msg, type });
-        }
-      };
-
-      if (runtimeSetupPromise) {
-        void runtimeSetupPromise
-          .then(() => {
-            if (currentGeneration !== socketGeneration) return;
-            enqueueAll();
-          })
-          .catch(() => {});
-        return;
-      }
-
-      enqueueAll();
-    } finally {
-      noteSocketCallbackDuration(Math.max(0, Date.now() - callbackStartedAt));
-    }
-  });
-
-  return sock;
+  return whatsappRuntime.connectToWhatsApp({ state, version });
 }
 
 start().catch(err => {
   void handleFatal('Erro fatal no start()', err);
 });
+
+
+
+
 
