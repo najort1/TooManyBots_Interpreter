@@ -1,4 +1,4 @@
-﻿/**
+/**
  * db/index.js
  *
  * Gerenciamento de estado de sessão usando better-sqlite3.
@@ -16,15 +16,12 @@ import fs from 'fs';
 import path from 'path';
 import zlib from 'zlib';
 import { fileURLToPath } from 'url';
+import { setDbContext, registerFlushForRead } from './context.js';
+import { createEventRepository } from './eventRepository.js';
+import { createAnalyticsRepository } from './analyticsRepository.js';
 import { SESSION_STATUS } from '../config/constants.js';
 import { createDbRuntimeState, normalizeDbRuntimeConfig } from './runtimeConfig.js';
 import {
-  mapBroadcastContactRow,
-  mapConversationEventRow,
-  mapSessionRow,
-  normalizeMetadata,
-  normalizePersistedDisplayName,
-  normalizeRecipientList,
   normalizeSessionScope,
   safeParseJson,
   toJsonPath,
@@ -52,6 +49,22 @@ let eventBuffer = [];
 let eventFlushTimer = null;
 let eventInsertTx = null;
 const dbRuntimeState = createDbRuntimeState();
+
+const eventRepository = createEventRepository({
+  getDb: () => db,
+  getStmts: () => stmts,
+  getDbRuntimeState: () => dbRuntimeState,
+  getEventBuffer: () => eventBuffer,
+  getConversationEventListeners: () => conversationEventListeners,
+  flushConversationEventBuffer: options => flushConversationEventBuffer(options),
+  ensureEventBufferFlushedForRead: () => ensureEventBufferFlushedForRead(),
+  getDynamicStatement: sql => getDynamicStatement(sql),
+  analyticsSchema: ANALYTICS_SCHEMA,
+});
+
+const analyticsRepository = createAnalyticsRepository({
+  getStmts: () => stmts,
+});
 
 function safePragma(database, sql) {
   try {
@@ -189,7 +202,12 @@ function startEventFlushTimer() {
   if (!dbRuntimeState.config.eventBatchingEnabled) return;
   const flushMs = Math.max(100, Number(dbRuntimeState.config.eventBatchFlushMs) || 1000);
   eventFlushTimer = setInterval(() => {
-    flushConversationEventBuffer({ reason: 'interval' });
+    const result = flushConversationEventBuffer({ reason: 'interval' });
+    // Surface persistent flush failures. db/index.js has no injected logger reference,
+    // so console.warn is used intentionally here as a last-resort diagnostic channel.
+    if (result?.error && result.error !== 'batching-disabled') {
+      console.warn('[db] Conversation event batch flush failed:', result.error);
+    }
   }, flushMs);
   if (typeof eventFlushTimer.unref === 'function') {
     eventFlushTimer.unref();
@@ -796,6 +814,12 @@ export async function initDb() {
   recordDbSizeSnapshot();
   startEventFlushTimer();
 
+  // Register the initialized db context and flush hook for use by domain
+  // repository modules (db/sessionRepository.js, db/broadcastRepository.js,
+  // db/contactRepository.js) — must run after all stmts are compiled.
+  setDbContext(db, stmts);
+  registerFlushForRead(ensureEventBufferFlushedForRead);
+
   return db;
 }
 export function getDb() {
@@ -832,27 +856,6 @@ export function getDatabaseRuntimeConfig() {
 export function getDatabaseMaintenanceStatus() {
   return {
     ...dbRuntimeState.maintenance,
-  };
-}
-
-function normalizeConversationEventInput({
-  occurredAt = Date.now(),
-  eventType = 'message',
-  direction = 'system',
-  jid = 'unknown',
-  flowPath = '',
-  messageText = '',
-  metadata = {},
-} = {}) {
-  const safeMessage = messageText == null ? '' : String(messageText);
-  return {
-    occurredAt: Number(occurredAt) || Date.now(),
-    eventType: String(eventType || 'message'),
-    direction: String(direction || 'system'),
-    jid: String(jid || 'unknown'),
-    flowPath: String(flowPath || ''),
-    messageText: safeMessage,
-    metadata: normalizeMetadata(metadata),
   };
 }
 
@@ -1193,31 +1196,19 @@ export function writeToDisk() {
   flushConversationEventBuffer({ force: true, reason: 'writeToDisk' });
 }
 
-// ─── Auxiliares de Sessão ─────────────────────────────────────────────────────
+// ─── Session Repository ───────────────────────────────────────────────────────
+// Delegated to db/sessionRepository.js — re-exported here to preserve the
+// existing import contract for all consumers of db/index.js.
 
-export function getSession(jid, scope = null) {
-  const normalizedJid = String(jid ?? '').trim();
-  if (!normalizedJid) return null;
-
-  const { flowPath } = normalizeSessionScope(scope);
-  if (flowPath) {
-    const row = stmts.getSession.get(normalizedJid, flowPath);
-    return row ? mapSessionRow(row) : null;
-  }
-
-  const latest = stmts.getLatestSessionByJid.get(normalizedJid);
-  return latest ? mapSessionRow(latest) : null;
-}
-
-export function createSession(jid, scope = null) {
-  const normalizedJid = String(jid ?? '').trim();
-  if (!normalizedJid) return null;
-
-  const { flowPath, botType } = normalizeSessionScope(scope);
-  const resolvedBotType = botType ?? 'conversation';
-  stmts.createSession.run(normalizedJid, flowPath, resolvedBotType, SESSION_STATUS.ACTIVE);
-  return getSession(normalizedJid, { flowPath });
-}
+export {
+  getSession,
+  createSession,
+  deleteSession,
+  getActiveSessions,
+  getActiveSessionsPage,
+  clearActiveSessions,
+  clearActiveSessionsByFlowPath,
+} from './sessionRepository.js';
 
 function normalizeVariablesDelta(delta = {}) {
   if (!delta || typeof delta !== 'object' || Array.isArray(delta)) {
@@ -1323,69 +1314,7 @@ export function updateSession(jid, patch = {}, scope = null) {
   getDynamicStatement(sql).run(...params);
 }
 
-export function deleteSession(jid, scope = null) {
-  const normalizedJid = String(jid ?? '').trim();
-  if (!normalizedJid) return;
-  const { flowPath } = normalizeSessionScope(scope);
-  stmts.deleteSession.run(normalizedJid, flowPath);
-}
 
-export function getActiveSessions(scope = null) {
-  const { flowPath, botType } = normalizeSessionScope(scope);
-  let rows = [];
-  if (flowPath) {
-    rows = stmts.getActiveSessionsByFlowPath.all(SESSION_STATUS.ACTIVE, flowPath);
-  } else if (botType) {
-    rows = stmts.getActiveSessionsByBotType.all(SESSION_STATUS.ACTIVE, botType);
-  } else {
-    rows = stmts.getActiveSessions.all(SESSION_STATUS.ACTIVE);
-  }
-  return rows.map(mapSessionRow);
-}
-
-export function getActiveSessionsPage(scope = null, {
-  cursorUpdatedAt = Number.MAX_SAFE_INTEGER,
-  cursorJid = '\uffff',
-  limit = 200,
-} = {}) {
-  const { flowPath, botType } = normalizeSessionScope(scope);
-  const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 200));
-  const normalizedCursorUpdatedAt = Number.isFinite(Number(cursorUpdatedAt))
-    ? Number(cursorUpdatedAt)
-    : Number.MAX_SAFE_INTEGER;
-  const normalizedCursorJid = String(cursorJid ?? '\uffff');
-
-  let rows = [];
-  if (flowPath) {
-    rows = stmts.getActiveSessionsPageByFlowPath.all(
-      SESSION_STATUS.ACTIVE,
-      flowPath,
-      normalizedCursorUpdatedAt,
-      normalizedCursorUpdatedAt,
-      normalizedCursorJid,
-      normalizedLimit
-    );
-  } else if (botType) {
-    rows = stmts.getActiveSessionsPageByBotType.all(
-      SESSION_STATUS.ACTIVE,
-      botType,
-      normalizedCursorUpdatedAt,
-      normalizedCursorUpdatedAt,
-      normalizedCursorJid,
-      normalizedLimit
-    );
-  } else {
-    rows = stmts.getActiveSessionsPage.all(
-      SESSION_STATUS.ACTIVE,
-      normalizedCursorUpdatedAt,
-      normalizedCursorUpdatedAt,
-      normalizedCursorJid,
-      normalizedLimit
-    );
-  }
-
-  return rows.map(mapSessionRow);
-}
 
 export function addConversationEvent({
   occurredAt = Date.now(),
@@ -1396,9 +1325,7 @@ export function addConversationEvent({
   messageText = '',
   metadata = {},
 } = {}) {
-  if (!db || !stmts.insertConversationEvent) return;
-
-  const event = normalizeConversationEventInput({
+  return eventRepository.addConversationEvent({
     occurredAt,
     eventType,
     direction,
@@ -1407,137 +1334,34 @@ export function addConversationEvent({
     messageText,
     metadata,
   });
-
-  if (dbRuntimeState.config.eventBatchingEnabled) {
-    eventBuffer.push(event);
-    const maxBatchSize = Math.max(1, Number(dbRuntimeState.config.eventBatchSize) || 1);
-    if (eventBuffer.length >= maxBatchSize) {
-      flushConversationEventBuffer({ reason: 'batch-size-threshold' });
-    }
-  } else {
-    stmts.insertConversationEvent.run(
-      event.occurredAt,
-      event.eventType,
-      event.direction,
-      event.jid,
-      event.flowPath,
-      event.messageText,
-      JSON.stringify(event.metadata || {})
-    );
-  }
-
-  for (const listener of conversationEventListeners) {
-    try {
-      listener(event);
-    } catch {
-      // ignore listener errors
-    }
-  }
 }
 
 export function listConversationEvents(limit = 200) {
-  ensureEventBufferFlushedForRead();
-  const normalizedLimit = Math.max(1, Math.min(1000, Number(limit) || 200));
-  const rows = stmts.listConversationEvents.all(normalizedLimit);
-  return rows.map(mapConversationEventRow);
+  return eventRepository.listConversationEvents(limit);
 }
 
 export function listConversationEventsByFlowPath(flowPath, limit = 200) {
-  ensureEventBufferFlushedForRead();
-  const normalizedFlowPath = String(flowPath ?? '').trim();
-  if (!normalizedFlowPath) return [];
-  const normalizedLimit = Math.max(1, Math.min(1000, Number(limit) || 200));
-  const rows = stmts.listConversationEventsByFlowPath.all(normalizedFlowPath, normalizedLimit);
-  return rows.map(mapConversationEventRow);
+  return eventRepository.listConversationEventsByFlowPath(flowPath, limit);
 }
 
 export function listConversationEventsByJid(jid, limit = 200) {
-  ensureEventBufferFlushedForRead();
-  const normalizedJid = String(jid ?? '').trim();
-  if (!normalizedJid) return [];
-  const normalizedLimit = Math.max(1, Math.min(1000, Number(limit) || 200));
-  const rows = stmts.listConversationEventsByJid.all(normalizedJid, normalizedLimit);
-  return rows.map(mapConversationEventRow);
+  return eventRepository.listConversationEventsByJid(jid, limit);
 }
 
 export function listConversationEventsByJids(jids = [], limitPerJid = 120) {
-  ensureEventBufferFlushedForRead();
-  const normalizedLimitPerJid = Math.max(1, Math.min(200, Number(limitPerJid) || 120));
-  const normalizedJids = [...new Set(
-    (Array.isArray(jids) ? jids : [])
-      .map(item => String(item ?? '').trim())
-      .filter(Boolean)
-  )];
-  if (normalizedJids.length === 0) return {};
-
-  const byJid = new Map();
-  const chunkSize = 250;
-  for (let offset = 0; offset < normalizedJids.length; offset += chunkSize) {
-    const chunk = normalizedJids.slice(offset, offset + chunkSize);
-    if (chunk.length === 0) continue;
-
-    const placeholders = chunk.map(() => '?').join(', ');
-    const sql = `
-      SELECT id, occurred_at, event_type, direction, jid, flow_path, message_text, metadata
-      FROM (
-        SELECT
-          id,
-          occurred_at,
-          event_type,
-          direction,
-          jid,
-          flow_path,
-          message_text,
-          metadata,
-          ROW_NUMBER() OVER (
-            PARTITION BY jid
-            ORDER BY occurred_at DESC, id DESC
-          ) AS rn
-        FROM ${ANALYTICS_SCHEMA}.conversation_events
-        WHERE jid IN (${placeholders})
-      ) ranked
-      WHERE rn <= ?
-      ORDER BY jid ASC, occurred_at DESC, id DESC
-    `;
-    const rows = getDynamicStatement(sql).all(...chunk, normalizedLimitPerJid);
-    for (const row of rows) {
-      const jid = String(row?.jid ?? '').trim();
-      if (!jid) continue;
-      const current = byJid.get(jid) ?? [];
-      current.push(mapConversationEventRow(row));
-      byJid.set(jid, current);
-    }
-  }
-
-  return Object.fromEntries(byJid.entries());
+  return eventRepository.listConversationEventsByJids(jids, limitPerJid);
 }
 
 export function listConversationEventsSince(sinceTimestamp, limit = 500) {
-  ensureEventBufferFlushedForRead();
-  const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 500));
-  const since = Number(sinceTimestamp) || 0;
-  const rows = stmts.listConversationEventsSince.all(since, normalizedLimit);
-  return rows.map(mapConversationEventRow);
+  return eventRepository.listConversationEventsSince(sinceTimestamp, limit);
 }
 
 export function listConversationEventsSinceByFlowPath(flowPath, sinceTimestamp, limit = 500) {
-  ensureEventBufferFlushedForRead();
-  const normalizedFlowPath = String(flowPath ?? '').trim();
-  if (!normalizedFlowPath) return [];
-  const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 500));
-  const since = Number(sinceTimestamp) || 0;
-  const rows = stmts.listConversationEventsSinceByFlowPath.all(normalizedFlowPath, since, normalizedLimit);
-  return rows.map(mapConversationEventRow);
+  return eventRepository.listConversationEventsSinceByFlowPath(flowPath, sinceTimestamp, limit);
 }
 
 export function listConversationEventsSinceByJid(jid, sinceTimestamp, limit = 500) {
-  ensureEventBufferFlushedForRead();
-  const normalizedJid = String(jid ?? '').trim();
-  if (!normalizedJid) return [];
-  const normalizedLimit = Math.max(1, Math.min(2000, Number(limit) || 500));
-  const since = Number(sinceTimestamp) || 0;
-  const rows = stmts.listConversationEventsSinceByJid.all(normalizedJid, since, normalizedLimit);
-  return rows.map(mapConversationEventRow);
+  return eventRepository.listConversationEventsSinceByJid(jid, sinceTimestamp, limit);
 }
 
 export function createConversationSessionRecord({
@@ -1546,13 +1370,12 @@ export function createConversationSessionRecord({
   flowPath = '',
   startedAt = Date.now(),
 }) {
-  if (!sessionId || !jid) return;
-  stmts.createConversationSession.run(
-    String(sessionId),
-    String(jid),
-    String(flowPath || ''),
-    Number(startedAt) || Date.now()
-  );
+  return analyticsRepository.createConversationSessionRecord({
+    sessionId,
+    jid,
+    flowPath,
+    startedAt,
+  });
 }
 
 export function finishConversationSessionRecord({
@@ -1560,287 +1383,55 @@ export function finishConversationSessionRecord({
   endedAt = Date.now(),
   endReason = 'unknown',
 }) {
-  if (!sessionId) return;
-  stmts.finishConversationSession.run(
-    Number(endedAt) || Date.now(),
-    String(endReason || 'unknown'),
-    String(sessionId)
-  );
+  return analyticsRepository.finishConversationSessionRecord({
+    sessionId,
+    endedAt,
+    endReason,
+  });
 }
 
-export function clearActiveSessions() {
-  const active = getActiveSessions();
-  stmts.deleteActiveSessions.run(SESSION_STATUS.ACTIVE);
-  return active;
-}
-
-export function clearActiveSessionsByFlowPath(flowPath) {
-  const normalizedFlowPath = String(flowPath ?? '').trim();
-  if (!normalizedFlowPath) return [];
-  const active = getActiveSessions({ flowPath: normalizedFlowPath });
-  stmts.deleteActiveSessionsByFlowPath.run(SESSION_STATUS.ACTIVE, normalizedFlowPath);
-  return active;
-}
 
 export function getConversationDashboardStats({ from, to, flowPath = '' }) {
-  const fromTs = Number(from) || 0;
-  const toTs = Number(to) || Date.now();
-  const normalizedFlowPath = String(flowPath ?? '').trim();
-
-  const started = normalizedFlowPath
-    ? (stmts.countStartedSessionsInRangeByFlowPath.get(fromTs, toTs, normalizedFlowPath)?.total ?? 0)
-    : (stmts.countStartedSessionsInRange.get(fromTs, toTs)?.total ?? 0);
-  const abandoned = normalizedFlowPath
-    ? (stmts.countEndedByReasonInRangeByFlowPath.get(fromTs, toTs, 'timeout', normalizedFlowPath)?.total ?? 0)
-    : (stmts.countEndedByReasonInRange.get(fromTs, toTs, 'timeout')?.total ?? 0);
-  const avgDurationMs = normalizedFlowPath
-    ? (stmts.avgEndedDurationInRangeByFlowPath.get(fromTs, toTs, normalizedFlowPath)?.avgDurationMs ?? 0)
-    : (stmts.avgEndedDurationInRange.get(fromTs, toTs)?.avgDurationMs ?? 0);
-  const activeSessions = normalizedFlowPath
-    ? (stmts.countOpenSessionsByFlowPath.get(normalizedFlowPath)?.total ?? 0)
-    : (stmts.countOpenSessions.get()?.total ?? 0);
-
-  return {
-    conversationsStarted: Number(started) || 0,
-    abandonedSessions: Number(abandoned) || 0,
-    abandonmentRate: (Number(started) || 0) > 0
-      ? Number(((Number(abandoned) || 0) / Number(started)).toFixed(4))
-      : 0,
-    averageDurationMs: Number(avgDurationMs) || 0,
-    activeSessions: Number(activeSessions) || 0,
-  };
+  return analyticsRepository.getConversationDashboardStats({ from, to, flowPath });
 }
 
 export function getConversationSessionsTotal(flowPath = '') {
-  const normalizedFlowPath = String(flowPath ?? '').trim();
-  if (normalizedFlowPath) {
-    return Number(stmts.countConversationSessionsTotalByFlowPath.get(normalizedFlowPath)?.total ?? 0) || 0;
-  }
-  return Number(stmts.countConversationSessionsTotal.get()?.total ?? 0) || 0;
+  return analyticsRepository.getConversationSessionsTotal(flowPath);
 }
 
 export function getConversationEndedByReasonCount({ from, to, endReason, flowPath = '' }) {
-  const fromTs = Number(from) || 0;
-  const toTs = Number(to) || Date.now();
-  const reason = String(endReason ?? '').trim();
-  if (!reason) return 0;
-
-  const normalizedFlowPath = String(flowPath ?? '').trim();
-  if (normalizedFlowPath) {
-    return Number(
-      stmts.countEndedByReasonInRangeByFlowPath.get(fromTs, toTs, reason, normalizedFlowPath)?.total ?? 0
-    ) || 0;
-  }
-
-  return Number(stmts.countEndedByReasonInRange.get(fromTs, toTs, reason)?.total ?? 0) || 0;
+  return analyticsRepository.getConversationEndedByReasonCount({ from, to, endReason, flowPath });
 }
 
 export function listConversationSessionStarts({ from, to, flowPath = '' }) {
-  const fromTs = Number(from) || 0;
-  const toTs = Number(to) || Date.now();
-  const normalizedFlowPath = String(flowPath ?? '').trim();
-
-  const rows = normalizedFlowPath
-    ? stmts.listStartedSessionsInRangeByFlowPath.all(fromTs, toTs, normalizedFlowPath)
-    : stmts.listStartedSessionsInRange.all(fromTs, toTs);
-
-  return rows.map(row => Number(row.started_at) || 0).filter(Boolean);
+  return analyticsRepository.listConversationSessionStarts({ from, to, flowPath });
 }
 
 export function listConversationSessionEndsByReason({ from, to, endReason, flowPath = '' }) {
-  const fromTs = Number(from) || 0;
-  const toTs = Number(to) || Date.now();
-  const reason = String(endReason ?? '').trim();
-  if (!reason) return [];
-
-  const normalizedFlowPath = String(flowPath ?? '').trim();
-  const rows = normalizedFlowPath
-    ? stmts.listEndedByReasonInRangeByFlowPath.all(fromTs, toTs, reason, normalizedFlowPath)
-    : stmts.listEndedByReasonInRange.all(fromTs, toTs, reason);
-
-  return rows.map(row => Number(row.ended_at) || 0).filter(Boolean);
+  return analyticsRepository.listConversationSessionEndsByReason({ from, to, endReason, flowPath });
 }
 
-export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
-  ensureEventBufferFlushedForRead();
-  const normalizedLimit = Math.max(1, Math.min(5000, Number(limit) || 200));
-  const normalizedSearch = String(search ?? '').trim();
-  const rows = normalizedSearch
-    ? stmts.searchBroadcastContacts.all(`%${normalizedSearch}%`, `%${normalizedSearch}%`, normalizedLimit)
-    : stmts.listBroadcastContacts.all(normalizedLimit);
+// ─── Contact Repository ───────────────────────────────────────────────────────
+// Delegated to db/contactRepository.js — re-exported here to preserve the
+// existing import contract for all consumers of db/index.js.
 
-  return rows
-    .map(mapBroadcastContactRow)
-    .filter(row => row.jid);
-}
+export {
+  upsertContactDisplayName,
+  getContactDisplayName,
+  listContactDisplayNames,
+} from './contactRepository.js';
 
-export function upsertContactDisplayName({
-  jid = '',
-  displayName = '',
-  source = 'runtime',
-  updatedAt = Date.now(),
-} = {}) {
-  const normalizedJid = String(jid ?? '').trim();
-  if (!normalizedJid) return false;
-  const normalizedDisplayName = normalizePersistedDisplayName(displayName, normalizedJid);
-  if (!normalizedDisplayName) return false;
-  const normalizedSource = String(source ?? '').trim() || 'runtime';
-  const normalizedUpdatedAt = Number(updatedAt) || Date.now();
+// ─── Broadcast Repository ──────────────────────────────────────────────────────
+// Delegated to db/broadcastRepository.js — re-exported here to preserve the
+// existing import contract for all consumers of db/index.js.
 
-  stmts.upsertContactProfile.run(
-    normalizedJid,
-    normalizedDisplayName,
-    normalizedSource,
-    normalizedUpdatedAt
-  );
-
-  return true;
-}
-
-export function getContactDisplayName(jid = '') {
-  const normalizedJid = String(jid ?? '').trim();
-  if (!normalizedJid) return '';
-  const row = stmts.getContactDisplayNameByJid.get(normalizedJid);
-  return normalizePersistedDisplayName(row?.display_name, normalizedJid);
-}
-
-export function listContactDisplayNames(limit = 5000) {
-  const normalizedLimit = Math.max(1, Math.min(50000, Number(limit) || 5000));
-  const rows = stmts.listContactProfiles.all(normalizedLimit);
-  return rows
-    .map(row => {
-      const jid = String(row?.jid || '').trim();
-      const name = normalizePersistedDisplayName(row?.display_name, jid);
-      if (!jid || !name) return null;
-      return {
-        jid,
-        name,
-        source: String(row?.source || '').trim() || 'runtime',
-        updatedAt: Number(row?.updated_at) || 0,
-      };
-    })
-    .filter(Boolean);
-}
-
-export function createBroadcastDispatch({
-  createdAt = Date.now(),
-  actor = 'dashboard-agent',
-  targetMode = 'all',
-  messageType = 'text',
-  messageText = '',
-  mediaMimeType = '',
-  mediaFileName = '',
-  recipients = [],
-} = {}) {
-  const normalizedRecipients = normalizeRecipientList(recipients);
-  const nowTs = Number(createdAt) || Date.now();
-  const insertTx = db.transaction(() => {
-    const info = stmts.insertBroadcastCampaign.run(
-      nowTs,
-      String(actor || 'dashboard-agent'),
-      String(targetMode || 'all'),
-      String(messageType || 'text'),
-      String(messageText || ''),
-      String(mediaMimeType || ''),
-      String(mediaFileName || ''),
-      normalizedRecipients.length
-    );
-    const campaignId = Number(info?.lastInsertRowid) || 0;
-
-    for (const jid of normalizedRecipients) {
-      stmts.insertBroadcastRecipient.run(
-        campaignId,
-        jid,
-        'pending',
-        '',
-        null,
-        nowTs,
-        nowTs
-      );
-    }
-
-    return { campaignId };
-  });
-
-  return insertTx();
-}
-
-export function markBroadcastRecipientResult({
-  campaignId,
-  jid,
-  status = 'failed',
-  errorMessage = '',
-  sentAt = Date.now(),
-} = {}) {
-  const normalizedCampaignId = Number(campaignId) || 0;
-  const normalizedJid = String(jid ?? '').trim();
-  if (!normalizedCampaignId || !normalizedJid) return;
-
-  const normalizedStatus = String(status ?? '').trim().toLowerCase() === 'sent' ? 'sent' : 'failed';
-  const nowTs = Date.now();
-  stmts.updateBroadcastRecipientResult.run(
-    normalizedStatus,
-    String(errorMessage || ''),
-    normalizedStatus === 'sent' ? (Number(sentAt) || nowTs) : null,
-    nowTs,
-    normalizedCampaignId,
-    normalizedJid
-  );
-}
-
-export function markBroadcastRecipientResultsBatch({
-  campaignId,
-  results = [],
-} = {}) {
-  const normalizedCampaignId = Number(campaignId) || 0;
-  if (!normalizedCampaignId || !Array.isArray(results) || results.length === 0) return { applied: 0 };
-
-  const nowTs = Date.now();
-  const normalizedRows = [];
-  for (const row of results) {
-    const normalizedJid = String(row?.jid ?? '').trim();
-    if (!normalizedJid) continue;
-    const normalizedStatus = String(row?.status ?? '').trim().toLowerCase() === 'sent' ? 'sent' : 'failed';
-    normalizedRows.push({
-      jid: normalizedJid,
-      status: normalizedStatus,
-      errorMessage: String(row?.errorMessage || ''),
-      sentAt: normalizedStatus === 'sent' ? (Number(row?.sentAt) || nowTs) : null,
-    });
-  }
-
-  if (normalizedRows.length === 0) return { applied: 0 };
-
-  const applyTx = db.transaction((rows) => {
-    for (const row of rows) {
-      stmts.updateBroadcastRecipientResult.run(
-        row.status,
-        row.errorMessage,
-        row.sentAt,
-        nowTs,
-        normalizedCampaignId,
-        row.jid
-      );
-    }
-  });
-  applyTx(normalizedRows);
-  return { applied: normalizedRows.length };
-}
-
-export function cancelBroadcastPendingRecipients({
-  campaignId,
-  errorMessage = 'cancelled',
-} = {}) {
-  const normalizedCampaignId = Number(campaignId) || 0;
-  if (!normalizedCampaignId) return { cancelled: 0 };
-  const nowTs = Date.now();
-  const info = stmts.cancelPendingBroadcastRecipients.run(
-    String(errorMessage || 'cancelled'),
-    nowTs,
-    normalizedCampaignId
-  );
-  return { cancelled: Number(info?.changes) || 0 };
-}
+export {
+  listBroadcastContacts,
+  createBroadcastDispatch,
+  markBroadcastRecipientResult,
+  markBroadcastRecipientResultsBatch,
+  cancelBroadcastPendingRecipients,
+} from './broadcastRepository.js';
 
 function fileSizeOrZero(filePath) {
   try {
@@ -1962,9 +1553,5 @@ export function getDatabaseInfo() {
 }
 
 export function onConversationEvent(listener) {
-  if (typeof listener !== 'function') return () => {};
-  conversationEventListeners.add(listener);
-  return () => {
-    conversationEventListeners.delete(listener);
-  };
+  return eventRepository.onConversationEvent(listener);
 }
