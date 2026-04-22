@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  fetchSelectableGroups,
   isLikelyRealGroupJid,
   isLikelyRealSelectableJid,
   isLikelyRealUserJid,
+  mergeContactCacheEntry,
   mergeChatsIntoContactCache,
 } from '../runtime/contactUtils.js';
 
@@ -34,4 +36,69 @@ test('mergeChatsIntoContactCache hydrates both user and group display names', ()
 
   assert.equal(cache.get(groupJid)?.name, 'Grupo Oficial');
   assert.equal(cache.get(userJid)?.name, 'Eduardo');
+});
+
+test('mergeChatsIntoContactCache does not degrade group name to JID on partial updates', () => {
+  const cache = new Map();
+  const groupJid = '120363405600887559@g.us';
+  const groupLocalPart = '120363405600887559';
+
+  mergeChatsIntoContactCache(cache, [{ id: groupJid, name: 'Grupo Oficial' }]);
+  mergeChatsIntoContactCache(cache, [{ id: groupJid, name: groupJid }]);
+  mergeChatsIntoContactCache(cache, [{ id: groupJid, name: groupLocalPart }]);
+  mergeChatsIntoContactCache(cache, [{ id: groupJid, subject: '' }]);
+
+  assert.equal(cache.get(groupJid)?.name, 'Grupo Oficial');
+});
+
+test('mergeContactCacheEntry does not degrade user display name to JID', () => {
+  const cache = new Map();
+  const userJid = '5581999999999@s.whatsapp.net';
+  const userLocalPart = '5581999999999';
+
+  mergeContactCacheEntry(cache, { id: userJid, name: 'Eduardo' });
+  mergeContactCacheEntry(cache, { id: userJid, name: userJid });
+  mergeContactCacheEntry(cache, { id: userJid, name: userLocalPart });
+
+  assert.equal(cache.get(userJid)?.name, 'Eduardo');
+});
+
+test('fetchSelectableGroups keeps cached group name when socket subject is missing', async () => {
+  const cache = new Map();
+  const groupJid = '120363405600887559@g.us';
+  cache.set(groupJid, { jid: groupJid, name: 'Grupo Persistido' });
+
+  const sock = {
+    groupFetchAllParticipating: async () => ({
+      [groupJid]: {
+        subject: '',
+        participants: [{}, {}],
+      },
+    }),
+  };
+
+  const groups = await fetchSelectableGroups(sock, cache);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0]?.name, 'Grupo Persistido');
+  assert.equal(cache.get(groupJid)?.name, 'Grupo Persistido');
+});
+
+test('fetchSelectableGroups does not replace cached group name with JID-like subject', async () => {
+  const cache = new Map();
+  const groupJid = '120363405600887559@g.us';
+  cache.set(groupJid, { jid: groupJid, name: 'Grupo Persistido' });
+
+  const sock = {
+    groupFetchAllParticipating: async () => ({
+      [groupJid]: {
+        subject: '120363405600887559',
+        participants: [{}],
+      },
+    }),
+  };
+
+  const groups = await fetchSelectableGroups(sock, cache);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0]?.name, 'Grupo Persistido');
+  assert.equal(cache.get(groupJid)?.name, 'Grupo Persistido');
 });

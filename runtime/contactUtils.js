@@ -187,6 +187,29 @@ function normalizeCandidateName(value) {
   return cleaned || raw;
 }
 
+function isMeaningfulDisplayName(name, jid = '') {
+  const normalizedName = normalizeCandidateName(name);
+  if (!normalizedName) return false;
+  const normalizedJid = toJidString(jid);
+  if (normalizedJid && normalizedName === normalizedJid) return false;
+  const jidLocalPart = extractJidLocalPart(normalizedJid);
+  if (jidLocalPart) {
+    if (normalizedName === jidLocalPart) return false;
+    if (normalizedName === `+${jidLocalPart}`) return false;
+  }
+  return true;
+}
+
+function resolveBestDisplayName({ candidate = '', fallback = '', jid = '' } = {}) {
+  if (isMeaningfulDisplayName(candidate, jid)) {
+    return formatNameOrFallback(candidate, jid);
+  }
+  if (isMeaningfulDisplayName(fallback, jid)) {
+    return formatNameOrFallback(fallback, jid);
+  }
+  return formatNameOrFallback('', jid);
+}
+
 export function mergeContactCacheEntry(contactCache, input) {
   if (!input || typeof input !== 'object') return;
 
@@ -231,9 +254,11 @@ export function mergeContactCacheEntry(contactCache, input) {
 
   for (const jid of personJids) {
     const existing = contactCache.get(jid) ?? { jid, name: jid };
-    const nextName = explicitName
-      ? formatNameOrFallback(explicitName, existing.name ?? jid)
-      : formatNameOrFallback(existing.name, jid);
+    const nextName = resolveBestDisplayName({
+      candidate: explicitName,
+      fallback: existing.name ?? jid,
+      jid,
+    });
     contactCache.set(jid, { jid, name: nextName });
   }
 }
@@ -260,10 +285,12 @@ export function mergeChatsIntoContactCache(contactCache, chats) {
     }
 
     if (isGroupJid(jid)) {
-      const groupName = formatNameOrFallback(
-        chat?.name || chat?.subject || chat?.notify || chat?.pushName || jid,
-        jid
-      );
+      const existingName = contactCache.get(jid)?.name || '';
+      const groupName = resolveBestDisplayName({
+        candidate: chat?.name || chat?.subject || chat?.notify || chat?.pushName || '',
+        fallback: existingName,
+        jid,
+      });
       contactCache.set(jid, { jid, name: groupName });
     }
   }
@@ -286,11 +313,19 @@ export async function fetchSelectableContacts(contactCache) {
 export async function fetchSelectableGroups(sock, contactCache = null) {
   const raw = await sock.groupFetchAllParticipating();
   const groups = Object.entries(raw ?? {})
-    .map(([jid, group]) => ({
-      jid: String(jid ?? '').trim(),
-      name: formatNameOrFallback(group?.subject, jid),
-      participants: Array.isArray(group?.participants) ? group.participants.length : 0,
-    }))
+    .map(([jid, group]) => {
+      const normalizedJid = String(jid ?? '').trim();
+      const cachedName = contactCache?.get?.(normalizedJid)?.name || '';
+      return {
+        jid: normalizedJid,
+        name: resolveBestDisplayName({
+          candidate: group?.subject || group?.name || '',
+          fallback: cachedName,
+          jid: normalizedJid,
+        }),
+        participants: Array.isArray(group?.participants) ? group.participants.length : 0,
+      };
+    })
     .filter(group => isGroupJid(group.jid))
     .sort((a, b) => a.name.localeCompare(b.name));
 
