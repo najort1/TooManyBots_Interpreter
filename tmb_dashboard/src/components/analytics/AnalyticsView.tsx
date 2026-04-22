@@ -43,7 +43,18 @@ function buildChartMotionOptions(prefersReducedMotion: boolean) {
 function getPrimaryChartConfig(mode: DashboardMode, stats: DashboardStats, prefersReducedMotion: boolean): ChartConfiguration {
   const motionOptions = buildChartMotionOptions(prefersReducedMotion);
   if (mode === 'CONVERSATION') {
-    const funnel = stats.funnel ?? [{ step: 'start', label: 'Inicio', count: stats.conversationsStarted ?? 0 }];
+    const fallbackFunnel = [{ step: 'start', label: 'Inicio', count: stats.conversationsStarted ?? 0 }];
+    const rawFunnel = (stats as DashboardStats & { funnel?: unknown }).funnel;
+    const funnel = Array.isArray(rawFunnel)
+      ? rawFunnel
+      : (rawFunnel && typeof rawFunnel === 'object'
+        ? [
+            { step: 'started', label: 'Iniciadas', count: Number((rawFunnel as { started?: number }).started ?? 0) },
+            { step: 'active', label: 'Ativas', count: Number((rawFunnel as { active?: number }).active ?? 0) },
+            { step: 'completed', label: 'Concluidas', count: Number((rawFunnel as { completed?: number }).completed ?? 0) },
+            { step: 'abandoned', label: 'Abandonadas', count: Number((rawFunnel as { abandoned?: number }).abandoned ?? 0) },
+          ]
+        : fallbackFunnel);
     return {
       type: 'bar',
       data: {

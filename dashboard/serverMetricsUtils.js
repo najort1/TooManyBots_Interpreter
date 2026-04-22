@@ -60,6 +60,7 @@ export function buildWeeklyTrend({ now = new Date(), days = 7, startedTimestamps
     .sort((a, b) => a.dayTs - b.dayTs)
     .map(item => ({
       day: weekdayShortPtBr(new Date(item.dayTs)),
+      date: weekdayShortPtBr(new Date(item.dayTs)),
       started: item.started,
       abandoned: item.abandoned,
       abandonmentRate: item.started > 0 ? Number((item.abandoned / item.started).toFixed(4)) : 0,
@@ -70,14 +71,13 @@ export function buildConversationFunnel({ started = 0, abandoned = 0, completed 
   const safeStarted = Math.max(0, Number(started) || 0);
   const safeAbandoned = Math.max(0, Number(abandoned) || 0);
   const safeCompleted = Math.max(0, Number(completed) || 0);
-  return {
-    started: safeStarted,
-    completed: safeCompleted,
-    abandoned: safeAbandoned,
-    active: Math.max(0, safeStarted - safeCompleted - safeAbandoned),
-    completionRate: safeStarted > 0 ? Number((safeCompleted / safeStarted).toFixed(4)) : 0,
-    abandonmentRate: safeStarted > 0 ? Number((safeAbandoned / safeStarted).toFixed(4)) : 0,
-  };
+  const safeActive = Math.max(0, safeStarted - safeCompleted - safeAbandoned);
+  return [
+    { step: 'started', label: 'Iniciadas', count: safeStarted },
+    { step: 'active', label: 'Ativas', count: safeActive },
+    { step: 'completed', label: 'Concluidas', count: safeCompleted },
+    { step: 'abandoned', label: 'Abandonadas', count: safeAbandoned },
+  ];
 }
 
 export function normalizeActorJidFromEvent(event) {
