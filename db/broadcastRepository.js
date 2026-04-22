@@ -8,7 +8,7 @@
  */
 
 import { getDb, getStmts, ensureFlushForRead } from './context.js';
-import { normalizeRecipientList } from './helpers.js';
+import { isLikelyRealWhatsAppUserJid, normalizeRecipientList } from './helpers.js';
 
 // ─── Broadcast Contacts ───────────────────────────────────────────────────────
 
@@ -27,8 +27,9 @@ export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
 
   const normalizedLimit = Math.max(1, Math.min(5000, Number(limit) || 200));
   const normalizedSearch = String(search ?? '').trim();
+  const normalizedSearchLower = normalizedSearch.toLowerCase();
 
-  const rows = normalizedSearch
+  const eventRows = normalizedSearch
     ? stmts.searchBroadcastContacts.all(
         `%${normalizedSearch}%`,
         `%${normalizedSearch}%`,
@@ -36,13 +37,55 @@ export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
       )
     : stmts.listBroadcastContacts.all(normalizedLimit);
 
-  return rows
-    .map(row => ({
-      jid: String(row?.jid || '').trim(),
+  const profileRows = stmts.listContactProfiles.all(Math.max(normalizedLimit * 8, 2000));
+  const mergedByJid = new Map();
+
+  for (const row of eventRows) {
+    const jid = String(row?.jid || '').trim();
+    if (!jid || !isLikelyRealWhatsAppUserJid(jid)) continue;
+    mergedByJid.set(jid, {
+      jid,
       name: String(row?.display_name || '').trim(),
       lastInteractionAt: Number(row?.last_interaction_at) || 0,
-    }))
-    .filter(row => row.jid);
+    });
+  }
+
+  for (const row of profileRows) {
+    const jid = String(row?.jid || '').trim();
+    if (!jid || !isLikelyRealWhatsAppUserJid(jid)) continue;
+
+    const profileName = String(row?.display_name || '').trim();
+    const profileUpdatedAt = Number(row?.updated_at) || 0;
+    const existing = mergedByJid.get(jid);
+    if (!existing) {
+      mergedByJid.set(jid, {
+        jid,
+        name: profileName,
+        lastInteractionAt: profileUpdatedAt,
+      });
+      continue;
+    }
+
+    if (!existing.name && profileName) {
+      existing.name = profileName;
+    }
+    if (!existing.lastInteractionAt && profileUpdatedAt > 0) {
+      existing.lastInteractionAt = profileUpdatedAt;
+    }
+  }
+
+  const mergedRows = [...mergedByJid.values()];
+  const filteredRows = normalizedSearchLower
+    ? mergedRows.filter(row => {
+        const jid = String(row?.jid || '').toLowerCase();
+        const name = String(row?.name || '').toLowerCase();
+        return jid.includes(normalizedSearchLower) || name.includes(normalizedSearchLower);
+      })
+    : mergedRows;
+
+  return filteredRows
+    .sort((a, b) => (Number(b?.lastInteractionAt) || 0) - (Number(a?.lastInteractionAt) || 0))
+    .slice(0, normalizedLimit);
 }
 
 // ─── Broadcast Campaigns ──────────────────────────────────────────────────────
