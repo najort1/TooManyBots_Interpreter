@@ -361,7 +361,7 @@ test('database info includes daily size history snapshots', () => {
 
 test('contact display names persist in sqlite and enrich broadcast list results', () => {
   const now = Date.now();
-  const jid = `persisted-contact-${now}@s.whatsapp.net`;
+  const jid = '5511999999999@s.whatsapp.net';
 
   addConversationEvent({
     occurredAt: now,
@@ -393,5 +393,44 @@ test('contact display names persist in sqlite and enrich broadcast list results'
   assert.ok(
     broadcastList.some(item => item.jid === jid && item.name === 'lucy'),
     'expected persisted contact name to be searchable in broadcast contacts'
+  );
+});
+
+test('synthetic user jid is ignored by contact persistence and broadcast contacts list', () => {
+  const now = Date.now();
+  const jid = `persisted-contact-${now}@s.whatsapp.net`;
+
+  addConversationEvent({
+    occurredAt: now,
+    eventType: 'message-incoming',
+    direction: 'incoming',
+    jid,
+    flowPath: '/tmp/persisted-contact-flow.tmb',
+    messageText: 'oi',
+    metadata: {},
+  });
+
+  const upserted = upsertContactDisplayName({
+    jid,
+    displayName: '~lucy',
+    source: 'test-suite',
+    updatedAt: now,
+  });
+
+  assert.equal(upserted, false);
+  assert.equal(getContactDisplayName(jid), '');
+
+  const names = listContactDisplayNames(5000);
+  assert.equal(
+    names.some(item => item.jid === jid),
+    false,
+    'synthetic jid should not be returned by listContactDisplayNames'
+  );
+
+  const broadcastList = listBroadcastContacts({ search: 'persisted-contact', limit: 500 });
+  assert.equal(
+    broadcastList.some(item => item.jid === jid),
+    false,
+    'synthetic jid should not be returned by broadcast contacts'
   );
 });
