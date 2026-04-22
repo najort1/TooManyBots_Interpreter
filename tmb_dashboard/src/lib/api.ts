@@ -49,6 +49,12 @@ export function isAbortError(error: unknown): boolean {
   return message.includes('aborted') || message.includes('aborterror');
 }
 
+function toAbortError(): Error {
+  const abortError = new Error('request-aborted');
+  abortError.name = 'AbortError';
+  return abortError;
+}
+
 async function requestJson<T>(url: string, init?: RequestInit, options?: RequestJsonOptions): Promise<T> {
   const resolvedUrl = resolveApiUrl(url);
   const requestKey = String(options?.requestKey || '').trim();
@@ -64,22 +70,19 @@ async function requestJson<T>(url: string, init?: RequestInit, options?: Request
 
   const signal = init?.signal ?? controller?.signal;
   let response: Response;
+  let text = '';
   try {
     response = await fetch(resolvedUrl, { ...(init || {}), signal });
+    text = await response.text();
   } catch (error) {
+    if (isAbortError(error)) {
+      throw toAbortError();
+    }
+    throw error;
+  } finally {
     if (controller && inflightByKey.get(requestKey) === controller) {
       inflightByKey.delete(requestKey);
     }
-    if (isAbortError(error)) {
-      const abortError = new Error('request-aborted');
-      abortError.name = 'AbortError';
-      throw abortError;
-    }
-    throw error;
-  }
-  const text = await response.text().catch(() => '');
-  if (controller && inflightByKey.get(requestKey) === controller) {
-    inflightByKey.delete(requestKey);
   }
 
   if (!response.ok) {
