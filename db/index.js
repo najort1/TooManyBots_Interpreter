@@ -20,6 +20,7 @@ import { setDbContext, registerFlushForRead } from './context.js';
 import { createEventRepository } from './eventRepository.js';
 import { createAnalyticsRepository } from './analyticsRepository.js';
 import { SESSION_STATUS } from '../config/constants.js';
+import { normalizeBoolean, normalizeInt } from '../utils/normalization.js';
 import { createDbRuntimeState, normalizeDbRuntimeConfig } from './runtimeConfig.js';
 import {
   normalizeSessionScope,
@@ -28,7 +29,8 @@ import {
 } from './helpers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DATA_DIR   = path.join(__dirname, '..', 'data');
+const ENV_DATA_DIR = String(process.env.TMB_DATA_DIR || '').trim();
+const DATA_DIR   = ENV_DATA_DIR ? path.resolve(ENV_DATA_DIR) : path.join(__dirname, '..', 'data');
 const LEGACY_DB_PATH = path.join(DATA_DIR, 'sessions.db');
 const RUNTIME_DB_PATH = path.join(DATA_DIR, 'runtime.db');
 const ANALYTICS_DB_PATH = path.join(DATA_DIR, 'analytics.db');
@@ -37,6 +39,12 @@ const ANALYTICS_SCHEMA = 'analytics';
 const DB_SIZE_HISTORY_DAYS = 7;
 const JSON_BOOL_TRUE = '1';
 const JSON_BOOL_FALSE = '0';
+const REAL_WHATSAPP_USER_JID_SQL = `
+  ce.jid LIKE '%@s.whatsapp.net'
+  AND instr(ce.jid, '@') > 1
+  AND length(substr(ce.jid, 1, instr(ce.jid, '@') - 1)) BETWEEN 8 AND 20
+  AND substr(ce.jid, 1, instr(ce.jid, '@') - 1) NOT GLOB '*[^0-9]*'
+`;
 
 /** @type {import('better-sqlite3').Database} */
 let db;
@@ -697,7 +705,7 @@ export async function initDb() {
        LEFT JOIN ${ANALYTICS_SCHEMA}.contact_profiles cp
          ON cp.jid = ce.jid
        WHERE ce.direction = 'incoming'
-          AND ce.jid LIKE '%@s.whatsapp.net'
+         AND ${REAL_WHATSAPP_USER_JID_SQL}
        GROUP BY ce.jid
        ORDER BY last_interaction_at DESC
        LIMIT ?`
@@ -711,11 +719,11 @@ export async function initDb() {
        LEFT JOIN ${ANALYTICS_SCHEMA}.contact_profiles cp
          ON cp.jid = ce.jid
        WHERE ce.direction = 'incoming'
-          AND ce.jid LIKE '%@s.whatsapp.net'
-         AND (
-           ce.jid LIKE ?
-           OR cp.display_name LIKE ?
-         )
+         AND ${REAL_WHATSAPP_USER_JID_SQL}
+        AND (
+          ce.jid LIKE ?
+          OR cp.display_name LIKE ?
+        )
        GROUP BY ce.jid
        ORDER BY last_interaction_at DESC
        LIMIT ?`

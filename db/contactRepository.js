@@ -8,7 +8,7 @@
  */
 
 import { getStmts } from './context.js';
-import { normalizePersistedDisplayName } from './helpers.js';
+import { isLikelyRealWhatsAppUserJid, normalizePersistedDisplayName } from './helpers.js';
 
 // ─── Contact Profiles ─────────────────────────────────────────────────────────
 
@@ -33,6 +33,9 @@ export function upsertContactDisplayName({
   const stmts = getStmts();
   const normalizedJid = String(jid ?? '').trim();
   if (!normalizedJid) return false;
+  if (normalizedJid.endsWith('@s.whatsapp.net') && !isLikelyRealWhatsAppUserJid(normalizedJid)) {
+    return false;
+  }
 
   const normalizedDisplayName = normalizePersistedDisplayName(displayName, normalizedJid);
   if (!normalizedDisplayName) return false;
@@ -79,6 +82,7 @@ export function listContactDisplayNames(limit = 5000) {
   return rows
     .map(row => {
       const jid = String(row?.jid || '').trim();
+      if (jid.endsWith('@s.whatsapp.net') && !isLikelyRealWhatsAppUserJid(jid)) return null;
       const name = normalizePersistedDisplayName(row?.display_name, jid);
       if (!jid || !name) return null;
       return {

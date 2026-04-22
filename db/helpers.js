@@ -68,6 +68,15 @@ export function mapBroadcastContactRow(row) {
   };
 }
 
+export function isLikelyRealWhatsAppUserJid(jid = '') {
+  const normalized = String(jid ?? '').trim();
+  if (!normalized.endsWith('@s.whatsapp.net')) return false;
+  const atIndex = normalized.indexOf('@');
+  if (atIndex <= 0) return false;
+  const localPart = normalized.slice(0, atIndex);
+  return /^\d{8,20}$/.test(localPart);
+}
+
 export function normalizePersistedDisplayName(value, fallbackJid = '') {
   const raw = String(value ?? '').trim();
   if (!raw) return '';
