@@ -102,7 +102,7 @@ export function createSetupRuntimeStateController({
     const contactsFromCache = await fetchSelectableContacts(contactCache);
     const currentSocket = getCurrentSocket();
     const groupsFromSocket = currentSocket
-      ? await fetchSelectableGroups(currentSocket).catch(() => [])
+      ? await fetchSelectableGroups(currentSocket, contactCache).catch(() => [])
       : [];
     const recoveredFromDb = fetchSavedTestTargetJidsFromDb(contactCache, 2500);
 

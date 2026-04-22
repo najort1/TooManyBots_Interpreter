@@ -249,11 +249,23 @@ export function mergeChatsIntoContactCache(contactCache, chats) {
   if (!Array.isArray(chats)) return;
   for (const chat of chats) {
     const jid = toJidString(chat?.id) || toJidString(chat?.jid);
-    if (!jid || !jid.endsWith('@s.whatsapp.net')) continue;
-    mergeContactCacheEntry(contactCache, {
-      id: jid,
-      name: chat?.name || chat?.notify || chat?.pushName || jid,
-    });
+    if (!jid) continue;
+
+    if (isUserJid(jid)) {
+      mergeContactCacheEntry(contactCache, {
+        id: jid,
+        name: chat?.name || chat?.notify || chat?.pushName || jid,
+      });
+      continue;
+    }
+
+    if (isGroupJid(jid)) {
+      const groupName = formatNameOrFallback(
+        chat?.name || chat?.subject || chat?.notify || chat?.pushName || jid,
+        jid
+      );
+      contactCache.set(jid, { jid, name: groupName });
+    }
   }
 }
 
@@ -271,7 +283,7 @@ export async function fetchSelectableContacts(contactCache) {
   return contacts;
 }
 
-export async function fetchSelectableGroups(sock) {
+export async function fetchSelectableGroups(sock, contactCache = null) {
   const raw = await sock.groupFetchAllParticipating();
   const groups = Object.entries(raw ?? {})
     .map(([jid, group]) => ({
@@ -281,6 +293,15 @@ export async function fetchSelectableGroups(sock) {
     }))
     .filter(group => isGroupJid(group.jid))
     .sort((a, b) => a.name.localeCompare(b.name));
+
+  if (contactCache && typeof contactCache.set === 'function') {
+    for (const group of groups) {
+      const groupJid = String(group?.jid || '').trim();
+      if (!groupJid) continue;
+      const groupName = formatNameOrFallback(group?.name, groupJid);
+      contactCache.set(groupJid, { jid: groupJid, name: groupName });
+    }
+  }
 
   return groups;
 }

@@ -25,7 +25,7 @@ export async function configureRuntimeAccessSelectors(sock, flow, currentConfig,
     const shouldAskGroups = shouldReconfigureNow || !hasSavedWhitelist;
 
     if (shouldAskGroups) {
-      const groups = await fetchSelectableGroups(sock);
+      const groups = await fetchSelectableGroups(sock, contactCache);
       console.log(`[Setup] Grupos disponiveis para whitelist: ${groups.length}`);
       if (groups.length === 0) {
         console.warn('Nenhum grupo encontrado para configurar whitelist de grupos.');
@@ -79,7 +79,7 @@ export async function configureRuntimeAccessSelectors(sock, flow, currentConfig,
           const contacts = await fetchSelectableContacts(contactCache);
           let groups = [];
           try {
-            groups = await fetchSelectableGroups(sock);
+            groups = await fetchSelectableGroups(sock, contactCache);
           } catch {
             groups = [];
           }
