@@ -396,6 +396,26 @@ test('contact display names persist in sqlite and enrich broadcast list results'
   );
 });
 
+test('broadcast contacts include persisted profiles even without incoming event history', () => {
+  const now = Date.now();
+  const jid = `55${now}@s.whatsapp.net`;
+
+  const upserted = upsertContactDisplayName({
+    jid,
+    displayName: 'Contato sem historico',
+    source: 'test-suite',
+    updatedAt: now,
+  });
+
+  assert.equal(upserted, true);
+
+  const broadcastList = listBroadcastContacts({ search: 'sem historico', limit: 500 });
+  assert.ok(
+    broadcastList.some(item => item.jid === jid && item.name === 'Contato sem historico'),
+    'expected persisted-only contact profile to be listed in broadcast contacts'
+  );
+});
+
 test('synthetic user jid is ignored by contact persistence and broadcast contacts list', () => {
   const now = Date.now();
   const jid = `persisted-contact-${now}@s.whatsapp.net`;
