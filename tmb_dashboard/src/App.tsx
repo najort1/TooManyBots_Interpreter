@@ -80,9 +80,28 @@ type PendingConfirmAction =
   | 'reset-session-by-jid'
   | 'send-broadcast';
 
+const DASHBOARD_VIEW_STORAGE_KEY = 'tmb_dashboard_view';
+
+function isDashboardView(value: string): value is DashboardView {
+  return value === 'setup'
+    || value === 'analytics'
+    || value === 'observability'
+    || value === 'handoff'
+    || value === 'broadcast'
+    || value === 'sessions'
+    || value === 'settings'
+    || value === 'flows'
+    || value === 'dbMaintenance';
+}
+
+function getInitialDashboardView(): DashboardView {
+  const stored = String(window.localStorage.getItem(DASHBOARD_VIEW_STORAGE_KEY) || '').trim();
+  return isDashboardView(stored) ? stored : 'analytics';
+}
+
 function App() {
-  const [view, setView] = useState<DashboardView>('analytics');
-  const [renderedView, setRenderedView] = useState<DashboardView>('analytics');
+  const [view, setView] = useState<DashboardView>(() => getInitialDashboardView());
+  const [renderedView, setRenderedView] = useState<DashboardView>(() => getInitialDashboardView());
   const [viewTransition, setViewTransition] = useState<'idle' | 'enter' | 'exit'>('idle');
   const [needsInitialSetup, setNeedsInitialSetup] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -212,6 +231,10 @@ function App() {
   useEffect(() => {
     wsConnectedRef.current = wsConnected;
   }, [wsConnected]);
+
+  useEffect(() => {
+    window.localStorage.setItem(DASHBOARD_VIEW_STORAGE_KEY, view);
+  }, [view]);
 
   useEffect(() => {
     const root = document.documentElement;
