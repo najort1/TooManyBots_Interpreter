@@ -5,7 +5,11 @@ export function createFlowRegistryController({
   runtimeModeDevelopment,
 } = {}) {
   function isDevelopmentMode(currentConfig) {
-    return String(currentConfig?.runtimeMode ?? '').toLowerCase() === runtimeModeDevelopment;
+    const mode = String(currentConfig?.runtimeMode ?? '').toLowerCase();
+    // Hot-reload deve funcionar em qualquer modo nao-producao.
+    // No setup atual, "restricted-test" e tratado como ambiente iterativo.
+    if (!mode) return false;
+    return mode !== 'production';
   }
 
   function getActiveFlows() {
