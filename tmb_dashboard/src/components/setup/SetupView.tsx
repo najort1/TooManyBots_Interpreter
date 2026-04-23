@@ -343,7 +343,7 @@ export function SetupView({
 
       <article className={panelClass}>
         <header className="mb-3">
-          <h3 className="text-base font-extrabold">Ajustes Avancados</h3>
+          <h3 className="text-base font-extrabold">Ajustes Avançados</h3>
         </header>
 
         <div className="grid grid-cols-1 gap-3">
@@ -400,7 +400,7 @@ export function SetupView({
                 className={`${inputBaseClass} w-full max-w-[260px]`}
               />
               <span className="text-xs text-slate-500">
-                WhatsApp: {setupTargets?.socketReady ? 'conectado' : 'aguardando conexao'}
+                WhatsApp: {setupTargets?.socketReady ? 'conectado' : 'aguardando conexão'}
               </span>
             </div>
 
@@ -508,7 +508,7 @@ export function SetupView({
 
           <label className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
             <p className="m-0 text-sm font-semibold text-slate-700">Contatos/Grupos do Teste Restrito</p>
-            <small className="text-xs text-slate-500">Um JID por linha (ou separados por virgula).</small>
+            <small className="text-xs text-slate-500">Um JID por linha (ou separados por vírgula).</small>
             <textarea
               value={testTargetsInput}
               onChange={event => setTestTargetsInput(event.target.value)}
@@ -521,7 +521,7 @@ export function SetupView({
 
           <label className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
             <p className="m-0 text-sm font-semibold text-slate-700">Whitelist de Grupos</p>
-            <small className="text-xs text-slate-500">Necessario para flows com escopo group-whitelist.</small>
+            <small className="text-xs text-slate-500">Necessário para fluxos com escopo group-whitelist.</small>
             <textarea
               value={groupWhitelistInput}
               onChange={event => setGroupWhitelistInput(event.target.value)}

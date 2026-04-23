@@ -15,9 +15,9 @@ interface ObservabilityViewProps {
 }
 
 const TELEMETRY_OPTIONS: Array<{ value: DashboardTelemetryLevel; label: string }> = [
-  { value: 'minimum', label: 'Minimo' },
+  { value: 'minimum', label: 'Mínimo' },
   { value: 'operational', label: 'Operacional' },
-  { value: 'diagnostic', label: 'Diagnostico' },
+  { value: 'diagnostic', label: 'Diagnóstico' },
   { value: 'verbose', label: 'Verbose temporario' },
 ];
 
@@ -127,14 +127,14 @@ export function ObservabilityView({
 
       <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard
-          title="CPU media"
+          title="CPU média"
           value={cpuPercent}
           icon="fa-solid fa-microchip"
           color="amber"
           formatValue={value => `${value.toFixed(1)}%`}
         />
         <KpiCard
-          title="Memoria RSS"
+          title="Memória RSS"
           value={memoryMb}
           icon="fa-solid fa-memory"
           color="blue"
@@ -147,7 +147,7 @@ export function ObservabilityView({
           color="red"
         />
         <KpiCard
-          title="Sessoes ativas"
+          title="Sessões ativas"
           value={Number(snapshot?.runtime?.sessionsActive || 0)}
           icon="fa-solid fa-users"
           color="emerald"
@@ -167,23 +167,23 @@ export function ObservabilityView({
 
         <article className={`${panelClass} xl:col-start-3 xl:row-start-1`}>
           <header className="mb-3">
-            <h3 className="text-base font-extrabold">Saude do runtime</h3>
+            <h3 className="text-base font-extrabold">Saúde do runtime</h3>
           </header>
           <div className="grid grid-cols-1 gap-2 text-sm">
             <div className="rounded-xl border border-[#e5edf7] bg-[#f8fbff] p-3">
-              <span className="text-slate-500">Latencia media por mensagem</span>
+              <span className="text-slate-500">Latência média por mensagem</span>
               <strong className="block text-lg">{Number(snapshot?.runtime?.messageLatencyAvgMs || 0).toFixed(1)} ms</strong>
             </div>
             <div className="rounded-xl border border-[#e5edf7] bg-[#f8fbff] p-3">
-              <span className="text-slate-500">Latencia p95 por mensagem</span>
+              <span className="text-slate-500">Latência p95 por mensagem</span>
               <strong className="block text-lg">{Number(snapshot?.runtime?.messageLatencyP95Ms || 0).toFixed(1)} ms</strong>
             </div>
             <div className="rounded-xl border border-[#e5edf7] bg-[#f8fbff] p-3">
-              <span className="text-slate-500">Tempo medio query sqlite</span>
+              <span className="text-slate-500">Tempo médio query sqlite</span>
               <strong className="block text-lg">{Number(snapshot?.runtime?.sqliteQueryAvgMs || 0).toFixed(2)} ms</strong>
             </div>
             <div className="rounded-xl border border-[#e5edf7] bg-[#f8fbff] p-3">
-              <span className="text-slate-500">Reconexoes socket (24h)</span>
+              <span className="text-slate-500">Reconexões socket (24h)</span>
               <strong className="block text-lg">{Number(snapshot?.runtime?.socketReconnectRatePerDay || 0)}</strong>
             </div>
           </div>
@@ -195,7 +195,7 @@ export function ObservabilityView({
           </header>
           <div className="space-y-2 text-sm">
             <div className="rounded-xl border border-[#e5edf7] bg-[#f8fbff] p-3">
-              <span className="text-slate-500">Fila de ingestao</span>
+              <span className="text-slate-500">Fila de ingestão</span>
               <strong className="block text-lg">{Number(snapshot?.runtime?.backlog?.ingestionQueue || 0)}</strong>
             </div>
             <div className="rounded-xl border border-[#e5edf7] bg-[#f8fbff] p-3">
@@ -215,7 +215,7 @@ export function ObservabilityView({
           </header>
           <div className="max-h-[260px] overflow-auto xl:max-h-none">
             {handlers.length === 0 ? (
-              <p className="text-sm text-slate-500">Sem erros por handler no nivel atual.</p>
+              <p className="text-sm text-slate-500">Sem erros por handler no nível atual.</p>
             ) : (
               handlers.map(item => (
                 <div key={item.handlerType} className="mb-2 rounded-xl border border-[#ebf1f8] p-2 text-sm last:mb-0">
@@ -229,14 +229,14 @@ export function ObservabilityView({
 
         <article className={`${panelClass} flex flex-col xl:col-span-2 xl:row-start-2 xl:row-span-2`}>
           <header className="mb-3">
-            <h3 className="text-base font-extrabold">Saude do banco local</h3>
+            <h3 className="text-base font-extrabold">Saúde do banco local</h3>
           </header>
           <div className="min-h-[260px] flex-1 overflow-auto rounded-xl border border-[#e5edf7]">
             <table className="w-full border-collapse text-[0.8rem]">
               <thead>
                 <tr>
                   <th className="border-b border-[#e5edf7] p-2 text-left">Query</th>
-                  <th className="border-b border-[#e5edf7] p-2 text-left">Media</th>
+                  <th className="border-b border-[#e5edf7] p-2 text-left">Média</th>
                   <th className="border-b border-[#e5edf7] p-2 text-left">P95</th>
                   <th className="border-b border-[#e5edf7] p-2 text-left">Max</th>
                   <th className="border-b border-[#e5edf7] p-2 text-left">Contagem</th>
@@ -245,7 +245,7 @@ export function ObservabilityView({
               <tbody>
                 {queries.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-3 text-center text-slate-500">Sem consultas amostradas no nivel atual.</td>
+                    <td colSpan={5} className="p-3 text-center text-slate-500">Sem consultas amostradas no nível atual.</td>
                   </tr>
                 ) : queries.map(item => (
                   <tr key={item.query}>
@@ -275,7 +275,7 @@ export function ObservabilityView({
               <strong className="block text-lg">{Number(snapshot?.http?.totalErrors || 0)}</strong>
             </div>
             <div className="rounded-xl border border-[#e5edf7] bg-[#f8fbff] p-3 text-sm">
-              <span className="text-slate-500">WS conexoes abertas</span>
+              <span className="text-slate-500">WS conexões abertas</span>
               <strong className="block text-lg">{Number(snapshot?.websocket?.connectionsOpened || 0)}</strong>
             </div>
             <div className="rounded-xl border border-[#e5edf7] bg-[#f8fbff] p-3 text-sm">
@@ -288,16 +288,16 @@ export function ObservabilityView({
               <thead>
                 <tr>
                   <th className="border-b border-[#e5edf7] p-2 text-left">Rota</th>
-                  <th className="border-b border-[#e5edf7] p-2 text-left">Media</th>
+                  <th className="border-b border-[#e5edf7] p-2 text-left">Média</th>
                   <th className="border-b border-[#e5edf7] p-2 text-left">P95</th>
                   <th className="border-b border-[#e5edf7] p-2 text-left">Erros</th>
-                  <th className="border-b border-[#e5edf7] p-2 text-left">Ultimo</th>
+                  <th className="border-b border-[#e5edf7] p-2 text-left">Último</th>
                 </tr>
               </thead>
               <tbody>
                 {routes.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="p-3 text-center text-slate-500">Sem rotas amostradas no nivel atual.</td>
+                    <td colSpan={5} className="p-3 text-center text-slate-500">Sem rotas amostradas no nível atual.</td>
                   </tr>
                 ) : routes.map(route => (
                   <tr key={route.route}>

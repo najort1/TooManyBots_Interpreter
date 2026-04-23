@@ -125,7 +125,7 @@ export function SettingsView({
           <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
             <p className="m-0 text-sm font-semibold text-slate-700">Auto-reload de flows (.tmb)</p>
             <small className="text-xs text-slate-500">
-              Atualiza automaticamente o flow ao detectar mudancas em arquivos.
+              Atualiza automaticamente o fluxo ao detectar mudanças em arquivos.
             </small>
             <div className="mt-2 flex gap-2">
               <button
@@ -212,7 +212,7 @@ export function SettingsView({
           </div>
 
           <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
-            <p className="m-0 text-sm font-semibold text-slate-700">Cache Settings</p>
+            <p className="m-0 text-sm font-semibold text-slate-700">Configurações de Cache</p>
             <small className="text-xs text-slate-500">
               Limpa cache em memória de sessões/blocos para diagnóstico sem reiniciar.
             </small>

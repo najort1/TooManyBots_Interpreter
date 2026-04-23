@@ -37,7 +37,7 @@ function getSessionBadge(session: HandoffSession): string {
 function getTimelineLabel(event: EventLog): string {
   const eventType = String(event.eventType || '').toLowerCase();
   const direction = String(event.direction || '').toLowerCase();
-  if (direction === 'incoming' || eventType === 'message-incoming') return 'Usuario';
+  if (direction === 'incoming' || eventType === 'message-incoming') return 'Usuário';
   if (direction === 'outgoing' || eventType === 'human-message-outgoing' || eventType === 'message-outgoing') {
     return 'Atendente/Bot';
   }

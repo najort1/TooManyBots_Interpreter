@@ -108,7 +108,7 @@ export function SessionManagementView({
                   disabled={busyAction || !selectedFlowPath}
                 >
                   <i className="fa-solid fa-broom" aria-hidden="true" />
-                  Limpar sessões do flow selecionado
+                  Limpar sessões do fluxo selecionado
                 </button>
               </div>
             </div>
@@ -136,15 +136,15 @@ export function SessionManagementView({
             </div>
 
             <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
-              <p className="m-0 text-sm font-semibold text-slate-700">Timeout Configuration</p>
-              <small className="text-xs text-slate-500">Ajusta `sessionTimeoutMinutes` do flow selecionado.</small>
+              <p className="m-0 text-sm font-semibold text-slate-700">Configuração de Timeout</p>
+              <small className="text-xs text-slate-500">Ajusta `sessionTimeoutMinutes` do fluxo selecionado.</small>
               <div className="mt-2 grid grid-cols-1 gap-2">
                 <select
                   value={selectedFlowPath}
                   onChange={event => onSelectFlowPath(event.target.value)}
                   className={inputBaseClass}
                 >
-                  <option value="">Selecione um flow</option>
+                  <option value="">Selecione um fluxo</option>
                   {flows.map(flow => (
                     <option key={flow.flowPath} value={flow.flowPath}>
                       {flow.flowPath} ({flow.botType})
