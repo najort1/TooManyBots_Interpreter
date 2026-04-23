@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import { fmtTime, formatJidPhone } from '../../lib/format';
 import { buttonBaseClass, iconButtonClass, inputBaseClass, panelClass, timelineItemClass } from '../../lib/uiTokens';
 import type { BroadcastContact, BroadcastSendProgress, BroadcastSendResult } from '../../types';
@@ -84,6 +84,11 @@ export function BroadcastView({
 }: BroadcastViewProps) {
   const imageInputRef = useRef<HTMLInputElement | null>(null);
   const selected = useMemo(() => new Set(selectedJids), [selectedJids]);
+  const groupRecipientsCount = useMemo(
+    () => contacts.filter(contact => String(contact?.recipientType || '').trim().toLowerCase() === 'group').length,
+    [contacts]
+  );
+  const individualRecipientsCount = Math.max(0, contacts.length - groupRecipientsCount);
   const recipientsCount = recipientMode === 'all' ? contacts.length : selectedJids.length;
   const progressAttempted = Math.max(0, Number(sendProgress?.attempted || recipientsCount));
   const progressSent = Math.max(0, Number(sendProgress?.sent || 0));
@@ -342,7 +347,7 @@ export function BroadcastView({
         </div>
 
         <label className="mb-2 block text-xs font-bold uppercase tracking-[0.06em] text-slate-500" htmlFor="broadcast-search">
-          Buscar contato
+          Buscar destinatário
         </label>
         <input
           id="broadcast-search"
@@ -381,12 +386,12 @@ export function BroadcastView({
           ].join(' ')}
         >
           {loadingContacts ? (
-            <p className="py-4 text-center text-sm text-slate-500">Carregando contatos...</p>
+            <p className="py-4 text-center text-sm text-slate-500">Carregando destinatários...</p>
           ) : contacts.length === 0 ? (
             <EmptyStateMascot
               compact
-              title="Nenhum contato encontrado."
-              description="Sincronize ou ajuste o filtro para exibir destinatários nesta lista."
+              title="Nenhum destinatário encontrado."
+              description="Sincronize ou ajuste o filtro para exibir contatos e grupos nesta lista."
             />
           ) : (
             contacts.map(contact => (
@@ -408,6 +413,9 @@ export function BroadcastView({
                   <small className="block text-[0.73rem] text-slate-500">
                     Última interação: {contact.lastInteractionAt ? fmtTime(contact.lastInteractionAt) : '--:--'}
                   </small>
+                  <small className="mt-1 inline-block rounded-full bg-[#e2e8f0] px-2 py-0.5 text-[0.66rem] font-bold text-slate-700">
+                    {String(contact?.recipientType || '').trim().toLowerCase() === 'group' ? 'Grupo' : 'Contato'}
+                  </small>
                   {contact.hasActiveSession ? (
                     <small className="mt-1 inline-block rounded-full bg-[#dcfce7] px-2 py-0.5 text-[0.66rem] font-bold text-[#166534]">
                       Sessão ativa
@@ -425,6 +433,9 @@ export function BroadcastView({
           <h3 className="text-base font-extrabold">Novo Anúncio</h3>
           <small className="mt-1 block text-xs text-slate-500">
             Destinatários atuais: {recipientsCount} | modo {recipientMode === 'all' ? 'todos' : 'selecionados'}
+          </small>
+          <small className="mt-1 block text-[0.74rem] text-slate-500">
+            Lista disponível: {individualRecipientsCount} contato(s) e {groupRecipientsCount} grupo(s)
           </small>
           <small className="mt-1 block text-[0.74rem] text-[#1d4e89]">
             Intervalo atual de envio: {Math.max(0, Math.floor(Number(broadcastSendIntervalMs) || 0))} ms. Configure em Configurações &gt; Runtime.
@@ -655,3 +666,4 @@ export function BroadcastView({
     </section>
   );
 }
+
