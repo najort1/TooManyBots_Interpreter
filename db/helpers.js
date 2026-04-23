@@ -61,10 +61,14 @@ export function mapConversationEventRow(row) {
 }
 
 export function mapBroadcastContactRow(row) {
+  const jid = String(row?.jid || '').trim();
   return {
-    jid: String(row?.jid || '').trim(),
+    jid,
     name: String(row?.display_name || '').trim(),
     lastInteractionAt: Number(row?.last_interaction_at) || 0,
+    recipientType: String(row?.recipient_type || '').trim().toLowerCase() === 'group'
+      ? 'group'
+      : (isLikelyRealWhatsAppGroupJid(jid) ? 'group' : 'individual'),
   };
 }
 
@@ -75,6 +79,29 @@ export function isLikelyRealWhatsAppUserJid(jid = '') {
   if (atIndex <= 0) return false;
   const localPart = normalized.slice(0, atIndex);
   return /^\d{8,20}$/.test(localPart);
+}
+
+export function isLikelyRealWhatsAppGroupJid(jid = '') {
+  const normalized = String(jid ?? '').trim();
+  if (!normalized.endsWith('@g.us')) return false;
+  const atIndex = normalized.indexOf('@');
+  if (atIndex <= 0) return false;
+  const localPart = normalized.slice(0, atIndex);
+  return /^\d{8,24}(?:-\d{1,24})?$/.test(localPart);
+}
+
+export function isLikelyRealBroadcastRecipientJid(jid = '') {
+  return isLikelyRealWhatsAppUserJid(jid) || isLikelyRealWhatsAppGroupJid(jid);
+}
+
+export function getBroadcastRecipientType(jid = '') {
+  if (isLikelyRealWhatsAppGroupJid(jid)) return 'group';
+  if (isLikelyRealWhatsAppUserJid(jid)) return 'individual';
+  return '';
+}
+
+function normalizeRecipientType(value = '') {
+  return String(value ?? '').trim().toLowerCase() === 'group' ? 'group' : 'individual';
 }
 
 export function normalizePersistedDisplayName(value, fallbackJid = '') {
@@ -98,5 +125,27 @@ export function normalizeRecipientList(recipients = []) {
     seen.add(jid);
     result.push(jid);
   }
+  return result;
+}
+
+export function normalizeBroadcastRecipientList(recipients = []) {
+  if (!Array.isArray(recipients)) return [];
+  const seen = new Set();
+  const result = [];
+
+  for (const item of recipients) {
+    const jid = String(typeof item === 'string' ? item : item?.jid ?? '').trim();
+    if (!jid || seen.has(jid)) continue;
+    if (!isLikelyRealBroadcastRecipientJid(jid)) continue;
+
+    const inferredType = getBroadcastRecipientType(jid);
+    const requestedType = normalizeRecipientType(typeof item === 'string' ? '' : item?.recipientType ?? '');
+    result.push({
+      jid,
+      recipientType: inferredType || requestedType,
+    });
+    seen.add(jid);
+  }
+
   return result;
 }

@@ -6,19 +6,52 @@ function normalizeJid(value) {
   return String(value ?? '').trim();
 }
 
-function normalizeJidList(value) {
+function inferRecipientType(jid) {
+  return String(jid || '').endsWith('@g.us') ? 'group' : 'individual';
+}
+
+function normalizeRecipientList(value, { knownRecipientsByJid = null } = {}) {
   if (!Array.isArray(value)) return [];
   const seen = new Set();
   const result = [];
 
   for (const item of value) {
-    const jid = normalizeJid(item);
+    const inputJid = normalizeJid(typeof item === 'string' ? item : item?.jid);
+    const known = knownRecipientsByJid?.get?.(inputJid) || null;
+    const jid = normalizeJid(known?.jid || inputJid);
     if (!jid || seen.has(jid)) continue;
     seen.add(jid);
-    result.push(jid);
+    const recipientTypeRaw = String(
+      known?.recipientType
+      || (typeof item === 'string' ? '' : item?.recipientType ?? '')
+      || inferRecipientType(jid)
+    )
+      .trim()
+      .toLowerCase();
+    result.push({
+      jid,
+      recipientType: recipientTypeRaw === 'group' ? 'group' : 'individual',
+    });
   }
 
   return result;
+}
+
+function summarizeRecipients(recipients = []) {
+  let individuals = 0;
+  let groups = 0;
+  for (const recipient of recipients) {
+    if (String(recipient?.recipientType || '').trim().toLowerCase() === 'group') {
+      groups += 1;
+    } else {
+      individuals += 1;
+    }
+  }
+  return {
+    total: recipients.length,
+    individuals,
+    groups,
+  };
 }
 
 export function createActiveSessionLookup({
@@ -56,18 +89,37 @@ export function resolveBroadcastSelection({
   selectedJids = [],
   allContacts = [],
 }) {
+  const knownRecipientsByJid = new Map(
+    (Array.isArray(allContacts) ? allContacts : [])
+      .map(contact => {
+        const jid = normalizeJid(contact?.jid);
+        if (!jid) return null;
+        return [
+          jid,
+          {
+            jid,
+            recipientType: String(contact?.recipientType || '').trim().toLowerCase() === 'group' ? 'group' : inferRecipientType(jid),
+          },
+        ];
+      })
+      .filter(Boolean)
+  );
   const normalizedTarget = String(target ?? '').trim().toLowerCase();
   if (normalizedTarget === 'selected') {
-    const selected = normalizeJidList(selectedJids).slice(0, BROADCAST_LIMITS.SELECTED_RECIPIENTS_MAX);
+    const selected = normalizeRecipientList(selectedJids, { knownRecipientsByJid })
+      .slice(0, BROADCAST_LIMITS.SELECTED_RECIPIENTS_MAX);
     return {
       target: 'selected',
       recipients: selected,
+      recipientCounts: summarizeRecipients(selected),
     };
   }
 
-  const recipients = normalizeJidList(allContacts.map(contact => contact?.jid)).slice(0, BROADCAST_LIMITS.CONTACT_LIST_MAX);
+  const recipients = normalizeRecipientList(allContacts, { knownRecipientsByJid })
+    .slice(0, BROADCAST_LIMITS.CONTACT_LIST_MAX);
   return {
     target: 'all',
     recipients,
+    recipientCounts: summarizeRecipients(recipients),
   };
 }

@@ -88,15 +88,31 @@ function createMetricsTracker() {
     startedAt: Date.now(),
     completedAt: 0,
     recentFailures: [], // timestamps de falhas recentes (para failures/min)
+    sentIndividuals: 0,
+    sentGroups: 0,
+    failedIndividuals: 0,
+    failedGroups: 0,
   };
 
-  function recordSend(durationMs, { failed = false } = {}) {
+  function recordSend(durationMs, { failed = false, recipientType = 'individual' } = {}) {
     const safeMs = Math.max(0, Number(durationMs) || 0);
     state.totalSendMs += safeMs;
     state.sendCount += 1;
     if (safeMs > state.maxSendMs) state.maxSendMs = safeMs;
     samples.push(safeMs);
     if (samples.length > maxSamples) samples.shift();
+    const isGroup = String(recipientType || '').trim().toLowerCase() === 'group';
+    if (failed) {
+      if (isGroup) {
+        state.failedGroups += 1;
+      } else {
+        state.failedIndividuals += 1;
+      }
+    } else if (isGroup) {
+      state.sentGroups += 1;
+    } else {
+      state.sentIndividuals += 1;
+    }
     if (failed) {
       const nowTs = Date.now();
       state.recentFailures.push(nowTs);
@@ -133,19 +149,39 @@ function createMetricsTracker() {
       failuresPerMinute: state.recentFailures.length,
       elapsedMs,
       startedAt: state.startedAt,
+      sentIndividuals: state.sentIndividuals,
+      sentGroups: state.sentGroups,
+      failedIndividuals: state.failedIndividuals,
+      failedGroups: state.failedGroups,
     };
   }
 
   return { recordSend, markCompleted, snapshot };
 }
 
+function normalizeRecipientCounts(raw = {}) {
+  const counts = raw && typeof raw === 'object' ? raw : {};
+  return {
+    attemptedIndividuals: Math.max(0, Number(counts.attemptedIndividuals) || 0),
+    attemptedGroups: Math.max(0, Number(counts.attemptedGroups) || 0),
+    sentIndividuals: Math.max(0, Number(counts.sentIndividuals) || 0),
+    sentGroups: Math.max(0, Number(counts.sentGroups) || 0),
+    failedIndividuals: Math.max(0, Number(counts.failedIndividuals) || 0),
+    failedGroups: Math.max(0, Number(counts.failedGroups) || 0),
+    cancelledIndividuals: Math.max(0, Number(counts.cancelledIndividuals) || 0),
+    cancelledGroups: Math.max(0, Number(counts.cancelledGroups) || 0),
+  };
+}
+
 function buildProgressSnapshot(result, {
   status = 'sending',
   jid = '',
+  recipientType = '',
   recipientStatus = '',
   error = '',
   controlStatus = 'running',
   metrics = null,
+  recipientCounts = null,
 } = {}) {
   const attempted = Math.max(0, Number(result?.attempted) || 0);
   const sent = Math.max(0, Number(result?.sent) || 0);
@@ -154,6 +190,7 @@ function buildProgressSnapshot(result, {
   const processed = Math.max(0, Math.min(attempted, sent + failed + cancelled));
   const remaining = Math.max(0, attempted - processed);
   const percent = attempted > 0 ? Math.min(100, Math.round((processed / attempted) * 100)) : 0;
+  const normalizedRecipientCounts = normalizeRecipientCounts(result?.recipientCounts || recipientCounts || {});
   return {
     campaignId: Number(result?.campaignId) || 0,
     attempted,
@@ -166,9 +203,11 @@ function buildProgressSnapshot(result, {
     status: String(status || 'sending'),
     controlStatus: String(controlStatus || 'running'),
     jid: String(jid || ''),
+    recipientType: String(recipientType || ''),
     recipientStatus: String(recipientStatus || ''),
     error: String(error || ''),
     metrics: metrics || null,
+    recipientCounts: normalizedRecipientCounts,
   };
 }
 
@@ -226,7 +265,10 @@ export function createBroadcastService({ logger, getSendDelayMs = null }) {
 
       return contacts.map(contact => ({
         ...contact,
-        hasActiveSession: activeLookup.has(contact.jid),
+        recipientType: String(contact?.recipientType || '').trim().toLowerCase() === 'group' ? 'group' : 'individual',
+        hasActiveSession: String(contact?.recipientType || '').trim().toLowerCase() === 'group'
+          ? false
+          : activeLookup.has(contact.jid),
       }));
     },
 
@@ -304,7 +346,12 @@ export function createBroadcastService({ logger, getSendDelayMs = null }) {
         failed: 0,
         cancelled: 0,
         failures: [],
+        recipientCounts: normalizeRecipientCounts({
+          attemptedIndividuals: Number(selection?.recipientCounts?.individuals) || 0,
+          attemptedGroups: Number(selection?.recipientCounts?.groups) || 0,
+        }),
       };
+      const processedRecipientJids = new Set();
 
       const controller = createCampaignController();
       const metrics = createMetricsTracker();
@@ -401,7 +448,13 @@ export function createBroadcastService({ logger, getSendDelayMs = null }) {
       );
 
       try {
-        for (const jid of selection.recipients) {
+        for (const recipient of selection.recipients) {
+          const jid = String(recipient?.jid || '').trim();
+          const recipientType = String(recipient?.recipientType || '').trim().toLowerCase() === 'group'
+            ? 'group'
+            : 'individual';
+          if (!jid) continue;
+
           // Aguarda saida do estado pausado antes de enviar o proximo destinatario.
           if (controller.getControlStatus() === 'paused') {
             // Flush antes de dormir na pausa para deixar o DB consistente.
@@ -418,26 +471,42 @@ export function createBroadcastService({ logger, getSendDelayMs = null }) {
             await sendBroadcastMessage(sock, jid, message);
             pendingResults.push({
               jid,
+              recipientType,
               status: 'sent',
               errorMessage: '',
               sentAt: Date.now(),
             });
             result.sent += 1;
+            if (recipientType === 'group') {
+              result.recipientCounts.sentGroups += 1;
+            } else {
+              result.recipientCounts.sentIndividuals += 1;
+            }
           } catch (error) {
             recipientStatus = 'failed';
             const errorText = safeErrorMessage(error);
             recipientError = errorText;
             pendingResults.push({
               jid,
+              recipientType,
               status: 'failed',
               errorMessage: errorText,
             });
             result.failed += 1;
-            result.failures.push({ jid, error: errorText });
-            log?.warn?.({ campaignId: campaign.campaignId, jid, error: errorText }, 'Broadcast recipient failed');
+            if (recipientType === 'group') {
+              result.recipientCounts.failedGroups += 1;
+            } else {
+              result.recipientCounts.failedIndividuals += 1;
+            }
+            result.failures.push({ jid, recipientType, error: errorText });
+            log?.warn?.({ campaignId: campaign.campaignId, jid, recipientType, error: errorText }, 'Broadcast recipient failed');
           }
 
-          metrics.recordSend(Date.now() - sendStartedAt, { failed: recipientStatus === 'failed' });
+          processedRecipientJids.add(jid);
+          metrics.recordSend(Date.now() - sendStartedAt, {
+            failed: recipientStatus === 'failed',
+            recipientType,
+          });
           flushPendingResults(false);
 
           // Falhas sao criticas: emite sempre para visibilidade rapida.
@@ -446,6 +515,7 @@ export function createBroadcastService({ logger, getSendDelayMs = null }) {
               status: 'sending',
               controlStatus: controller.getControlStatus(),
               jid,
+              recipientType,
               recipientStatus,
               error: recipientError,
               metrics: metricsSnapshot(),
@@ -488,11 +558,23 @@ export function createBroadcastService({ logger, getSendDelayMs = null }) {
         const finalMetrics = metricsSnapshot();
 
         if (controller.isCancelled()) {
+          const pendingRecipients = selection.recipients.filter(item => !processedRecipientJids.has(String(item?.jid || '').trim()));
+          let cancelledIndividuals = 0;
+          let cancelledGroups = 0;
+          for (const pending of pendingRecipients) {
+            if (String(pending?.recipientType || '').trim().toLowerCase() === 'group') {
+              cancelledGroups += 1;
+            } else {
+              cancelledIndividuals += 1;
+            }
+          }
           const { cancelled } = cancelBroadcastPendingRecipients({
             campaignId: campaign.campaignId,
             errorMessage: 'cancelled-by-operator',
           });
           result.cancelled = Math.max(0, Number(cancelled) || 0);
+          result.recipientCounts.cancelledIndividuals = cancelledIndividuals;
+          result.recipientCounts.cancelledGroups = cancelledGroups;
           controller.setControlStatus('cancelled');
           emitProgress(
             buildProgressSnapshot(result, {
@@ -507,6 +589,7 @@ export function createBroadcastService({ logger, getSendDelayMs = null }) {
             sent: result.sent,
             failed: result.failed,
             cancelled: result.cancelled,
+            recipientCounts: result.recipientCounts,
             metrics: finalMetrics,
           }, 'Broadcast campaign cancelled');
         } else {
@@ -523,11 +606,18 @@ export function createBroadcastService({ logger, getSendDelayMs = null }) {
             campaignId: campaign.campaignId,
             sent: result.sent,
             failed: result.failed,
+            recipientCounts: result.recipientCounts,
             metrics: finalMetrics,
           }, 'Broadcast campaign completed');
         }
 
-        result.metrics = finalMetrics;
+        result.metrics = {
+          ...finalMetrics,
+          attemptedIndividuals: result.recipientCounts.attemptedIndividuals,
+          attemptedGroups: result.recipientCounts.attemptedGroups,
+          cancelledIndividuals: result.recipientCounts.cancelledIndividuals,
+          cancelledGroups: result.recipientCounts.cancelledGroups,
+        };
         return result;
       } finally {
         // Proteje contra crashes antes de marcar conclusao: garante que o
@@ -538,4 +628,3 @@ export function createBroadcastService({ logger, getSendDelayMs = null }) {
     },
   };
 }
-

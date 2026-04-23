@@ -8,16 +8,21 @@
  */
 
 import { getDb, getStmts, ensureFlushForRead } from './context.js';
-import { isLikelyRealWhatsAppUserJid, normalizeRecipientList } from './helpers.js';
+import {
+  getBroadcastRecipientType,
+  isLikelyRealBroadcastRecipientJid,
+  normalizeBroadcastRecipientList,
+} from './helpers.js';
+import { listBroadcastContactProfiles } from './contactRepository.js';
 
 // ─── Broadcast Contacts ───────────────────────────────────────────────────────
 
 /**
- * Lists contacts eligible for broadcast, optionally filtered by a search term.
- * Always flushes the event buffer first to ensure display-name data is current.
+ * Lists recipients eligible for broadcast, optionally filtered by a search term.
+ * Includes both individual contacts and groups known by runtime history/profiles.
  *
  * @param {{ search?: string, limit?: number }} [opts]
- * @returns {{ jid: string, name: string, lastInteractionAt: number }[]}
+ * @returns {{ jid: string, name: string, lastInteractionAt: number, recipientType: 'individual' | 'group' }[]}
  */
 export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
   const stmts = getStmts();
@@ -37,31 +42,39 @@ export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
       )
     : stmts.listBroadcastContacts.all(normalizedLimit);
 
-  const profileRows = stmts.listContactProfiles.all(Math.max(normalizedLimit * 8, 2000));
+  // Reuse contact repository normalization/validation so groups are selected
+  // from the same persisted source used by setup/runtime flows.
+  const profileRows = listBroadcastContactProfiles(Math.max(normalizedLimit * 8, 2000));
   const mergedByJid = new Map();
 
   for (const row of eventRows) {
     const jid = String(row?.jid || '').trim();
-    if (!jid || !isLikelyRealWhatsAppUserJid(jid)) continue;
+    if (!jid || !isLikelyRealBroadcastRecipientJid(jid)) continue;
+    const rowType = String(row?.recipient_type || '').trim().toLowerCase();
     mergedByJid.set(jid, {
       jid,
       name: String(row?.display_name || '').trim(),
       lastInteractionAt: Number(row?.last_interaction_at) || 0,
+      recipientType: rowType === 'group'
+        ? 'group'
+        : (getBroadcastRecipientType(jid) === 'group' ? 'group' : 'individual'),
     });
   }
 
   for (const row of profileRows) {
     const jid = String(row?.jid || '').trim();
-    if (!jid || !isLikelyRealWhatsAppUserJid(jid)) continue;
+    if (!jid || !isLikelyRealBroadcastRecipientJid(jid)) continue;
 
-    const profileName = String(row?.display_name || '').trim();
-    const profileUpdatedAt = Number(row?.updated_at) || 0;
+    const profileName = String(row?.name || '').trim();
+    const profileUpdatedAt = Number(row?.updatedAt) || 0;
+    const profileType = String(row?.recipientType || '').trim().toLowerCase() === 'group' ? 'group' : 'individual';
     const existing = mergedByJid.get(jid);
     if (!existing) {
       mergedByJid.set(jid, {
         jid,
         name: profileName,
         lastInteractionAt: profileUpdatedAt,
+        recipientType: profileType,
       });
       continue;
     }
@@ -71,6 +84,9 @@ export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
     }
     if (!existing.lastInteractionAt && profileUpdatedAt > 0) {
       existing.lastInteractionAt = profileUpdatedAt;
+    }
+    if (!existing.recipientType && profileType) {
+      existing.recipientType = profileType;
     }
   }
 
@@ -85,7 +101,11 @@ export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
 
   return filteredRows
     .sort((a, b) => (Number(b?.lastInteractionAt) || 0) - (Number(a?.lastInteractionAt) || 0))
-    .slice(0, normalizedLimit);
+    .slice(0, normalizedLimit)
+    .map(row => ({
+      ...row,
+      recipientType: String(row?.recipientType || '').trim().toLowerCase() === 'group' ? 'group' : 'individual',
+    }));
 }
 
 // ─── Broadcast Campaigns ──────────────────────────────────────────────────────
@@ -102,7 +122,7 @@ export function listBroadcastContacts({ search = '', limit = 200 } = {}) {
  *   messageText?: string,
  *   mediaMimeType?: string,
  *   mediaFileName?: string,
- *   recipients?: string[],
+ *   recipients?: Array<string | { jid: string, recipientType?: 'individual' | 'group' }>,
  * }} opts
  * @returns {{ campaignId: number }}
  */
@@ -118,7 +138,7 @@ export function createBroadcastDispatch({
 } = {}) {
   const db = getDb();
   const stmts = getStmts();
-  const normalizedRecipients = normalizeRecipientList(recipients);
+  const normalizedRecipients = normalizeBroadcastRecipientList(recipients);
   const nowTs = Number(createdAt) || Date.now();
 
   const insertTx = db.transaction(() => {
@@ -134,8 +154,17 @@ export function createBroadcastDispatch({
     );
     const campaignId = Number(info?.lastInsertRowid) || 0;
 
-    for (const jid of normalizedRecipients) {
-      stmts.insertBroadcastRecipient.run(campaignId, jid, 'pending', '', null, nowTs, nowTs);
+    for (const recipient of normalizedRecipients) {
+      stmts.insertBroadcastRecipient.run(
+        campaignId,
+        recipient.jid,
+        recipient.recipientType,
+        'pending',
+        '',
+        null,
+        nowTs,
+        nowTs
+      );
     }
 
     return { campaignId };
@@ -150,6 +179,7 @@ export function createBroadcastDispatch({
  * @param {{
  *   campaignId: number,
  *   jid: string,
+ *   recipientType?: 'individual' | 'group',
  *   status?: 'sent' | 'failed',
  *   errorMessage?: string,
  *   sentAt?: number,
@@ -158,6 +188,7 @@ export function createBroadcastDispatch({
 export function markBroadcastRecipientResult({
   campaignId,
   jid,
+  recipientType = '',
   status = 'failed',
   errorMessage = '',
   sentAt = Date.now(),
@@ -168,8 +199,12 @@ export function markBroadcastRecipientResult({
   if (!normalizedCampaignId || !normalizedJid) return;
 
   const normalizedStatus = String(status ?? '').trim().toLowerCase() === 'sent' ? 'sent' : 'failed';
+  const normalizedRecipientType = String(recipientType || '').trim().toLowerCase() === 'group'
+    ? 'group'
+    : (getBroadcastRecipientType(normalizedJid) === 'group' ? 'group' : 'individual');
   const nowTs = Date.now();
   stmts.updateBroadcastRecipientResult.run(
+    normalizedRecipientType,
     normalizedStatus,
     String(errorMessage || ''),
     normalizedStatus === 'sent' ? (Number(sentAt) || nowTs) : null,
@@ -184,7 +219,7 @@ export function markBroadcastRecipientResult({
  *
  * @param {{
  *   campaignId: number,
- *   results?: Array<{ jid: string, status: string, errorMessage?: string, sentAt?: number }>,
+ *   results?: Array<{ jid: string, recipientType?: 'individual' | 'group', status: string, errorMessage?: string, sentAt?: number }>,
  * }} opts
  * @returns {{ applied: number }}
  */
@@ -205,6 +240,9 @@ export function markBroadcastRecipientResultsBatch({
     const normalizedStatus = String(row?.status ?? '').trim().toLowerCase() === 'sent' ? 'sent' : 'failed';
     normalizedRows.push({
       jid: normalizedJid,
+      recipientType: String(row?.recipientType || '').trim().toLowerCase() === 'group'
+        ? 'group'
+        : (getBroadcastRecipientType(normalizedJid) === 'group' ? 'group' : 'individual'),
       status: normalizedStatus,
       errorMessage: String(row?.errorMessage || ''),
       sentAt: normalizedStatus === 'sent' ? (Number(row?.sentAt) || nowTs) : null,
@@ -216,6 +254,7 @@ export function markBroadcastRecipientResultsBatch({
   const applyTx = db.transaction((rows) => {
     for (const row of rows) {
       stmts.updateBroadcastRecipientResult.run(
+        row.recipientType,
         row.status,
         row.errorMessage,
         row.sentAt,

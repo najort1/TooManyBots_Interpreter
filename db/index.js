@@ -45,6 +45,18 @@ const REAL_WHATSAPP_USER_JID_SQL = `
   AND length(substr(ce.jid, 1, instr(ce.jid, '@') - 1)) BETWEEN 8 AND 20
   AND substr(ce.jid, 1, instr(ce.jid, '@') - 1) NOT GLOB '*[^0-9]*'
 `;
+const REAL_WHATSAPP_GROUP_JID_SQL = `
+  ce.jid LIKE '%@g.us'
+  AND instr(ce.jid, '@') > 1
+  AND length(substr(ce.jid, 1, instr(ce.jid, '@') - 1)) BETWEEN 8 AND 49
+  AND replace(substr(ce.jid, 1, instr(ce.jid, '@') - 1), '-', '') NOT GLOB '*[^0-9]*'
+`;
+const REAL_WHATSAPP_BROADCAST_TARGET_JID_SQL = `
+  (
+    (${REAL_WHATSAPP_USER_JID_SQL})
+    OR (${REAL_WHATSAPP_GROUP_JID_SQL})
+  )
+`;
 
 /** @type {import('better-sqlite3').Database} */
 let db;
@@ -244,6 +256,27 @@ function listTableColumns(schema, tableName) {
   }
 }
 
+function ensureBroadcastRecipientsSchema() {
+  if (!tableExists('broadcast_recipients', ANALYTICS_SCHEMA)) return;
+  const columns = listTableColumns(ANALYTICS_SCHEMA, 'broadcast_recipients');
+  if (!columns.includes('recipient_type')) {
+    db.exec(`
+      ALTER TABLE ${ANALYTICS_SCHEMA}.broadcast_recipients
+      ADD COLUMN recipient_type TEXT NOT NULL DEFAULT 'individual';
+    `);
+  }
+
+  // Backfill defensively for rows created before recipient_type existed.
+  db.exec(`
+    UPDATE ${ANALYTICS_SCHEMA}.broadcast_recipients
+    SET recipient_type = CASE
+      WHEN jid LIKE '%@g.us' THEN 'group'
+      ELSE 'individual'
+    END
+    WHERE COALESCE(trim(recipient_type), '') = '';
+  `);
+}
+
 function migrateLegacyDatabaseIfNeeded() {
   if (!fs.existsSync(LEGACY_DB_PATH)) return;
   if (readMetaValue('legacy_split_migration_v1', JSON_BOOL_FALSE) === JSON_BOOL_TRUE) return;
@@ -341,14 +374,19 @@ function migrateLegacyDatabaseIfNeeded() {
     }
 
     if (schemaTableExists('legacy', 'broadcast_recipients')) {
+      const columns = listTableColumns('legacy', 'broadcast_recipients');
+      const hasRecipientType = columns.includes('recipient_type');
       db.exec(`
         INSERT OR IGNORE INTO ${ANALYTICS_SCHEMA}.broadcast_recipients (
-          id, campaign_id, jid, send_status, error_message, sent_at, created_at, updated_at
+          id, campaign_id, jid, recipient_type, send_status, error_message, sent_at, created_at, updated_at
         )
         SELECT
           id,
           campaign_id,
           jid,
+          ${hasRecipientType
+            ? "CASE WHEN lower(COALESCE(recipient_type, 'individual')) = 'group' THEN 'group' ELSE 'individual' END"
+            : "CASE WHEN jid LIKE '%@g.us' THEN 'group' ELSE 'individual' END"},
           COALESCE(send_status, 'pending'),
           error_message,
           sent_at,
@@ -471,6 +509,7 @@ export async function initDb() {
       id             INTEGER PRIMARY KEY AUTOINCREMENT,
       campaign_id    INTEGER NOT NULL,
       jid            TEXT    NOT NULL,
+      recipient_type TEXT    NOT NULL DEFAULT 'individual',
       send_status    TEXT    NOT NULL DEFAULT 'pending',
       error_message  TEXT,
       sent_at        INTEGER,
@@ -485,6 +524,8 @@ export async function initDb() {
       updated_at    INTEGER NOT NULL
     );
   `);
+
+  ensureBroadcastRecipientsSchema();
 
   rebuildSessionsTableIfNeeded();
 
@@ -504,6 +545,7 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_broadcast_campaigns_created_at ON broadcast_campaigns(created_at DESC);
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_broadcast_recipients_campaign_status ON broadcast_recipients(campaign_id, send_status);
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_broadcast_recipients_jid_created ON broadcast_recipients(jid, created_at DESC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_broadcast_recipients_campaign_type ON broadcast_recipients(campaign_id, recipient_type);
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_contact_profiles_display_name ON contact_profiles(display_name);
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_contact_profiles_updated_at ON contact_profiles(updated_at DESC);
   `);
@@ -700,12 +742,16 @@ export async function initDb() {
       `SELECT
          ce.jid AS jid,
          MAX(ce.occurred_at) AS last_interaction_at,
-         COALESCE(MAX(cp.display_name), '') AS display_name
+         COALESCE(MAX(cp.display_name), '') AS display_name,
+         CASE
+           WHEN ce.jid LIKE '%@g.us' THEN 'group'
+           ELSE 'individual'
+         END AS recipient_type
        FROM ${ANALYTICS_SCHEMA}.conversation_events ce
        LEFT JOIN ${ANALYTICS_SCHEMA}.contact_profiles cp
          ON cp.jid = ce.jid
        WHERE ce.direction = 'incoming'
-         AND ${REAL_WHATSAPP_USER_JID_SQL}
+         AND ${REAL_WHATSAPP_BROADCAST_TARGET_JID_SQL}
        GROUP BY ce.jid
        ORDER BY last_interaction_at DESC
        LIMIT ?`
@@ -714,12 +760,16 @@ export async function initDb() {
       `SELECT
          ce.jid AS jid,
          MAX(ce.occurred_at) AS last_interaction_at,
-         COALESCE(MAX(cp.display_name), '') AS display_name
+         COALESCE(MAX(cp.display_name), '') AS display_name,
+         CASE
+           WHEN ce.jid LIKE '%@g.us' THEN 'group'
+           ELSE 'individual'
+         END AS recipient_type
        FROM ${ANALYTICS_SCHEMA}.conversation_events ce
        LEFT JOIN ${ANALYTICS_SCHEMA}.contact_profiles cp
          ON cp.jid = ce.jid
        WHERE ce.direction = 'incoming'
-         AND ${REAL_WHATSAPP_USER_JID_SQL}
+         AND ${REAL_WHATSAPP_BROADCAST_TARGET_JID_SQL}
         AND (
           ce.jid LIKE ?
           OR cp.display_name LIKE ?
@@ -755,12 +805,12 @@ export async function initDb() {
     ),
     insertBroadcastRecipient: db.prepare(
       `INSERT OR IGNORE INTO ${ANALYTICS_SCHEMA}.broadcast_recipients (
-        campaign_id, jid, send_status, error_message, sent_at, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
+        campaign_id, jid, recipient_type, send_status, error_message, sent_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
     ),
     updateBroadcastRecipientResult: db.prepare(
       `UPDATE ${ANALYTICS_SCHEMA}.broadcast_recipients
-       SET send_status = ?, error_message = ?, sent_at = ?, updated_at = ?
+       SET recipient_type = ?, send_status = ?, error_message = ?, sent_at = ?, updated_at = ?
        WHERE campaign_id = ? AND jid = ?`
     ),
     cancelPendingBroadcastRecipients: db.prepare(
@@ -1427,6 +1477,7 @@ export {
   upsertContactDisplayName,
   getContactDisplayName,
   listContactDisplayNames,
+  listBroadcastContactProfiles,
 } from './contactRepository.js';
 
 // ─── Broadcast Repository ──────────────────────────────────────────────────────

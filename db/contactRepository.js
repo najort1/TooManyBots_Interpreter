@@ -8,7 +8,12 @@
  */
 
 import { getStmts } from './context.js';
-import { isLikelyRealWhatsAppUserJid, normalizePersistedDisplayName } from './helpers.js';
+import {
+  getBroadcastRecipientType,
+  isLikelyRealBroadcastRecipientJid,
+  isLikelyRealWhatsAppUserJid,
+  normalizePersistedDisplayName,
+} from './helpers.js';
 
 // ─── Contact Profiles ─────────────────────────────────────────────────────────
 
@@ -90,6 +95,25 @@ export function listContactDisplayNames(limit = 5000) {
         name,
         source: String(row?.source || '').trim() || 'runtime',
         updatedAt: Number(row?.updated_at) || 0,
+      };
+    })
+    .filter(Boolean);
+}
+
+/**
+ * Lists persisted profiles eligible for broadcast selection (contacts + groups).
+ *
+ * @param {number} [limit=5000]
+ * @returns {{ jid: string, name: string, source: string, updatedAt: number, recipientType: 'individual' | 'group' }[]}
+ */
+export function listBroadcastContactProfiles(limit = 5000) {
+  return listContactDisplayNames(limit)
+    .map(item => {
+      const jid = String(item?.jid || '').trim();
+      if (!isLikelyRealBroadcastRecipientJid(jid)) return null;
+      return {
+        ...item,
+        recipientType: getBroadcastRecipientType(jid) === 'group' ? 'group' : 'individual',
       };
     })
     .filter(Boolean);
