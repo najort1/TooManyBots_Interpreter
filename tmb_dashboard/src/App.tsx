@@ -1067,8 +1067,8 @@ function App() {
       return;
     }
 
-    await handleSendBroadcast();
     setPendingConfirmAction(null);
+    await handleSendBroadcast();
   }, [
     handleClearAllSessions,
     handleClearRuntimeCache,

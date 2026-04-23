@@ -23,6 +23,9 @@ import { getFlowBotType } from './flowLoader.js';
 import { resolveKeyword } from './resolvers/keywordResolver.js';
 import { resolveList } from './resolvers/listResolver.js';
 import { resolveMultipleChoice } from './resolvers/multipleChoiceResolver.js';
+import { sendTextMessage } from './sender.js';
+import { isSessionTerminationMessage } from '../utils/sessionTermination.js';
+import { stringifyError } from '../utils/errors.js';
 import {
   SESSION_STATUS,
   WAIT_TYPE,
@@ -32,6 +35,8 @@ import {
 } from '../config/constants.js';
 
 const userLocks = new Map();
+const SESSION_TERMINATION_REASON = 'user-requested-stop';
+const SESSION_TERMINATION_MESSAGE = 'Sessao encerrada. Ate logo!';
 
 function normalizeFlowPath(flow) {
   return String(flow?.flowPath ?? '').trim();
@@ -573,6 +578,29 @@ function endSession(jid, session, nowTs, reason, flow) {
   return endedSession;
 }
 
+async function terminateSessionFromUserKeyword(sock, jid, message, session, flow) {
+  if (!session || session.status !== SESSION_STATUS.ACTIVE) {
+    return { terminated: false, session };
+  }
+
+  if (!isSessionTerminationMessage(message)) {
+    return { terminated: false, session };
+  }
+
+  try {
+    await sendTextMessage(sock, jid, SESSION_TERMINATION_MESSAGE);
+  } catch (error) {
+    console.warn(
+      `[SessionTermination] Falha ao enviar mensagem de encerramento para ${jid}: ${stringifyError(error)}`
+    );
+  }
+
+  return {
+    terminated: true,
+    session: endSession(jid, session, Date.now(), SESSION_TERMINATION_REASON, flow),
+  };
+}
+
 function isSessionTimedOut(session, flow, nowTs) {
   const { sessionTimeoutMinutes } = getSessionLimits(flow);
   if (sessionTimeoutMinutes <= 0) return false;
@@ -685,6 +713,18 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
       const hasCommandPrefix = normalizedIncoming.startsWith('/');
       let session = sessionRead(jid, scope);
       let commandCandidate = null;
+
+      const terminationResolution = await terminateSessionFromUserKeyword(
+        scopedSock,
+        jid,
+        message,
+        session,
+        flow
+      );
+      if (terminationResolution.terminated) {
+        return;
+      }
+      session = terminationResolution.session;
 
       const shouldResolveCommandCandidate =
         commandMode && (
