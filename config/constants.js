@@ -17,6 +17,7 @@ export const WAIT_TYPE = {
   LIST: 'list',
   MULTIPLE_CHOICE: 'multiple-choice',
   HUMAN: 'human',
+  SATISFACTION_SURVEY: 'satisfaction-survey',
 };
 
 // ─── Tipos de Bloco Suportados ────────────────────────────────────────────────
@@ -103,9 +104,11 @@ export const INTERNAL_VAR = {
   SESSION_STARTED_AT: '__sessionStartedAt',
   SESSION_LAST_ACTIVITY_AT: '__sessionLastActivityAt',
   SESSION_MESSAGE_COUNT: '__sessionMessageCount',
+  SESSION_USER_KEY: '__sessionUserKey',
   SESSION_ENDED_AT: '__sessionEndedAt',
   SESSION_END_REASON: '__sessionEndReason',
   HUMAN_HANDOFF: '__humanHandoff',
+  SATISFACTION_SURVEY_STATE: '__satisfactionSurveyState',
 };
 
 // ─── Limites do Engine ────────────────────────────────────────────────────────

@@ -15,6 +15,14 @@ import {
   deleteSession,
   createConversationSessionRecord,
   finishConversationSessionRecord,
+  saveSatisfactionSurveyResponse,
+  recordStartPolicyEvent,
+  countStartPolicyEventsInWindow,
+  pruneStartPolicyEventsBefore,
+  upsertPersistedContextVariable,
+  deletePersistedContextVariable,
+  loadPersistedContextVariables,
+  deleteExpiredPersistedContextVariables,
 } from '../db/index.js';
 import { emitConversationEvent } from './conversationEvents.js';
 import { LRUCache } from './utils.js';
@@ -26,6 +34,17 @@ import { resolveMultipleChoice } from './resolvers/multipleChoiceResolver.js';
 import { sendTextMessage } from './sender.js';
 import { isSessionTerminationMessage } from '../utils/sessionTermination.js';
 import { stringifyError } from '../utils/errors.js';
+import { resolveSessionTimeoutConfig } from '../utils/sessionTimeoutPresets.js';
+import { buildSlidingPeriodWindow } from '../utils/slidingPeriod.js';
+import { evaluateAvailability } from '../utils/availability.js';
+import {
+  normalizeContextPersistenceConfig,
+  getContextPersistenceExpiryTs,
+} from '../utils/contextPersistence.js';
+import {
+  buildSatisfactionSurveyQuestion,
+  parseSatisfactionSurveyResponse,
+} from '../utils/satisfactionSurvey.js';
 import {
   SESSION_STATUS,
   WAIT_TYPE,
@@ -37,6 +56,9 @@ import {
 const userLocks = new Map();
 const SESSION_TERMINATION_REASON = 'user-requested-stop';
 const SESSION_TERMINATION_MESSAGE = 'Sessao encerrada. Ate logo!';
+const SATISFACTION_INVALID_MESSAGE = 'Resposta invalida. Envie apenas um numero dentro da escala informada.';
+const START_POLICY_BLOCKED_MESSAGE = 'Voce atingiu o limite de inicios permitido neste periodo.';
+const START_POLICY_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
 
 function normalizeFlowPath(flow) {
   return String(flow?.flowPath ?? '').trim();
@@ -436,10 +458,61 @@ function findCommandCandidate(flow, message) {
 
 function getSessionLimits(flow) {
   const limits = getRuntimeConfig(flow).sessionLimits ?? {};
+  const timeoutConfig = resolveSessionTimeoutConfig(limits, 0);
   return {
     maxMessagesPerSession: Number(limits.maxMessagesPerSession) || 0,
-    sessionTimeoutMinutes: Number(limits.sessionTimeoutMinutes) || 0,
+    sessionTimeoutPreset: timeoutConfig.sessionTimeoutPreset,
+    sessionTimeoutMinutes: timeoutConfig.sessionTimeoutMinutes,
     timeoutMessage: limits.timeoutMessage || 'Sessão encerrada por tempo limite.',
+  };
+}
+
+function getStartPolicyLimit(flow) {
+  const limits = getRuntimeConfig(flow).startPolicyLimit ?? {};
+  return {
+    maxStarts: Math.max(1, Number(limits.maxStarts) || 3),
+    period: String(limits.period ?? 'day').trim().toLowerCase() || 'day',
+    blockedMessage: String(limits.blockedMessage ?? START_POLICY_BLOCKED_MESSAGE).trim() || START_POLICY_BLOCKED_MESSAGE,
+  };
+}
+
+function getContextPersistenceConfig(flow) {
+  return normalizeContextPersistenceConfig(getRuntimeConfig(flow).contextPersistence ?? {});
+}
+
+function getAvailabilityConfig(flow) {
+  return getRuntimeConfig(flow).availability ?? {};
+}
+
+function getSatisfactionSurveyConfig(flow) {
+  const endBehavior = getRuntimeConfig(flow).endBehavior ?? {};
+  const cfg = endBehavior.sendSatisfactionSurvey;
+  if (typeof cfg === 'boolean') {
+    return {
+      enabled: cfg,
+      questionType: 'rating-scale',
+      scale: 5,
+      timeoutMinutes: 5,
+      thankYouMessage: 'Obrigado pelo seu feedback!',
+    };
+  }
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) {
+    return {
+      enabled: false,
+      questionType: 'rating-scale',
+      scale: 5,
+      timeoutMinutes: 5,
+      thankYouMessage: 'Obrigado pelo seu feedback!',
+    };
+  }
+  const scaleRaw = Number(cfg.scale);
+  const timeoutRaw = Number(cfg.timeoutMinutes);
+  return {
+    enabled: cfg.enabled === true,
+    questionType: String(cfg.questionType ?? 'rating-scale').trim().toLowerCase() || 'rating-scale',
+    scale: Math.max(1, Math.min(10, Number.isFinite(scaleRaw) ? Math.floor(scaleRaw) : 5)),
+    timeoutMinutes: Math.max(0, Math.min(24 * 60, Number.isFinite(timeoutRaw) ? Math.floor(timeoutRaw) : 5)),
+    thankYouMessage: String(cfg.thankYouMessage ?? 'Obrigado pelo seu feedback!').trim() || 'Obrigado pelo seu feedback!',
   };
 }
 
@@ -473,6 +546,33 @@ function getSessionId(session) {
   return String(session?.variables?.[INTERNAL_VAR.SESSION_ID] ?? '').trim();
 }
 
+function normalizeUserKey(userKey, fallbackJid) {
+  return String(userKey ?? fallbackJid ?? '').trim();
+}
+
+function getSessionUserKey(session, fallbackJid = '') {
+  const fromSession = String(session?.variables?.[INTERNAL_VAR.SESSION_USER_KEY] ?? '').trim();
+  return fromSession || String(fallbackJid ?? '').trim();
+}
+
+function getSatisfactionSurveyState(session) {
+  const raw = session?.variables?.[INTERNAL_VAR.SATISFACTION_SURVEY_STATE];
+  if (!raw) return null;
+  if (raw && typeof raw === 'object' && !Array.isArray(raw)) {
+    return raw;
+  }
+  if (typeof raw !== 'string') return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
 function parseObjectVar(value) {
   if (value && typeof value === 'object' && !Array.isArray(value)) return value;
   if (typeof value !== 'string' || !value.trim()) return {};
@@ -484,9 +584,59 @@ function parseObjectVar(value) {
   }
 }
 
-function createOrResetSessionRuntimeState(jid, nowTs, flow) {
+function loadGlobalVariablesForSessionStart(userKey, flow, nowTs) {
+  const config = getContextPersistenceConfig(flow);
+  if (!config.memoryModeEnabled) return {};
+  if (config.variablePersistence === 'never') return {};
+  if (!Array.isArray(config.globalVariables) || config.globalVariables.length === 0) return {};
+
+  deleteExpiredPersistedContextVariables(nowTs);
+  return loadPersistedContextVariables({
+    jid: userKey,
+    flowPath: flow?.flowPath ?? '',
+    variableNames: config.globalVariables,
+    nowTs,
+  });
+}
+
+function persistGlobalVariablesForEndedSession(session, flow, nowTs) {
+  const config = getContextPersistenceConfig(flow);
+  if (!config.memoryModeEnabled) return;
+  if (config.variablePersistence === 'never') return;
+  if (!Array.isArray(config.globalVariables) || config.globalVariables.length === 0) return;
+
+  const userKey = getSessionUserKey(session, session?.jid);
+  if (!userKey) return;
+
+  const expiresAt = getContextPersistenceExpiryTs(config.variablePersistence, nowTs);
+  if (expiresAt === undefined) return;
+
+  for (const variableName of config.globalVariables) {
+    if (!Object.prototype.hasOwnProperty.call(session?.variables ?? {}, variableName)) {
+      deletePersistedContextVariable({
+        jid: userKey,
+        flowPath: flow?.flowPath ?? '',
+        variableName,
+      });
+      continue;
+    }
+
+    upsertPersistedContextVariable({
+      jid: userKey,
+      flowPath: flow?.flowPath ?? '',
+      variableName,
+      variableValue: session.variables[variableName],
+      persistedAt: nowTs,
+      expiresAt,
+    });
+  }
+}
+
+function createOrResetSessionRuntimeState(jid, userKey, nowTs, flow) {
   const scope = buildSessionScope(flow);
   const isConversationBot = scope.botType === 'conversation';
+  const normalizedUserKey = normalizeUserKey(userKey, jid);
+  const persistedGlobals = loadGlobalVariablesForSessionStart(normalizedUserKey, flow, nowTs);
   sessionCreate(jid, scope);
   let session = sessionRead(jid, scope);
   if (!session) {
@@ -500,13 +650,15 @@ function createOrResetSessionRuntimeState(jid, nowTs, flow) {
     waitingFor: null,
     status: SESSION_STATUS.ACTIVE,
     variables: {
-      ...session.variables,
+      ...persistedGlobals,
       [INTERNAL_VAR.SESSION_ID]: sessionId,
+      [INTERNAL_VAR.SESSION_USER_KEY]: normalizedUserKey,
       [INTERNAL_VAR.SESSION_STARTED_AT]: nowTs,
       [INTERNAL_VAR.SESSION_LAST_ACTIVITY_AT]: nowTs,
       [INTERNAL_VAR.SESSION_MESSAGE_COUNT]: 0,
       [INTERNAL_VAR.SESSION_ENDED_AT]: undefined,
       [INTERNAL_VAR.SESSION_END_REASON]: undefined,
+      [INTERNAL_VAR.SATISFACTION_SURVEY_STATE]: undefined,
     },
     botType: scope.botType,
   });
@@ -549,9 +701,12 @@ function endSession(jid, session, nowTs, reason, flow) {
       [INTERNAL_VAR.SESSION_LAST_ACTIVITY_AT]: nowTs,
       [INTERNAL_VAR.SESSION_ENDED_AT]: nowTs,
       [INTERNAL_VAR.SESSION_END_REASON]: reason,
+      [INTERNAL_VAR.SATISFACTION_SURVEY_STATE]: undefined,
     },
     botType: scope.botType,
   });
+
+  persistGlobalVariablesForEndedSession(endedSession, flow, nowTs);
 
   if (isConversationBot) {
     finishConversationSessionRecord({
@@ -576,6 +731,183 @@ function endSession(jid, session, nowTs, reason, flow) {
   }
 
   return endedSession;
+}
+
+function shouldEnforceStartPolicyLimit(flow) {
+  const policy = String(getRuntimeConfig(flow).startPolicy ?? 'allow-always').trim().toLowerCase();
+  return policy === 'max-per-period';
+}
+
+async function enforceStartPolicyLimit(sock, jid, userKey, flow, nowTs) {
+  if (!shouldEnforceStartPolicyLimit(flow)) {
+    return { blocked: false };
+  }
+
+  const limits = getStartPolicyLimit(flow);
+  const window = buildSlidingPeriodWindow(limits.period, nowTs);
+
+  pruneStartPolicyEventsBefore(nowTs - START_POLICY_RETENTION_MS);
+  const startsInWindow = countStartPolicyEventsInWindow({
+    jid: userKey,
+    flowPath: flow?.flowPath ?? '',
+    fromTs: window.startTs,
+    toTs: window.endTs,
+  });
+
+  if (startsInWindow >= limits.maxStarts) {
+    if (limits.blockedMessage) {
+      await sock.sendMessage(jid, { text: limits.blockedMessage });
+    }
+    return { blocked: true };
+  }
+
+  return { blocked: false };
+}
+
+async function enforceAvailabilityOnSessionStart(sock, jid, flow, nowTs) {
+  const availability = getAvailabilityConfig(flow);
+  const decision = evaluateAvailability(availability, { nowTs });
+  if (decision.available) {
+    return { blocked: false };
+  }
+
+  const outsideMessage = String(availability?.outsideScheduleMessage ?? '').trim() ||
+    'Nosso atendimento esta fora do horario configurado.';
+  await sock.sendMessage(jid, { text: outsideMessage });
+  return { blocked: true };
+}
+
+function buildSatisfactionSurveyState(flow, session, nowTs) {
+  const config = getSatisfactionSurveyConfig(flow);
+  if (!config.enabled) return null;
+
+  const timeoutAt = nowTs + (config.timeoutMinutes * 60 * 1000);
+  return {
+    questionType: config.questionType,
+    scale: config.scale,
+    timeoutMinutes: config.timeoutMinutes,
+    timeoutAt,
+    thankYouMessage: config.thankYouMessage,
+    createdAt: nowTs,
+    sessionId: getSessionId(session),
+  };
+}
+
+async function finalizeSatisfactionSurvey(
+  sock,
+  jid,
+  session,
+  flow,
+  nowTs,
+  {
+    rating = null,
+    timedOut = false,
+    reason = 'satisfaction-survey',
+  } = {}
+) {
+  const surveyState = getSatisfactionSurveyState(session);
+  if (!surveyState) {
+    return endSession(jid, session, nowTs, reason, flow);
+  }
+
+  saveSatisfactionSurveyResponse({
+    jid: getSessionUserKey(session, jid),
+    flowPath: flow?.flowPath ?? '',
+    sessionId: String(surveyState.sessionId ?? '').trim(),
+    questionType: String(surveyState.questionType ?? 'rating-scale'),
+    scale: Number(surveyState.scale) || 5,
+    rating,
+    timedOut,
+    thankYouMessage: String(surveyState.thankYouMessage ?? ''),
+    createdAt: Number(surveyState.createdAt) || nowTs,
+    answeredAt: timedOut ? null : nowTs,
+  });
+
+  const thankYouMessage = String(surveyState.thankYouMessage ?? '').trim();
+  if (thankYouMessage) {
+    await sendTextMessage(sock, jid, thankYouMessage);
+  }
+
+  return endSession(jid, session, nowTs, reason, flow);
+}
+
+function isPendingSatisfactionSurveyTimedOut(session, nowTs) {
+  if (session?.waitingFor !== WAIT_TYPE.SATISFACTION_SURVEY) return false;
+  const surveyState = getSatisfactionSurveyState(session);
+  if (!surveyState) return false;
+  const timeoutAt = Number(surveyState.timeoutAt) || 0;
+  if (timeoutAt <= 0) return false;
+  return nowTs >= timeoutAt;
+}
+
+async function maybeStartSatisfactionSurvey(sock, jid, session, flow, nowTs) {
+  const surveyState = buildSatisfactionSurveyState(flow, session, nowTs);
+  if (!surveyState) {
+    return { started: false, session };
+  }
+
+  const questionText = buildSatisfactionSurveyQuestion({
+    questionType: surveyState.questionType,
+    scale: surveyState.scale,
+  });
+  await sendTextMessage(sock, jid, questionText);
+
+  const scope = buildSessionScope(flow);
+  const nextSession = persistSessionPatch(jid, scope, session, {
+    waitingFor: WAIT_TYPE.SATISFACTION_SURVEY,
+    variables: {
+      ...session.variables,
+      [INTERNAL_VAR.SATISFACTION_SURVEY_STATE]: surveyState,
+    },
+  });
+
+  if (surveyState.timeoutMinutes <= 0) {
+    const ended = await finalizeSatisfactionSurvey(sock, jid, nextSession, flow, nowTs, {
+      rating: null,
+      timedOut: true,
+      reason: 'satisfaction-timeout',
+    });
+    return { started: true, session: ended };
+  }
+  return { started: true, session: nextSession };
+}
+
+async function resolveSatisfactionSurveyWait(sock, jid, message, session, flow, nowTs) {
+  if (session?.waitingFor !== WAIT_TYPE.SATISFACTION_SURVEY) {
+    return { handled: false, session };
+  }
+
+  if (isPendingSatisfactionSurveyTimedOut(session, nowTs)) {
+    const ended = await finalizeSatisfactionSurvey(sock, jid, session, flow, nowTs, {
+      rating: null,
+      timedOut: true,
+      reason: 'satisfaction-timeout',
+    });
+    return { handled: true, session: ended };
+  }
+
+  const surveyState = getSatisfactionSurveyState(session);
+  if (!surveyState) {
+    const ended = endSession(jid, session, nowTs, 'satisfaction-invalid-state', flow);
+    return { handled: true, session: ended };
+  }
+
+  const parsed = parseSatisfactionSurveyResponse(message, {
+    scale: Number(surveyState.scale) || 5,
+    min: surveyState.questionType === 'nps' ? 0 : 1,
+  });
+
+  if (!parsed.valid) {
+    await sock.sendMessage(jid, { text: SATISFACTION_INVALID_MESSAGE });
+    return { handled: true, session };
+  }
+
+  const ended = await finalizeSatisfactionSurvey(sock, jid, session, flow, nowTs, {
+    rating: parsed.value,
+    timedOut: false,
+    reason: 'satisfaction-completed',
+  });
+  return { handled: true, session: ended };
 }
 
 async function terminateSessionFromUserKeyword(sock, jid, message, session, flow) {
@@ -644,7 +976,7 @@ async function enforceSessionLimits(sock, jid, session, flow, nowTs) {
   return { blocked: false, session };
 }
 
-async function resolveSessionStartPolicy(sock, jid, session, flow, nowTs) {
+async function resolveSessionStartPolicy(sock, jid, userKey, session, flow, nowTs) {
   const postEnd = getPostEndConfig(flow);
 
   if (!shouldAllowByStartPolicy(flow)) {
@@ -655,7 +987,25 @@ async function resolveSessionStartPolicy(sock, jid, session, flow, nowTs) {
   }
 
   if (!session) {
-    return { blocked: false, session: createOrResetSessionRuntimeState(jid, nowTs, flow) };
+    const availabilityResolution = await enforceAvailabilityOnSessionStart(sock, jid, flow, nowTs);
+    if (availabilityResolution.blocked) {
+      return { blocked: true, session };
+    }
+
+    const startLimitResolution = await enforceStartPolicyLimit(sock, jid, userKey, flow, nowTs);
+    if (startLimitResolution.blocked) {
+      return { blocked: true, session };
+    }
+
+    const started = createOrResetSessionRuntimeState(jid, userKey, nowTs, flow);
+    if (shouldEnforceStartPolicyLimit(flow)) {
+      recordStartPolicyEvent({
+        jid: userKey,
+        flowPath: flow?.flowPath ?? '',
+        startedAt: nowTs,
+      });
+    }
+    return { blocked: false, session: started };
   }
 
   if (session.status !== SESSION_STATUS.ENDED) {
@@ -684,13 +1034,31 @@ async function resolveSessionStartPolicy(sock, jid, session, flow, nowTs) {
     }
   }
 
-  return { blocked: false, session: createOrResetSessionRuntimeState(jid, nowTs, flow) };
+  const availabilityResolution = await enforceAvailabilityOnSessionStart(sock, jid, flow, nowTs);
+  if (availabilityResolution.blocked) {
+    return { blocked: true, session };
+  }
+
+  const startLimitResolution = await enforceStartPolicyLimit(sock, jid, userKey, flow, nowTs);
+  if (startLimitResolution.blocked) {
+    return { blocked: true, session };
+  }
+
+  const started = createOrResetSessionRuntimeState(jid, userKey, nowTs, flow);
+  if (shouldEnforceStartPolicyLimit(flow)) {
+    recordStartPolicyEvent({
+      jid: userKey,
+      flowPath: flow?.flowPath ?? '',
+      startedAt: nowTs,
+    });
+  }
+  return { blocked: false, session: started };
 }
 
 /**
  * Main entry point called on every incoming WhatsApp message.
  */
-export async function handleIncoming(sock, jid, message, listId, flow, msgId, messageKey = null) {
+export async function handleIncoming(sock, jid, message, listId, flow, msgId, messageKey = null, actorJid = null) {
   const startedAt = Date.now();
   engineRuntimeStats.handleIncomingCount += 1;
   const scope = buildSessionScope(flow);
@@ -708,6 +1076,7 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
   try {
     return await executeWithLock(jid, flow, async () => {
       const nowTs = Date.now();
+      const userKey = normalizeUserKey(actorJid, jid);
       const commandMode = isCommandMode(flow);
       const normalizedIncoming = String(message ?? '').trim();
       const hasCommandPrefix = normalizedIncoming.startsWith('/');
@@ -747,7 +1116,7 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
         );
       }
 
-      const startResolution = await resolveSessionStartPolicy(scopedSock, jid, session, flow, nowTs);
+      const startResolution = await resolveSessionStartPolicy(scopedSock, jid, userKey, session, flow, nowTs);
       if (startResolution.blocked) return;
       session = startResolution.session;
 
@@ -758,6 +1127,7 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
       session = persistSessionPatch(jid, scope, session, {
         variables: {
           ...session.variables,
+          [INTERNAL_VAR.SESSION_USER_KEY]: userKey,
           [INTERNAL_VAR.LAST_MESSAGE]: message,
           [INTERNAL_VAR.LAST_INCOMING_MESSAGE_ID]: msgId ?? '',
           [INTERNAL_VAR.LAST_INCOMING_LIST_ID]: listId ?? '',
@@ -765,6 +1135,21 @@ export async function handleIncoming(sock, jid, message, listId, flow, msgId, me
         },
         botType: scope.botType,
       });
+
+      if (session.waitingFor === WAIT_TYPE.SATISFACTION_SURVEY) {
+        const satisfactionResolution = await resolveSatisfactionSurveyWait(
+          scopedSock,
+          jid,
+          message,
+          session,
+          flow,
+          nowTs
+        );
+        if (satisfactionResolution.handled) {
+          return;
+        }
+        session = satisfactionResolution.session;
+      }
 
       const limitsResolution = await enforceSessionLimits(scopedSock, jid, session, flow, nowTs);
       if (limitsResolution.blocked) return;
@@ -916,6 +1301,13 @@ async function runEngine(sock, jid, session, flow, runtime = {}) {
     session = persistSessionPatch(jid, scope, session, patch);
 
     if (result.done) {
+      if (block.type === BLOCK_TYPE.END_CONVERSATION) {
+        const surveyStart = await maybeStartSatisfactionSurvey(scopedSock, jid, session, flow, Date.now());
+        session = surveyStart.session;
+        if (surveyStart.started) {
+          return;
+        }
+      }
       session = endSession(jid, session, Date.now(), 'end-conversation', flow);
       return;
     }
@@ -1029,7 +1421,9 @@ export function startSessionCleanup(sock, flowOrFlows) {
       if (cycleState.running) return;
       cycleState.running = true;
       const limits = getSessionLimits(flow);
-      if (limits.sessionTimeoutMinutes <= 0) {
+      const surveyConfig = getSatisfactionSurveyConfig(flow);
+      const shouldCheckSurveyTimeout = surveyConfig.enabled === true;
+      if (limits.sessionTimeoutMinutes <= 0 && !shouldCheckSurveyTimeout) {
         cycleState.running = false;
         return;
       }
@@ -1053,18 +1447,32 @@ export function startSessionCleanup(sock, flowOrFlows) {
 
           const nowTs = Date.now();
           for (const session of page) {
-            if (!isSessionTimedOut(session, flow, nowTs)) continue;
+            const timedOutBySessionLimit = isSessionTimedOut(session, flow, nowTs);
+            const timedOutBySurvey = isPendingSatisfactionSurveyTimedOut(session, nowTs);
+            if (!timedOutBySessionLimit && !timedOutBySurvey) continue;
 
             await executeWithLock(session.jid, flow, async () => {
               const syncSession = getSession(session.jid, scope);
               if (!syncSession || syncSession.status !== SESSION_STATUS.ACTIVE) return;
-              if (!isSessionTimedOut(syncSession, flow, nowTs)) return;
+              const lockNowTs = Date.now();
+              const sessionStillTimedOut = isSessionTimedOut(syncSession, flow, lockNowTs);
+              const surveyStillTimedOut = isPendingSatisfactionSurveyTimedOut(syncSession, lockNowTs);
+              if (!sessionStillTimedOut && !surveyStillTimedOut) return;
+
+              if (surveyStillTimedOut) {
+                await finalizeSatisfactionSurvey(sock, session.jid, syncSession, flow, lockNowTs, {
+                  rating: null,
+                  timedOut: true,
+                  reason: 'satisfaction-timeout',
+                });
+                return;
+              }
 
               console.log(`[SessionCleanup] Sessão para ${session.jid} atingiu o timeout (${limits.sessionTimeoutMinutes} min). Encerrando e enviando mensagem...`);
               if (limits.timeoutMessage) {
                 await sock.sendMessage(session.jid, { text: limits.timeoutMessage }).catch(console.error);
               }
-              endSession(session.jid, syncSession, nowTs, 'timeout', flow);
+              endSession(session.jid, syncSession, lockNowTs, 'timeout', flow);
             });
           }
 

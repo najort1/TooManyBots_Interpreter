@@ -109,7 +109,7 @@ export async function handleEndConversation({ block, session, sock, jid, flow })
     const text = interpolateForDisplay(block.config.message, session.variables);
     await sendTextMessage(sock, jid, text);
   }
-  return { nextBlockIndex: null, sessionPatch: { status: SESSION_STATUS.ENDED }, done: true };
+  return { nextBlockIndex: null, sessionPatch: {}, done: true };
 }
 
 export async function handleRestartFlow({ session }) {

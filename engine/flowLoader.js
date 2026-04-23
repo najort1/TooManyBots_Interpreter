@@ -11,7 +11,12 @@
 import fs from 'fs';
 import path from 'path';
 import { BLOCK_TYPE } from '../config/constants.js';
-import { toPositiveNumber } from '../utils/normalization.js';
+import { normalizeInt, toPositiveNumber } from '../utils/normalization.js';
+import { normalizeSlidingPeriod } from '../utils/slidingPeriod.js';
+import { resolveSessionTimeoutConfig } from '../utils/sessionTimeoutPresets.js';
+import { normalizeContextPersistenceConfig } from '../utils/contextPersistence.js';
+import { normalizeAvailabilityConfig } from '../utils/availability.js';
+import { normalizeSatisfactionSurveyConfig } from '../utils/satisfactionSurvey.js';
 
 const REQUIRED_BLOCK_FIELDS = ['id', 'type', 'config'];
 
@@ -80,28 +85,51 @@ function validateRedirectToHumanBlock(block, activeBlockIds = null) {
 }
 
 function normalizeRuntimeConfig(runtimeConfig = {}) {
+  const baseConfig = runtimeConfig && typeof runtimeConfig === 'object' ? runtimeConfig : {};
+  const startPolicyLimit = baseConfig.startPolicyLimit && typeof baseConfig.startPolicyLimit === 'object'
+    ? baseConfig.startPolicyLimit
+    : {};
   const endBehavior = runtimeConfig.endBehavior ?? {};
-  const postEnd = runtimeConfig.postEnd ?? {};
-  const sessionLimits = runtimeConfig.sessionLimits ?? {};
+  const postEnd = baseConfig.postEnd ?? {};
+  const sessionLimits = baseConfig.sessionLimits ?? {};
+  const resolvedTimeout = resolveSessionTimeoutConfig(sessionLimits, 0);
+  const legacyScaleMax = endBehavior?.satisfactionSurveyScale?.max;
+  const satisfactionSurvey = normalizeSatisfactionSurveyConfig(endBehavior.sendSatisfactionSurvey, {
+    legacyScaleMax,
+  });
+  const contextPersistence = normalizeContextPersistenceConfig(baseConfig.contextPersistence);
+  const availability = normalizeAvailabilityConfig(baseConfig.availability);
 
   return {
-    conversationMode: runtimeConfig.conversationMode ?? 'conversation',
-    interactionScope: runtimeConfig.interactionScope ?? 'all',
-    startPolicy: runtimeConfig.startPolicy ?? 'allow-always',
+    conversationMode: baseConfig.conversationMode ?? 'conversation',
+    interactionScope: baseConfig.interactionScope ?? 'all',
+    startPolicy: String(baseConfig.startPolicy ?? 'allow-always').trim().toLowerCase() || 'allow-always',
+    startPolicyLimit: {
+      maxStarts: normalizeInt(startPolicyLimit.maxStarts, 3, { min: 1, max: 100000, rounding: 'floor' }),
+      period: normalizeSlidingPeriod(startPolicyLimit.period),
+      blockedMessage:
+        String(startPolicyLimit.blockedMessage ?? 'Voce atingiu o limite de inicios permitido neste periodo.')
+          .trim() ||
+        'Voce atingiu o limite de inicios permitido neste periodo.',
+    },
     endBehavior: {
       sendClosingMessage: endBehavior.sendClosingMessage !== false,
+      sendSatisfactionSurvey: satisfactionSurvey,
     },
     postEnd: {
-      reentryPolicy: postEnd.reentryPolicy ?? 'allow-always',
+      reentryPolicy: String(postEnd.reentryPolicy ?? 'allow-always').trim().toLowerCase() || 'allow-always',
       cooldownMinutes: toPositiveNumber(postEnd.cooldownMinutes, 0),
       blockedMessage: postEnd.blockedMessage ?? 'Este fluxo nao permite novas conversas para este usuario.',
       cooldownMessage: postEnd.cooldownMessage ?? 'Aguarde alguns minutos para iniciar uma nova conversa.',
     },
     sessionLimits: {
       maxMessagesPerSession: toPositiveNumber(sessionLimits.maxMessagesPerSession, 0),
-      sessionTimeoutMinutes: toPositiveNumber(sessionLimits.sessionTimeoutMinutes, 0),
+      sessionTimeoutPreset: resolvedTimeout.sessionTimeoutPreset,
+      sessionTimeoutMinutes: resolvedTimeout.sessionTimeoutMinutes,
       timeoutMessage: sessionLimits.timeoutMessage ?? 'Sessao encerrada por tempo limite.',
     },
+    contextPersistence,
+    availability,
   };
 }
 

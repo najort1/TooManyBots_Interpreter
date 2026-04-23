@@ -435,7 +435,7 @@ export function createIngestionPipelineController({
     for (const flow of dispatchFlows) {
       const dispatchScheduler = getDispatchScheduler();
       if (!dispatchScheduler) {
-        taskPromises.push(handleIncoming(sock, jid, text, listId, flow, id, messageKey));
+        taskPromises.push(handleIncoming(sock, jid, text, listId, flow, id, messageKey, actorJid || null));
         continue;
       }
 
@@ -445,7 +445,7 @@ export function createIngestionPipelineController({
         priority: dispatchPriority,
         payload: null,
         handler: async () => {
-          await handleIncoming(sock, jid, text, listId, flow, id, messageKey);
+          await handleIncoming(sock, jid, text, listId, flow, id, messageKey, actorJid || null);
         },
       });
 
