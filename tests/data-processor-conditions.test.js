@@ -226,3 +226,30 @@ test('data-processor array_join works without jsonPath for simple arrays', async
   assert.equal(result.nextBlockIndex, 1);
   assert.equal(result.sessionPatch.variables.joined_text, 'maçã, banana, laranja');
 });
+
+test('data-processor clears stale output variable when transform fails with onError continue', async () => {
+  const { payload, sentMessages } = createCtx(
+    {
+      operation: 'transform',
+      sourceVariable: 'cotacoes_array',
+      outputVariable: 'cotacoes_formatadas',
+      transformType: 'array_map',
+      mapExpression: '{{item.tipo_boletim}}',
+      onError: 'continue',
+      errorMessage: 'Erro ao formatar cotações',
+    },
+    {
+      cotacoes_array: null,
+      cotacoes_formatadas: 'VALOR_ANTIGO',
+      moeda: 'USD',
+    }
+  );
+
+  const result = await handleDataProcessor(payload);
+  assert.equal(result.done, false);
+  assert.equal(result.nextBlockIndex, 1);
+  assert.equal(result.sessionPatch.variables.cotacoes_formatadas, null);
+  assert.equal(result.sessionPatch.variables.moeda, 'USD');
+  assert.equal(sentMessages.length, 1);
+  assert.equal(sentMessages[0].text, 'Erro ao formatar cotações');
+});

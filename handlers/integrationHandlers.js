@@ -594,10 +594,16 @@ async function handleProcessingError({
   error,
   stage,
   fallbackMessage,
+  outputVariable,
 }) {
   const hasCustomErrorMessage = Object.prototype.hasOwnProperty.call(cfg, 'errorMessage');
   const errorTemplate = hasCustomErrorMessage ? cfg.errorMessage : fallbackMessage;
   const errorMessage = interpolate(toText(errorTemplate), session.variables);
+  const normalizedOutputVariable = toText(outputVariable);
+  const shouldClearOutputVariable = Boolean(normalizedOutputVariable);
+  const variables = shouldClearOutputVariable
+    ? { ...session.variables, [normalizedOutputVariable]: null }
+    : null;
 
   logHandlerErrorEvent({
     block,
@@ -616,14 +622,16 @@ async function handleProcessingError({
   if (shouldStopOnError(cfg.onError)) {
     return {
       nextBlockIndex: null,
-      sessionPatch: { status: SESSION_STATUS.ENDED },
+      sessionPatch: shouldClearOutputVariable
+        ? { status: SESSION_STATUS.ENDED, variables }
+        : { status: SESSION_STATUS.ENDED },
       done: true,
     };
   }
 
   return {
     nextBlockIndex: session.blockIndex + 1,
-    sessionPatch: {},
+    sessionPatch: shouldClearOutputVariable ? { variables } : {},
     done: false,
   };
 }
@@ -793,6 +801,7 @@ export async function handleDataProcessor({ block, session, sock, jid, flow }) {
       error,
       stage: 'data-processor',
       fallbackMessage: 'Erro ao processar dados.',
+      outputVariable: targetVariable,
     });
   }
 }
@@ -824,6 +833,7 @@ export async function handleStringFunctions({ block, session, sock, jid, flow })
       error,
       stage: 'string-functions',
       fallbackMessage: 'Erro ao executar operacao de string.',
+      outputVariable: targetVariable,
     });
   }
 }
@@ -856,6 +866,7 @@ export async function handleListOperations({ block, session, sock, jid, flow }) 
       error,
       stage: 'list-operations',
       fallbackMessage: 'Erro ao executar operacao de lista.',
+      outputVariable: targetVariable,
     });
   }
 }
