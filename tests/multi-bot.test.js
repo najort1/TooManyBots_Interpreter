@@ -416,6 +416,64 @@ test('broadcast contacts include persisted profiles even without incoming event 
   );
 });
 
+test('broadcast contacts include valid group profiles with recipientType group', () => {
+  const now = Date.now();
+  const groupJid = '120363405600887559@g.us';
+
+  addConversationEvent({
+    occurredAt: now,
+    eventType: 'message-incoming',
+    direction: 'incoming',
+    jid: groupJid,
+    flowPath: '/tmp/persisted-group-flow.tmb',
+    messageText: 'oi grupo',
+    metadata: {},
+  });
+
+  const upserted = upsertContactDisplayName({
+    jid: groupJid,
+    displayName: 'Grupo VIP',
+    source: 'test-suite',
+    updatedAt: now,
+  });
+
+  assert.equal(upserted, true);
+
+  const broadcastList = listBroadcastContacts({ search: 'Grupo VIP', limit: 500 });
+  const groupEntry = broadcastList.find(item => item.jid === groupJid);
+  assert.ok(groupEntry, 'expected persisted group to be listed in broadcast contacts');
+  assert.equal(groupEntry?.recipientType, 'group');
+});
+
+test('invalid group jid is ignored by broadcast contacts list', () => {
+  const now = Date.now();
+  const invalidGroupJid = `grupo-invalido-${now}@g.us`;
+
+  addConversationEvent({
+    occurredAt: now,
+    eventType: 'message-incoming',
+    direction: 'incoming',
+    jid: invalidGroupJid,
+    flowPath: '/tmp/persisted-group-flow.tmb',
+    messageText: 'oi grupo invalido',
+    metadata: {},
+  });
+
+  upsertContactDisplayName({
+    jid: invalidGroupJid,
+    displayName: 'Grupo Invalido',
+    source: 'test-suite',
+    updatedAt: now,
+  });
+
+  const broadcastList = listBroadcastContacts({ search: 'Grupo Invalido', limit: 500 });
+  assert.equal(
+    broadcastList.some(item => item.jid === invalidGroupJid),
+    false,
+    'invalid group jid should not be listed for broadcast'
+  );
+});
+
 test('synthetic user jid is ignored by contact persistence and broadcast contacts list', () => {
   const now = Date.now();
   const jid = `persisted-contact-${now}@s.whatsapp.net`;
