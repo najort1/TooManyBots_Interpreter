@@ -108,7 +108,9 @@ export function useBroadcastActions({
       percent: 0,
       status: 'started',
       controlStatus: 'running',
+      recipientType: '',
       recipientStatus: '',
+      recipientCounts: null,
       jid: '',
     });
     setBroadcastLastResult(null);
@@ -138,7 +140,9 @@ export function useBroadcastActions({
         percent: result.attempted > 0 ? Math.min(100, Math.round((processedCount / result.attempted) * 100)) : 0,
         status: 'completed',
         controlStatus: finalControlStatus,
+        recipientType: '',
         recipientStatus: '',
+        recipientCounts: result.recipientCounts ?? null,
         jid: '',
         metrics: result.metrics ?? null,
       });

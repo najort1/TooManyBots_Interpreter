@@ -153,6 +153,33 @@ function toBroadcastMetrics(raw: unknown): BroadcastSendProgress['metrics'] {
     failuresPerMinute: numeric('failuresPerMinute'),
     elapsedMs: numeric('elapsedMs'),
     startedAt: numeric('startedAt'),
+    sentIndividuals: numeric('sentIndividuals'),
+    sentGroups: numeric('sentGroups'),
+    failedIndividuals: numeric('failedIndividuals'),
+    failedGroups: numeric('failedGroups'),
+    attemptedIndividuals: numeric('attemptedIndividuals'),
+    attemptedGroups: numeric('attemptedGroups'),
+    cancelledIndividuals: numeric('cancelledIndividuals'),
+    cancelledGroups: numeric('cancelledGroups'),
+  };
+}
+
+function toBroadcastRecipientCounts(raw: unknown): BroadcastSendProgress['recipientCounts'] {
+  if (!raw || typeof raw !== 'object') return null;
+  const counts = raw as Record<string, unknown>;
+  const numeric = (key: string): number => {
+    const value = Number(counts[key]);
+    return Number.isFinite(value) ? value : 0;
+  };
+  return {
+    attemptedIndividuals: numeric('attemptedIndividuals'),
+    attemptedGroups: numeric('attemptedGroups'),
+    sentIndividuals: numeric('sentIndividuals'),
+    sentGroups: numeric('sentGroups'),
+    failedIndividuals: numeric('failedIndividuals'),
+    failedGroups: numeric('failedGroups'),
+    cancelledIndividuals: numeric('cancelledIndividuals'),
+    cancelledGroups: numeric('cancelledGroups'),
   };
 }
 
@@ -180,10 +207,16 @@ export function toBroadcastProgress(log: EventLog): BroadcastSendProgress | null
     recipientStatusRaw === 'failed'
       ? 'failed'
       : (recipientStatusRaw === 'sent' ? 'sent' : '');
+  const recipientTypeRaw = readMetadataText(log, 'recipientType').toLowerCase();
+  const recipientType: BroadcastSendProgress['recipientType'] =
+    recipientTypeRaw === 'group'
+      ? 'group'
+      : (recipientTypeRaw === 'individual' ? 'individual' : '');
   const jid = String(log.jid || '').trim();
   const controlStatus = normalizeBroadcastControlStatus(readMetadataText(log, 'controlStatus'));
   const metadata = (log.metadata && typeof log.metadata === 'object') ? log.metadata as Record<string, unknown> : null;
   const metrics = toBroadcastMetrics(metadata?.metrics);
+  const recipientCounts = toBroadcastRecipientCounts(metadata?.recipientCounts);
 
   return {
     campaignId: Math.max(0, readMetadataNumber(log, 'campaignId', 0)),
@@ -196,7 +229,9 @@ export function toBroadcastProgress(log: EventLog): BroadcastSendProgress | null
     percent,
     status,
     controlStatus,
+    recipientType,
     recipientStatus,
+    recipientCounts,
     jid: jid || '',
     metrics,
   };

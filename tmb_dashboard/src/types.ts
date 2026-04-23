@@ -221,8 +221,22 @@ export interface HandoffSession {
   lastActivityAt?: number;
 }
 
+export type BroadcastRecipientType = 'individual' | 'group';
+
+export interface BroadcastRecipientCounts {
+  attemptedIndividuals: number;
+  attemptedGroups: number;
+  sentIndividuals: number;
+  sentGroups: number;
+  failedIndividuals: number;
+  failedGroups: number;
+  cancelledIndividuals: number;
+  cancelledGroups: number;
+}
+
 export interface BroadcastContact {
   jid: string;
+  recipientType: BroadcastRecipientType;
   name?: string;
   lastInteractionAt: number;
   hasActiveSession?: boolean;
@@ -236,6 +250,14 @@ export interface BroadcastSendMetrics {
   failuresPerMinute: number;
   elapsedMs: number;
   startedAt: number;
+  sentIndividuals?: number;
+  sentGroups?: number;
+  failedIndividuals?: number;
+  failedGroups?: number;
+  attemptedIndividuals?: number;
+  attemptedGroups?: number;
+  cancelledIndividuals?: number;
+  cancelledGroups?: number;
 }
 
 export interface BroadcastSendResult {
@@ -245,8 +267,10 @@ export interface BroadcastSendResult {
   sent: number;
   failed: number;
   cancelled?: number;
+  recipientCounts?: BroadcastRecipientCounts | null;
   failures: Array<{
     jid: string;
+    recipientType?: BroadcastRecipientType;
     error: string;
   }>;
   metrics?: BroadcastSendMetrics | null;
@@ -270,7 +294,9 @@ export interface BroadcastSendProgress {
   percent: number;
   status: 'started' | 'sending' | 'completed';
   controlStatus?: BroadcastControlStatus;
+  recipientType?: BroadcastRecipientType | '';
   recipientStatus?: 'sent' | 'failed' | '';
+  recipientCounts?: BroadcastRecipientCounts | null;
   jid?: string;
   actor?: string;
   target?: 'all' | 'selected' | string;

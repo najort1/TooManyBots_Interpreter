@@ -41,6 +41,55 @@ interface RequestJsonOptions {
   requestKey?: string;
 }
 
+function inferRecipientType(jid: string): 'individual' | 'group' {
+  return String(jid || '').trim().endsWith('@g.us') ? 'group' : 'individual';
+}
+
+function normalizeRecipientCounts(raw: unknown) {
+  if (!raw || typeof raw !== 'object') return null;
+  const counts = raw as Record<string, unknown>;
+  const numeric = (key: string): number => {
+    const value = Number(counts[key]);
+    return Number.isFinite(value) ? value : 0;
+  };
+  return {
+    attemptedIndividuals: numeric('attemptedIndividuals'),
+    attemptedGroups: numeric('attemptedGroups'),
+    sentIndividuals: numeric('sentIndividuals'),
+    sentGroups: numeric('sentGroups'),
+    failedIndividuals: numeric('failedIndividuals'),
+    failedGroups: numeric('failedGroups'),
+    cancelledIndividuals: numeric('cancelledIndividuals'),
+    cancelledGroups: numeric('cancelledGroups'),
+  };
+}
+
+function normalizeBroadcastMetrics(raw: unknown) {
+  if (!raw || typeof raw !== 'object') return null;
+  const metrics = raw as Record<string, unknown>;
+  const numeric = (key: string): number => {
+    const value = Number(metrics[key]);
+    return Number.isFinite(value) ? value : 0;
+  };
+  return {
+    avgSendMs: numeric('avgSendMs'),
+    maxSendMs: numeric('maxSendMs'),
+    p95SendMs: numeric('p95SendMs'),
+    throughputPerSecond: numeric('throughputPerSecond'),
+    failuresPerMinute: numeric('failuresPerMinute'),
+    elapsedMs: numeric('elapsedMs'),
+    startedAt: numeric('startedAt'),
+    sentIndividuals: numeric('sentIndividuals'),
+    sentGroups: numeric('sentGroups'),
+    failedIndividuals: numeric('failedIndividuals'),
+    failedGroups: numeric('failedGroups'),
+    attemptedIndividuals: numeric('attemptedIndividuals'),
+    attemptedGroups: numeric('attemptedGroups'),
+    cancelledIndividuals: numeric('cancelledIndividuals'),
+    cancelledGroups: numeric('cancelledGroups'),
+  };
+}
+
 export function isAbortError(error: unknown): boolean {
   if (!error) return false;
   const maybeError = error as { name?: string; message?: string };
@@ -230,7 +279,24 @@ export async function fetchBroadcastContacts(search = '', limit = 200): Promise<
     undefined,
     { requestKey: 'broadcast-contacts' }
   );
-  return Array.isArray(data.contacts) ? data.contacts : [];
+  if (!Array.isArray(data.contacts)) return [];
+  const normalized: BroadcastContact[] = [];
+  for (const contact of data.contacts) {
+    const jid = String(contact?.jid || '').trim();
+    if (!jid) continue;
+    const recipientType = String((contact as any)?.recipientType || '').trim().toLowerCase() === 'group'
+      ? 'group'
+      : inferRecipientType(jid);
+    normalized.push({
+      ...contact,
+      jid,
+      recipientType,
+      name: String(contact?.name || '').trim() || undefined,
+      lastInteractionAt: Number(contact?.lastInteractionAt) || 0,
+      hasActiveSession: recipientType === 'group' ? false : Boolean(contact?.hasActiveSession),
+    });
+  }
+  return normalized;
 }
 
 export async function postBroadcastSend(payload: {
@@ -241,7 +307,7 @@ export async function postBroadcastSend(payload: {
   fileName?: string;
   mimeType?: string;
 }): Promise<BroadcastSendResult> {
-  return requestJson<BroadcastSendResult>('/api/broadcast/send', {
+  const data = await requestJson<BroadcastSendResult>('/api/broadcast/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -254,6 +320,25 @@ export async function postBroadcastSend(payload: {
       agentId: 'dashboard-agent',
     }),
   });
+  return {
+    ...data,
+    campaignId: Number(data?.campaignId) || 0,
+    attempted: Number(data?.attempted) || 0,
+    sent: Number(data?.sent) || 0,
+    failed: Number(data?.failed) || 0,
+    cancelled: Number(data?.cancelled) || 0,
+    recipientCounts: normalizeRecipientCounts((data as any)?.recipientCounts),
+    failures: Array.isArray(data?.failures)
+      ? data.failures.map(item => ({
+          jid: String(item?.jid || ''),
+          recipientType: String((item as any)?.recipientType || '').trim().toLowerCase() === 'group'
+            ? 'group'
+            : inferRecipientType(String(item?.jid || '')),
+          error: String(item?.error || ''),
+        }))
+      : [],
+    metrics: normalizeBroadcastMetrics((data as any)?.metrics),
+  };
 }
 
 export interface BroadcastStatusResponse {
@@ -263,9 +348,33 @@ export interface BroadcastStatusResponse {
 }
 
 export async function fetchBroadcastStatus(): Promise<BroadcastStatusResponse> {
-  return requestJson<BroadcastStatusResponse>('/api/broadcast/status', undefined, {
+  const data = await requestJson<BroadcastStatusResponse>('/api/broadcast/status', undefined, {
     requestKey: 'broadcast-status',
   });
+  if (!data?.campaign) return { ok: Boolean(data?.ok), active: Boolean(data?.active), campaign: null };
+  const campaign = data.campaign;
+  const jid = String(campaign.jid || '').trim();
+  return {
+    ok: Boolean(data.ok),
+    active: Boolean(data.active),
+    campaign: {
+      ...campaign,
+      campaignId: Number(campaign.campaignId) || 0,
+      attempted: Number(campaign.attempted) || 0,
+      processed: Number(campaign.processed) || 0,
+      sent: Number(campaign.sent) || 0,
+      failed: Number(campaign.failed) || 0,
+      cancelled: Number(campaign.cancelled) || 0,
+      remaining: Number(campaign.remaining) || 0,
+      percent: Number(campaign.percent) || 0,
+      jid,
+      recipientType: String((campaign as any).recipientType || '').trim().toLowerCase() === 'group'
+        ? 'group'
+        : (jid ? inferRecipientType(jid) : ''),
+      recipientCounts: normalizeRecipientCounts((campaign as any).recipientCounts),
+      metrics: normalizeBroadcastMetrics((campaign as any).metrics),
+    },
+  };
 }
 
 async function postBroadcastControl(action: 'pause' | 'resume' | 'cancel'): Promise<BroadcastStatusResponse> {
