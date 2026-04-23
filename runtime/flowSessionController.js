@@ -1,3 +1,5 @@
+import { resolveSessionTimeoutConfig } from '../utils/sessionTimeoutPresets.js';
+
 export function createFlowSessionController({
   getActiveSessions,
   getActiveFlows,
@@ -34,9 +36,7 @@ export function createFlowSessionController({
   }
 
   function getFlowSessionTimeoutMinutes(flow) {
-    const value = Number(flow?.runtimeConfig?.sessionLimits?.sessionTimeoutMinutes);
-    if (!Number.isFinite(value) || value < 0) return 0;
-    return Math.floor(value);
+    return resolveSessionTimeoutConfig(flow?.runtimeConfig?.sessionLimits ?? {}).sessionTimeoutMinutes;
   }
 
   function parseHumanHandoff(value) {
