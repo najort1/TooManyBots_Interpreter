@@ -37,7 +37,9 @@ export function createMessageTelemetryController({
     status = 'sending',
     controlStatus = 'running',
     jid = '',
+    recipientType = '',
     recipientStatus = '',
+    recipientCounts = null,
     error = '',
     metrics = null,
   } = {}) {
@@ -72,7 +74,20 @@ export function createMessageTelemetryController({
         percent: percentSafe,
         status: statusSafe,
         controlStatus: controlStatusSafe,
+        recipientType: String(recipientType || ''),
         recipientStatus: String(recipientStatus || ''),
+        recipientCounts: recipientCounts && typeof recipientCounts === 'object'
+          ? {
+              attemptedIndividuals: Number(recipientCounts.attemptedIndividuals) || 0,
+              attemptedGroups: Number(recipientCounts.attemptedGroups) || 0,
+              sentIndividuals: Number(recipientCounts.sentIndividuals) || 0,
+              sentGroups: Number(recipientCounts.sentGroups) || 0,
+              failedIndividuals: Number(recipientCounts.failedIndividuals) || 0,
+              failedGroups: Number(recipientCounts.failedGroups) || 0,
+              cancelledIndividuals: Number(recipientCounts.cancelledIndividuals) || 0,
+              cancelledGroups: Number(recipientCounts.cancelledGroups) || 0,
+            }
+          : null,
         error: String(error || ''),
         metrics: metrics && typeof metrics === 'object' ? {
           avgSendMs: Number(metrics.avgSendMs) || 0,
@@ -82,6 +97,14 @@ export function createMessageTelemetryController({
           failuresPerMinute: Number(metrics.failuresPerMinute) || 0,
           elapsedMs: Number(metrics.elapsedMs) || 0,
           startedAt: Number(metrics.startedAt) || 0,
+          sentIndividuals: Number(metrics.sentIndividuals) || 0,
+          sentGroups: Number(metrics.sentGroups) || 0,
+          failedIndividuals: Number(metrics.failedIndividuals) || 0,
+          failedGroups: Number(metrics.failedGroups) || 0,
+          attemptedIndividuals: Number(metrics.attemptedIndividuals) || 0,
+          attemptedGroups: Number(metrics.attemptedGroups) || 0,
+          cancelledIndividuals: Number(metrics.cancelledIndividuals) || 0,
+          cancelledGroups: Number(metrics.cancelledGroups) || 0,
         } : null,
       },
     });

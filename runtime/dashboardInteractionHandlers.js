@@ -237,6 +237,7 @@ export function createDashboardInteractionHandlers({
             failed: result.failed,
             cancelled: cancelledCount,
             campaignId: result.campaignId,
+            recipientCounts: result.recipientCounts || null,
             metrics: result.metrics || null,
           },
         });

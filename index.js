@@ -751,7 +751,9 @@ function emitDashboardBroadcastProgress({
   status = 'sending',
   controlStatus = 'running',
   jid = '',
+  recipientType = '',
   recipientStatus = '',
+  recipientCounts = null,
   error = '',
   metrics = null,
 } = {}) {
@@ -769,7 +771,9 @@ function emitDashboardBroadcastProgress({
     status,
     controlStatus,
     jid,
+    recipientType,
     recipientStatus,
+    recipientCounts,
     error,
     metrics,
   });

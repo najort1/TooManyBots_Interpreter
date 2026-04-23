@@ -404,7 +404,9 @@ export async function dispatchDashboardApiRoute({
       sent: result?.sent || 0,
       failed: result?.failed || 0,
       cancelled: result?.cancelled || 0,
+      recipientCounts: result?.recipientCounts || null,
       failures: Array.isArray(result?.failures) ? result.failures : [],
+      metrics: result?.metrics || null,
     });
     return true;
   }
