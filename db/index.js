@@ -523,6 +523,34 @@ export async function initDb() {
       source        TEXT NOT NULL DEFAULT 'runtime',
       updated_at    INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.satisfaction_surveys (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      jid               TEXT    NOT NULL,
+      flow_path         TEXT    NOT NULL DEFAULT '',
+      session_id        TEXT    NOT NULL DEFAULT '',
+      question_type     TEXT    NOT NULL,
+      scale             INTEGER NOT NULL DEFAULT 5,
+      rating            INTEGER,
+      timed_out         INTEGER NOT NULL DEFAULT 0,
+      thank_you_message TEXT    NOT NULL DEFAULT '',
+      created_at        INTEGER NOT NULL,
+      answered_at       INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.start_policy_events (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      jid        TEXT    NOT NULL,
+      flow_path  TEXT    NOT NULL DEFAULT '',
+      started_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.persisted_context_variables (
+      jid           TEXT    NOT NULL,
+      flow_path     TEXT    NOT NULL DEFAULT '',
+      variable_name TEXT    NOT NULL,
+      variable_value TEXT   NOT NULL,
+      persisted_at  INTEGER NOT NULL,
+      expires_at    INTEGER,
+      PRIMARY KEY (jid, flow_path, variable_name)
+    );
   `);
 
   ensureBroadcastRecipientsSchema();
@@ -548,6 +576,11 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_broadcast_recipients_campaign_type ON broadcast_recipients(campaign_id, recipient_type);
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_contact_profiles_display_name ON contact_profiles(display_name);
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_contact_profiles_updated_at ON contact_profiles(updated_at DESC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_satisfaction_surveys_jid_created_at ON satisfaction_surveys(jid, created_at DESC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_satisfaction_surveys_flow_created_at ON satisfaction_surveys(flow_path, created_at DESC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_start_policy_events_scope_started_at ON start_policy_events(jid, flow_path, started_at DESC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_persisted_context_scope_expires_at ON persisted_context_variables(jid, flow_path, expires_at);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_persisted_context_expires_at ON persisted_context_variables(expires_at);
   `);
 
   migrateLegacyDatabaseIfNeeded();
@@ -797,6 +830,85 @@ export async function initDb() {
          display_name = excluded.display_name,
          source = excluded.source,
          updated_at = excluded.updated_at`
+    ),
+    insertSatisfactionSurvey: db.prepare(
+      `INSERT INTO ${ANALYTICS_SCHEMA}.satisfaction_surveys (
+        jid, flow_path, session_id, question_type, scale, rating, timed_out, thank_you_message, created_at, answered_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ),
+    listSatisfactionSurvey: db.prepare(
+      `SELECT id, jid, flow_path, session_id, question_type, scale, rating, timed_out, thank_you_message, created_at, answered_at
+       FROM ${ANALYTICS_SCHEMA}.satisfaction_surveys
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`
+    ),
+    listSatisfactionSurveyByJid: db.prepare(
+      `SELECT id, jid, flow_path, session_id, question_type, scale, rating, timed_out, thank_you_message, created_at, answered_at
+       FROM ${ANALYTICS_SCHEMA}.satisfaction_surveys
+       WHERE jid = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`
+    ),
+    listSatisfactionSurveyByFlowPath: db.prepare(
+      `SELECT id, jid, flow_path, session_id, question_type, scale, rating, timed_out, thank_you_message, created_at, answered_at
+       FROM ${ANALYTICS_SCHEMA}.satisfaction_surveys
+       WHERE flow_path = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`
+    ),
+    listSatisfactionSurveyByJidAndFlowPath: db.prepare(
+      `SELECT id, jid, flow_path, session_id, question_type, scale, rating, timed_out, thank_you_message, created_at, answered_at
+       FROM ${ANALYTICS_SCHEMA}.satisfaction_surveys
+       WHERE jid = ? AND flow_path = ?
+       ORDER BY created_at DESC, id DESC
+       LIMIT ?`
+    ),
+    insertStartPolicyEvent: db.prepare(
+      `INSERT INTO ${ANALYTICS_SCHEMA}.start_policy_events (jid, flow_path, started_at)
+       VALUES (?, ?, ?)`
+    ),
+    countStartPolicyEventsInRange: db.prepare(
+      `SELECT COUNT(*) AS total
+       FROM ${ANALYTICS_SCHEMA}.start_policy_events
+       WHERE jid = ? AND flow_path = ? AND started_at >= ? AND started_at < ?`
+    ),
+    deleteStartPolicyEventsBefore: db.prepare(
+      `DELETE FROM ${ANALYTICS_SCHEMA}.start_policy_events
+       WHERE started_at < ?`
+    ),
+    upsertPersistedContextVariable: db.prepare(
+      `INSERT INTO ${ANALYTICS_SCHEMA}.persisted_context_variables (
+        jid, flow_path, variable_name, variable_value, persisted_at, expires_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(jid, flow_path, variable_name) DO UPDATE SET
+        variable_value = excluded.variable_value,
+        persisted_at = excluded.persisted_at,
+        expires_at = excluded.expires_at`
+    ),
+    deletePersistedContextVariable: db.prepare(
+      `DELETE FROM ${ANALYTICS_SCHEMA}.persisted_context_variables
+       WHERE jid = ? AND flow_path = ? AND variable_name = ?`
+    ),
+    deletePersistedContextVariablesByScope: db.prepare(
+      `DELETE FROM ${ANALYTICS_SCHEMA}.persisted_context_variables
+       WHERE jid = ? AND flow_path = ?`
+    ),
+    listPersistedContextVariables: db.prepare(
+      `SELECT variable_name, variable_value
+       FROM ${ANALYTICS_SCHEMA}.persisted_context_variables
+       WHERE jid = ? AND flow_path = ? AND (expires_at IS NULL OR expires_at > ?)
+       ORDER BY persisted_at DESC`
+    ),
+    listPersistedContextVariablesByNames: db.prepare(
+      `SELECT variable_name, variable_value
+       FROM ${ANALYTICS_SCHEMA}.persisted_context_variables
+       WHERE jid = ? AND flow_path = ? AND (expires_at IS NULL OR expires_at > ?)
+         AND variable_name IN (SELECT value FROM json_each(?))
+       ORDER BY persisted_at DESC`
+    ),
+    deleteExpiredPersistedContextVariables: db.prepare(
+      `DELETE FROM ${ANALYTICS_SCHEMA}.persisted_context_variables
+       WHERE expires_at IS NOT NULL AND expires_at <= ?`
     ),
     insertBroadcastCampaign: db.prepare(
       `INSERT INTO ${ANALYTICS_SCHEMA}.broadcast_campaigns (
@@ -1491,6 +1603,28 @@ export {
   markBroadcastRecipientResultsBatch,
   cancelBroadcastPendingRecipients,
 } from './broadcastRepository.js';
+
+// --- Satisfaction Repository ---
+export {
+  saveSatisfactionSurveyResponse,
+  listSatisfactionSurveyResponses,
+} from './satisfactionRepository.js';
+
+// --- Start Policy Repository ---
+export {
+  recordStartPolicyEvent,
+  countStartPolicyEventsInWindow,
+  pruneStartPolicyEventsBefore,
+} from './startPolicyRepository.js';
+
+// --- Context Persistence Repository ---
+export {
+  upsertPersistedContextVariable,
+  deletePersistedContextVariable,
+  deletePersistedContextVariablesByScope,
+  loadPersistedContextVariables,
+  deleteExpiredPersistedContextVariables,
+} from './contextPersistenceRepository.js';
 
 function fileSizeOrZero(filePath) {
   try {
