@@ -43,7 +43,7 @@ function buildChartMotionOptions(prefersReducedMotion: boolean) {
 function getPrimaryChartConfig(mode: DashboardMode, stats: DashboardStats, prefersReducedMotion: boolean): ChartConfiguration {
   const motionOptions = buildChartMotionOptions(prefersReducedMotion);
   if (mode === 'CONVERSATION') {
-    const fallbackFunnel = [{ step: 'start', label: 'Inicio', count: stats.conversationsStarted ?? 0 }];
+    const fallbackFunnel = [{ step: 'start', label: 'Início', count: stats.conversationsStarted ?? 0 }];
     const rawFunnel = (stats as DashboardStats & { funnel?: unknown }).funnel;
     const funnel = Array.isArray(rawFunnel)
       ? rawFunnel
@@ -51,7 +51,7 @@ function getPrimaryChartConfig(mode: DashboardMode, stats: DashboardStats, prefe
         ? [
             { step: 'started', label: 'Iniciadas', count: Number((rawFunnel as { started?: number }).started ?? 0) },
             { step: 'active', label: 'Ativas', count: Number((rawFunnel as { active?: number }).active ?? 0) },
-            { step: 'completed', label: 'Concluidas', count: Number((rawFunnel as { completed?: number }).completed ?? 0) },
+            { step: 'completed', label: 'Concluídas', count: Number((rawFunnel as { completed?: number }).completed ?? 0) },
             { step: 'abandoned', label: 'Abandonadas', count: Number((rawFunnel as { abandoned?: number }).abandoned ?? 0) },
           ]
         : fallbackFunnel);
@@ -147,7 +147,7 @@ function getVolumeChartConfig(mode: DashboardMode, stats: DashboardStats, prefer
 function getBottomChartConfig(stats: DashboardStats, prefersReducedMotion: boolean): ChartConfiguration<'bar'> {
   const motionOptions = buildChartMotionOptions(prefersReducedMotion);
   const trend = stats.weeklyTrend ?? [];
-  const labels = trend.length ? trend.map(item => item.date) : ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sab', 'Dom'];
+  const labels = trend.length ? trend.map(item => item.date) : ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'];
   const started = trend.length ? trend.map(item => item.started) : [0, 0, 0, 0, 0, 0, 0];
   const abandoned = trend.length ? trend.map(item => item.abandoned) : [0, 0, 0, 0, 0, 0, 0];
 
@@ -350,7 +350,7 @@ export function AnalyticsView({
                   log.direction === 'outgoing' ||
                   eventType.includes('outgoing') ||
                   eventType.startsWith('human-');
-                const label = isOutgoing ? 'Bot/Atendente' : 'Usuario';
+                const label = isOutgoing ? 'Bot/Atendente' : 'Usuário';
                 const text = log.messageText || '[Evento de sistema]';
                 return (
                   <div
