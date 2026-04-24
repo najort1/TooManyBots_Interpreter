@@ -148,3 +148,7 @@ export const BROADCAST_LIMITS = {
   // throttled.
   PROGRESS_THROTTLE_MS: 400,
 };
+
+// --- Tipos de Mídia Suportados ---
+export const ALLOWED_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
+

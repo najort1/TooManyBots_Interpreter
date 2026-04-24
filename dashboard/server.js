@@ -17,6 +17,7 @@ import {
   listConversationEventsSinceByFlowPath,
 } from '../db/index.js';
 import { normalizeInt } from '../utils/normalization.js';
+import { ALLOWED_IMAGE_MIME } from '../config/constants.js';
 import { createDashboardHttpServer } from './httpServer.js';
 import { setupDashboardWebsocketServer, broadcastDashboardPayload, stopDashboardWebsocketServer } from './websocketManager.js';
 import { sendJson, sendText, decodePathComponent, isPathInsideRoot, tryServePublicAsset, readJsonBody } from './staticFileHandler.js';
@@ -60,13 +61,6 @@ const STATIC_MIME_TYPES = {
   '.webp': 'image/webp',
   '.ico': 'image/x-icon',
 };
-
-const ALLOWED_HANDOFF_IMAGE_MIME = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/gif',
-]);
 
 const STATS_CACHE_TTL_MS = 1500;
 const HANDOFF_SESSIONS_CACHE_TTL_MS = 1000;
@@ -136,7 +130,7 @@ function parseDataUrlImage(dataUrl, declaredMimeType = '') {
 
   const inferredMimeType = String(match[1] || '').toLowerCase();
   const mimeType = String(declaredMimeType || inferredMimeType).toLowerCase();
-  if (!ALLOWED_HANDOFF_IMAGE_MIME.has(mimeType)) {
+  if (!ALLOWED_IMAGE_MIME.has(mimeType)) {
     throw new Error('Tipo de imagem não suportado');
   }
 
