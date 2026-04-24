@@ -1,4 +1,4 @@
-import fs from 'fs';
+﻿import fs from 'fs';
 import path from 'path';
 import {
   DisconnectReason,
@@ -46,10 +46,9 @@ import {
   getEngineRuntimeStats,
   startSessionCleanup,
   resetActiveSessions,
-  resumeSessionFromHumanHandoff,
-  endSessionFromDashboard,
   clearEngineRuntimeCaches,
 } from './engine/flowEngine.js';
+import { endSessionFromDashboard, resumeSessionFromHumanHandoff } from './engine/handoffEngine.js';
 import { configureConversationEventEmitter } from './engine/conversationEvents.js';
 import {
   getConfig,
@@ -59,7 +58,7 @@ import {
   RUNTIME_MODE,
 } from './config/index.js';
 import { DashboardServer } from './dashboard/server.js';
-import { BROADCAST_LIMITS } from './config/constants.js';
+import { BROADCAST_LIMITS, ALLOWED_IMAGE_MIME } from './config/constants.js';
 import { createBroadcastService } from './engine/broadcastService.js';
 import { createSurveyBroadcastService } from './engine/surveyBroadcastService.js';
 import { buildBroadcastMessage } from './engine/broadcastMessageBuilder.js';
@@ -100,31 +99,13 @@ import {
   readPerMinute,
   computeQueuePressurePercent,
 } from './runtime/healthMetrics.js';
-import { createInstanceLock } from './runtime/instanceLock.js';
+import { initRuntimeContainer } from './runtime/container.js';
 import {
-  createDashboardBridgeController,
   openDashboardInBrowser as launchDashboardInBrowser,
 } from './runtime/dashboardBridge.js';
-import { createIngestionPipelineController } from './runtime/ingestionPipeline.js';
-import { createWhatsAppRuntimeController } from './runtime/whatsappRuntime.js';
 import { createDashboardSettingsSessionHandlers } from './runtime/dashboardSettingsSessionHandlers.js';
 import { createDashboardInteractionHandlers } from './runtime/dashboardInteractionHandlers.js';
 import { createDashboardSurveyHandlers } from './runtime/dashboardSurveyHandlers.js';
-import { createFlowRuntimeManager } from './runtime/flowRuntimeManager.js';
-import { createSetupConfigController } from './runtime/setupConfigController.js';
-import { createSetupRuntimeStateController } from './runtime/setupRuntimeState.js';
-import { createRuntimeInfoController } from './runtime/runtimeInfoController.js';
-import { createMaintenanceController } from './runtime/maintenanceController.js';
-import { createDatabaseMaintenanceController } from './runtime/databaseMaintenanceController.js';
-import { createHandoffMediaCaptureController } from './runtime/handoffMediaCapture.js';
-import { createAuthStateController } from './runtime/authStateController.js';
-import { createFlowSessionController } from './runtime/flowSessionController.js';
-import { createRuntimeGuardController } from './runtime/runtimeGuardController.js';
-import { createRuntimeDiagnosticsController } from './runtime/runtimeDiagnosticsController.js';
-import { createRuntimeLoggingController } from './runtime/runtimeLoggingController.js';
-import { createFatalLifecycleController } from './runtime/fatalLifecycleController.js';
-import { createFlowRegistryController } from './runtime/flowRegistryController.js';
-import { createMessageTelemetryController } from './runtime/messageTelemetryController.js';
 
 let config;
 let logger;
@@ -193,8 +174,6 @@ const contactCache = new PersistentContactCache({
   },
 });
 const HANDOFF_MEDIA_DIR = path.resolve('./data/handoff-media');
-const ALLOWED_INCOMING_IMAGE_MIME = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/gif']);
-
 
 const FATAL_LOG_FILE = path.resolve('./fatal-error.log');
 const RUNTIME_LOCK_FILE = path.resolve('./data/runtime-single-instance.lock');
@@ -207,176 +186,6 @@ let reconnectController = null;
 let saveCredsImmediate = null;
 let saveCredsDebounceTimer = null;
 let mediaCleanupTimer = null;
-
-// Single-instance lock — protects against multiple concurrent runtimes.
-const instanceLock = createInstanceLock(RUNTIME_LOCK_FILE);
-const dashboardBridge = createDashboardBridgeController({
-  getLogger: () => logger,
-});
-const ingestionPipeline = createIngestionPipelineController({
-  getConfig: () => config,
-  getLogger: () => logger,
-  getRuntimeGuardState: () => runtimeGuardState,
-  getIngestionRuntimeCounters: () => ingestionRuntimeCounters,
-  getPostProcessQueue: () => postProcessQueue,
-  getMediaPipelineQueue: () => mediaPipelineQueue,
-  getDispatchScheduler: () => dispatchScheduler,
-  getIngestionQueue: () => ingestionQueue,
-  getContactCache: () => contactCache,
-  getWhatsappHealthState: () => whatsappHealthState,
-  getWarnedMissingTestTargets: () => warnedMissingTestTargets,
-  setWarnedMissingTestTargets: next => {
-    warnedMissingTestTargets = Boolean(next);
-  },
-  maybeLogThroughputPressure,
-  noteQueueLag,
-  evaluateRuntimeGuardState,
-  logConversationEvent,
-  captureIncomingImageForDashboard,
-  mergeContactCacheEntry,
-  parseMessage,
-  getMessageDebugInfo,
-  resolveIncomingActorJid,
-  getGroupWhitelistJids,
-  getAllowedTestJids,
-  normalizeInteractionScope,
-  isGroupWhitelistScope,
-  shouldProcessByInteractionScope,
-  getFlowBotType,
-  getSession,
-  getActiveFlows,
-  handleIncoming,
-  formatError,
-  bumpMinuteCounter,
-});
-const flowRegistryController = createFlowRegistryController({
-  getCurrentFlowRegistry: () => currentFlowRegistry,
-  getConfig: () => config,
-  loadFlows,
-  runtimeModeDevelopment: RUNTIME_MODE.DEVELOPMENT,
-});
-const flowRuntimeManager = createFlowRuntimeManager({
-  getConfig: () => config,
-  isDevelopmentMode,
-  getActiveFlows,
-  resetActiveSessions,
-  loadFlowRegistryFromConfig,
-  applyFlowSessionTimeoutOverrides,
-  setCurrentFlowRegistry: registry => {
-    currentFlowRegistry = registry;
-  },
-  setWarnedMissingTestTargets: next => {
-    warnedMissingTestTargets = Boolean(next);
-  },
-  getCurrentSocket: () => currentSocket,
-  startSessionCleanup,
-  logConversationEvent,
-  currentPrimaryFlowPathForLogs,
-});
-const setupRuntimeStateController = createSetupRuntimeStateController({
-  getConfig: () => config,
-  runtimeModeProduction: RUNTIME_MODE.PRODUCTION,
-  toTrimmedStringArray,
-  listContactDisplayNames,
-  contactCache,
-  getContactDisplayName,
-  fetchSelectableContacts,
-  fetchSelectableGroups,
-  getCurrentSocket: () => currentSocket,
-  fetchSavedTestTargetJidsFromDb,
-  isUserJid,
-  isGroupJid,
-});
-const setupConfigController = createSetupConfigController({
-  getConfig: () => config,
-  setConfig: nextConfig => {
-    config = nextConfig;
-  },
-  setCurrentFlowRegistry: registry => {
-    currentFlowRegistry = registry;
-  },
-  setWarnedMissingTestTargets: next => {
-    warnedMissingTestTargets = Boolean(next);
-  },
-  setRuntimeSetupDone: next => {
-    runtimeSetupDone = Boolean(next);
-  },
-  saveUserConfig,
-  normalizeUserConfig,
-  applyFlowSessionTimeoutOverrides,
-  loadFlowRegistryFromConfig,
-  isGroupWhitelistScope,
-  getGroupWhitelistJids,
-  getAllowedTestJids,
-  installLibSignalNoiseFilter,
-  getLogger: () => logger,
-  initializeRuntimeSchedulers,
-  initializeReconnectPolicy,
-  getMediaCleanupTimer: () => mediaCleanupTimer,
-  setMediaCleanupTimer: next => {
-    mediaCleanupTimer = next;
-  },
-  startHandoffMediaMaintenance,
-  applyDatabaseRuntimeConfigFromAppConfig,
-  startDatabaseMaintenanceScheduler,
-  getCurrentSocket: () => currentSocket,
-  startSessionCleanup,
-  getActiveFlows,
-  setupFlowWatcher: () => flowRuntimeManager.setupFlowWatcher(),
-  setRequiresInitialSetup: next => {
-    requiresInitialSetup = Boolean(next);
-  },
-  setHasSavedConfigAtBoot: next => {
-    hasSavedConfigAtBoot = Boolean(next);
-  },
-  ensureWhatsAppRuntimeStarted,
-  buildSetupConfigSnapshot,
-  toTrimmedStringArray,
-  normalizeBroadcastSendIntervalMs,
-  runtimeModeProduction: RUNTIME_MODE.PRODUCTION,
-});
-const whatsappRuntime = createWhatsAppRuntimeController({
-  initializeReconnectPolicy,
-  getReconnectController: () => reconnectController,
-  getConfig: () => config,
-  incrementSocketGeneration: () => {
-    socketGeneration += 1;
-    return socketGeneration;
-  },
-  getSocketGeneration: () => socketGeneration,
-  getLogger: () => logger,
-  setCurrentSocket: sock => {
-    currentSocket = sock;
-  },
-  getCurrentSocket: () => currentSocket,
-  attachOutgoingMessageLogger,
-  noteSocketEvent,
-  scheduleCredsSave,
-  mergeContactList,
-  mergeChatsIntoContactCache,
-  getContactCache: () => contactCache,
-  flushCredsNow,
-  resolveDisconnectReasonName,
-  classifyDisconnectCategory,
-  isLoggedOutDisconnect: statusCode => statusCode === DisconnectReason.loggedOut,
-  getWhatsappHealthState: () => whatsappHealthState,
-  incrementObjectCounter,
-  evaluateRuntimeGuardState,
-  setRuntimeSetupDone: next => {
-    runtimeSetupDone = Boolean(next);
-  },
-  startSessionCleanup,
-  getActiveFlows,
-  initializeTerminalCommands,
-  getAllowedTestJids,
-  getGroupWhitelistJids,
-  enqueueIncomingUpsertMessage: payload => {
-    ingestionPipeline.enqueueIncomingUpsertMessage(payload);
-  },
-  isReloadInProgress: () => flowRuntimeManager.isReloadInProgress(),
-  getRuntimeSetupPromise: () => runtimeSetupPromise,
-  noteSocketCallbackDuration,
-});
 
 const authPersistenceStats = {
   updateEvents: 0,
@@ -421,16 +230,6 @@ const runtimeGuardState = {
   droppedPostTasks: 0,
   droppedMediaTasks: 0,
 };
-const runtimeGuardController = createRuntimeGuardController({
-  getRuntimeGuardState: () => runtimeGuardState,
-  getConfig: () => config,
-  getLogger: () => logger,
-  queueSnapshotOrFallback,
-  getIngestionQueue: () => ingestionQueue,
-  getMediaPipelineQueue: () => mediaPipelineQueue,
-  getReconnectController: () => reconnectController,
-  computeQueuePressurePercent,
-});
 
 const handoffMediaMaintenanceStats = {
   runs: 0,
@@ -484,115 +283,117 @@ const whatsappHealthState = {
     credsUpdate: new Map(),
   },
 };
-const runtimeDiagnosticsController = createRuntimeDiagnosticsController({
-  disconnectReasonNameByCode,
+
+const container = initRuntimeContainer({
   getConfig: () => config,
+  setConfig: nextConfig => { config = nextConfig; },
   getLogger: () => logger,
-  getWhatsappHealthState: () => whatsappHealthState,
-  readPerMinute,
-  bumpMinuteCounter,
-  pushSample,
-});
-const runtimeLoggingController = createRuntimeLoggingController({
-  runtimeModeProduction: RUNTIME_MODE.PRODUCTION,
-});
-const fatalLifecycleController = createFatalLifecycleController({
-  fatalLogFile: FATAL_LOG_FILE,
-  flushCredsNow: reason => flushCredsNow(reason),
-  closeReconnectController: () => reconnectController?.close?.(),
-  releaseInstanceLock: () => instanceLock.release(),
-});
-const authStateController = createAuthStateController({
-  getConfig: () => config,
-  getAuthStorageCache: () => authStorageCache,
-  getAuthStateStorageStats,
+  getCurrentFlowRegistry: () => currentFlowRegistry,
+  setCurrentFlowRegistry: registry => { currentFlowRegistry = registry; },
+  getCurrentSocket: () => currentSocket,
+  setCurrentSocket: sock => { currentSocket = sock; },
+  getRuntimeSetupPromise: () => runtimeSetupPromise,
+  setRuntimeSetupDone: next => { runtimeSetupDone = Boolean(next); },
+  getWarnedMissingTestTargets: () => warnedMissingTestTargets,
+  setWarnedMissingTestTargets: next => { warnedMissingTestTargets = Boolean(next); },
+  getRequiresInitialSetup: () => requiresInitialSetup,
+  setRequiresInitialSetup: next => { requiresInitialSetup = Boolean(next); },
+  getHasSavedConfigAtBoot: () => hasSavedConfigAtBoot,
+  setHasSavedConfigAtBoot: next => { hasSavedConfigAtBoot = Boolean(next); },
+  getSocketGeneration: () => socketGeneration,
+  incrementSocketGeneration: () => { socketGeneration += 1; return socketGeneration; },
+
+  ingestionRuntimeCounters,
+  contactCache,
+  runtimeGuardState,
+  whatsappHealthState,
+  handoffMediaMaintenanceStats,
+  authPersistenceStats,
+  authCleanupStats,
+  authStorageCache,
+
+  getIngestionQueue: () => ingestionQueue,
+  getDispatchScheduler: () => dispatchScheduler,
+  getPostProcessQueue: () => postProcessQueue,
+  getMediaPipelineQueue: () => mediaPipelineQueue,
+  getReconnectController: () => reconnectController,
+
   getSaveCredsDebounceTimer: () => saveCredsDebounceTimer,
-  setSaveCredsDebounceTimer: next => {
-    saveCredsDebounceTimer = next;
-  },
+  setSaveCredsDebounceTimer: next => { saveCredsDebounceTimer = next; },
   getSaveCredsImmediate: () => saveCredsImmediate,
-  getAuthPersistenceStats: () => authPersistenceStats,
-  cleanupAuthSignalSessions,
-  getAuthCleanupStats: () => authCleanupStats,
   getAuthStateMaintenanceTimer: () => authStateMaintenanceTimer,
-  setAuthStateMaintenanceTimer: next => {
-    authStateMaintenanceTimer = next;
-  },
-});
-const runtimeInfoController = createRuntimeInfoController({
-  getConfig: () => config,
-  runtimeModeProduction: RUNTIME_MODE.PRODUCTION,
+  setAuthStateMaintenanceTimer: next => { authStateMaintenanceTimer = next; },
+  getDbSizeSnapshotMaintenanceTimer: () => dbSizeSnapshotMaintenanceTimer,
+  setDbSizeSnapshotMaintenanceTimer: next => { dbSizeSnapshotMaintenanceTimer = next; },
+  getDbMaintenanceTimer: () => dbMaintenanceTimer,
+  setDbMaintenanceTimer: next => { dbMaintenanceTimer = next; },
+  getMediaCleanupTimer: () => mediaCleanupTimer,
+  setMediaCleanupTimer: next => { mediaCleanupTimer = next; },
+
+  RUNTIME_LOCK_FILE,
+  FATAL_LOG_FILE,
+  HANDOFF_MEDIA_DIR,
+  ALLOWED_IMAGE_MIME,
+  DASHBOARD_TELEMETRY_LEVELS,
+  disconnectReasonNameByCode,
+  runtimeStatsStartedAt,
+
+  formatError,
+  flushCredsNow,
+  scheduleCredsSave,
+  evaluateRuntimeGuardState,
+  noteSocketEvent,
+  noteSocketCallbackDuration,
+  noteQueueLag,
+  maybeLogThroughputPressure,
+  logConversationEvent,
+  captureIncomingImageForDashboard,
+  installLibSignalNoiseFilter,
+  initializeRuntimeSchedulers,
+  initializeReconnectPolicy,
+  startHandoffMediaMaintenance,
+  applyDatabaseRuntimeConfigFromAppConfig,
+  startDatabaseMaintenanceScheduler,
+  ensureWhatsAppRuntimeStarted,
+  buildSetupConfigSnapshot,
+  normalizeBroadcastSendIntervalMs,
+  attachOutgoingMessageLogger,
+  initializeTerminalCommands,
+  queueSnapshotOrFallback,
   getDashboardFlow,
   getConversationFlow,
   getCommandFlows,
   normalizeDashboardTelemetryLevel,
   resolveDashboardIsolationMode,
-  getWhatsAppHealthState: () => whatsappHealthState,
-  getRuntimeGuardState: () => runtimeGuardState,
   refreshAuthStateStorageSnapshot,
-  getReconnectController: () => reconnectController,
-  trimTimestampWindow,
-  readPerMinute,
-  toPercentile,
-  getAuthPersistenceStats: () => authPersistenceStats,
-  getAuthCleanupStats: () => authCleanupStats,
-  getAuthStorageCache: () => authStorageCache,
-  getHandoffMediaMaintenanceStats: () => handoffMediaMaintenanceStats,
-  evaluateRuntimeGuardState,
-  getEngineRuntimeStats,
-  getIngestionRuntimeCounters: () => ingestionRuntimeCounters,
-  getRuntimeStatsStartedAt: () => runtimeStatsStartedAt,
-  queueSnapshotOrFallback,
-  getIngestionQueue: () => ingestionQueue,
-  getDispatchScheduler: () => dispatchScheduler,
-  getPostProcessQueue: () => postProcessQueue,
-  getMediaPipelineQueue: () => mediaPipelineQueue,
-});
-const maintenanceController = createMaintenanceController({
-  handoffMediaDir: HANDOFF_MEDIA_DIR,
-  getConfig: () => config,
-  getLogger: () => logger,
-  getDatabaseInfo,
-  getDbSizeSnapshotMaintenanceTimer: () => dbSizeSnapshotMaintenanceTimer,
-  setDbSizeSnapshotMaintenanceTimer: next => {
-    dbSizeSnapshotMaintenanceTimer = next;
-  },
-  getMediaCleanupTimer: () => mediaCleanupTimer,
-  setMediaCleanupTimer: next => {
-    mediaCleanupTimer = next;
-  },
-  getHandoffMediaMaintenanceStats: () => handoffMediaMaintenanceStats,
-});
-const databaseMaintenanceController = createDatabaseMaintenanceController({
-  getConfig: () => config,
-  configureDatabaseRuntime,
-  runDatabaseMaintenance,
-  getLogger: () => logger,
-  getDbMaintenanceTimer: () => dbMaintenanceTimer,
-  setDbMaintenanceTimer: next => {
-    dbMaintenanceTimer = next;
-  },
-  dashboardTelemetryLevels: DASHBOARD_TELEMETRY_LEVELS,
-});
-const handoffMediaCaptureController = createHandoffMediaCaptureController({
-  handoffMediaDir: HANDOFF_MEDIA_DIR,
-  allowedIncomingImageMime: ALLOWED_INCOMING_IMAGE_MIME,
-  downloadMediaMessage,
-  getLogger: () => logger,
-  getConfig: () => config,
-  getIngestionRuntimeCounters: () => ingestionRuntimeCounters,
-});
-const flowSessionController = createFlowSessionController({
-  getActiveSessions,
-  getActiveFlows,
-  getFlowBotType,
+  broadcastDashboardEvent,
+  currentPrimaryFlowPathForLogs,
+  toTrimmedStringArray,
   resolveContactDisplayName,
 });
-const messageTelemetryController = createMessageTelemetryController({
-  addConversationEvent,
-  currentPrimaryFlowPathForLogs: () => currentPrimaryFlowPathForLogs(),
-  broadcastDashboardEvent: event => broadcastDashboardEvent(event),
-});
+
+const {
+  instanceLock,
+  dashboardBridge,
+  ingestionPipeline,
+  flowRegistryController,
+  flowRuntimeManager,
+  setupRuntimeStateController,
+  setupConfigController,
+  whatsappRuntime,
+  runtimeGuardController,
+  runtimeDiagnosticsController,
+  runtimeLoggingController,
+  fatalLifecycleController,
+  authStateController,
+  runtimeInfoController,
+  maintenanceController,
+  databaseMaintenanceController,
+  handoffMediaCaptureController,
+  flowSessionController,
+  messageTelemetryController,
+} = container;
+
 
 
 function normalizeErrorCategory(error) {
