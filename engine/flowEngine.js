@@ -16,6 +16,11 @@ import {
   createConversationSessionRecord,
   finishConversationSessionRecord,
   saveSatisfactionSurveyResponse,
+  createSurveyInstance,
+  saveSurveyResponse,
+  markSurveyInstanceCompleted,
+  markSurveyInstanceAbandoned,
+  updateRealtimeSurveyMetrics,
   recordStartPolicyEvent,
   countStartPolicyEventsInWindow,
   pruneStartPolicyEventsBefore,
@@ -25,7 +30,7 @@ import {
   deleteExpiredPersistedContextVariables,
 } from '../db/index.js';
 import { emitConversationEvent } from './conversationEvents.js';
-import { LRUCache } from './utils.js';
+import { LRUCache, interpolate } from './utils.js';
 import { parseCommandInput } from './commandParser.js';
 import { getFlowBotType } from './flowLoader.js';
 import { resolveKeyword } from './resolvers/keywordResolver.js';
@@ -46,6 +51,10 @@ import {
   parseSatisfactionSurveyResponse,
 } from '../utils/satisfactionSurvey.js';
 import {
+  buildSurveyQuestionPrompt,
+  parseSurveyQuestionResponse,
+} from '../utils/surveyRuntime.js';
+import {
   SESSION_STATUS,
   WAIT_TYPE,
   ENGINE_LIMITS,
@@ -57,6 +66,7 @@ const userLocks = new Map();
 const SESSION_TERMINATION_REASON = 'user-requested-stop';
 const SESSION_TERMINATION_MESSAGE = 'Sessao encerrada. Ate logo!';
 const SATISFACTION_INVALID_MESSAGE = 'Resposta invalida. Envie apenas um numero dentro da escala informada.';
+const SURVEY_INVALID_MESSAGE = 'Resposta invalida. Revise a pergunta e tente novamente.';
 const START_POLICY_BLOCKED_MESSAGE = 'Voce atingiu o limite de inicios permitido neste periodo.';
 const START_POLICY_RETENTION_MS = 45 * 24 * 60 * 60 * 1000;
 
@@ -516,6 +526,11 @@ function getSatisfactionSurveyConfig(flow) {
   };
 }
 
+function flowHasSurveyBlock(flow) {
+  const blocks = Array.isArray(flow?.blocks) ? flow.blocks : [];
+  return blocks.some(block => String(block?.type || '').trim() === BLOCK_TYPE.SURVEY);
+}
+
 function getPostEndConfig(flow) {
   const cfg = getRuntimeConfig(flow).postEnd ?? {};
   return {
@@ -783,6 +798,7 @@ function buildSatisfactionSurveyState(flow, session, nowTs) {
 
   const timeoutAt = nowTs + (config.timeoutMinutes * 60 * 1000);
   return {
+    mode: 'end-behavior',
     questionType: config.questionType,
     scale: config.scale,
     timeoutMinutes: config.timeoutMinutes,
@@ -793,7 +809,154 @@ function buildSatisfactionSurveyState(flow, session, nowTs) {
   };
 }
 
-async function finalizeSatisfactionSurvey(
+function isBlockSurveyState(state) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return false;
+  return String(state.mode || '').trim().toLowerCase() === 'block';
+}
+
+function buildSurveyConversationContext(session) {
+  const context = {
+    lastMessage: String(session?.variables?.[INTERNAL_VAR.LAST_MESSAGE] ?? ''),
+    lastIncomingMessageId: String(session?.variables?.[INTERNAL_VAR.LAST_INCOMING_MESSAGE_ID] ?? ''),
+    lastIncomingListId: String(session?.variables?.[INTERNAL_VAR.LAST_INCOMING_LIST_ID] ?? ''),
+  };
+  return JSON.stringify(context);
+}
+
+function ensureBlockSurveyInstance(surveyState, session, flow, jid, nowTs) {
+  if (String(surveyState?.instanceId || '').trim()) {
+    return String(surveyState.instanceId).trim();
+  }
+
+  const resolvedSurveyTypeId = String(surveyState?.surveyTypeId || '').trim() || 'csat';
+  try {
+    const created = createSurveyInstance({
+      surveyTypeId: resolvedSurveyTypeId,
+      flowPath: flow?.flowPath ?? '',
+      blockId: String(surveyState?.contextBlockId || '').trim(),
+      sessionId: getSessionId(session),
+      jid: getSessionUserKey(session, jid),
+      startedAt: Number(surveyState?.startedAt) || nowTs,
+      conversationContext: buildSurveyConversationContext(session),
+    });
+    return String(created?.instanceId || '').trim();
+  } catch {
+    const fallback = createSurveyInstance({
+      surveyTypeId: 'csat',
+      flowPath: flow?.flowPath ?? '',
+      blockId: String(surveyState?.contextBlockId || '').trim(),
+      sessionId: getSessionId(session),
+      jid: getSessionUserKey(session, jid),
+      startedAt: Number(surveyState?.startedAt) || nowTs,
+      conversationContext: buildSurveyConversationContext(session),
+    });
+    return String(fallback?.instanceId || '').trim();
+  }
+}
+
+async function finalizeBlockSurvey(
+  sock,
+  jid,
+  session,
+  flow,
+  nowTs,
+  {
+    completed = true,
+    abandonmentReason = 'timeout',
+  } = {}
+) {
+  const surveyState = getSatisfactionSurveyState(session);
+  if (!isBlockSurveyState(surveyState)) {
+    return session;
+  }
+
+  const workingState = {
+    ...surveyState,
+    instanceId: ensureBlockSurveyInstance(surveyState, session, flow, jid, nowTs),
+  };
+  const scope = buildSessionScope(flow);
+  const nextVariables = {
+    ...session.variables,
+    [INTERNAL_VAR.SATISFACTION_SURVEY_STATE]: undefined,
+  };
+  const fallbackNextBlockIndex = Number(session.blockIndex) + 1;
+  const configuredNextBlockIndex = Number(workingState.nextBlockIndex);
+  const nextBlockIndex = Number.isInteger(configuredNextBlockIndex) && configuredNextBlockIndex >= 0
+    ? configuredNextBlockIndex
+    : fallbackNextBlockIndex;
+
+  if (completed) {
+    markSurveyInstanceCompleted({
+      instanceId: workingState.instanceId,
+      completedAt: nowTs,
+    });
+  } else {
+    markSurveyInstanceAbandoned({
+      instanceId: workingState.instanceId,
+      abandonedAt: nowTs,
+      abandonmentReason,
+    });
+  }
+
+  const realtimeMetrics = updateRealtimeSurveyMetrics({
+    typeId: String(workingState.surveyTypeId || '').trim(),
+    flowPath: flow?.flowPath ?? '',
+    nowTs,
+  });
+
+  const resolvedSession = persistSessionPatch(jid, scope, session, {
+    waitingFor: null,
+    blockIndex: nextBlockIndex,
+    variables: nextVariables,
+  });
+
+  if (completed) {
+    const thankYouMessage = String(workingState.thankYouMessage ?? '').trim();
+    if (thankYouMessage) {
+      await sendTextMessage(sock, jid, thankYouMessage);
+    }
+  } else {
+    const timeoutMessage = String(workingState.timeoutMessage ?? '').trim();
+    if (timeoutMessage) {
+      await sendTextMessage(sock, jid, timeoutMessage);
+    }
+  }
+
+  emitConversationEvent({
+    occurredAt: nowTs,
+    eventType: completed ? 'survey:response:completed' : 'survey:response:abandoned',
+    direction: 'system',
+    jid: getSessionUserKey(session, jid),
+    flowPath: flow?.flowPath ?? '',
+    messageText: completed ? 'Pesquisa concluida' : 'Pesquisa abandonada',
+    metadata: {
+      instanceId: workingState.instanceId,
+      surveyTypeId: String(workingState.surveyTypeId || '').trim(),
+      completed,
+      abandonmentReason: completed ? '' : abandonmentReason,
+      responseCount: Array.isArray(workingState.responses) ? workingState.responses.length : 0,
+      blockId: String(workingState.contextBlockId || '').trim(),
+    },
+  });
+
+  emitConversationEvent({
+    occurredAt: nowTs,
+    eventType: 'survey:metrics:updated',
+    direction: 'system',
+    jid: 'system',
+    flowPath: flow?.flowPath ?? '',
+    messageText: 'Metricas de pesquisa atualizadas',
+    metadata: {
+      surveyTypeId: String(workingState.surveyTypeId || '').trim(),
+      metrics: realtimeMetrics?.overview ?? null,
+      calculatedAt: realtimeMetrics?.calculatedAt ?? nowTs,
+    },
+  });
+
+  return resolvedSession;
+}
+
+async function finalizeEndBehaviorSatisfactionSurvey(
   sock,
   jid,
   session,
@@ -806,7 +969,7 @@ async function finalizeSatisfactionSurvey(
   } = {}
 ) {
   const surveyState = getSatisfactionSurveyState(session);
-  if (!surveyState) {
+  if (!surveyState || isBlockSurveyState(surveyState)) {
     return endSession(jid, session, nowTs, reason, flow);
   }
 
@@ -829,6 +992,25 @@ async function finalizeSatisfactionSurvey(
   }
 
   return endSession(jid, session, nowTs, reason, flow);
+}
+
+async function finalizeSatisfactionSurvey(
+  sock,
+  jid,
+  session,
+  flow,
+  nowTs,
+  options = {}
+) {
+  const surveyState = getSatisfactionSurveyState(session);
+  if (isBlockSurveyState(surveyState)) {
+    const timedOut = options?.timedOut === true;
+    return finalizeBlockSurvey(sock, jid, session, flow, nowTs, {
+      completed: !timedOut,
+      abandonmentReason: timedOut ? String(options?.reason || 'timeout') : '',
+    });
+  }
+  return finalizeEndBehaviorSatisfactionSurvey(sock, jid, session, flow, nowTs, options);
 }
 
 function isPendingSatisfactionSurveyTimedOut(session, nowTs) {
@@ -890,6 +1072,79 @@ async function resolveSatisfactionSurveyWait(sock, jid, message, session, flow, 
   if (!surveyState) {
     const ended = endSession(jid, session, nowTs, 'satisfaction-invalid-state', flow);
     return { handled: true, session: ended };
+  }
+
+  if (isBlockSurveyState(surveyState)) {
+    const questions = Array.isArray(surveyState.questions) ? surveyState.questions : [];
+    const currentQuestionIndex = Math.max(0, Number(surveyState.questionIndex) || 0);
+    const currentQuestion = questions[currentQuestionIndex];
+    if (!currentQuestion) {
+      const finalized = await finalizeBlockSurvey(sock, jid, session, flow, nowTs, {
+        completed: true,
+      });
+      return { handled: false, session: finalized };
+    }
+
+    const parsed = parseSurveyQuestionResponse(message, currentQuestion);
+    if (!parsed.valid) {
+      const invalidMessage = String(surveyState.invalidMessage || SURVEY_INVALID_MESSAGE).trim() || SURVEY_INVALID_MESSAGE;
+      await sendTextMessage(sock, jid, invalidMessage);
+      return { handled: true, session };
+    }
+
+    const nextState = {
+      ...surveyState,
+      instanceId: ensureBlockSurveyInstance(surveyState, session, flow, jid, nowTs),
+      responses: Array.isArray(surveyState.responses) ? [...surveyState.responses] : [],
+    };
+
+    const responsePayload = {
+      questionId: String(currentQuestion.id || `q_${currentQuestionIndex + 1}`),
+      questionType: String(currentQuestion.type || 'text'),
+      numericValue: parsed.response.numericValue,
+      textValue: parsed.response.textValue,
+      choiceId: parsed.response.choiceId,
+      choiceIds: parsed.response.choiceIds,
+      respondedAt: nowTs,
+    };
+
+    saveSurveyResponse({
+      instanceId: nextState.instanceId,
+      ...responsePayload,
+    });
+    nextState.responses.push(responsePayload);
+
+    const scope = buildSessionScope(flow);
+    const nextQuestionIndex = currentQuestionIndex + 1;
+    if (nextQuestionIndex >= questions.length) {
+      const sessionWithState = persistSessionPatch(jid, scope, session, {
+        variables: {
+          ...session.variables,
+          [INTERNAL_VAR.SATISFACTION_SURVEY_STATE]: nextState,
+        },
+      });
+      const finalized = await finalizeBlockSurvey(sock, jid, sessionWithState, flow, nowTs, {
+        completed: true,
+      });
+      return { handled: false, session: finalized };
+    }
+
+    nextState.questionIndex = nextQuestionIndex;
+    const updatedSession = persistSessionPatch(jid, scope, session, {
+      waitingFor: WAIT_TYPE.SATISFACTION_SURVEY,
+      variables: {
+        ...session.variables,
+        [INTERNAL_VAR.SATISFACTION_SURVEY_STATE]: nextState,
+      },
+    });
+
+    const nextQuestion = questions[nextQuestionIndex];
+    const nextPrompt = interpolate(buildSurveyQuestionPrompt(nextQuestion, {
+      index: nextQuestionIndex,
+      total: questions.length,
+    }), updatedSession.variables || {});
+    await sendTextMessage(sock, jid, nextPrompt);
+    return { handled: true, session: updatedSession };
   }
 
   const parsed = parseSatisfactionSurveyResponse(message, {
@@ -1422,7 +1677,7 @@ export function startSessionCleanup(sock, flowOrFlows) {
       cycleState.running = true;
       const limits = getSessionLimits(flow);
       const surveyConfig = getSatisfactionSurveyConfig(flow);
-      const shouldCheckSurveyTimeout = surveyConfig.enabled === true;
+      const shouldCheckSurveyTimeout = surveyConfig.enabled === true || flowHasSurveyBlock(flow);
       if (limits.sessionTimeoutMinutes <= 0 && !shouldCheckSurveyTimeout) {
         cycleState.running = false;
         return;
