@@ -1,12 +1,8 @@
 import { getDb } from './context.js';
+import { toText } from '../utils/normalization.js';
 
 const ANALYTICS_SCHEMA = 'analytics';
 const PERIOD_UNITS = new Set(['hour', 'day', 'week', 'month', 'year']);
-
-function toText(value, fallback = '') {
-  const normalized = String(value ?? '').trim();
-  return normalized || fallback;
-}
 
 function toPositiveIntOrNull(value) {
   if (value == null || value === '') return null;

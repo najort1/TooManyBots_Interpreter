@@ -5,10 +5,7 @@ import {
   listSurveyMetricsByFlow,
   refreshSurveyMetricsCache,
 } from './surveyRepository.js';
-
-function toText(value) {
-  return String(value ?? '').trim();
-}
+import { toText } from '../utils/normalization.js';
 
 function normalizeMetricByType(typeId, overview) {
   const normalizedType = toText(typeId).toLowerCase();

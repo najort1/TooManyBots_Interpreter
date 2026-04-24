@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { getDb } from './context.js';
+import { toText } from '../utils/normalization.js';
 
 const ANALYTICS_SCHEMA = 'analytics';
 
@@ -11,11 +12,6 @@ const CACHE_TTL_BY_BUCKET_MS = {
   week: 6 * 60 * 60 * 1000,
   month: 12 * 60 * 60 * 1000,
 };
-
-function toText(value, fallback = '') {
-  const normalized = String(value ?? '').trim();
-  return normalized || fallback;
-}
 
 function toOptionalText(value) {
   const normalized = String(value ?? '').trim();

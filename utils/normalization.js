@@ -1,3 +1,8 @@
+export function toText(value, fallback = '') {
+  const normalized = String(value ?? '').trim();
+  return normalized || fallback;
+}
+
 export function normalizeBoolean(value, fallback = false) {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'number') return value !== 0;

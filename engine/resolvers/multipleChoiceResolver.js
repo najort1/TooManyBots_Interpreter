@@ -1,9 +1,6 @@
 import { safeParseJSON } from '../utils.js';
 import { INTERNAL_VAR } from '../../config/constants.js';
-
-function toText(value) {
-  return String(value ?? '').trim();
-}
+import { toText } from '../../utils/normalization.js';
 
 function toBool(value) {
   if (typeof value === 'boolean') return value;

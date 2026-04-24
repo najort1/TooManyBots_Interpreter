@@ -1,15 +1,5 @@
-import { BROADCAST_LIMITS } from '../config/constants.js';
-
-const ALLOWED_IMAGE_MIME = new Set([
-  'image/jpeg',
-  'image/png',
-  'image/webp',
-  'image/gif',
-]);
-
-function toText(value) {
-  return String(value ?? '').trim();
-}
+import { BROADCAST_LIMITS, ALLOWED_IMAGE_MIME } from '../config/constants.js';
+import { toText } from '../utils/normalization.js';
 
 export function parseBroadcastImageDataUrl(dataUrl, declaredMimeType = '') {
   const raw = String(dataUrl ?? '').trim();

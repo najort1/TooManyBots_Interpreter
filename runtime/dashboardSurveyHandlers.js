@@ -1,11 +1,7 @@
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { normalizeBotSurveyConfig } from './sessionEndSurveyTrigger.js';
-
-function toText(value, fallback = '') {
-  const normalized = String(value ?? '').trim();
-  return normalized || fallback;
-}
+import { toText } from '../utils/normalization.js';
 
 function toNumberOrNull(value) {
   const numeric = Number(value);

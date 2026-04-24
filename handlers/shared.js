@@ -2,6 +2,8 @@ import { interpolate, safeParseJSON } from '../engine/utils.js';
 import { emitConversationEvent } from '../engine/conversationEvents.js';
 import { delay } from '../utils/async.js';
 import { stringifyError as stringifyErrorUtil } from '../utils/errors.js';
+import { toText } from '../utils/normalization.js';
+export { toText };
 import {
   BLOCK_TYPE,
   CONDITION_TYPE,
@@ -95,10 +97,6 @@ export function logHandlerErrorEvent({ block, session, jid, flow, userMessage = 
       error: safeError,
     },
   });
-}
-
-export function toText(value) {
-  return String(value ?? '').trim();
 }
 
 export function toNumber(value, fallback = 0) {

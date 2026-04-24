@@ -8,13 +8,9 @@ import {
   buildSurveyQuestionPrompt,
   normalizeSurveyQuestions,
 } from '../utils/surveyRuntime.js';
+import { toText } from '../utils/normalization.js';
 
 const TRIGGER_TYPES = new Set(['session_end', 'human_handoff_end', 'timeout', 'manual_broadcast']);
-
-function toText(value, fallback = '') {
-  const normalized = String(value ?? '').trim();
-  return normalized || fallback;
-}
 
 function normalizeTriggerType(value) {
   const normalized = toText(value, 'session_end').toLowerCase();

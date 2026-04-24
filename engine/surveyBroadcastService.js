@@ -12,11 +12,7 @@ import { safeErrorMessage } from '../utils/errors.js';
 import {
   buildPostSessionSurveyState,
 } from '../runtime/sessionEndSurveyTrigger.js';
-
-function toText(value, fallback = '') {
-  const normalized = String(value ?? '').trim();
-  return normalized || fallback;
-}
+import { toText } from '../utils/normalization.js';
 
 function normalizeJids(jids = []) {
   if (!Array.isArray(jids)) return [];

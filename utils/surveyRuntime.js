@@ -1,7 +1,4 @@
-function toText(value, fallback = '') {
-  const normalized = String(value ?? '').trim();
-  return normalized || fallback;
-}
+import { toText } from './normalization.js';
 
 function toInt(value, fallback) {
   const numeric = Number(value);

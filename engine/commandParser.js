@@ -1,6 +1,4 @@
-function toText(value) {
-  return String(value ?? '').trim();
-}
+import { toText } from '../utils/normalization.js';
 
 function escapeRegex(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
