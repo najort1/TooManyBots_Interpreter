@@ -671,6 +671,35 @@ export async function initDb() {
       responded_at   INTEGER NOT NULL,
       FOREIGN KEY (instance_id) REFERENCES survey_instances(instance_id) ON DELETE CASCADE
     );
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.survey_frequency_rules (
+      survey_type_id          TEXT PRIMARY KEY,
+      max_responses_per_user  INTEGER,
+      period_unit             TEXT NOT NULL DEFAULT 'month',
+      period_value            INTEGER NOT NULL DEFAULT 1,
+      min_interval_seconds    INTEGER NOT NULL DEFAULT 0,
+      skip_for_admins         INTEGER NOT NULL DEFAULT 0,
+      created_at              INTEGER NOT NULL,
+      updated_at              INTEGER NOT NULL,
+      FOREIGN KEY (survey_type_id) REFERENCES survey_type_definitions(type_id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.survey_user_response_log (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      survey_type_id  TEXT NOT NULL,
+      jid             TEXT NOT NULL,
+      instance_id     TEXT NOT NULL DEFAULT '',
+      trigger_type    TEXT NOT NULL DEFAULT '',
+      responded_at    INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.survey_broadcast_dispatches (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      survey_type_id  TEXT NOT NULL,
+      actor           TEXT NOT NULL,
+      recipient_count INTEGER NOT NULL DEFAULT 0,
+      sent_count      INTEGER NOT NULL DEFAULT 0,
+      failed_count    INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL,
+      completed_at    INTEGER
+    );
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.survey_metrics_cache (
       cache_key      TEXT PRIMARY KEY,
       survey_type_id TEXT NOT NULL DEFAULT '',
@@ -719,6 +748,8 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_instances_session ON survey_instances(session_id);
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_instances_jid_started_at ON survey_instances(jid, started_at DESC);
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_responses_instance ON survey_responses(instance_id, responded_at ASC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_response_log_lookup ON survey_user_response_log(survey_type_id, jid, responded_at DESC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_broadcast_dispatches_created ON survey_broadcast_dispatches(created_at DESC);
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_metrics_lookup ON survey_metrics_cache(survey_type_id, flow_path, time_bucket, period_start DESC);
   `);
 
@@ -1769,6 +1800,18 @@ export {
   refreshSurveyMetricsCache,
   updateRealtimeSurveyMetrics,
 } from './surveyRepository.js';
+
+export {
+  normalizeSurveyFrequencyRule,
+  getSurveyFrequencyRule,
+  upsertSurveyFrequencyRule,
+  deleteSurveyFrequencyRule,
+  recordSurveyUserResponse,
+  getSurveyUserResponseFrequency,
+  checkSurveyFrequencyRules,
+  createSurveyBroadcastDispatch,
+  completeSurveyBroadcastDispatch,
+} from './surveyFrequencyRepository.js';
 
 // --- Survey Metrics Calculator ---
 export {
