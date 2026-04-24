@@ -22,6 +22,7 @@ import { setupDashboardWebsocketServer, broadcastDashboardPayload, stopDashboard
 import { sendJson, sendText, decodePathComponent, isPathInsideRoot, tryServePublicAsset, readJsonBody } from './staticFileHandler.js';
 import {
   buildConversationFunnel,
+  CONVERSATION_COMPLETED_END_REASONS,
   buildRecentErrors,
   buildStatsCacheKey,
   buildWeeklyTrend,
@@ -287,6 +288,24 @@ function resolveBlockIndex(targetBlockIndex, targetBlockId, flowBlocks = []) {
   return matched ? matched.index : -1;
 }
 
+function countCompletedConversationSessions(timedDbQuery, { from, to, flowPath = '' } = {}) {
+  const hasRange = Number.isFinite(Number(from)) || Number.isFinite(Number(to));
+  return CONVERSATION_COMPLETED_END_REASONS.reduce((total, endReason) => {
+    const queryKeySuffix = hasRange ? 'daily' : 'total';
+    const queryKey = `getConversationEndedByReasonCount:${endReason}-${queryKeySuffix}`;
+    const count = hasRange
+      ? timedDbQuery(
+        queryKey,
+        () => getConversationEndedByReasonCount({ from, to, endReason, flowPath })
+      )
+      : timedDbQuery(
+        queryKey,
+        () => getConversationEndedByReasonCount({ endReason, flowPath })
+      );
+    return total + (Number(count) || 0);
+  }, 0);
+}
+
 
 export class DashboardServer {
   constructor({
@@ -542,15 +561,7 @@ export class DashboardServer {
         'getConversationDashboardStats:total',
         () => getConversationDashboardStats({ flowPath })
       );
-      const completedSessionsTotal =
-        this.timedDbQuery(
-          'getConversationEndedByReasonCount:flow-complete-total',
-          () => getConversationEndedByReasonCount({ endReason: 'flow-complete', flowPath })
-        ) +
-        this.timedDbQuery(
-          'getConversationEndedByReasonCount:end-conversation-total',
-          () => getConversationEndedByReasonCount({ endReason: 'end-conversation', flowPath })
-        );
+      const completedSessionsTotal = countCompletedConversationSessions(this.timedDbQuery.bind(this), { flowPath });
       const totalSessions = this.timedDbQuery(
         'getConversationSessionsTotal',
         () => getConversationSessionsTotal(flowPath)
@@ -558,15 +569,11 @@ export class DashboardServer {
       const completionRateTotal = totalSessions > 0
         ? Number((completedSessionsTotal / totalSessions).toFixed(4))
         : 0;
-      const completedSessions =
-        this.timedDbQuery(
-          'getConversationEndedByReasonCount:flow-complete-daily',
-          () => getConversationEndedByReasonCount({ from: start, to: end, endReason: 'flow-complete', flowPath })
-        ) +
-        this.timedDbQuery(
-          'getConversationEndedByReasonCount:end-conversation-daily',
-          () => getConversationEndedByReasonCount({ from: start, to: end, endReason: 'end-conversation', flowPath })
-        );
+      const completedSessions = countCompletedConversationSessions(this.timedDbQuery.bind(this), {
+        from: start,
+        to: end,
+        flowPath,
+      });
 
       const weekStart = start - (6 * 24 * 60 * 60 * 1000);
       const weeklyStarted = this.timedDbQuery(

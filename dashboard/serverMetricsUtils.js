@@ -14,6 +14,13 @@ export const WS_IMMEDIATE_EVENT_TYPES = new Set([
   'human-handoff-ended',
 ]);
 
+export const CONVERSATION_COMPLETED_END_REASONS = Object.freeze([
+  'flow-complete',
+  'end-conversation',
+  'satisfaction-completed',
+  'satisfaction-timeout',
+]);
+
 export function pad2(value) {
   return String(value).padStart(2, '0');
 }
@@ -78,6 +85,11 @@ export function buildConversationFunnel({ started = 0, abandoned = 0, completed 
     { step: 'completed', label: 'Concluidas', count: safeCompleted },
     { step: 'abandoned', label: 'Abandonadas', count: safeAbandoned },
   ];
+}
+
+export function isConversationCompletedEndReason(endReason = '') {
+  const normalized = String(endReason || '').trim().toLowerCase();
+  return CONVERSATION_COMPLETED_END_REASONS.includes(normalized);
 }
 
 export function normalizeActorJidFromEvent(event) {
