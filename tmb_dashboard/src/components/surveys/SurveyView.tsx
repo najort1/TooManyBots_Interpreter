@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
+import { useSearchParams } from 'react-router';
 import { panelClass } from '../../lib/uiTokens';
 import type { BroadcastContact, SurveyFilters, SurveyTypeDefinition } from '../../types';
 import { fetchBroadcastContacts } from '../../lib/api';
@@ -32,8 +33,20 @@ function lastDays(days: number) {
   };
 }
 
+type SurveyTab = 'analytics' | 'manage' | 'broadcast';
+
+function normalizeSurveyTab(value: string | null): SurveyTab {
+  return value === 'manage' || value === 'broadcast' ? value : 'analytics';
+}
+
+function parseFiniteNumber(value: string | null, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 export function SurveyView({ onShowNotice }: { onShowNotice: (message: string) => void }) {
-  const [tab, setTab] = useState<'analytics' | 'manage' | 'broadcast'>('analytics');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = normalizeSurveyTab(searchParams.get('tab'));
   const [editingSurvey, setEditingSurvey] = useState<SurveyTypeDefinition | null>(null);
   const [creatingSurvey, setCreatingSurvey] = useState(false);
   const [savingSurvey, setSavingSurvey] = useState(false);
@@ -42,15 +55,15 @@ export function SurveyView({ onShowNotice }: { onShowNotice: (message: string) =
   const [broadcastContacts, setBroadcastContacts] = useState<BroadcastContact[]>([]);
   const [loadingBroadcastContacts, setLoadingBroadcastContacts] = useState(false);
   const defaults = useMemo(() => lastDays(30), []);
-  const [filters, setFilters] = useState<SurveyFilters>({
-    typeId: '',
-    flowPath: '',
-    from: defaults.from,
-    to: defaults.to,
-    granularity: 'day',
-    limit: 20,
-    offset: 0,
-  });
+  const filters = useMemo<SurveyFilters>(() => ({
+    typeId: String(searchParams.get('typeId') || ''),
+    flowPath: String(searchParams.get('flowPath') || ''),
+    from: parseFiniteNumber(searchParams.get('from'), defaults.from),
+    to: parseFiniteNumber(searchParams.get('to'), defaults.to),
+    granularity: String(searchParams.get('granularity') || 'day'),
+    limit: Math.max(1, Math.floor(parseFiniteNumber(searchParams.get('limit'), 20))),
+    offset: Math.max(0, Math.floor(parseFiniteNumber(searchParams.get('offset'), 0))),
+  }), [defaults.from, defaults.to, searchParams]);
 
   const { exportCsv, exportJson } = useSurveyExport(filters);
 
@@ -75,12 +88,48 @@ export function SurveyView({ onShowNotice }: { onShowNotice: (message: string) =
   }, { enabled: true, debounceMs: 500 });
 
   const updateFilters = useCallback((patch: Partial<SurveyFilters>) => {
-    setFilters(previous => ({
-      ...previous,
+    const nextFilters = {
+      ...filters,
       ...patch,
       offset: 0,
-    }));
-  }, []);
+    };
+
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      const entries: Array<[keyof SurveyFilters, unknown]> = [
+        ['typeId', nextFilters.typeId],
+        ['flowPath', nextFilters.flowPath],
+        ['from', nextFilters.from],
+        ['to', nextFilters.to],
+        ['granularity', nextFilters.granularity],
+        ['limit', nextFilters.limit],
+        ['offset', nextFilters.offset],
+      ];
+
+      for (const [key, value] of entries) {
+        const normalized = value === null || value === undefined ? '' : String(value).trim();
+        if (normalized) {
+          next.set(key, normalized);
+        } else {
+          next.delete(key);
+        }
+      }
+
+      return next;
+    }, { replace: true });
+  }, [filters, setSearchParams]);
+
+  const setTab = useCallback((nextTab: SurveyTab) => {
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      if (nextTab === 'analytics') {
+        next.delete('tab');
+      } else {
+        next.set('tab', nextTab);
+      }
+      return next;
+    });
+  }, [setSearchParams]);
 
   const loadManagedTypes = useCallback(async () => {
     setLoadingManagedTypes(true);
