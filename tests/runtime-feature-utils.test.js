@@ -4,6 +4,10 @@ import assert from 'node:assert/strict';
 import { buildSlidingPeriodWindow, getSlidingPeriodStartTs } from '../utils/slidingPeriod.js';
 import { resolveSessionTimeoutConfig } from '../utils/sessionTimeoutPresets.js';
 import { evaluateAvailability, getBrazilNationalHolidaysByYear } from '../utils/availability.js';
+import {
+  CONVERSATION_COMPLETED_END_REASONS,
+  isConversationCompletedEndReason,
+} from '../dashboard/serverMetricsUtils.js';
 
 test('session timeout preset overrides custom minutes when preset is not custom', () => {
   const presetConfig = resolveSessionTimeoutConfig({
@@ -78,4 +82,17 @@ test('availability supports overnight time ranges with timezone-aware clock', ()
   assert.equal(allowed.available, true);
   assert.equal(blocked.available, false);
   assert.equal(blocked.reason, 'time');
+});
+
+test('conversation completed end reasons include satisfaction closures', () => {
+  assert.deepEqual(CONVERSATION_COMPLETED_END_REASONS, [
+    'flow-complete',
+    'end-conversation',
+    'satisfaction-completed',
+    'satisfaction-timeout',
+  ]);
+
+  assert.equal(isConversationCompletedEndReason('satisfaction-completed'), true);
+  assert.equal(isConversationCompletedEndReason('satisfaction-timeout'), true);
+  assert.equal(isConversationCompletedEndReason('timeout'), false);
 });

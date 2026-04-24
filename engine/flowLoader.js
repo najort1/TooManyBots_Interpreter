@@ -86,6 +86,7 @@ function validateRedirectToHumanBlock(block, activeBlockIds = null) {
 
 function normalizeRuntimeConfig(runtimeConfig = {}) {
   const baseConfig = runtimeConfig && typeof runtimeConfig === 'object' ? runtimeConfig : {};
+  const conversationMode = normalizeConversationMode(baseConfig.conversationMode);
   const startPolicyLimit = baseConfig.startPolicyLimit && typeof baseConfig.startPolicyLimit === 'object'
     ? baseConfig.startPolicyLimit
     : {};
@@ -101,8 +102,8 @@ function normalizeRuntimeConfig(runtimeConfig = {}) {
   const availability = normalizeAvailabilityConfig(baseConfig.availability);
 
   return {
-    conversationMode: baseConfig.conversationMode ?? 'conversation',
-    interactionScope: baseConfig.interactionScope ?? 'all',
+    conversationMode,
+    interactionScope: baseConfig.interactionScope ?? (conversationMode === 'conversation' ? 'all-users' : 'all'),
     startPolicy: String(baseConfig.startPolicy ?? 'allow-always').trim().toLowerCase() || 'allow-always',
     startPolicyLimit: {
       maxStarts: normalizeInt(startPolicyLimit.maxStarts, 3, { min: 1, max: 100000, rounding: 'floor' }),
