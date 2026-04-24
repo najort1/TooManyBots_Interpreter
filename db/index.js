@@ -39,6 +39,72 @@ const ANALYTICS_SCHEMA = 'analytics';
 const DB_SIZE_HISTORY_DAYS = 7;
 const JSON_BOOL_TRUE = '1';
 const JSON_BOOL_FALSE = '0';
+const DEFAULT_SURVEY_TYPE_DEFINITIONS = [
+  {
+    typeId: 'nps',
+    name: 'NPS',
+    schema: {
+      questions: [
+        {
+          id: 'nps_score',
+          text: 'De 0 a 10, qual a chance de nos recomendar?',
+          type: 'scale',
+          scale: { min: 0, max: 10 },
+          required: true,
+        },
+      ],
+      scoringRules: {
+        formula: 'nps',
+        promoterMin: 9,
+        detractorMax: 6,
+      },
+      visualizations: ['trend', 'distribution', 'by-flow'],
+      retentionDays: 365,
+    },
+  },
+  {
+    typeId: 'csat',
+    name: 'CSAT',
+    schema: {
+      questions: [
+        {
+          id: 'csat_score',
+          text: 'De 1 a 5, qual seu nivel de satisfacao com o atendimento?',
+          type: 'scale',
+          scale: { min: 1, max: 5 },
+          required: true,
+        },
+      ],
+      scoringRules: {
+        formula: 'csat',
+        satisfiedMin: 4,
+      },
+      visualizations: ['trend', 'distribution', 'by-flow'],
+      retentionDays: 365,
+    },
+  },
+  {
+    typeId: 'ces',
+    name: 'CES',
+    schema: {
+      questions: [
+        {
+          id: 'ces_score',
+          text: 'De 1 a 7, quao facil foi resolver sua solicitacao?',
+          type: 'scale',
+          scale: { min: 1, max: 7 },
+          required: true,
+        },
+      ],
+      scoringRules: {
+        formula: 'ces',
+        lowEffortMax: 2,
+      },
+      visualizations: ['trend', 'distribution', 'by-flow'],
+      retentionDays: 365,
+    },
+  },
+];
 const REAL_WHATSAPP_USER_JID_SQL = `
   ce.jid LIKE '%@s.whatsapp.net'
   AND instr(ce.jid, '@') > 1
@@ -275,6 +341,26 @@ function ensureBroadcastRecipientsSchema() {
     END
     WHERE COALESCE(trim(recipient_type), '') = '';
   `);
+}
+
+function seedDefaultSurveyTypeDefinitions() {
+  if (!db || !tableExists('survey_type_definitions', ANALYTICS_SCHEMA)) return;
+  const nowTs = Date.now();
+  const upsert = db.prepare(
+    `INSERT OR IGNORE INTO ${ANALYTICS_SCHEMA}.survey_type_definitions (
+      type_id, name, schema_json, is_active, created_at, updated_at
+    ) VALUES (?, ?, ?, 1, ?, ?)`
+  );
+
+  for (const definition of DEFAULT_SURVEY_TYPE_DEFINITIONS) {
+    upsert.run(
+      String(definition.typeId || '').trim(),
+      String(definition.name || '').trim(),
+      JSON.stringify(definition.schema || {}),
+      nowTs,
+      nowTs
+    );
+  }
 }
 
 function migrateLegacyDatabaseIfNeeded() {
@@ -551,6 +637,53 @@ export async function initDb() {
       expires_at    INTEGER,
       PRIMARY KEY (jid, flow_path, variable_name)
     );
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.survey_type_definitions (
+      type_id     TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      schema_json TEXT NOT NULL,
+      is_active   INTEGER NOT NULL DEFAULT 1,
+      created_at  INTEGER NOT NULL,
+      updated_at  INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.survey_instances (
+      instance_id         TEXT PRIMARY KEY,
+      survey_type_id      TEXT NOT NULL,
+      flow_path           TEXT NOT NULL DEFAULT '',
+      block_id            TEXT NOT NULL DEFAULT '',
+      session_id          TEXT NOT NULL DEFAULT '',
+      jid                 TEXT NOT NULL,
+      started_at          INTEGER NOT NULL,
+      completed_at        INTEGER,
+      abandoned_at        INTEGER,
+      abandonment_reason  TEXT,
+      conversation_context TEXT NOT NULL DEFAULT '',
+      FOREIGN KEY (survey_type_id) REFERENCES survey_type_definitions(type_id)
+    );
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.survey_responses (
+      response_id    TEXT PRIMARY KEY,
+      instance_id    TEXT NOT NULL,
+      question_id    TEXT NOT NULL,
+      question_type  TEXT NOT NULL,
+      numeric_value  INTEGER,
+      text_value     TEXT,
+      choice_id      TEXT,
+      choice_ids     TEXT,
+      responded_at   INTEGER NOT NULL,
+      FOREIGN KEY (instance_id) REFERENCES survey_instances(instance_id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.survey_metrics_cache (
+      cache_key      TEXT PRIMARY KEY,
+      survey_type_id TEXT NOT NULL DEFAULT '',
+      flow_path      TEXT NOT NULL DEFAULT '',
+      time_bucket    TEXT NOT NULL,
+      period_start   INTEGER NOT NULL,
+      period_end     INTEGER NOT NULL,
+      metric_name    TEXT NOT NULL,
+      metric_value   REAL NOT NULL,
+      sample_size    INTEGER NOT NULL DEFAULT 0,
+      calculated_at  INTEGER NOT NULL,
+      expires_at     INTEGER NOT NULL
+    );
   `);
 
   ensureBroadcastRecipientsSchema();
@@ -581,9 +714,16 @@ export async function initDb() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_start_policy_events_scope_started_at ON start_policy_events(jid, flow_path, started_at DESC);
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_persisted_context_scope_expires_at ON persisted_context_variables(jid, flow_path, expires_at);
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_persisted_context_expires_at ON persisted_context_variables(expires_at);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_instances_type_started_at ON survey_instances(survey_type_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_instances_flow_started_at ON survey_instances(flow_path, started_at DESC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_instances_session ON survey_instances(session_id);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_instances_jid_started_at ON survey_instances(jid, started_at DESC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_responses_instance ON survey_responses(instance_id, responded_at ASC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_survey_metrics_lookup ON survey_metrics_cache(survey_type_id, flow_path, time_bucket, period_start DESC);
   `);
 
   migrateLegacyDatabaseIfNeeded();
+  seedDefaultSurveyTypeDefinitions();
 
   // Pré-compilar prepared statements para performance máxima
   stmts = {
@@ -1609,6 +1749,35 @@ export {
   saveSatisfactionSurveyResponse,
   listSatisfactionSurveyResponses,
 } from './satisfactionRepository.js';
+
+// --- Survey Repository ---
+export {
+  listSurveyTypeDefinitions,
+  getSurveyTypeDefinitionById,
+  upsertSurveyTypeDefinition,
+  createSurveyInstance,
+  getSurveyInstanceById,
+  listSurveyInstances,
+  saveSurveyResponse,
+  markSurveyInstanceCompleted,
+  markSurveyInstanceAbandoned,
+  getSurveyMetricsOverview,
+  listSurveyTrend,
+  listSurveyDistribution,
+  listSurveyMetricsByFlow,
+  listSurveyResponsesForExport,
+  refreshSurveyMetricsCache,
+  updateRealtimeSurveyMetrics,
+} from './surveyRepository.js';
+
+// --- Survey Metrics Calculator ---
+export {
+  calculateSurveyOverview,
+  calculateSurveyTrend,
+  calculateSurveyDistribution,
+  calculateSurveyByFlow,
+  recalculateSurveyMetricsCache,
+} from './surveyMetricsCalculator.js';
 
 // --- Start Policy Repository ---
 export {
