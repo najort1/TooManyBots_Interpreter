@@ -44,6 +44,7 @@ export const BLOCK_TYPE = {
   DATA_PROCESSOR: 'data-processor',
   MULTIPLE_CHOICE: 'multiple-choice',
   SEND_REACTION: 'send-reaction',
+  SURVEY: 'survey',
 };
 
 // ─── Tipos de Condição ────────────────────────────────────────────────────────
