@@ -1,6 +1,7 @@
 ﻿import fs from 'fs';
 import path from 'path';
 import { normalizeInt } from '../utils/normalization.js';
+import { normalizeBotSurveyConfig } from '../runtime/sessionEndSurveyTrigger.js';
 
 export const RUNTIME_MODE = {
   PRODUCTION: 'production',
@@ -69,6 +70,7 @@ export const config = {
   dbEventBatchFlushMs: 1000,
   dbEventBatchSize: 200,
   flowSessionTimeoutOverrides: {},
+  surveyConfigsByFlowPath: {},
   testTargetMode: 'contacts-and-groups',
   testJid: '',
   testJids: [],
@@ -170,6 +172,17 @@ function normalizeTimeoutOverrides(input) {
     if (!normalizedKey) continue;
     if (!Number.isFinite(normalizedValue) || normalizedValue < 0) continue;
     result[normalizedKey] = Math.floor(normalizedValue);
+  }
+  return result;
+}
+
+function normalizeSurveyConfigsByFlowPath(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const result = {};
+  for (const [flowPath, rawConfig] of Object.entries(input)) {
+    const normalizedFlowPath = String(flowPath ?? '').trim();
+    if (!normalizedFlowPath) continue;
+    result[normalizedFlowPath] = normalizeBotSurveyConfig(rawConfig);
   }
   return result;
 }
@@ -371,6 +384,7 @@ function normalizeConfigShape(input) {
     { min: 10, max: 5000 }
   );
   normalized.flowSessionTimeoutOverrides = normalizeTimeoutOverrides(normalized.flowSessionTimeoutOverrides);
+  normalized.surveyConfigsByFlowPath = normalizeSurveyConfigsByFlowPath(normalized.surveyConfigsByFlowPath);
 
   normalized.testTargetMode = String(normalized.testTargetMode ?? config.testTargetMode).trim() || config.testTargetMode;
   normalized.testJid = String(normalized.testJid ?? '').trim();
@@ -452,6 +466,7 @@ function sanitizeConfigForSave(input) {
     dbEventBatchFlushMs: normalized.dbEventBatchFlushMs,
     dbEventBatchSize: normalized.dbEventBatchSize,
     flowSessionTimeoutOverrides: normalized.flowSessionTimeoutOverrides,
+    surveyConfigsByFlowPath: normalized.surveyConfigsByFlowPath,
     testTargetMode: normalized.testTargetMode,
     testJid: normalized.testJid,
     testJids: normalized.testJids,

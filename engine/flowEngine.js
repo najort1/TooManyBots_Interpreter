@@ -20,6 +20,7 @@ import {
   saveSurveyResponse,
   markSurveyInstanceCompleted,
   markSurveyInstanceAbandoned,
+  recordSurveyUserResponse,
   updateRealtimeSurveyMetrics,
   recordStartPolicyEvent,
   countStartPolicyEventsInWindow,
@@ -52,8 +53,13 @@ import {
 } from '../utils/satisfactionSurvey.js';
 import {
   buildSurveyQuestionPrompt,
+  parseSurveyConsentResponse,
   parseSurveyQuestionResponse,
 } from '../utils/surveyRuntime.js';
+import {
+  buildPostSessionSurveyState,
+  shouldTriggerPostSessionSurvey,
+} from '../runtime/sessionEndSurveyTrigger.js';
 import {
   SESSION_STATUS,
   WAIT_TYPE,
@@ -400,7 +406,7 @@ export async function resumeSessionFromHumanHandoff({ sock, jid, flow, targetBlo
   });
 }
 
-export async function endSessionFromDashboard({ jid, flow, reason = 'human-agent-ended', actor = 'dashboard-agent' }) {
+export async function endSessionFromDashboard({ jid, flow, sock = null, reason = 'human-agent-ended', actor = 'dashboard-agent' }) {
   const scope = buildSessionScope(flow);
   return executeWithLock(jid, flow, async () => {
     let session = sessionRead(jid, scope);
@@ -422,6 +428,20 @@ export async function endSessionFromDashboard({ jid, flow, reason = 'human-agent
         },
       },
     });
+
+    if (sock) {
+      const dedicatedSurveyStart = await maybeStartDedicatedPostSessionSurvey(
+        sock,
+        jid,
+        session,
+        flow,
+        nowTs,
+        'human_handoff_end'
+      );
+      if (dedicatedSurveyStart.started) {
+        return { ok: true, session: dedicatedSurveyStart.session, surveyStarted: true };
+      }
+    }
 
     session = endSession(jid, session, nowTs, reason, flow);
     return { ok: true, session };
@@ -814,6 +834,12 @@ function isBlockSurveyState(state) {
   return String(state.mode || '').trim().toLowerCase() === 'block';
 }
 
+function isDedicatedSurveyState(state) {
+  if (!state || typeof state !== 'object' || Array.isArray(state)) return false;
+  const mode = String(state.mode || '').trim().toLowerCase();
+  return mode === 'dedicated' || mode === 'dedicated-broadcast';
+}
+
 function buildSurveyConversationContext(session) {
   const context = {
     lastMessage: String(session?.variables?.[INTERNAL_VAR.LAST_MESSAGE] ?? ''),
@@ -866,7 +892,7 @@ async function finalizeBlockSurvey(
   } = {}
 ) {
   const surveyState = getSatisfactionSurveyState(session);
-  if (!isBlockSurveyState(surveyState)) {
+  if (!isBlockSurveyState(surveyState) && !isDedicatedSurveyState(surveyState)) {
     return session;
   }
 
@@ -890,6 +916,13 @@ async function finalizeBlockSurvey(
       instanceId: workingState.instanceId,
       completedAt: nowTs,
     });
+    recordSurveyUserResponse({
+      surveyTypeId: String(workingState.surveyTypeId || '').trim(),
+      jid: getSessionUserKey(session, jid),
+      instanceId: workingState.instanceId,
+      triggerType: String(workingState.triggerType || workingState.source || 'inline-block'),
+      respondedAt: nowTs,
+    });
   } else {
     markSurveyInstanceAbandoned({
       instanceId: workingState.instanceId,
@@ -904,7 +937,7 @@ async function finalizeBlockSurvey(
     nowTs,
   });
 
-  const resolvedSession = persistSessionPatch(jid, scope, session, {
+  let resolvedSession = persistSessionPatch(jid, scope, session, {
     waitingFor: null,
     blockIndex: nextBlockIndex,
     variables: nextVariables,
@@ -952,6 +985,16 @@ async function finalizeBlockSurvey(
       calculatedAt: realtimeMetrics?.calculatedAt ?? nowTs,
     },
   });
+
+  if (isDedicatedSurveyState(workingState) || workingState.endSessionOnComplete === true) {
+    resolvedSession = endSession(
+      jid,
+      resolvedSession,
+      nowTs,
+      completed ? 'dedicated-survey-completed' : 'dedicated-survey-abandoned',
+      flow
+    );
+  }
 
   return resolvedSession;
 }
@@ -1003,7 +1046,7 @@ async function finalizeSatisfactionSurvey(
   options = {}
 ) {
   const surveyState = getSatisfactionSurveyState(session);
-  if (isBlockSurveyState(surveyState)) {
+  if (isBlockSurveyState(surveyState) || isDedicatedSurveyState(surveyState)) {
     const timedOut = options?.timedOut === true;
     return finalizeBlockSurvey(sock, jid, session, flow, nowTs, {
       completed: !timedOut,
@@ -1054,6 +1097,71 @@ async function maybeStartSatisfactionSurvey(sock, jid, session, flow, nowTs) {
   return { started: true, session: nextSession };
 }
 
+async function maybeStartDedicatedPostSessionSurvey(sock, jid, session, flow, nowTs, triggerType = 'session_end') {
+  const decision = shouldTriggerPostSessionSurvey({
+    flow,
+    session,
+    jid,
+    triggerType,
+    nowTs,
+  });
+
+  if (!decision.shouldTrigger) {
+    return { started: false, session, reason: decision.reason };
+  }
+
+  const stateBuild = buildPostSessionSurveyState({
+    surveyTypeId: decision.surveyTypeId,
+    triggerType: decision.triggerType || triggerType,
+    session,
+    flow,
+    nowTs,
+  });
+
+  if (!stateBuild.ok) {
+    emitConversationEvent({
+      occurredAt: nowTs,
+      eventType: 'survey:trigger:skipped',
+      direction: 'system',
+      jid: getSessionUserKey(session, jid),
+      flowPath: flow?.flowPath ?? '',
+      messageText: 'Pesquisa dedicada nao iniciada',
+      metadata: {
+        reason: stateBuild.error || 'invalid-survey',
+        surveyTypeId: decision.surveyTypeId || '',
+        triggerType,
+      },
+    });
+    return { started: false, session, reason: stateBuild.error || 'invalid-survey' };
+  }
+
+  await sendTextMessage(sock, jid, interpolate(stateBuild.firstPrompt, session.variables || {}));
+  const scope = buildSessionScope(flow);
+  const nextSession = persistSessionPatch(jid, scope, session, {
+    waitingFor: WAIT_TYPE.SATISFACTION_SURVEY,
+    variables: {
+      ...session.variables,
+      [INTERNAL_VAR.SATISFACTION_SURVEY_STATE]: stateBuild.state,
+    },
+  });
+
+  emitConversationEvent({
+    occurredAt: nowTs,
+    eventType: 'survey:trigger:started',
+    direction: 'system',
+    jid: getSessionUserKey(session, jid),
+    flowPath: flow?.flowPath ?? '',
+    messageText: 'Pesquisa dedicada iniciada',
+    metadata: {
+      surveyTypeId: decision.surveyTypeId,
+      triggerType: decision.triggerType || triggerType,
+      questionCount: stateBuild.questions.length,
+    },
+  });
+
+  return { started: true, session: nextSession };
+}
+
 async function resolveSatisfactionSurveyWait(sock, jid, message, session, flow, nowTs) {
   if (session?.waitingFor !== WAIT_TYPE.SATISFACTION_SURVEY) {
     return { handled: false, session };
@@ -1074,15 +1182,77 @@ async function resolveSatisfactionSurveyWait(sock, jid, message, session, flow, 
     return { handled: true, session: ended };
   }
 
-  if (isBlockSurveyState(surveyState)) {
+  if (isBlockSurveyState(surveyState) || isDedicatedSurveyState(surveyState)) {
     const questions = Array.isArray(surveyState.questions) ? surveyState.questions : [];
     const currentQuestionIndex = Math.max(0, Number(surveyState.questionIndex) || 0);
+
+    if (isDedicatedSurveyState(surveyState) && surveyState.awaitingConsent !== false) {
+      const consent = parseSurveyConsentResponse(message);
+      if (!consent.valid) {
+        const consentInvalidMessage = String(
+          surveyState.consentInvalidMessage || 'Para responder a pesquisa, envie 1 ou sim. Para recusar, envie 2 ou nao.'
+        ).trim();
+        await sendTextMessage(sock, jid, consentInvalidMessage);
+        return { handled: true, session };
+      }
+
+      if (!consent.accepted) {
+        const declineMessage = String(surveyState.declineMessage || 'Tudo bem, obrigado pelo seu tempo.').trim();
+        if (declineMessage) {
+          await sendTextMessage(sock, jid, declineMessage);
+        }
+        emitConversationEvent({
+          occurredAt: nowTs,
+          eventType: 'survey:response:declined',
+          direction: 'system',
+          jid: getSessionUserKey(session, jid),
+          flowPath: flow?.flowPath ?? '',
+          messageText: 'Pesquisa recusada pelo usuario',
+          metadata: {
+            surveyTypeId: String(surveyState.surveyTypeId || '').trim(),
+            triggerType: String(surveyState.triggerType || surveyState.source || 'dedicated'),
+          },
+        });
+        return {
+          handled: true,
+          session: endSession(jid, session, nowTs, 'dedicated-survey-declined', flow),
+        };
+      }
+
+      const nextState = {
+        ...surveyState,
+        awaitingConsent: false,
+        consentAcceptedAt: nowTs,
+      };
+      const scope = buildSessionScope(flow);
+      const updatedSession = persistSessionPatch(jid, scope, session, {
+        waitingFor: WAIT_TYPE.SATISFACTION_SURVEY,
+        variables: {
+          ...session.variables,
+          [INTERNAL_VAR.SATISFACTION_SURVEY_STATE]: nextState,
+        },
+      });
+      const firstQuestion = questions[currentQuestionIndex];
+      if (!firstQuestion) {
+        const finalized = await finalizeBlockSurvey(sock, jid, updatedSession, flow, nowTs, {
+          completed: true,
+        });
+        return { handled: true, session: finalized };
+      }
+      const firstPrompt = interpolate(buildSurveyQuestionPrompt(firstQuestion, {
+        index: currentQuestionIndex,
+        total: questions.length,
+      }), updatedSession.variables || {});
+      await sendTextMessage(sock, jid, firstPrompt);
+      return { handled: true, session: updatedSession };
+    }
+
     const currentQuestion = questions[currentQuestionIndex];
     if (!currentQuestion) {
       const finalized = await finalizeBlockSurvey(sock, jid, session, flow, nowTs, {
         completed: true,
       });
-      return { handled: false, session: finalized };
+      return { handled: isDedicatedSurveyState(surveyState), session: finalized };
     }
 
     const parsed = parseSurveyQuestionResponse(message, currentQuestion);
@@ -1126,7 +1296,7 @@ async function resolveSatisfactionSurveyWait(sock, jid, message, session, flow, 
       const finalized = await finalizeBlockSurvey(sock, jid, sessionWithState, flow, nowTs, {
         completed: true,
       });
-      return { handled: false, session: finalized };
+      return { handled: isDedicatedSurveyState(nextState), session: finalized };
     }
 
     nextState.questionIndex = nextQuestionIndex;
@@ -1206,6 +1376,17 @@ async function enforceSessionLimits(sock, jid, session, flow, nowTs) {
   if (isSessionTimedOut(session, flow, nowTs)) {
     if (limits.timeoutMessage) {
       await sock.sendMessage(jid, { text: limits.timeoutMessage });
+    }
+    const dedicatedSurveyStart = await maybeStartDedicatedPostSessionSurvey(
+      sock,
+      jid,
+      session,
+      flow,
+      nowTs,
+      'timeout'
+    );
+    if (dedicatedSurveyStart.started) {
+      return { blocked: true, session: dedicatedSurveyStart.session };
     }
     session = endSession(jid, session, nowTs, 'timeout', flow);
     return { blocked: true, session };
@@ -1557,6 +1738,18 @@ async function runEngine(sock, jid, session, flow, runtime = {}) {
 
     if (result.done) {
       if (block.type === BLOCK_TYPE.END_CONVERSATION) {
+        const dedicatedSurveyStart = await maybeStartDedicatedPostSessionSurvey(
+          scopedSock,
+          jid,
+          session,
+          flow,
+          Date.now(),
+          'session_end'
+        );
+        session = dedicatedSurveyStart.session;
+        if (dedicatedSurveyStart.started) {
+          return;
+        }
         const surveyStart = await maybeStartSatisfactionSurvey(scopedSock, jid, session, flow, Date.now());
         session = surveyStart.session;
         if (surveyStart.started) {
@@ -1727,6 +1920,15 @@ export function startSessionCleanup(sock, flowOrFlows) {
               if (limits.timeoutMessage) {
                 await sock.sendMessage(session.jid, { text: limits.timeoutMessage }).catch(console.error);
               }
+              const dedicatedSurveyStart = await maybeStartDedicatedPostSessionSurvey(
+                sock,
+                session.jid,
+                syncSession,
+                flow,
+                lockNowTs,
+                'timeout'
+              );
+              if (dedicatedSurveyStart.started) return;
               endSession(session.jid, syncSession, lockNowTs, 'timeout', flow);
             });
           }
