@@ -31,7 +31,20 @@ export function getMessageDebugInfo(msg, type) {
 }
 
 export function normalizeInteractionScope(flow) {
-  return String(flow?.runtimeConfig?.interactionScope ?? 'all').toLowerCase();
+  const explicitScope = String(flow?.runtimeConfig?.interactionScope ?? '').trim().toLowerCase();
+  const conversationMode = String(flow?.runtimeConfig?.conversationMode ?? 'conversation').trim().toLowerCase();
+  if (explicitScope) {
+    if (conversationMode === 'conversation' && (explicitScope === 'all' || explicitScope === 'any')) {
+      // Backward-compatible safety: old flows often persisted interactionScope="all".
+      // For conversation bots, treat it as direct users only.
+      return 'all-users';
+    }
+    return explicitScope;
+  }
+
+  // Default safety: conversation bots should not run in groups unless scope explicitly mentions groups.
+  if (conversationMode === 'conversation') return 'all-users';
+  return 'all';
 }
 
 export function isGroupWhitelistScope(flow) {
