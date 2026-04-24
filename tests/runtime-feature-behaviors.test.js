@@ -7,6 +7,8 @@ import {
   getSession,
   updateSession,
   listSatisfactionSurveyResponses,
+  listSurveyInstances,
+  getSurveyInstanceById,
 } from '../db/index.js';
 import { handleIncoming } from '../engine/flowEngine.js';
 import { INTERNAL_VAR, WAIT_TYPE, SESSION_STATUS } from '../config/constants.js';
@@ -246,6 +248,78 @@ test('satisfaction survey timeout finalizes session and records timeout outcome'
 
     const texts = sent.map(item => item.payload?.text).filter(Boolean);
     assert.equal(texts.includes('Obrigado mesmo sem resposta.'), true);
+  } finally {
+    deleteSession(jid, { flowPath });
+  }
+});
+
+test('survey block captures multi-question responses and resumes flow execution', async () => {
+  const now = Date.now();
+  const jid = `survey-block-${now}@s.whatsapp.net`;
+  const flowPath = `/tmp/survey-block-${now}.tmb`;
+  const { sent, sock } = createSocketRecorder();
+
+  const flow = createFlowFixture(flowPath, [
+    { id: 'start', type: 'initial-message', config: { text: 'Inicio da pesquisa' } },
+    {
+      id: 'survey-block',
+      type: 'survey',
+      config: {
+        surveyTypeId: 'csat',
+        timeoutMinutes: 10,
+        thankYouMessage: 'Obrigado pelo feedback da pesquisa!',
+        questions: [
+          {
+            id: 'nota',
+            text: 'De 1 a 5, qual sua nota?',
+            type: 'scale',
+            scale: { min: 1, max: 5 },
+            required: true,
+          },
+          {
+            id: 'comentario',
+            text: 'Conte em uma frase o motivo da nota.',
+            type: 'text',
+            required: true,
+          },
+        ],
+      },
+    },
+    { id: 'after', type: 'send-text', config: { text: 'Fluxo retomado apos pesquisa.' } },
+    { id: 'end', type: 'end-conversation', config: { message: 'Fim.' } },
+  ], {
+    conversationMode: 'conversation',
+  });
+
+  try {
+    await handleIncoming(sock, jid, 'oi', null, flow, `survey-block-1-${now}`);
+    const waitingAfterStart = getSession(jid, { flowPath });
+    assert.equal(waitingAfterStart?.waitingFor, WAIT_TYPE.SATISFACTION_SURVEY);
+
+    await handleIncoming(sock, jid, '5', null, flow, `survey-block-2-${now}`);
+    const stillWaiting = getSession(jid, { flowPath });
+    assert.equal(stillWaiting?.waitingFor, WAIT_TYPE.SATISFACTION_SURVEY);
+
+    await handleIncoming(sock, jid, 'Atendimento rapido e claro.', null, flow, `survey-block-3-${now}`);
+
+    const endedSession = getSession(jid, { flowPath });
+    assert.equal(endedSession?.status, SESSION_STATUS.ENDED);
+    assert.equal(endedSession?.variables?.[INTERNAL_VAR.SESSION_END_REASON], 'end-conversation');
+
+    const savedInstances = listSurveyInstances({ typeId: 'csat', flowPath, limit: 10, offset: 0 });
+    assert.equal(savedInstances.total >= 1, true);
+    const currentInstance = savedInstances.items.find(item => item.jid === jid);
+    assert.equal(Boolean(currentInstance?.instanceId), true);
+
+    const instanceDetail = getSurveyInstanceById(currentInstance?.instanceId || '');
+    assert.equal(Array.isArray(instanceDetail?.responses), true);
+    assert.equal((instanceDetail?.responses || []).length >= 2, true);
+    assert.equal((instanceDetail?.responses || []).some(item => item.questionId === 'nota' && item.numericValue === 5), true);
+    assert.equal((instanceDetail?.responses || []).some(item => item.questionId === 'comentario'), true);
+
+    const texts = sent.map(item => String(item.payload?.text || '')).filter(Boolean);
+    assert.equal(texts.includes('Fluxo retomado apos pesquisa.'), true);
+    assert.equal(texts.includes('Obrigado pelo feedback da pesquisa!'), true);
   } finally {
     deleteSession(jid, { flowPath });
   }

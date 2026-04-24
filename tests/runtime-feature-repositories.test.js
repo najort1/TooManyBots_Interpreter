@@ -12,6 +12,12 @@ import {
   deletePersistedContextVariablesByScope,
   saveSatisfactionSurveyResponse,
   listSatisfactionSurveyResponses,
+  upsertSurveyTypeDefinition,
+  createSurveyInstance,
+  saveSurveyResponse,
+  markSurveyInstanceCompleted,
+  listSurveyInstances,
+  getSurveyMetricsOverview,
 } from '../db/index.js';
 
 await initDb();
@@ -110,4 +116,59 @@ test('satisfaction repository stores answered and timeout survey outcomes', () =
   assert.equal(rows.length, 2);
   assert.equal(rows.some(row => row.rating === 4 && row.timedOut === false), true);
   assert.equal(rows.some(row => row.rating == null && row.timedOut === true), true);
+});
+
+test('survey repository stores instances, responses, and computes overview metrics', () => {
+  const base = Date.now();
+  const typeId = `csat_test_${base}`;
+  const jid = `survey-instance-${base}@s.whatsapp.net`;
+  const flowPath = '/tmp/survey-flow-v2.tmb';
+
+  upsertSurveyTypeDefinition({
+    typeId,
+    name: 'CSAT Teste',
+    schema: {
+      questions: [
+        { id: 'q1', text: 'Nota', type: 'scale', scale: { min: 1, max: 5 }, required: true },
+      ],
+      scoringRules: { formula: 'csat' },
+      visualizations: ['trend'],
+      retentionDays: 90,
+    },
+    isActive: true,
+  });
+
+  const created = createSurveyInstance({
+    surveyTypeId: typeId,
+    flowPath,
+    blockId: 'survey-block-1',
+    sessionId: `${jid}:${base}`,
+    jid,
+    startedAt: base,
+  });
+
+  assert.equal(Boolean(created?.instanceId), true);
+
+  saveSurveyResponse({
+    instanceId: created.instanceId,
+    questionId: 'q1',
+    questionType: 'scale',
+    numericValue: 5,
+    respondedAt: base + 1000,
+  });
+
+  markSurveyInstanceCompleted({
+    instanceId: created.instanceId,
+    completedAt: base + 2000,
+  });
+
+  const listed = listSurveyInstances({ typeId, flowPath, limit: 10, offset: 0 });
+  assert.equal(listed.total >= 1, true);
+  assert.equal(listed.items.some(item => item.instanceId === created.instanceId), true);
+
+  const overview = getSurveyMetricsOverview({ typeId, flowPath, from: base - 10, to: base + 5000 });
+  assert.equal(overview.totalInstances >= 1, true);
+  assert.equal(overview.completedInstances >= 1, true);
+  assert.equal(overview.numericResponses >= 1, true);
+  assert.equal(overview.avgScore >= 5, true);
 });
