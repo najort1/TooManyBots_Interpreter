@@ -351,7 +351,17 @@ export class DashboardServer {
     onResetSessionsByJid = async () => ({ ok: false, error: 'not-implemented' }),
     onUpdateFlowSessionTimeout = async () => ({ ok: false, error: 'not-implemented' }),
     onListSurveyTypes = async () => [],
+    onCreateSurvey = async () => ({ ok: false, error: 'not-implemented' }),
+    onUpdateSurvey = async () => ({ ok: false, error: 'not-implemented' }),
+    onSetSurveyStatus = async () => ({ ok: false, error: 'not-implemented' }),
+    onDuplicateSurvey = async () => ({ ok: false, error: 'not-implemented' }),
     onGetSurveyType = async () => ({ ok: false, error: 'not-implemented' }),
+    onGetSurveyFrequency = async () => ({ ok: false, error: 'not-implemented' }),
+    onUpdateSurveyFrequency = async () => ({ ok: false, error: 'not-implemented' }),
+    onListAvailableSurveysForBot = async () => [],
+    onLinkSurveyToBot = async () => ({ ok: false, error: 'not-implemented' }),
+    onUnlinkSurveyFromBot = async () => ({ ok: false, error: 'not-implemented' }),
+    onBroadcastSurvey = async () => ({ ok: false, error: 'not-implemented' }),
     onListSurveyInstances = async () => ({ total: 0, items: [], limit: 0, offset: 0 }),
     onGetSurveyInstance = async () => ({ ok: false, error: 'not-implemented' }),
     onGetSurveyMetricsOverview = async () => ({}),
@@ -396,7 +406,17 @@ export class DashboardServer {
     this.onResetSessionsByJid = onResetSessionsByJid;
     this.onUpdateFlowSessionTimeout = onUpdateFlowSessionTimeout;
     this.onListSurveyTypes = onListSurveyTypes;
+    this.onCreateSurvey = onCreateSurvey;
+    this.onUpdateSurvey = onUpdateSurvey;
+    this.onSetSurveyStatus = onSetSurveyStatus;
+    this.onDuplicateSurvey = onDuplicateSurvey;
     this.onGetSurveyType = onGetSurveyType;
+    this.onGetSurveyFrequency = onGetSurveyFrequency;
+    this.onUpdateSurveyFrequency = onUpdateSurveyFrequency;
+    this.onListAvailableSurveysForBot = onListAvailableSurveysForBot;
+    this.onLinkSurveyToBot = onLinkSurveyToBot;
+    this.onUnlinkSurveyFromBot = onUnlinkSurveyFromBot;
+    this.onBroadcastSurvey = onBroadcastSurvey;
     this.onListSurveyInstances = onListSurveyInstances;
     this.onGetSurveyInstance = onGetSurveyInstance;
     this.onGetSurveyMetricsOverview = onGetSurveyMetricsOverview;

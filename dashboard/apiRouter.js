@@ -286,6 +286,149 @@ export async function dispatchDashboardApiRoute({
     return true;
   }
 
+  if (pathname === '/api/surveys' && req.method === 'POST') {
+    const body = await readJsonBody(req);
+    const result = await server.onCreateSurvey(body || {});
+    if (!result?.ok) {
+      sendJson(res, 400, { ok: false, error: result?.error || 'failed-to-create-survey' });
+      return true;
+    }
+    sendJson(res, 201, result);
+    return true;
+  }
+
+  if (pathname === '/api/surveys' && req.method === 'GET') {
+    const activeOnly = requestUrl.searchParams.get('activeOnly') === '1';
+    const items = await server.onListSurveyTypes({ activeOnly });
+    sendJson(res, 200, { ok: true, data: Array.isArray(items) ? items : [] });
+    return true;
+  }
+
+  if (pathname.startsWith('/api/surveys/') && pathname.endsWith('/broadcast') && req.method === 'POST') {
+    const typeId = decodePathComponent(pathname.slice('/api/surveys/'.length, -'/broadcast'.length));
+    const body = await readJsonBody(req);
+    const selectedJids = Array.isArray(body?.jids) ? body.jids : [];
+    const result = await server.onBroadcastSurvey({
+      typeId,
+      selectedJids,
+      actor: normalizeActor(body?.agentId),
+    });
+    if (!result?.ok) {
+      sendJson(res, 400, { ok: false, error: result?.error || 'survey-broadcast-failed' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (pathname.startsWith('/api/surveys/') && pathname.endsWith('/duplicate') && req.method === 'POST') {
+    const typeId = decodePathComponent(pathname.slice('/api/surveys/'.length, -'/duplicate'.length));
+    const result = await server.onDuplicateSurvey({ typeId });
+    if (!result?.ok) {
+      sendJson(res, 400, { ok: false, error: result?.error || 'failed-to-duplicate-survey' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (pathname.startsWith('/api/surveys/') && pathname.endsWith('/activate') && req.method === 'POST') {
+    const typeId = decodePathComponent(pathname.slice('/api/surveys/'.length, -'/activate'.length));
+    const result = await server.onSetSurveyStatus({ typeId, status: 'active' });
+    if (!result?.ok) {
+      sendJson(res, 400, { ok: false, error: result?.error || 'failed-to-activate-survey' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (pathname.startsWith('/api/surveys/') && pathname.endsWith('/deactivate') && req.method === 'POST') {
+    const typeId = decodePathComponent(pathname.slice('/api/surveys/'.length, -'/deactivate'.length));
+    const result = await server.onSetSurveyStatus({ typeId, status: 'inactive' });
+    if (!result?.ok) {
+      sendJson(res, 400, { ok: false, error: result?.error || 'failed-to-deactivate-survey' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (pathname.startsWith('/api/surveys/') && pathname.endsWith('/frequency') && req.method === 'GET') {
+    const typeId = decodePathComponent(pathname.slice('/api/surveys/'.length, -'/frequency'.length));
+    const result = await server.onGetSurveyFrequency({ typeId });
+    if (!result?.ok) {
+      sendJson(res, 400, { ok: false, error: result?.error || 'failed-to-get-frequency' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (pathname.startsWith('/api/surveys/') && pathname.endsWith('/frequency') && req.method === 'PUT') {
+    const typeId = decodePathComponent(pathname.slice('/api/surveys/'.length, -'/frequency'.length));
+    const body = await readJsonBody(req);
+    const result = await server.onUpdateSurveyFrequency({ typeId, frequency: body || {} });
+    if (!result?.ok) {
+      sendJson(res, 400, { ok: false, error: result?.error || 'failed-to-update-frequency' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (pathname.startsWith('/api/surveys/') && req.method === 'PUT') {
+    const typeId = decodePathComponent(pathname.slice('/api/surveys/'.length));
+    const body = await readJsonBody(req);
+    const result = await server.onUpdateSurvey({ typeId, ...(body || {}) });
+    if (!result?.ok) {
+      sendJson(res, 400, { ok: false, error: result?.error || 'failed-to-update-survey' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (pathname.startsWith('/api/surveys/') && req.method === 'DELETE') {
+    const typeId = decodePathComponent(pathname.slice('/api/surveys/'.length));
+    const result = await server.onSetSurveyStatus({ typeId, status: 'inactive' });
+    if (!result?.ok) {
+      sendJson(res, 400, { ok: false, error: result?.error || 'failed-to-delete-survey' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (pathname.startsWith('/api/bots/') && pathname.endsWith('/available-surveys') && req.method === 'GET') {
+    const data = await server.onListAvailableSurveysForBot({});
+    sendJson(res, 200, { ok: true, data: Array.isArray(data) ? data : [] });
+    return true;
+  }
+
+  if (pathname.startsWith('/api/bots/') && pathname.endsWith('/link-survey') && req.method === 'POST') {
+    const botId = decodePathComponent(pathname.slice('/api/bots/'.length, -'/link-survey'.length));
+    const body = await readJsonBody(req);
+    const result = await server.onLinkSurveyToBot({ botId, surveyConfig: body?.surveyConfig || body || {} });
+    if (!result?.ok) {
+      sendJson(res, 400, { ok: false, error: result?.error || 'failed-to-link-survey' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
+  if (pathname.startsWith('/api/bots/') && pathname.endsWith('/unlink-survey') && req.method === 'DELETE') {
+    const botId = decodePathComponent(pathname.slice('/api/bots/'.length, -'/unlink-survey'.length));
+    const result = await server.onUnlinkSurveyFromBot({ botId });
+    if (!result?.ok) {
+      sendJson(res, 400, { ok: false, error: result?.error || 'failed-to-unlink-survey' });
+      return true;
+    }
+    sendJson(res, 200, result);
+    return true;
+  }
+
   if (pathname === '/api/surveys/types' && req.method === 'GET') {
     const quota = server.consumeRouteQuota(req, '/api/surveys/types');
     if (!quota.ok) {
