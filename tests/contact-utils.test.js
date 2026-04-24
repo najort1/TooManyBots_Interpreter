@@ -8,6 +8,8 @@ import {
   isLikelyRealUserJid,
   mergeContactCacheEntry,
   mergeChatsIntoContactCache,
+  normalizeInteractionScope,
+  shouldProcessByInteractionScope,
 } from '../runtime/contactUtils.js';
 
 test('contact-utils filters synthetic JIDs and accepts real WhatsApp-like JIDs', () => {
@@ -101,4 +103,25 @@ test('fetchSelectableGroups does not replace cached group name with JID-like sub
   assert.equal(groups.length, 1);
   assert.equal(groups[0]?.name, 'Grupo Persistido');
   assert.equal(cache.get(groupJid)?.name, 'Grupo Persistido');
+});
+
+test('conversation mode defaults interaction scope to all-users', () => {
+  const flow = { runtimeConfig: { conversationMode: 'conversation' } };
+  assert.equal(normalizeInteractionScope(flow), 'all-users');
+  assert.equal(shouldProcessByInteractionScope(false, flow), true);
+  assert.equal(shouldProcessByInteractionScope(true, flow), false);
+});
+
+test('command mode keeps default interaction scope as all', () => {
+  const flow = { runtimeConfig: { conversationMode: 'command' } };
+  assert.equal(normalizeInteractionScope(flow), 'all');
+  assert.equal(shouldProcessByInteractionScope(false, flow), true);
+  assert.equal(shouldProcessByInteractionScope(true, flow), true);
+});
+
+test('conversation mode maps legacy all scope to direct users only', () => {
+  const flow = { runtimeConfig: { conversationMode: 'conversation', interactionScope: 'all' } };
+  assert.equal(normalizeInteractionScope(flow), 'all-users');
+  assert.equal(shouldProcessByInteractionScope(false, flow), true);
+  assert.equal(shouldProcessByInteractionScope(true, flow), false);
 });
