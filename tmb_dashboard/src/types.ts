@@ -1,7 +1,7 @@
 export type DashboardMode = 'CONVERSATION' | 'COMMAND';
 export type DashboardTelemetryLevel = 'minimum' | 'operational' | 'diagnostic' | 'verbose';
 
-export type DashboardView = 'setup' | 'analytics' | 'observability' | 'handoff' | 'broadcast' | 'sessions' | 'settings' | 'flows' | 'dbMaintenance';
+export type DashboardView = 'setup' | 'analytics' | 'surveys' | 'observability' | 'handoff' | 'broadcast' | 'sessions' | 'settings' | 'flows' | 'dbMaintenance';
 
 export interface RuntimeHealth {
   status: string;
@@ -477,4 +477,126 @@ export interface BotInfo {
   syntaxValid: boolean;
   syntaxError: string | null;
   status: 'active' | 'inactive' | 'error';
+}
+
+export interface SurveyQuestionDefinition {
+  id: string;
+  text: string;
+  type: 'scale' | 'text' | 'choice' | 'multiple' | string;
+  required?: boolean;
+  scale?: {
+    min: number;
+    max: number;
+  };
+  choices?: Array<{
+    id: string;
+    label: string;
+    value?: string;
+  }>;
+}
+
+export interface SurveyTypeDefinition {
+  typeId: string;
+  name: string;
+  schema: {
+    questions?: SurveyQuestionDefinition[];
+    scoringRules?: Record<string, unknown>;
+    visualizations?: string[];
+    retentionDays?: number;
+  };
+  isActive: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface SurveyResponseRecord {
+  responseId: string;
+  instanceId: string;
+  questionId: string;
+  questionType: string;
+  numericValue: number | null;
+  textValue: string;
+  choiceId: string;
+  choiceIds: string[];
+  respondedAt: number;
+}
+
+export interface SurveyInstance {
+  instanceId: string;
+  surveyTypeId: string;
+  flowPath: string;
+  blockId: string;
+  sessionId: string;
+  jid: string;
+  startedAt: number;
+  completedAt: number | null;
+  abandonedAt: number | null;
+  abandonmentReason: string;
+  conversationContext: string;
+  responses?: SurveyResponseRecord[];
+}
+
+export interface SurveyInstanceList {
+  total: number;
+  items: SurveyInstance[];
+  limit: number;
+  offset: number;
+}
+
+export interface SurveyMetricsOverview {
+  totalInstances: number;
+  completedInstances: number;
+  abandonedInstances: number;
+  completionRate: number;
+  abandonmentRate: number;
+  avgDurationSeconds: number;
+  numericResponses: number;
+  avgScore: number;
+  npsScore: number;
+  csatRate: number;
+  lowEffortRate: number;
+  sampleSize: number;
+  keyMetricName?: string;
+  keyMetricValue?: number;
+  secondaryMetricName?: string;
+  secondaryMetricValue?: number;
+}
+
+export interface SurveyTrendPoint {
+  bucket: string;
+  timeBucket: 'hour' | 'day' | 'week' | 'month' | string;
+  totalInstances: number;
+  completedInstances: number;
+  abandonedInstances: number;
+  numericResponses: number;
+  avgScore: number;
+}
+
+export interface SurveyDistributionPoint {
+  value: number;
+  total: number;
+}
+
+export interface SurveyFlowMetric {
+  flowPath: string;
+  totalInstances: number;
+  completedInstances: number;
+  abandonedInstances: number;
+  completionRate: number;
+  abandonmentRate: number;
+  avgDurationSeconds: number;
+  numericResponses: number;
+  avgScore: number;
+}
+
+export interface SurveyFilters {
+  typeId?: string;
+  flowPath?: string;
+  blockId?: string;
+  from?: number | null;
+  to?: number | null;
+  granularity?: 'hour' | 'day' | 'week' | 'month' | string;
+  limit?: number;
+  offset?: number;
+  status?: 'completed' | 'abandoned' | 'pending' | string;
 }

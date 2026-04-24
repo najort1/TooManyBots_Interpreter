@@ -40,6 +40,7 @@ import { isLikelyErrorMessage } from './lib/format';
 import { Sidebar } from './components/layout/Sidebar';
 import { TopBar } from './components/layout/TopBar';
 import { AnalyticsView } from './components/analytics/AnalyticsView';
+import { SurveyView } from './components/surveys/SurveyView';
 import { ObservabilityView } from './components/observability/ObservabilityView';
 import { BroadcastView } from './components/broadcast/BroadcastView';
 import { HandoffView } from './components/handoff/HandoffView';
@@ -85,6 +86,7 @@ const DASHBOARD_VIEW_STORAGE_KEY = 'tmb_dashboard_view';
 function isDashboardView(value: string): value is DashboardView {
   return value === 'setup'
     || value === 'analytics'
+    || value === 'surveys'
     || value === 'observability'
     || value === 'handoff'
     || value === 'broadcast'
@@ -1143,6 +1145,12 @@ function App() {
               stats={stats}
               logs={logs}
               onExport={() => window.open('/api/export?format=csv', '_blank')}
+            />
+          )}
+
+          {renderedView === 'surveys' && (
+            <SurveyView
+              onShowNotice={showNotice}
             />
           )}
 

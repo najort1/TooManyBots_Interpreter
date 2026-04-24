@@ -16,6 +16,9 @@ export const WS_REFRESH_EVENT_TYPES = new Set([
   'message-outgoing',
   'human-message-outgoing',
   'human-image-outgoing',
+  'survey:response:completed',
+  'survey:response:abandoned',
+  'survey:metrics:updated',
 ]);
 
 export const TRANSIENT_WS_EVENT_TYPES = new Set(['broadcast-send-progress']);
