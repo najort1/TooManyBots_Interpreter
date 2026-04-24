@@ -6,6 +6,26 @@ import { URL } from 'node:url';
 import { handleDashboardApiRequest } from './apiController.js';
 import { sendJson, sendText, tryServePublicAsset } from './staticFileHandler.js';
 
+function serveDashboardIndex({ res, publicDir }) {
+  const indexPath = path.join(publicDir, 'index.html');
+  if (!fs.existsSync(indexPath)) {
+    sendText(res, 503, 'Dashboard frontend build not found. Run: npm --prefix tmb_dashboard run build');
+    return;
+  }
+
+  res.statusCode = 200;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.end(fs.readFileSync(indexPath));
+}
+
+function canServeSpaFallback(req, pathname) {
+  const method = String(req.method || 'GET').toUpperCase();
+  if (method !== 'GET' && method !== 'HEAD') return false;
+  if (pathname.startsWith('/api/') || pathname === '/api') return false;
+  if (pathname.startsWith('/ws')) return false;
+  return true;
+}
+
 export function createDashboardHttpServer({
   server,
   publicDir,
@@ -24,14 +44,7 @@ export function createDashboardHttpServer({
       });
 
       if (requestUrl.pathname === '/') {
-        const indexPath = path.join(publicDir, 'index.html');
-        if (!fs.existsSync(indexPath)) {
-          sendText(res, 503, 'Dashboard frontend build not found. Run: npm --prefix tmb_dashboard run build');
-          return;
-        }
-        res.statusCode = 200;
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.end(fs.readFileSync(indexPath));
+        serveDashboardIndex({ res, publicDir });
         return;
       }
 
@@ -59,6 +72,11 @@ export function createDashboardHttpServer({
         },
       });
       if (apiHandled) {
+        return;
+      }
+
+      if (canServeSpaFallback(req, requestUrl.pathname)) {
+        serveDashboardIndex({ res, publicDir });
         return;
       }
 
