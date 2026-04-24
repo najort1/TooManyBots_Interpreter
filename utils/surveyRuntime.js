@@ -11,11 +11,20 @@ function toInt(value, fallback) {
 
 function normalizeQuestionType(value) {
   const normalized = toText(value, 'text').toLowerCase();
-  if (normalized === 'scale' || normalized === 'text' || normalized === 'choice' || normalized === 'multiple') {
+  if (
+    normalized === 'scale'
+    || normalized === 'text'
+    || normalized === 'choice'
+    || normalized === 'multiple'
+    || normalized === 'nps'
+    || normalized === 'scale_0_5'
+    || normalized === 'boolean'
+  ) {
     return normalized;
   }
-  if (normalized === 'nps') return 'scale';
   if (normalized === 'rating-scale') return 'scale';
+  if (normalized === 'scale-0-5' || normalized === 'scale05') return 'scale_0_5';
+  if (normalized === 'yes-no' || normalized === 'sim-nao') return 'boolean';
   return 'text';
 }
 
@@ -96,9 +105,14 @@ export function normalizeSurveyQuestions(rawQuestions = [], options = {}) {
     if (!source || typeof source !== 'object' || Array.isArray(source)) continue;
 
     const type = normalizeQuestionType(source.type || fallbackType);
-    const scale = type === 'scale'
-      ? normalizeScale(source, fallbackScale)
-      : undefined;
+    let scale;
+    if (type === 'scale') {
+      scale = normalizeScale(source, fallbackScale);
+    } else if (type === 'nps') {
+      scale = { min: 0, max: 10 };
+    } else if (type === 'scale_0_5') {
+      scale = { min: 0, max: 5 };
+    }
     const choices = type === 'choice' || type === 'multiple'
       ? normalizeChoices(source.choices ?? source.options ?? source.items)
       : [];
@@ -150,6 +164,18 @@ export function buildSurveyQuestionPrompt(question = {}, { index = 0, total = 1 
     return `${heading}\nResponda com um numero de ${scale.min} a ${scale.max}.`;
   }
 
+  if (questionType === 'nps') {
+    return `${heading}\nResponda com um numero de 0 a 10.`;
+  }
+
+  if (questionType === 'scale_0_5') {
+    return `${heading}\nResponda com um numero de 0 a 5.`;
+  }
+
+  if (questionType === 'boolean') {
+    return `${heading}\nResponda com sim ou nao.`;
+  }
+
   if (questionType === 'choice' || questionType === 'multiple') {
     const choices = Array.isArray(question.choices) ? question.choices : [];
     const renderedChoices = choices
@@ -166,6 +192,72 @@ export function buildSurveyQuestionPrompt(question = {}, { index = 0, total = 1 
   return `${heading}\nDigite sua resposta em texto.`;
 }
 
+export function buildSurveyConsentPrompt({
+  title = '',
+  description = '',
+  questionCount = 0,
+  triggerType = '',
+  source = '',
+} = {}) {
+  const resolvedTitle = toText(title, 'Pesquisa de satisfacao');
+  const resolvedDescription = toText(description);
+  const totalQuestions = Math.max(1, toInt(questionCount, 1));
+  const questionLabel = totalQuestions === 1 ? '1 pergunta' : `${totalQuestions} perguntas`;
+  const context = `${toText(triggerType)} ${toText(source)}`.toLowerCase();
+  const intro = context.includes('manual')
+    ? 'Ola, queremos convidar voce para responder uma pesquisa.'
+    : 'Antes de encerrar, queremos convidar voce para responder uma pesquisa.';
+
+  return [
+    intro,
+    '',
+    resolvedTitle,
+    resolvedDescription,
+    `Ela tem ${questionLabel} e sua participacao e opcional.`,
+    '',
+    'Deseja responder?',
+    '1. Sim',
+    '2. Nao',
+  ].filter(line => line !== null && line !== undefined).join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
+export function parseSurveyConsentResponse(message) {
+  const normalized = toText(message)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  const accepted = new Set([
+    '1',
+    'sim',
+    's',
+    'yes',
+    'y',
+    'true',
+    'aceito',
+    'aceitar',
+    'responder',
+    'participar',
+    'pode',
+  ]);
+  const declined = new Set([
+    '2',
+    '0',
+    'nao',
+    'n',
+    'no',
+    'false',
+    'recuso',
+    'recusar',
+    'cancelar',
+    'pular',
+    'sair',
+  ]);
+
+  if (accepted.has(normalized)) return { valid: true, accepted: true };
+  if (declined.has(normalized)) return { valid: true, accepted: false };
+  return { valid: false, reason: 'invalid-consent' };
+}
+
 export function parseSurveyQuestionResponse(message, question = {}) {
   const questionType = normalizeQuestionType(question.type);
   const raw = toText(message);
@@ -173,15 +265,19 @@ export function parseSurveyQuestionResponse(message, question = {}) {
     return { valid: false, reason: 'empty' };
   }
 
-  if (questionType === 'scale') {
+  if (questionType === 'scale' || questionType === 'nps' || questionType === 'scale_0_5') {
     if (!/^-?\d+$/.test(raw)) {
       return { valid: false, reason: 'not-integer' };
     }
 
     const value = Number(raw);
-    const scale = question.scale && typeof question.scale === 'object'
-      ? question.scale
-      : { min: 1, max: 5 };
+    const scale = questionType === 'nps'
+      ? { min: 0, max: 10 }
+      : questionType === 'scale_0_5'
+        ? { min: 0, max: 5 }
+        : (question.scale && typeof question.scale === 'object'
+            ? question.scale
+            : { min: 1, max: 5 });
     const min = toInt(scale.min, 1);
     const max = toInt(scale.max, 5);
     if (!Number.isFinite(value) || value < min || value > max) {
@@ -194,6 +290,22 @@ export function parseSurveyQuestionResponse(message, question = {}) {
         numericValue: value,
         textValue: null,
         choiceId: null,
+        choiceIds: null,
+      },
+    };
+  }
+
+  if (questionType === 'boolean') {
+    const parsed = parseBooleanResponse(raw);
+    if (!parsed.valid) {
+      return { valid: false, reason: parsed.reason };
+    }
+    return {
+      valid: true,
+      response: {
+        numericValue: parsed.value ? 1 : 0,
+        textValue: parsed.value ? 'sim' : 'nao',
+        choiceId: parsed.value ? 'yes' : 'no',
         choiceIds: null,
       },
     };
@@ -261,4 +373,17 @@ export function parseSurveyQuestionResponse(message, question = {}) {
       choiceIds: null,
     },
   };
+}
+
+export function parseBooleanResponse(message) {
+  const normalized = toText(message)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  const truthy = new Set(['1', 'sim', 's', 'yes', 'y', 'true', 'verdadeiro']);
+  const falsy = new Set(['0', 'nao', 'n', 'no', 'false', 'falso']);
+
+  if (truthy.has(normalized)) return { valid: true, value: true };
+  if (falsy.has(normalized)) return { valid: true, value: false };
+  return { valid: false, reason: 'invalid-boolean' };
 }
