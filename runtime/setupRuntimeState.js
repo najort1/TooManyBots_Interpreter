@@ -54,6 +54,9 @@ export function createSetupRuntimeStateController({
       testJid: String(config?.testJid || ''),
       testJids: toTrimmedStringArray(config?.testJids),
       groupWhitelistJids: toTrimmedStringArray(config?.groupWhitelistJids),
+      surveyConfigsByFlowPath: config?.surveyConfigsByFlowPath && typeof config.surveyConfigsByFlowPath === 'object'
+        ? config.surveyConfigsByFlowPath
+        : {},
       dashboardHost: String(config?.dashboardHost || '127.0.0.1'),
       dashboardPort: Number(config?.dashboardPort || 8787),
     };

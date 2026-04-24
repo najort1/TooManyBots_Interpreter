@@ -160,6 +160,9 @@ export function createSetupConfigController({
     if (input.groupWhitelistJids !== undefined) {
       patch.groupWhitelistJids = toTrimmedStringArray(input.groupWhitelistJids);
     }
+    if (input.surveyConfigsByFlowPath !== undefined) {
+      patch.surveyConfigsByFlowPath = input.surveyConfigsByFlowPath;
+    }
     if (input.dashboardHost !== undefined) {
       patch.dashboardHost = String(input.dashboardHost || '').trim();
     }

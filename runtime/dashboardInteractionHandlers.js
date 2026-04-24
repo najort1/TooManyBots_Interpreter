@@ -153,11 +153,12 @@ export function createDashboardInteractionHandlers({
 
     onHumanEndSession: async ({ jid, reason, actor }) => {
       const flow = getDashboardFlow();
+      const sock = getCurrentSocket();
       if (!flow) {
         return { ok: false, error: 'runtime-not-ready' };
       }
 
-      const result = await endSessionFromDashboard({ jid, flow, reason, actor });
+      const result = await endSessionFromDashboard({ jid, flow, sock, reason, actor });
       if (!result?.ok) return result;
 
       logConversationEvent({

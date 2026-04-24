@@ -1,3 +1,5 @@
+import path from 'path';
+
 export function createFlowRegistryController({
   getCurrentFlowRegistry,
   getConfig,
@@ -60,7 +62,26 @@ export function createFlowRegistryController({
 
   function loadFlowRegistryFromConfig(currentConfig) {
     const flowPaths = resolveConfiguredFlowPaths(currentConfig);
-    return loadFlows(flowPaths);
+    const registry = loadFlows(flowPaths);
+    const surveyConfigsByFlowPath =
+      currentConfig?.surveyConfigsByFlowPath && typeof currentConfig.surveyConfigsByFlowPath === 'object'
+        ? currentConfig.surveyConfigsByFlowPath
+        : {};
+
+    for (const flow of registry.all) {
+      const candidates = [
+        flow.flowPath,
+        path.resolve(flow.flowPath || ''),
+        path.relative(process.cwd(), flow.flowPath || ''),
+        `./${path.relative(process.cwd(), flow.flowPath || '').replace(/\\/g, '/')}`,
+      ].map(item => String(item || '').trim()).filter(Boolean);
+      const surveyConfigKey = candidates.find(candidate => surveyConfigsByFlowPath[candidate]);
+      if (surveyConfigKey) {
+        flow.surveyConfig = surveyConfigsByFlowPath[surveyConfigKey];
+      }
+    }
+
+    return registry;
   }
 
   return {
