@@ -29,6 +29,7 @@ import {
   handleRedirectToHuman,
   handleSendReaction,
 } from './interactionHandlers.js';
+import { handleSurvey } from './surveyHandlers.js';
 
 export const HANDLERS = {
   [BLOCK_TYPE.INITIAL_MESSAGE]: handleInitialMessage,
@@ -43,6 +44,7 @@ export const HANDLERS = {
   [BLOCK_TYPE.LIST_OPERATIONS]: handleListOperations,
   [BLOCK_TYPE.DATA_PROCESSOR]: handleDataProcessor,
   [BLOCK_TYPE.SEND_REACTION]: handleSendReaction,
+  [BLOCK_TYPE.SURVEY]: handleSurvey,
   [BLOCK_TYPE.CONDITION]: handleCondition,
   [BLOCK_TYPE.IF_CONDITION]: handleIfCondition,
   [BLOCK_TYPE.ELSE_IF]: handleElseIf,
