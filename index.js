@@ -23,6 +23,16 @@ import {
   getContactDisplayName,
   listContactDisplayNames,
   upsertContactDisplayName,
+  listSurveyTypeDefinitions,
+  getSurveyTypeDefinitionById,
+  listSurveyInstances,
+  getSurveyInstanceById,
+  listSurveyResponsesForExport,
+  calculateSurveyOverview,
+  calculateSurveyTrend,
+  calculateSurveyDistribution,
+  calculateSurveyByFlow,
+  recalculateSurveyMetricsCache,
 } from './db/index.js';
 import { cleanupAuthSignalSessions, getAuthStateStorageStats, useSqliteAuthState } from './db/authState.js';
 import { getFlowBotType, loadFlows } from './engine/flowLoader.js';
@@ -95,6 +105,7 @@ import { createIngestionPipelineController } from './runtime/ingestionPipeline.j
 import { createWhatsAppRuntimeController } from './runtime/whatsappRuntime.js';
 import { createDashboardSettingsSessionHandlers } from './runtime/dashboardSettingsSessionHandlers.js';
 import { createDashboardInteractionHandlers } from './runtime/dashboardInteractionHandlers.js';
+import { createDashboardSurveyHandlers } from './runtime/dashboardSurveyHandlers.js';
 import { createFlowRuntimeManager } from './runtime/flowRuntimeManager.js';
 import { createSetupConfigController } from './runtime/setupConfigController.js';
 import { createSetupRuntimeStateController } from './runtime/setupRuntimeState.js';
@@ -1211,6 +1222,18 @@ async function startDashboardServer() {
       deleteSession,
       normalizeTimeoutMinutes,
       getActiveFlows,
+    }),
+    ...createDashboardSurveyHandlers({
+      listSurveyTypeDefinitions,
+      getSurveyTypeDefinitionById,
+      listSurveyInstances,
+      getSurveyInstanceById,
+      calculateSurveyOverview,
+      calculateSurveyTrend,
+      calculateSurveyDistribution,
+      calculateSurveyByFlow,
+      listSurveyResponsesForExport,
+      recalculateSurveyMetricsCache,
     }),
   };
 
