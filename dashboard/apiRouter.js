@@ -43,6 +43,31 @@ export async function dispatchDashboardApiRoute({
   } = context;
 
   const pathname = requestUrl.pathname;
+  const parseSurveyFilters = (source = requestUrl.searchParams) => {
+    const read = key => {
+      if (source && typeof source.get === 'function') {
+        return source.get(key);
+      }
+      return source?.[key];
+    };
+    const toOptionalInt = raw => {
+      const normalized = String(raw ?? '').trim();
+      if (!normalized) return null;
+      const parsed = toInt(normalized, Number.NaN);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+    return {
+      typeId: String(read('typeId') ?? '').trim(),
+      flowPath: String(read('flowPath') ?? '').trim(),
+      blockId: String(read('blockId') ?? '').trim(),
+      from: toOptionalInt(read('from')),
+      to: toOptionalInt(read('to')),
+      granularity: String(read('granularity') ?? read('timeBucket') ?? '').trim() || 'day',
+      limit: Math.max(1, Math.min(10000, toInt(read('limit'), 200))),
+      offset: Math.max(0, toInt(read('offset'), 0)),
+      status: String(read('status') ?? '').trim(),
+    };
+  };
 
   if (pathname === '/api/health') {
     const info = server.getRuntimeInfo();
@@ -258,6 +283,182 @@ export async function dispatchDashboardApiRoute({
       return true;
     }
     sendJson(res, 200, result);
+    return true;
+  }
+
+  if (pathname === '/api/surveys/types' && req.method === 'GET') {
+    const quota = server.consumeRouteQuota(req, '/api/surveys/types');
+    if (!quota.ok) {
+      sendJson(res, 429, { ok: false, error: 'rate-limit-exceeded', retryAfterMs: quota.retryAfterMs });
+      return true;
+    }
+    const activeOnly = requestUrl.searchParams.get('activeOnly') !== '0';
+    const types = await server.onListSurveyTypes({ activeOnly });
+    sendJson(res, 200, { ok: true, data: Array.isArray(types) ? types : [] });
+    return true;
+  }
+
+  if (pathname.startsWith('/api/surveys/types/') && req.method === 'GET') {
+    const typeId = decodePathComponent(pathname.slice('/api/surveys/types/'.length));
+    if (!typeId) {
+      sendJson(res, 400, { ok: false, error: 'typeId is required' });
+      return true;
+    }
+    const result = await server.onGetSurveyType({ typeId });
+    if (!result?.ok) {
+      sendJson(res, 404, { ok: false, error: result?.error || 'survey type not found' });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, data: result.data || null });
+    return true;
+  }
+
+  if (pathname === '/api/surveys/instances' && req.method === 'GET') {
+    const quota = server.consumeRouteQuota(req, '/api/surveys/instances');
+    if (!quota.ok) {
+      sendJson(res, 429, { ok: false, error: 'rate-limit-exceeded', retryAfterMs: quota.retryAfterMs });
+      return true;
+    }
+    const result = await server.onListSurveyInstances(parseSurveyFilters());
+    sendJson(res, 200, {
+      ok: true,
+      data: result || { total: 0, items: [], limit: 200, offset: 0 },
+    });
+    return true;
+  }
+
+  if (pathname.startsWith('/api/surveys/instances/') && req.method === 'GET') {
+    const instanceId = decodePathComponent(pathname.slice('/api/surveys/instances/'.length));
+    if (!instanceId) {
+      sendJson(res, 400, { ok: false, error: 'instanceId is required' });
+      return true;
+    }
+    const result = await server.onGetSurveyInstance({ instanceId });
+    if (!result?.ok) {
+      sendJson(res, 404, { ok: false, error: result?.error || 'survey instance not found' });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, data: result.data || null });
+    return true;
+  }
+
+  if (pathname === '/api/surveys/metrics/overview' && req.method === 'GET') {
+    const quota = server.consumeRouteQuota(req, '/api/surveys/metrics/overview');
+    if (!quota.ok) {
+      sendJson(res, 429, { ok: false, error: 'rate-limit-exceeded', retryAfterMs: quota.retryAfterMs });
+      return true;
+    }
+    const result = await server.onGetSurveyMetricsOverview(parseSurveyFilters());
+    sendJson(res, 200, { ok: true, data: result || {} });
+    return true;
+  }
+
+  if (pathname === '/api/surveys/metrics/trend' && req.method === 'GET') {
+    const quota = server.consumeRouteQuota(req, '/api/surveys/metrics/trend');
+    if (!quota.ok) {
+      sendJson(res, 429, { ok: false, error: 'rate-limit-exceeded', retryAfterMs: quota.retryAfterMs });
+      return true;
+    }
+    const result = await server.onGetSurveyMetricsTrend(parseSurveyFilters());
+    sendJson(res, 200, { ok: true, data: Array.isArray(result) ? result : [] });
+    return true;
+  }
+
+  if (pathname === '/api/surveys/metrics/distribution' && req.method === 'GET') {
+    const quota = server.consumeRouteQuota(req, '/api/surveys/metrics/distribution');
+    if (!quota.ok) {
+      sendJson(res, 429, { ok: false, error: 'rate-limit-exceeded', retryAfterMs: quota.retryAfterMs });
+      return true;
+    }
+    const result = await server.onGetSurveyMetricsDistribution(parseSurveyFilters());
+    sendJson(res, 200, { ok: true, data: Array.isArray(result) ? result : [] });
+    return true;
+  }
+
+  if (pathname === '/api/surveys/metrics/by-flow' && req.method === 'GET') {
+    const quota = server.consumeRouteQuota(req, '/api/surveys/metrics/by-flow');
+    if (!quota.ok) {
+      sendJson(res, 429, { ok: false, error: 'rate-limit-exceeded', retryAfterMs: quota.retryAfterMs });
+      return true;
+    }
+    const result = await server.onGetSurveyMetricsByFlow(parseSurveyFilters());
+    sendJson(res, 200, { ok: true, data: Array.isArray(result) ? result : [] });
+    return true;
+  }
+
+  if (pathname === '/api/surveys/export' && req.method === 'GET') {
+    const quota = server.consumeRouteQuota(req, '/api/surveys/export');
+    if (!quota.ok) {
+      sendJson(res, 429, { ok: false, error: 'rate-limit-exceeded', retryAfterMs: quota.retryAfterMs });
+      return true;
+    }
+    const filters = parseSurveyFilters();
+    const format = String(requestUrl.searchParams.get('format') ?? 'json').trim().toLowerCase();
+    const rows = await server.onExportSurveyResponses(filters);
+    const safeRows = Array.isArray(rows) ? rows : [];
+
+    if (format === 'csv') {
+      const escapeCsv = value => {
+        const raw = String(value ?? '');
+        if (raw.includes(',') || raw.includes('\"') || raw.includes('\n')) {
+          return `\"${raw.replace(/\"/g, '\"\"')}\"`;
+        }
+        return raw;
+      };
+
+      const headers = [
+        'instanceId',
+        'surveyTypeId',
+        'flowPath',
+        'blockId',
+        'sessionId',
+        'jid',
+        'startedAt',
+        'completedAt',
+        'abandonedAt',
+        'abandonmentReason',
+        'responseId',
+        'questionId',
+        'questionType',
+        'numericValue',
+        'textValue',
+        'choiceId',
+        'choiceIds',
+        'respondedAt',
+      ];
+
+      const csvRows = [headers.join(',')];
+      for (const row of safeRows) {
+        csvRows.push(headers.map(header => escapeCsv(row?.[header])).join(','));
+      }
+
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/csv');
+      res.setHeader('Content-Disposition', 'attachment; filename=\"surveys-export.csv\"');
+      res.end(csvRows.join('\n'));
+      return true;
+    }
+
+    sendJson(res, 200, { ok: true, data: safeRows });
+    return true;
+  }
+
+  if (pathname === '/api/surveys/admin/cache/refresh' && req.method === 'POST') {
+    const quota = server.consumeRouteQuota(req, '/api/surveys/admin/cache/refresh');
+    if (!quota.ok) {
+      sendJson(res, 429, { ok: false, error: 'rate-limit-exceeded', retryAfterMs: quota.retryAfterMs });
+      return true;
+    }
+    const body = await readJsonBody(req);
+    const result = await server.onRefreshSurveyMetricsCache({
+      ...parseSurveyFilters(body || {}),
+      force: true,
+    });
+    if (!result?.ok) {
+      sendJson(res, 500, { ok: false, error: result?.error || 'failed-to-refresh-survey-cache' });
+      return true;
+    }
+    sendJson(res, 200, { ok: true, data: result });
     return true;
   }
 

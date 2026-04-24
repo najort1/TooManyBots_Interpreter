@@ -79,6 +79,14 @@ const ROUTE_RATE_LIMITS = new Map([
   ['/api/handoff/sessions', { windowMs: 1000, max: 6 }],
   ['/api/setup/targets', { windowMs: 1000, max: 6 }],
   ['/api/broadcast/contacts', { windowMs: 1000, max: 6 }],
+  ['/api/surveys/types', { windowMs: 1000, max: 10 }],
+  ['/api/surveys/instances', { windowMs: 1000, max: 8 }],
+  ['/api/surveys/metrics/overview', { windowMs: 1000, max: 12 }],
+  ['/api/surveys/metrics/trend', { windowMs: 1000, max: 10 }],
+  ['/api/surveys/metrics/distribution', { windowMs: 1000, max: 10 }],
+  ['/api/surveys/metrics/by-flow', { windowMs: 1000, max: 10 }],
+  ['/api/surveys/export', { windowMs: 1000, max: 3 }],
+  ['/api/surveys/admin/cache/refresh', { windowMs: 1000, max: 2 }],
 ]);
 const TELEMETRY_SAMPLE_CAP_BY_LEVEL = {
   minimum: 0,
@@ -342,6 +350,16 @@ export class DashboardServer {
     onClearActiveSessionsByFlow = async () => ({ ok: false, error: 'not-implemented' }),
     onResetSessionsByJid = async () => ({ ok: false, error: 'not-implemented' }),
     onUpdateFlowSessionTimeout = async () => ({ ok: false, error: 'not-implemented' }),
+    onListSurveyTypes = async () => [],
+    onGetSurveyType = async () => ({ ok: false, error: 'not-implemented' }),
+    onListSurveyInstances = async () => ({ total: 0, items: [], limit: 0, offset: 0 }),
+    onGetSurveyInstance = async () => ({ ok: false, error: 'not-implemented' }),
+    onGetSurveyMetricsOverview = async () => ({}),
+    onGetSurveyMetricsTrend = async () => [],
+    onGetSurveyMetricsDistribution = async () => [],
+    onGetSurveyMetricsByFlow = async () => [],
+    onExportSurveyResponses = async () => [],
+    onRefreshSurveyMetricsCache = async () => ({ ok: false, error: 'not-implemented' }),
     logger = null,
   } = {}) {
     this.host = host;
@@ -377,6 +395,16 @@ export class DashboardServer {
     this.onClearActiveSessionsByFlow = onClearActiveSessionsByFlow;
     this.onResetSessionsByJid = onResetSessionsByJid;
     this.onUpdateFlowSessionTimeout = onUpdateFlowSessionTimeout;
+    this.onListSurveyTypes = onListSurveyTypes;
+    this.onGetSurveyType = onGetSurveyType;
+    this.onListSurveyInstances = onListSurveyInstances;
+    this.onGetSurveyInstance = onGetSurveyInstance;
+    this.onGetSurveyMetricsOverview = onGetSurveyMetricsOverview;
+    this.onGetSurveyMetricsTrend = onGetSurveyMetricsTrend;
+    this.onGetSurveyMetricsDistribution = onGetSurveyMetricsDistribution;
+    this.onGetSurveyMetricsByFlow = onGetSurveyMetricsByFlow;
+    this.onExportSurveyResponses = onExportSurveyResponses;
+    this.onRefreshSurveyMetricsCache = onRefreshSurveyMetricsCache;
     this.logger = logger?.child ? logger.child({ module: 'dashboard-server' }) : logger;
     this.server = null;
     this.wss = null;
