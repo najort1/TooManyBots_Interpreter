@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { buttonBaseClass, inputBaseClass, panelClass } from '../../lib/uiTokens';
 import type { BotInfo, RuntimeSetupConfig, SetupTargetsResponse } from '../../types';
+import { BotSurveyLinker } from './BotSurveyLinker';
 
 interface SetupViewProps {
   needsInitialSetup: boolean;
@@ -338,6 +339,14 @@ export function SetupView({
               )}
             </div>
           </div>
+
+          <BotSurveyLinker
+            bots={bots}
+            setupConfig={setupConfig}
+            busy={busySave}
+            onLinked={() => onReloadBots()}
+            onShowNotice={onShowNotice}
+          />
         </div>
       </article>
 

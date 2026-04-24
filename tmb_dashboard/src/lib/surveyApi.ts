@@ -5,8 +5,11 @@ import type {
   SurveyInstance,
   SurveyInstanceList,
   SurveyMetricsOverview,
+  SurveyFrequencyRules,
+  SurveyBroadcastResult,
   SurveyTrendPoint,
   SurveyTypeDefinition,
+  BotSurveyConfig,
 } from '../types';
 
 const API_BASE_URL = String(import.meta.env.VITE_API_BASE_URL || '').trim();
@@ -63,6 +66,89 @@ export async function fetchSurveyTypes(activeOnly = true): Promise<SurveyTypeDef
   const payload = await requestJson('/api/surveys/types?activeOnly=' + (activeOnly ? '1' : '0'));
   const data = readData<SurveyTypeDefinition[]>(payload, []);
   return Array.isArray(data) ? data : [];
+}
+
+export async function createSurveyDefinition(input: {
+  name: string;
+  title?: string;
+  description?: string;
+  status: 'draft' | 'active' | 'inactive';
+  questions: unknown[];
+  frequency?: Partial<SurveyFrequencyRules>;
+}): Promise<SurveyTypeDefinition> {
+  const payload = await requestJson<{ ok?: boolean; data?: SurveyTypeDefinition; error?: string }>(
+    '/api/surveys',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }
+  );
+  if (!payload?.ok || !payload.data) throw new Error(payload?.error || 'failed-to-create-survey');
+  return payload.data;
+}
+
+export async function updateSurveyDefinition(typeId: string, input: {
+  name: string;
+  title?: string;
+  description?: string;
+  status: 'draft' | 'active' | 'inactive';
+  questions: unknown[];
+  frequency?: Partial<SurveyFrequencyRules>;
+}): Promise<SurveyTypeDefinition> {
+  const payload = await requestJson<{ ok?: boolean; data?: SurveyTypeDefinition; error?: string }>(
+    `/api/surveys/${encodeURIComponent(typeId)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    }
+  );
+  if (!payload?.ok || !payload.data) throw new Error(payload?.error || 'failed-to-update-survey');
+  return payload.data;
+}
+
+export async function duplicateSurveyDefinition(typeId: string): Promise<SurveyTypeDefinition> {
+  const payload = await requestJson<{ ok?: boolean; data?: SurveyTypeDefinition; error?: string }>(
+    `/api/surveys/${encodeURIComponent(typeId)}/duplicate`,
+    { method: 'POST' }
+  );
+  if (!payload?.ok || !payload.data) throw new Error(payload?.error || 'failed-to-duplicate-survey');
+  return payload.data;
+}
+
+export async function setSurveyDefinitionStatus(
+  typeId: string,
+  status: 'active' | 'inactive'
+): Promise<SurveyTypeDefinition> {
+  const payload = await requestJson<{ ok?: boolean; data?: SurveyTypeDefinition; error?: string }>(
+    `/api/surveys/${encodeURIComponent(typeId)}/${status === 'active' ? 'activate' : 'deactivate'}`,
+    { method: 'POST' }
+  );
+  if (!payload?.ok || !payload.data) throw new Error(payload?.error || 'failed-to-change-survey-status');
+  return payload.data;
+}
+
+export async function linkSurveyToBot(
+  botId: string,
+  surveyConfig: BotSurveyConfig
+): Promise<{ ok: boolean; flowPath?: string; surveyConfig?: BotSurveyConfig; error?: string }> {
+  return requestJson(`/api/bots/${encodeURIComponent(botId)}/link-survey`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ surveyConfig }),
+  });
+}
+
+export async function broadcastSurvey(
+  typeId: string,
+  jids: string[]
+): Promise<SurveyBroadcastResult> {
+  return requestJson<SurveyBroadcastResult>(`/api/surveys/${encodeURIComponent(typeId)}/broadcast`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jids, agentId: 'dashboard-agent' }),
+  });
 }
 
 export async function fetchSurveyTypeById(typeId: string): Promise<SurveyTypeDefinition | null> {

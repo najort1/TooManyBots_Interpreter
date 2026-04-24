@@ -331,6 +331,7 @@ export interface RuntimeSetupConfig {
   testJid?: string;
   testJids: string[];
   groupWhitelistJids: string[];
+  surveyConfigsByFlowPath?: Record<string, BotSurveyConfig>;
   dashboardHost?: string;
   dashboardPort?: number;
 }
@@ -482,8 +483,9 @@ export interface BotInfo {
 export interface SurveyQuestionDefinition {
   id: string;
   text: string;
-  type: 'scale' | 'text' | 'choice' | 'multiple' | string;
+  type: 'scale' | 'text' | 'choice' | 'multiple' | 'nps' | 'scale_0_5' | 'boolean' | string;
   required?: boolean;
+  maxLength?: number;
   scale?: {
     min: number;
     max: number;
@@ -499,6 +501,8 @@ export interface SurveyTypeDefinition {
   typeId: string;
   name: string;
   schema: {
+    title?: string;
+    description?: string;
     questions?: SurveyQuestionDefinition[];
     scoringRules?: Record<string, unknown>;
     visualizations?: string[];
@@ -507,6 +511,37 @@ export interface SurveyTypeDefinition {
   isActive: boolean;
   createdAt: number;
   updatedAt: number;
+  status?: 'draft' | 'active' | 'inactive' | string;
+  title?: string;
+  description?: string;
+  questions?: SurveyQuestionDefinition[];
+  frequency?: SurveyFrequencyRules | null;
+}
+
+export interface SurveyFrequencyRules {
+  maxResponsesPerUser: number | null;
+  periodUnit: 'hour' | 'day' | 'week' | 'month' | 'year' | string;
+  periodValue: number;
+  minIntervalSeconds: number;
+  minIntervalDays?: number;
+  skipForAdmins: boolean;
+}
+
+export interface BotSurveyConfig {
+  postSessionSurveyTypeId: string | null;
+  triggerOn: Array<'session_end' | 'human_handoff_end' | 'timeout' | string>;
+  skipIfRecentlyCompleted: boolean;
+  skipWindowHours: number;
+}
+
+export interface SurveyBroadcastResult {
+  ok: boolean;
+  surveyTypeId: string;
+  attempted: number;
+  sent: number;
+  failed: number;
+  failures: Array<{ jid: string; error: string }>;
+  blockedGroups?: string[];
 }
 
 export interface SurveyResponseRecord {

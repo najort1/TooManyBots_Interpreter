@@ -94,8 +94,14 @@ export function SurveyFilters({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={`${buttonBaseClass} border-[#cde0f8] bg-[#edf5ff] text-[#214c84]`} onClick={onRefresh}>
-          <i className="fa-solid fa-rotate" aria-hidden="true" /> Atualizar
+        <button
+          type="button"
+          className={`${buttonBaseClass} border-[#cde0f8] bg-[#edf5ff] text-[#214c84]`}
+          onClick={onRefresh}
+          disabled={busy}
+        >
+          <i className={`fa-solid ${busy ? 'fa-spinner fa-spin' : 'fa-rotate'}`} aria-hidden="true" />
+          {busy ? 'Atualizando...' : 'Atualizar'}
         </button>
         <button type="button" className={`${buttonBaseClass} border-[#d3dfef] bg-white text-slate-700`} onClick={onExportCsv}>
           <i className="fa-solid fa-file-csv" aria-hidden="true" /> Exportar CSV
