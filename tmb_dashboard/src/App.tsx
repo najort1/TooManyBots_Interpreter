@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useToastManager } from './hooks/useToastManager';
 import { useHandoffActions } from './hooks/useHandoffActions';
 import { useBroadcastActions } from './hooks/useBroadcastActions';
 import { useSettingsActions } from './hooks/useSettingsActions';
 import { useSessionManagementActions } from './hooks/useSessionManagementActions';
+import {
+  DEFAULT_DASHBOARD_VIEW,
+  clearLegacyDashboardView,
+  dashboardPathToView,
+  dashboardViewToPath,
+} from './lib/dashboardRoutes';
 import {
   fetchActiveSessionsForManagement,
   fetchBots,
@@ -81,29 +88,15 @@ type PendingConfirmAction =
   | 'reset-session-by-jid'
   | 'send-broadcast';
 
-const DASHBOARD_VIEW_STORAGE_KEY = 'tmb_dashboard_view';
-
-function isDashboardView(value: string): value is DashboardView {
-  return value === 'setup'
-    || value === 'analytics'
-    || value === 'surveys'
-    || value === 'observability'
-    || value === 'handoff'
-    || value === 'broadcast'
-    || value === 'sessions'
-    || value === 'settings'
-    || value === 'flows'
-    || value === 'dbMaintenance';
-}
-
-function getInitialDashboardView(): DashboardView {
-  const stored = String(window.localStorage.getItem(DASHBOARD_VIEW_STORAGE_KEY) || '').trim();
-  return isDashboardView(stored) ? stored : 'analytics';
-}
-
 function App() {
-  const [view, setView] = useState<DashboardView>(() => getInitialDashboardView());
-  const [renderedView, setRenderedView] = useState<DashboardView>(() => getInitialDashboardView());
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view = useMemo<DashboardView>(() => {
+    const [pathSegment] = location.pathname.split('/').filter(Boolean);
+    return dashboardPathToView(pathSegment) || DEFAULT_DASHBOARD_VIEW;
+  }, [location.pathname]);
+  const [renderedView, setRenderedView] = useState<DashboardView>(() => view);
   const [viewTransition, setViewTransition] = useState<'idle' | 'enter' | 'exit'>('idle');
   const [needsInitialSetup, setNeedsInitialSetup] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -120,7 +113,6 @@ function App() {
   const [logs, setLogs] = useState<EventLog[]>([]);
   const [handoffBlocks, setHandoffBlocks] = useState<HandoffBlock[]>([]);
   const [handoffSessions, setHandoffSessions] = useState<HandoffSession[]>([]);
-  const [selectedHandoffJid, setSelectedHandoffJid] = useState('');
   const [selectedHandoffHistory, setSelectedHandoffHistory] = useState<EventLog[]>([]);
   const [handoffMessage, setHandoffMessage] = useState('');
   const [resumeBlockId, setResumeBlockId] = useState('');
@@ -131,8 +123,7 @@ function App() {
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
   const [pendingConfirmAction, setPendingConfirmAction] = useState<PendingConfirmAction | null>(null);
   const [broadcastContacts, setBroadcastContacts] = useState<BroadcastContact[]>([]);
-  const [broadcastSearch, setBroadcastSearch] = useState('');
-  const [broadcastRecipientMode, setBroadcastRecipientMode] = useState<'all' | 'selected'>('all');
+  const [broadcastRecipientModeState, setBroadcastRecipientModeState] = useState<'all' | 'selected'>('all');
   const [selectedBroadcastJids, setSelectedBroadcastJids] = useState<string[]>([]);
   const [broadcastMessage, setBroadcastMessage] = useState('');
   const [broadcastImageDataUrl, setBroadcastImageDataUrl] = useState('');
@@ -162,8 +153,7 @@ function App() {
   const [sessionOverview, setSessionOverview] = useState<SessionOverview | null>(null);
   const [sessionFlows, setSessionFlows] = useState<SessionFlowConfigItem[]>([]);
   const [activeManagementSessions, setActiveManagementSessions] = useState<ActiveSessionManagementItem[]>([]);
-  const [sessionSearch, setSessionSearch] = useState('');
-  const [sessionSelectedFlowPath, setSessionSelectedFlowPath] = useState('');
+  const [sessionSelectedFlowPathState, setSessionSelectedFlowPathState] = useState('');
   const [sessionTimeoutInputMinutes, setSessionTimeoutInputMinutes] = useState('');
   const [sessionResetJidInput, setSessionResetJidInput] = useState('');
   const [busySessionRefresh, setBusySessionRefresh] = useState(false);
@@ -175,6 +165,58 @@ function App() {
   const [busySetupSave, setBusySetupSave] = useState(false);
   const [setupTargets, setSetupTargets] = useState<SetupTargetsResponse | null>(null);
   const [wsConnected, setWsConnected] = useState(false);
+
+  const updateRouteSearchParam = useCallback((key: string, value: string | ((previous: string) => string)) => {
+    setSearchParams(previous => {
+      const next = new URLSearchParams(previous);
+      const current = String(next.get(key) || '');
+      const normalizedValue = typeof value === 'function' ? value(current) : value;
+      const trimmed = String(normalizedValue || '').trim();
+
+      if (trimmed) {
+        next.set(key, trimmed);
+      } else {
+        next.delete(key);
+      }
+
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const selectedHandoffJid = view === 'handoff' ? String(searchParams.get('jid') || '') : '';
+  const setSelectedHandoffJid = useCallback((value: string | ((previous: string) => string)) => {
+    updateRouteSearchParam('jid', value);
+  }, [updateRouteSearchParam]);
+  const broadcastSearch = view === 'broadcast' ? String(searchParams.get('q') || '') : '';
+  const setBroadcastSearch = useCallback((value: string | ((previous: string) => string)) => {
+    updateRouteSearchParam('q', value);
+  }, [updateRouteSearchParam]);
+  const broadcastRecipientMode = view === 'broadcast'
+    ? (searchParams.get('mode') === 'selected' ? 'selected' : 'all')
+    : broadcastRecipientModeState;
+  const setBroadcastRecipientMode = useCallback((value: 'all' | 'selected') => {
+    setBroadcastRecipientModeState(value);
+    if (view === 'broadcast') {
+      updateRouteSearchParam('mode', value === 'selected' ? 'selected' : '');
+    }
+  }, [updateRouteSearchParam, view]);
+  const sessionSearch = view === 'sessions' ? String(searchParams.get('q') || '') : '';
+  const setSessionSearch = useCallback((value: string | ((previous: string) => string)) => {
+    updateRouteSearchParam('q', value);
+  }, [updateRouteSearchParam]);
+  const sessionSelectedFlowPath = view === 'sessions'
+    ? String(searchParams.get('flow') || sessionSelectedFlowPathState)
+    : sessionSelectedFlowPathState;
+  const setSessionSelectedFlowPath = useCallback((value: string | ((previous: string) => string)) => {
+    const nextValue = typeof value === 'function' ? value(sessionSelectedFlowPathState) : value;
+    setSessionSelectedFlowPathState(nextValue);
+    if (view === 'sessions') {
+      updateRouteSearchParam('flow', nextValue);
+    }
+  }, [sessionSelectedFlowPathState, updateRouteSearchParam, view]);
+  const navigateToView = useCallback((nextView: DashboardView, options: { replace?: boolean } = {}) => {
+    navigate(dashboardViewToPath(nextView), { replace: options.replace === true });
+  }, [navigate]);
 
   const modeQuery = useMemo(() => modeToQuery(mode), [mode]);
   const prefersReducedMotion = useMemo(
@@ -235,8 +277,8 @@ function App() {
   }, [wsConnected]);
 
   useEffect(() => {
-    window.localStorage.setItem(DASHBOARD_VIEW_STORAGE_KEY, view);
-  }, [view]);
+    clearLegacyDashboardView();
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -276,9 +318,9 @@ function App() {
 
   useEffect(() => {
     if (needsInitialSetup && view !== 'setup') {
-      setView('setup');
+      navigateToView('setup', { replace: true });
     }
-  }, [needsInitialSetup, view]);
+  }, [navigateToView, needsInitialSetup, view]);
 
   const markSessionAsResponded = useCallback((jid: string, text: string, eventType: string) => {
     const nowTs = Date.now();
@@ -307,7 +349,7 @@ function App() {
     const uniqueAvailable = [...new Set(available)];
     setNeedsInitialSetup(nextNeedsInitialSetup);
     if (nextNeedsInitialSetup) {
-      setView('setup');
+      navigateToView('setup', { replace: true });
     }
     setAvailableModes(uniqueAvailable);
     setMode(previous => (uniqueAvailable.includes(previous) ? previous : toDashboardMode(health.mode)));
@@ -323,7 +365,7 @@ function App() {
     });
     setUptimeMs(Number(health.uptimeMs || 0));
     return nextNeedsInitialSetup;
-  }, []);
+  }, [navigateToView]);
 
   const loadRuntimeSettings = useCallback(async () => {
     const settings = await fetchRuntimeSettings();
@@ -343,10 +385,10 @@ function App() {
     const nextNeedsInitialSetup = state.needsInitialSetup === true;
     setNeedsInitialSetup(nextNeedsInitialSetup);
     if (nextNeedsInitialSetup) {
-      setView('setup');
+      navigateToView('setup', { replace: true });
     }
     return nextNeedsInitialSetup;
-  }, []);
+  }, [navigateToView]);
 
   const loadSetupBots = useCallback(async () => {
     setBusySetupLoad(true);
@@ -945,11 +987,11 @@ function App() {
       setHandoffBlocks(blocks);
 
       if (next.needsInitialSetup) {
-        setView('setup');
+        navigateToView('setup', { replace: true });
         showNotice('Configuração salva. Finalize os campos obrigatórios para iniciar o runtime.');
       } else {
         if (viewRef.current === 'setup') {
-          setView('analytics');
+          navigateToView('analytics', { replace: true });
         }
         await Promise.all([refreshStats(), refreshHandoffQueue(), refreshObservability()]);
         showNotice('Configuração aplicada com sucesso.');
@@ -963,6 +1005,7 @@ function App() {
     loadHealth,
     loadDbMaintenance,
     loadRuntimeSettings,
+    navigateToView,
     loadSetupBots,
     loadSetupTargets,
     refreshHandoffQueue,
@@ -1084,7 +1127,6 @@ function App() {
     <div className="flex min-h-screen">
       <Sidebar
         currentView={view}
-        onNavigate={setView}
         mobileOpen={sidebarOpen}
         onCloseMobile={() => setSidebarOpen(false)}
         needsInitialSetup={needsInitialSetup}

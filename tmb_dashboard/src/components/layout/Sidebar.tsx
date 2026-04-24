@@ -1,9 +1,10 @@
+import { NavLink } from 'react-router';
 import type { DashboardView } from '../../types';
+import { dashboardViewToPath } from '../../lib/dashboardRoutes';
 import projectFavicon from '../../assets/dhRt6-removebg-preview.png';
 
 interface SidebarProps {
   currentView: DashboardView;
-  onNavigate: (view: DashboardView) => void;
   mobileOpen: boolean;
   onCloseMobile: () => void;
   needsInitialSetup?: boolean;
@@ -24,7 +25,6 @@ const navItems: Array<{ id: DashboardView; label: string; iconClass: string }> =
 
 export function Sidebar({
   currentView,
-  onNavigate,
   mobileOpen,
   onCloseMobile,
   needsInitialSetup = false,
@@ -66,19 +66,16 @@ export function Sidebar({
           {visibleNavItems.map(item => {
             const active = currentView === item.id;
             return (
-              <button
+              <NavLink
                 key={item.id}
-                type="button"
+                to={dashboardViewToPath(item.id)}
                 className={[
                   'flex items-center gap-3 rounded-xl border bg-white px-3 py-2 text-left text-sm font-semibold transition-all',
                   active
                     ? 'border-[#9ebeee] bg-[#e3efff] text-[#173f78] shadow-[0_6px_14px_rgba(30,99,201,0.14)]'
                     : 'border-transparent text-[#2f4662] hover:border-[#d4e2f4] hover:bg-[#f1f6fd]',
                 ].join(' ')}
-                onClick={() => {
-                  onNavigate(item.id);
-                  onCloseMobile();
-                }}
+                onClick={onCloseMobile}
               >
                 <span
                   className={[
@@ -92,7 +89,7 @@ export function Sidebar({
                   <i className={item.iconClass} />
                 </span>
                 <span>{item.label}</span>
-              </button>
+              </NavLink>
             );
           })}
         </nav>
