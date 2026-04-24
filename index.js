@@ -25,6 +25,9 @@ import {
   upsertContactDisplayName,
   listSurveyTypeDefinitions,
   getSurveyTypeDefinitionById,
+  upsertSurveyTypeDefinition,
+  getSurveyFrequencyRule,
+  upsertSurveyFrequencyRule,
   listSurveyInstances,
   getSurveyInstanceById,
   listSurveyResponsesForExport,
@@ -58,6 +61,7 @@ import {
 import { DashboardServer } from './dashboard/server.js';
 import { BROADCAST_LIMITS } from './config/constants.js';
 import { createBroadcastService } from './engine/broadcastService.js';
+import { createSurveyBroadcastService } from './engine/surveyBroadcastService.js';
 import { buildBroadcastMessage } from './engine/broadcastMessageBuilder.js';
 import { sendImageMessage, sendTextMessage } from './engine/sender.js';
 import {
@@ -141,6 +145,7 @@ let authStateMaintenanceTimer = null;
 let dbSizeSnapshotMaintenanceTimer = null;
 let dbMaintenanceTimer = null;
 let broadcastService = null;
+let surveyBroadcastService = null;
 let hasSavedConfigAtBoot = false;
 let requiresInitialSetup = false;
 let whatsappRuntimeStarted = false;
@@ -1226,6 +1231,9 @@ async function startDashboardServer() {
     ...createDashboardSurveyHandlers({
       listSurveyTypeDefinitions,
       getSurveyTypeDefinitionById,
+      upsertSurveyTypeDefinition,
+      getSurveyFrequencyRule,
+      upsertSurveyFrequencyRule,
       listSurveyInstances,
       getSurveyInstanceById,
       calculateSurveyOverview,
@@ -1234,6 +1242,12 @@ async function startDashboardServer() {
       calculateSurveyByFlow,
       listSurveyResponsesForExport,
       recalculateSurveyMetricsCache,
+      applyRuntimeConfigFromDashboard,
+      getConfig: () => config,
+      getCurrentSocket: () => currentSocket,
+      getDashboardFlow,
+      getSurveyBroadcastService: () => surveyBroadcastService,
+      logConversationEvent,
     }),
   };
 
@@ -1344,6 +1358,14 @@ async function start() {
           : 0;
 
       return Math.max(baseDelayMs, pacingDelayMs + pressurePenaltyMs + conversationPenaltyMs);
+    },
+  });
+  surveyBroadcastService = createSurveyBroadcastService({
+    logger,
+    getSendDelayMs: () => {
+      const baseDelayMs = Math.max(250, Number(config?.broadcastSendIntervalMs ?? 250) || 250);
+      const broadcastLimitPerMinute = Math.max(1, Number(config?.whatsappMaxBroadcastOutboundPerMinute ?? 120));
+      return Math.max(baseDelayMs, Math.ceil(60_000 / broadcastLimitPerMinute));
     },
   });
 
