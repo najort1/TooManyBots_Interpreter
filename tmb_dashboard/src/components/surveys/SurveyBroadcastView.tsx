@@ -72,7 +72,7 @@ export function SurveyBroadcastView({
           <div>
             <h3 className="text-base font-extrabold">Disparo manual</h3>
             <small className="text-xs text-slate-500">
-              Apenas contatos individuais entram na selecao. Grupos filtrados: {blockedGroupsCount}
+              Envia uma pesquisa ativa agora, sem depender de um bloco no fluxo. Apenas contatos individuais entram na selecao. Grupos filtrados: {blockedGroupsCount}
             </small>
           </div>
           <button
@@ -155,6 +155,7 @@ export function SurveyBroadcastView({
             Selecionados: {selectedJids.length}
           </p>
           <p className="mt-1 text-xs text-slate-500">
+            Para envio automatico dentro de uma conversa, use um bloco survey no fluxo. Este painel e para campanhas pontuais.
             O intervalo minimo de envio e 250 ms por contato, aplicado no backend.
           </p>
           <button

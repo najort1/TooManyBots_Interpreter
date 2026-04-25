@@ -83,6 +83,10 @@ export function SurveyEditorView({ survey, busy = false, onSave, onCancel }: Sur
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
           <h3 className="text-base font-extrabold">{survey ? 'Editar Pesquisa' : 'Nova Pesquisa'}</h3>
+          <p className="mt-1 max-w-3xl text-xs text-slate-500">
+            Salvar deixa a pesquisa disponivel para um bloco survey no fluxo no-code ou para envio pela aba Disparo manual.
+            Este editor nao envia mensagens sozinho.
+          </p>
         </div>
         <select
           value={status}

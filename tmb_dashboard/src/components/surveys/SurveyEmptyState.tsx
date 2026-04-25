@@ -6,7 +6,7 @@ export function SurveyEmptyState() {
     <section className={panelClass}>
       <EmptyStateMascot
         title="Nenhuma pesquisa registrada ainda"
-        description="Assim que os blocos de survey forem executados no runtime, os indicadores aparecerao aqui em tempo real."
+        description="Os indicadores aparecem depois que uma pesquisa for enviada por um bloco survey no fluxo ou pela aba Disparo manual e o usuario responder no WhatsApp."
       />
     </section>
   );

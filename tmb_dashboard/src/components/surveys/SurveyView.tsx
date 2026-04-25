@@ -257,6 +257,14 @@ export function SurveyView({ onShowNotice }: { onShowNotice: (message: string) =
           />
         ) : (
           <article className={panelClass}>
+            <div className="mb-3 rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm text-slate-600">
+              <p className="m-0 font-semibold text-slate-700">Como a pesquisa chega ao usuario?</p>
+              <p className="mt-1">
+                Criar uma pesquisa aqui define as perguntas. Para enviar automaticamente durante uma conversa,
+                coloque um bloco survey no fluxo no-code e selecione esta pesquisa. Para enviar agora para contatos
+                individuais, use a aba Disparo manual.
+              </p>
+            </div>
             <header className="mb-3 flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-base font-extrabold">Pesquisas</h3>
               <button
