@@ -1,6 +1,6 @@
 import { useEffect, useState, useMemo } from 'react';
-import { fetchBots } from '../../lib/api';
-import { panelClass, inputBaseClass } from '../../lib/uiTokens';
+import { fetchBots, postReloadFlow } from '../../lib/api';
+import { panelClass, inputBaseClass, buttonBaseClass } from '../../lib/uiTokens';
 import { KpiCard } from '../KpiCard';
 import type { BotInfo } from '../../types';
 
@@ -11,6 +11,8 @@ interface FlowsViewProps {
 export function FlowsView({ onShowNotice }: FlowsViewProps) {
   const [bots, setBots] = useState<BotInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isReloading, setIsReloading] = useState(false);
+  const [reloadFeedback, setReloadFeedback] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
 
   const loadBotsData = async () => {
@@ -30,6 +32,25 @@ export function FlowsView({ onShowNotice }: FlowsViewProps) {
   useEffect(() => {
     void loadBotsData();
   }, []);
+
+  const handleReloadFlows = async () => {
+    setIsReloading(true);
+    setReloadFeedback('Recarregando fluxos...');
+    try {
+      const result = await postReloadFlow();
+      const flowCount = result.flowPaths.length;
+      const message = `Fluxos recarregados. ${result.endedSessions} sessão(ões) reiniciada(s).`;
+      setReloadFeedback(flowCount > 0 ? `${message} ${flowCount} fluxo(s) ativo(s).` : message);
+      onShowNotice?.('Fluxos recarregados com sucesso.');
+      await loadBotsData();
+    } catch (err) {
+      const message = `Falha ao recarregar fluxos: ${String((err as Error)?.message || err)}`;
+      setReloadFeedback(message);
+      onShowNotice?.(message);
+    } finally {
+      setIsReloading(false);
+    }
+  };
 
   const filteredBots = useMemo(() => {
     const q = searchQuery.toLowerCase();
@@ -55,19 +76,43 @@ export function FlowsView({ onShowNotice }: FlowsViewProps) {
       <div className={panelClass}>
         <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
           <h2 className="text-base font-bold text-slate-800">Arquivos de Fluxo</h2>
-          <div className="relative w-full max-w-sm">
-            <div className="pointer-events-none absolute inset-y-0 left-0 pl-3 flex items-center">
-              <i className="fa-solid fa-search text-gray-400"></i>
+          <div className="flex w-full flex-col gap-2 md:w-auto md:flex-row md:items-center">
+            <button
+              type="button"
+              className={`${buttonBaseClass} border-[#174d9d] bg-[#1e63c9] text-white hover:bg-[#174d9d]`}
+              onClick={handleReloadFlows}
+              disabled={isReloading}
+            >
+              <i className={isReloading ? 'fa-solid fa-spinner fa-spin' : 'fa-solid fa-rotate'} aria-hidden="true" />
+              {isReloading ? 'Recarregando...' : 'Recarregar fluxos'}
+            </button>
+            <div className="relative w-full max-w-sm">
+              <div className="pointer-events-none absolute inset-y-0 left-0 pl-3 flex items-center">
+                <i className="fa-solid fa-search text-gray-400"></i>
+              </div>
+              <input
+                type="text"
+                placeholder="Buscar fluxos..."
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                className={[inputBaseClass, 'w-full pl-9'].join(' ')}
+              />
             </div>
-            <input
-              type="text"
-              placeholder="Buscar fluxos..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              className={[inputBaseClass, 'w-full pl-9'].join(' ')}
-            />
           </div>
         </div>
+
+        {reloadFeedback ? (
+          <div
+            className={[
+              'mb-3 rounded-xl border px-3 py-2 text-sm font-semibold',
+              reloadFeedback.startsWith('Falha')
+                ? 'border-red-200 bg-red-50 text-red-700'
+                : 'border-blue-200 bg-blue-50 text-blue-700',
+            ].join(' ')}
+          >
+            {reloadFeedback}
+          </div>
+        ) : null}
 
         {isLoading ? (
           <div className="flex h-32 items-center justify-center text-slate-500 text-sm font-semibold gap-2">
