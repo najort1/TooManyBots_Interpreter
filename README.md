@@ -449,32 +449,6 @@ Inicializa:
 
 ---
 
-## Documentação
-
-A documentação completa está disponível em `.context/docs/`:
-
-| Documento | Descrição |
-|-----------|-----------|
-| [`project-overview.md`](.context/docs/project-overview.md) | Visão geral do projeto, arquitetura e stack |
-| [`development-workflow.md`](.context/docs/development-workflow.md) | Fluxo de trabalho, commits e code review |
-| [`testing-strategy.md`](.context/docs/testing-strategy.md) | Estratégia de testes e quality gates |
-| [`tooling.md`](.context/docs/tooling.md) | Ferramentas e dicas de produtividade |
-| [`AGENTS.md`](AGENTS.md) | Repository map e guia de colaboração |
-
----
-
-## Contribuindo
-
-1. Familiarize-se com a estrutura em [`Project Overview`](.context/docs/project-overview.md)
-2. Execute `npm test` para verificar setup
-3. Explore `smoke-test.js` para entender o fluxo básico
-4. Leia os handlers em `handlers/` para entender o processamento de blocos
-5. Verifique o `db/index.js` para entender a camada de persistência
-
-Consulte [`Development Workflow`](.context/docs/development-workflow.md) para mais detalhes.
-
----
-
 ## Resolução de Problemas
 
 ### `npm install` falha com erro de `node-gyp` ou `better-sqlite3`
@@ -504,14 +478,3 @@ Verifique:
 
 ### Smoke test falha
 O `smoke-test.js` requer um fluxo de exemplo. Crie um arquivo `bots/flow.tmb` com o exemplo acima antes de rodar.
-
----
-
-## Licença
-
-[Adicionar informação de licença]
-
----
-
-**Última atualização:** Abril de 2026
-</Content>
