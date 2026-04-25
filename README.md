@@ -86,7 +86,7 @@ O **TooManyBots Interpreter** resolve o problema de criar bots de WhatsApp compl
 
 ```bash
 # 1. Clone o repositório
-git clone <repo-url>
+git clone https://github.com/najort1/TooManyBots_Interpreter.git
 cd TooManyBots_Interpreter
 
 # 2. Instale as dependências do backend
