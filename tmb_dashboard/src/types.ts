@@ -117,6 +117,11 @@ export interface EventLog {
   eventType: string;
   direction: string;
   jid: string;
+  displayName?: string;
+  actorDisplayName?: string;
+  chatDisplayName?: string;
+  actorJid?: string;
+  chatJid?: string;
   flowPath?: string;
   messageText?: string;
   metadata?: Record<string, unknown>;
