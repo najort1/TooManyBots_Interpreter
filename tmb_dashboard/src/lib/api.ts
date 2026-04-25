@@ -168,8 +168,16 @@ export async function fetchHealth(): Promise<RuntimeHealth> {
   return requestJson<RuntimeHealth>('/api/health');
 }
 
-export async function postReloadFlow(): Promise<void> {
-  await requestJson('/api/reload', { method: 'POST' });
+export async function postReloadFlow(): Promise<{ reloaded: boolean; endedSessions: number; flowPaths: string[] }> {
+  const data = await requestJson<{ reloaded?: boolean; endedSessions?: number; flowPaths?: string[] }>(
+    '/api/reload',
+    { method: 'POST' }
+  );
+  return {
+    reloaded: data.reloaded === true,
+    endedSessions: Math.max(0, Number(data.endedSessions) || 0),
+    flowPaths: Array.isArray(data.flowPaths) ? data.flowPaths.map(item => String(item)) : [],
+  };
 }
 
 export async function fetchBots(): Promise<BotInfo[]> {
