@@ -470,6 +470,46 @@ export interface ActiveSessionManagementItem {
   handoffActive: boolean;
 }
 
+export interface FlowRuntimeDetails {
+  conversationMode?: string;
+  interactionScope?: string;
+  startPolicy?: string;
+  startPolicyLimit?: {
+    maxStarts?: number;
+    period?: string;
+    blockedMessage?: string;
+  } | null;
+  endBehavior?: {
+    sendClosingMessage?: boolean;
+  } | null;
+  postEnd?: {
+    reentryPolicy?: string;
+    cooldownMinutes?: number;
+    cooldownMessage?: string;
+    blockedMessage?: string;
+  } | null;
+  sessionLimits?: {
+    maxMessagesPerSession?: number;
+    sessionTimeoutPreset?: string;
+    sessionTimeoutMinutes?: number;
+    timeoutMessage?: string;
+  } | null;
+  contextPersistence?: {
+    variablePersistence?: string;
+    globalVariables?: string[];
+    memoryModeEnabled?: boolean;
+  } | null;
+  availability?: {
+    restrictBySchedule?: boolean;
+    allowedDays?: string[];
+    timeRangeStart?: string;
+    timeRangeEnd?: string;
+    includeBrazilNationalHolidays?: boolean;
+    timezone?: string;
+    outsideScheduleMessage?: string;
+  } | null;
+}
+
 export interface BotInfo {
   fileName: string;
   flowPath: string;
@@ -478,6 +518,7 @@ export interface BotInfo {
   syntaxValid: boolean;
   syntaxError: string | null;
   status: 'active' | 'inactive' | 'error';
+  runtimeConfig?: FlowRuntimeDetails | null;
 }
 
 export interface SurveyQuestionDefinition {

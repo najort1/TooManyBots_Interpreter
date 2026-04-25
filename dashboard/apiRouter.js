@@ -10,6 +10,27 @@ import {
 import { loadFlow, getFlowBotType } from '../engine/flowLoader.js';
 import { BROADCAST_LIMITS, INTERNAL_VAR } from '../config/constants.js';
 
+function buildDashboardRuntimeConfig(runtimeConfig = {}) {
+  const config = runtimeConfig && typeof runtimeConfig === 'object' ? runtimeConfig : {};
+  const endBehavior = config.endBehavior && typeof config.endBehavior === 'object'
+    ? config.endBehavior
+    : {};
+
+  return {
+    conversationMode: config.conversationMode,
+    interactionScope: config.interactionScope,
+    startPolicy: config.startPolicy,
+    startPolicyLimit: config.startPolicyLimit,
+    endBehavior: {
+      sendClosingMessage: endBehavior.sendClosingMessage,
+    },
+    postEnd: config.postEnd,
+    sessionLimits: config.sessionLimits,
+    contextPersistence: config.contextPersistence,
+    availability: config.availability,
+  };
+}
+
 export async function dispatchDashboardApiRoute({
   server,
   req,
@@ -145,6 +166,17 @@ export async function dispatchDashboardApiRoute({
           const parsed = loadFlow(flowPath);
           botType = String(parsed.botType || getFlowBotType(parsed));
           totalBlocks = Array.isArray(parsed.blocks) ? parsed.blocks.length : 0;
+          const runtimeConfig = buildDashboardRuntimeConfig(parsed.runtimeConfig);
+          return {
+            fileName: file,
+            flowPath,
+            botType,
+            totalBlocks,
+            syntaxValid: true,
+            syntaxError: null,
+            status: isActive ? 'active' : 'inactive',
+            runtimeConfig,
+          };
         } catch (err) {
           syntaxError = err.message || 'Erro de sintaxe';
         }
@@ -157,6 +189,7 @@ export async function dispatchDashboardApiRoute({
           syntaxValid: !syntaxError,
           syntaxError,
           status: syntaxError ? 'error' : (isActive ? 'active' : 'inactive'),
+          runtimeConfig: null,
         };
       });
 
