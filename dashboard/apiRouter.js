@@ -129,8 +129,20 @@ export async function dispatchDashboardApiRoute({
 
   if (pathname === '/api/reload' && req.method === 'POST') {
     try {
-      await server.onReload();
-      sendJson(res, 200, { reloaded: true });
+      const result = await server.onReload();
+      if (result && result.ok === false) {
+        sendJson(res, result.pending ? 409 : 500, {
+          reloaded: false,
+          error: result.error || 'failed-to-reload-flow',
+          pending: result.pending === true,
+        });
+        return true;
+      }
+      sendJson(res, 200, {
+        reloaded: true,
+        endedSessions: Number(result?.endedSessions) || 0,
+        flowPaths: Array.isArray(result?.flowPaths) ? result.flowPaths : [],
+      });
     } catch (error) {
       sendJson(res, 500, { error: error.message });
     }
@@ -904,7 +916,7 @@ export async function dispatchDashboardApiRoute({
         'listConversationEventsByJid',
         () => listConversationEventsByJid(jid, limit)
       );
-    sendJson(res, 200, { logs });
+    sendJson(res, 200, { logs: server.decorateEventsForDashboard(logs) });
     return true;
   }
 
@@ -1091,7 +1103,7 @@ export async function dispatchDashboardApiRoute({
         limit,
       })
     );
-    sendJson(res, 200, { logs });
+    sendJson(res, 200, { logs: server.decorateEventsForDashboard(logs) });
     return true;
   }
 

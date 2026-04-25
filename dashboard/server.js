@@ -1161,8 +1161,31 @@ export class DashboardServer {
     });
   }
 
+  decorateEventForDashboard(event = {}) {
+    if (!event || typeof event !== 'object') return event;
+    const actorJid = normalizeActorJidFromEvent(event);
+    const chatJid = normalizeChatJidFromEvent(event);
+    const displayName = formatActorLabel(this.getContactName, actorJid || chatJid || event.jid);
+    const actorDisplayName = actorJid ? formatActorLabel(this.getContactName, actorJid) : displayName;
+    const chatDisplayName = chatJid ? formatActorLabel(this.getContactName, chatJid) : displayName;
+
+    return {
+      ...event,
+      displayName,
+      actorDisplayName,
+      chatDisplayName,
+      actorJid: actorJid || '',
+      chatJid: chatJid || '',
+    };
+  }
+
+  decorateEventsForDashboard(events = []) {
+    if (!Array.isArray(events)) return [];
+    return events.map(event => this.decorateEventForDashboard(event));
+  }
+
   broadcast(payload) {
-    broadcastDashboardPayload(this, payload);
+    broadcastDashboardPayload(this, this.decorateEventForDashboard(payload));
   }
 
   async stop() {
