@@ -91,13 +91,26 @@ export function createFlowRuntimeManager({
   async function reloadFlow({ source = 'manual' } = {}) {
     if (reloadInProgress) {
       pendingReload = true;
-      return;
+      return { ok: false, pending: true, error: 'reload-already-in-progress' };
     }
 
     reloadInProgress = true;
+    const normalizedSource = String(source || 'manual');
 
     try {
       const previousFlows = getActiveFlows();
+      logConversationEvent({
+        eventType: 'flow-reload-start',
+        direction: 'system',
+        jid: 'system',
+        flowPath: currentPrimaryFlowPathForLogs(),
+        messageText: `Reload iniciado via ${normalizedSource}`,
+        metadata: {
+          source: normalizedSource,
+          flowPaths: previousFlows.map(flow => flow.flowPath),
+        },
+      });
+
       let endedSessions = 0;
       for (const flow of previousFlows) {
         endedSessions += await resetActiveSessions('flow-reload', flow);
@@ -114,21 +127,44 @@ export function createFlowRuntimeManager({
       }
 
       logConversationEvent({
-        eventType: 'flow-reload',
+        eventType: 'flow-reload-success',
         direction: 'system',
         jid: 'system',
         flowPath: currentPrimaryFlowPathForLogs(),
-        messageText: `Reload aplicado via ${source}`,
+        messageText: `Reload aplicado via ${normalizedSource}`,
         metadata: {
-          source,
+          source: normalizedSource,
           flowPaths: getActiveFlows().map(flow => flow.flowPath),
           endedSessions,
         },
       });
 
-      console.log(`Reload concluido (${source}). Sessoes reiniciadas: ${endedSessions}.`);
+      console.log(`Reload concluido (${normalizedSource}). Sessoes reiniciadas: ${endedSessions}.`);
+      return {
+        ok: true,
+        source: normalizedSource,
+        endedSessions,
+        flowPaths: getActiveFlows().map(flow => flow.flowPath),
+      };
     } catch (err) {
-      console.error(`Falha ao recarregar fluxo (${source}):`, stringifyError(err));
+      const errorMessage = stringifyError(err);
+      logConversationEvent({
+        eventType: 'flow-reload-error',
+        direction: 'system',
+        jid: 'system',
+        flowPath: currentPrimaryFlowPathForLogs(),
+        messageText: `Falha ao recarregar fluxo via ${normalizedSource}`,
+        metadata: {
+          source: normalizedSource,
+          error: errorMessage,
+        },
+      });
+      console.error(`Falha ao recarregar fluxo (${normalizedSource}):`, errorMessage);
+      return {
+        ok: false,
+        source: normalizedSource,
+        error: errorMessage,
+      };
     } finally {
       reloadInProgress = false;
       if (pendingReload) {

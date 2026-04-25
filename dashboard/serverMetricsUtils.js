@@ -8,6 +8,7 @@ export const DASHBOARD_TELEMETRY_LEVELS = new Set([
 export const WS_IMMEDIATE_EVENT_TYPES = new Set([
   'engine-error',
   'flow-error',
+  'flow-reload-error',
   'message-outgoing-error',
   'human-handoff-requested',
   'human-handoff-resolved',
