@@ -136,7 +136,7 @@ export function HandoffView({
             <EmptyStateMascot
               compact
               title="Nenhuma sessão aguardando atendimento."
-              description="Quando um usuário pedir atendimento humano, ele aparecerá aqui."
+              description="Para uma conversa aparecer aqui, o fluxo precisa executar um bloco redirect-to-human. Configure esse bloco no no-code quando quiser transferir o usuario para atendimento manual."
             />
           ) : (
             sessions.map(session => {
@@ -310,26 +310,32 @@ export function HandoffView({
               <i className={busySendImage ? 'fa-solid fa-spinner fa-spin' : 'fa-regular fa-image'} aria-hidden="true" />
             </button>
           </div>
-          <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-            <Select2Field
-              value={selectedBlockId}
-              onChange={onSelectBlock}
-              disabled={!selectedJid || busyResume}
-              placeholder="Selecione bloco para retomar"
-              options={blocks.map(block => ({
-                value: block.id,
-                label: `#${block.index} · ${block.name || block.id} (${block.type})`,
-              }))}
-            />
-            <button
-              type="button"
-              className={`${minimalBtn} border-[#0e6059] bg-[#0f766e] text-white hover:bg-[#0e6059]`}
-              onClick={onResume}
-              disabled={!selectedJid || busyResume}
-            >
-              <i className="fa-solid fa-play" aria-hidden="true" /> {busyResume ? 'Retomando...' : 'Retomar'}
-            </button>
-          </div>
+          {selectedJid ? (
+            <div className="grid grid-cols-1 items-center gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+              <Select2Field
+                value={selectedBlockId}
+                onChange={onSelectBlock}
+                disabled={busyResume}
+                placeholder="Selecione o bloco onde o bot deve continuar"
+                options={blocks.map(block => ({
+                  value: block.id,
+                  label: `#${block.index} · ${block.name || block.id} (${block.type})`,
+                }))}
+              />
+              <button
+                type="button"
+                className={`${minimalBtn} border-[#0e6059] bg-[#0f766e] text-white hover:bg-[#0e6059]`}
+                onClick={onResume}
+                disabled={busyResume}
+              >
+                <i className="fa-solid fa-play" aria-hidden="true" /> {busyResume ? 'Retomando...' : 'Retomar bot'}
+              </button>
+            </div>
+          ) : (
+            <p className="m-0 rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm text-slate-500">
+              A retomada do bot aparece depois que voce seleciona uma sessao em atendimento.
+            </p>
+          )}
         </div>
       </article>
     </section>
