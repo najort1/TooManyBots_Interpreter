@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
-import { buttonBaseClass, inputBaseClass, panelClass } from '../../lib/uiTokens';
+import { buttonBaseClass, iconButtonClass, inputBaseClass, panelClass } from '../../lib/uiTokens';
 import type { BotInfo, RuntimeSetupConfig, SetupTargetsResponse } from '../../types';
 import { BotSurveyLinker } from './BotSurveyLinker';
+import { FlowDetailsModal } from './FlowDetailsModal';
 
 interface SetupViewProps {
   needsInitialSetup: boolean;
@@ -102,6 +103,7 @@ export function SetupView({
     String(Number(setupConfig?.dashboardPort || 8787))
   );
   const [targetSearch, setTargetSearch] = useState('');
+  const [flowDetailsBot, setFlowDetailsBot] = useState<BotInfo | null>(null);
 
   const selectedBotMeta = useMemo(
     () => bots.filter(bot => selectedFiles.includes(bot.fileName)),
@@ -208,6 +210,10 @@ export function SetupView({
     });
   };
 
+  const closeFlowDetails = () => {
+    setFlowDetailsBot(null);
+  };
+
   return (
     <section className="mx-auto grid max-w-[1560px] grid-cols-1 gap-4 xl:grid-cols-2">
       <article className={panelClass}>
@@ -304,23 +310,29 @@ export function SetupView({
                   const selected = selectedFiles.includes(bot.fileName);
                   const disabled = busySave || bot.syntaxValid === false;
                   return (
-                    <label
+                    <div
                       key={bot.fileName}
                       className={[
-                        'flex cursor-pointer items-start gap-2 rounded-lg border p-2 text-sm',
+                        'flex items-start gap-2 rounded-lg border p-2 text-sm',
                         selected ? 'border-[#d9e6f6] bg-[#e6f0ff]' : 'border-[#d9e6f6] bg-white',
                         disabled ? 'cursor-not-allowed opacity-65' : '',
                       ].join(' ')}
                     >
-                      <input
-                        type={botRuntimeMode === 'single-flow' ? 'radio' : 'checkbox'}
-                        name="setup-flow-selector"
-                        checked={selected}
-                        onChange={() => handleToggleFlow(bot.fileName)}
-                        disabled={disabled}
-                        className="mt-0.5"
-                      />
-                      <span className="min-w-0">
+                      <label
+                        className={[
+                          'flex min-w-0 flex-1 items-start gap-2',
+                          disabled ? 'cursor-not-allowed' : 'cursor-pointer',
+                        ].join(' ')}
+                      >
+                        <input
+                          type={botRuntimeMode === 'single-flow' ? 'radio' : 'checkbox'}
+                          name="setup-flow-selector"
+                          checked={selected}
+                          onChange={() => handleToggleFlow(bot.fileName)}
+                          disabled={disabled}
+                          className="mt-0.5"
+                        />
+                        <span className="min-w-0">
                         <span className="block truncate font-semibold text-slate-800">
                           {bot.fileName} ({bot.botType})
                         </span>
@@ -332,8 +344,18 @@ export function SetupView({
                             Sintaxe inválida: {bot.syntaxError || 'erro não identificado'}
                           </span>
                         ) : null}
-                      </span>
-                    </label>
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        className={`${buttonBaseClass} ${iconButtonClass} shrink-0 border-[#d4e0f1] bg-white/90 text-slate-600 hover:bg-slate-50 hover:text-[#1e63c9]`}
+                        aria-label={`Ver detalhes do flow ${bot.fileName}`}
+                        title="Ver detalhes"
+                        onClick={() => setFlowDetailsBot(bot)}
+                      >
+                        <i className="fa-regular fa-eye" aria-hidden="true" />
+                      </button>
+                    </div>
                   );
                 })
               )}
@@ -578,6 +600,14 @@ export function SetupView({
           </div>
         </div>
       </article>
+      <FlowDetailsModal
+        bot={flowDetailsBot}
+        open={Boolean(flowDetailsBot)}
+        selected={flowDetailsBot ? selectedFiles.includes(flowDetailsBot.fileName) : false}
+        runtimeMode={runtimeMode}
+        botRuntimeMode={botRuntimeMode}
+        onClose={closeFlowDetails}
+      />
     </section>
   );
 }
