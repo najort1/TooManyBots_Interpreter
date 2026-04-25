@@ -1,7 +1,8 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { ChartConfiguration } from 'chart.js';
 import { ChartCanvas } from '../charts/ChartCanvas';
-import { fmtDuration, fmtTime, isLikelyErrorMessage } from '../../lib/format';
+import { fmtDuration, fmtTime, formatJidPhone, isLikelyErrorMessage } from '../../lib/format';
+import { getLogPresentation } from '../../lib/appUtils';
 import { buttonBaseClass, panelClass } from '../../lib/uiTokens';
 import type { DashboardMode, DashboardStats, EventLog } from '../../types';
 import { KpiCard } from '../KpiCard';
@@ -187,6 +188,7 @@ export function AnalyticsView({
   logs,
   onExport,
 }: AnalyticsViewProps) {
+  const [showTechnicalLogs, setShowTechnicalLogs] = useState(false);
   const prefersReducedMotion = useMemo(
     () => (typeof window !== 'undefined' && window.matchMedia
       ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -215,6 +217,10 @@ export function AnalyticsView({
   const conversionRate = started > 0 ? (completed / started) * 100 : 0;
   const recentErrors = safeStats.recentErrors ?? [];
   const apiHealth = safeStats.apiHealth ?? [];
+  const visibleLogs = useMemo(
+    () => logs.filter(log => showTechnicalLogs || !getLogPresentation(log).isTechnical),
+    [logs, showTechnicalLogs]
+  );
 
   return (
     <section className="mx-auto max-w-[1560px]">
@@ -332,34 +338,50 @@ export function AnalyticsView({
         <article className={`${panelClass} xl:col-span-2 min-h-[420px]`}>
           <header className="mb-3 flex items-center justify-between gap-3">
             <PanelTitle icon="fa-regular fa-rectangle-list" text={mode === 'CONVERSATION' ? 'Logs em Tempo Real' : 'Logs de Comandos'} />
-            <button
-              type="button"
-              className={`${buttonBaseClass} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
-              onClick={onExport}
-            >
-              <i className="fa-solid fa-file-export" aria-hidden="true" /> Exportar CSV
-            </button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <button
+                type="button"
+                className={`${buttonBaseClass} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
+                onClick={() => setShowTechnicalLogs(previous => !previous)}
+              >
+                <i className={showTechnicalLogs ? 'fa-solid fa-eye-slash' : 'fa-solid fa-eye'} aria-hidden="true" />
+                {showTechnicalLogs ? 'Ocultar eventos técnicos' : 'Eventos técnicos'}
+              </button>
+              <button
+                type="button"
+                className={`${buttonBaseClass} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
+                onClick={onExport}
+              >
+                <i className="fa-solid fa-file-export" aria-hidden="true" /> Exportar CSV
+              </button>
+            </div>
           </header>
           <div className="max-h-[360px] overflow-auto rounded-xl border border-[#dce6f2] bg-[#eef3fb] p-3">
-            {logs.length === 0 ? (
+            {visibleLogs.length === 0 ? (
               <p className="py-4 text-center text-sm text-slate-500">Aguardando mensagens...</p>
             ) : mode === 'CONVERSATION' ? (
-              logs.map((log, index) => {
-                const eventType = String(log.eventType || '').toLowerCase();
-                const isOutgoing =
-                  log.direction === 'outgoing' ||
-                  eventType.includes('outgoing') ||
-                  eventType.startsWith('human-');
-                const label = isOutgoing ? 'Bot/Atendente' : 'Usuário';
-                const text = log.messageText || '[Evento de sistema]';
+              visibleLogs.map((log, index) => {
+                const presentation = getLogPresentation(log);
                 return (
                   <div
                     key={`${log.occurredAt}-${index}`}
-                    className={`mb-1 grid grid-cols-[68px_1fr] gap-2 rounded-xl p-3 ${isOutgoing ? 'bg-[#e2e8f0]' : 'bg-white'}`}
+                    className={[
+                      'mb-1 grid grid-cols-[68px_1fr] gap-2 rounded-xl p-3',
+                      presentation.isError
+                        ? 'border border-red-200 bg-red-50'
+                        : presentation.isSystem
+                          ? 'bg-[#f8fafc]'
+                          : presentation.isOutgoing
+                            ? 'bg-[#e2e8f0]'
+                            : 'bg-white',
+                    ].join(' ')}
                   >
                     <time className="text-xs text-slate-500">{fmtTime(log.occurredAt)}</time>
                     <p className="text-[0.84rem] leading-[1.45]">
-                      <strong>{label}:</strong> {text}
+                      <strong>{presentation.label}:</strong> {presentation.text}
+                      {!presentation.isSystem && log.jid ? (
+                        <small className="mt-1 block text-[0.72rem] text-slate-500">{formatJidPhone(log.jid)}</small>
+                      ) : null}
                     </p>
                   </div>
                 );
@@ -369,20 +391,24 @@ export function AnalyticsView({
                 <thead>
                   <tr>
                     <th className="border-b border-[#e2e8f0] p-2 text-left font-bold text-slate-500">Hora</th>
-                    <th className="border-b border-[#e2e8f0] p-2 text-left font-bold text-slate-500">JID</th>
+                    <th className="border-b border-[#e2e8f0] p-2 text-left font-bold text-slate-500">Contato</th>
                     <th className="border-b border-[#e2e8f0] p-2 text-left font-bold text-slate-500">Comando</th>
                     <th className="border-b border-[#e2e8f0] p-2 text-left font-bold text-slate-500">Res</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {logs.map((log, index) => {
+                  {visibleLogs.map((log, index) => {
                     const commandFromMetadata = String(log.metadata?.commandName ?? log.metadata?.command ?? '').trim();
                     const command = commandFromMetadata || String(log.messageText || '').trim().split(/\s+/)[0] || 'n/a';
                     const failed = log.eventType.includes('error') || isLikelyErrorMessage(String(log.messageText ?? ''));
+                    const presentation = getLogPresentation(log);
                     return (
                       <tr key={`${log.occurredAt}-${index}`}>
                         <td className="border-b border-[#e2e8f0] p-2">{fmtTime(log.occurredAt)}</td>
-                        <td className="border-b border-[#e2e8f0] p-2">{log.jid}</td>
+                        <td className="border-b border-[#e2e8f0] p-2">
+                          <span className="block font-semibold text-slate-700">{presentation.displayName || formatJidPhone(log.jid)}</span>
+                          <small className="text-slate-500">{formatJidPhone(log.jid)}</small>
+                        </td>
                         <td className="border-b border-[#e2e8f0] p-2">{command}</td>
                         <td className="border-b border-[#e2e8f0] p-2">{failed ? 'ERRO' : 'OK'}</td>
                       </tr>
