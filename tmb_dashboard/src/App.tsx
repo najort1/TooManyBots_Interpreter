@@ -859,6 +859,10 @@ function App() {
         if (closedByClient) return;
         reconnectTimeout = window.setTimeout(connect, 3000);
       };
+
+      ws.onerror = () => {
+        setWsConnected(false);
+      };
     };
 
     connect();
@@ -1138,6 +1142,7 @@ function App() {
           onModeChange={setMode}
           botName={botName}
           uptimeMs={uptimeMs}
+          wsConnected={wsConnected}
           onOpenSidebar={() => setSidebarOpen(true)}
         />
 

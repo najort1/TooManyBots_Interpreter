@@ -178,7 +178,10 @@ export function DbMaintenanceView({
           </div>
 
           <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
-            <p className="m-0 text-sm font-semibold text-slate-700">Batch de eventos analiticos</p>
+            <p className="m-0 text-sm font-semibold text-slate-700">Agrupar eventos antes de gravar</p>
+            <p className="mt-1 text-xs text-slate-500">
+              Mantem a gravacao mais leve quando muitas mensagens chegam ao mesmo tempo. Na duvida, deixe habilitado.
+            </p>
             <div className="mt-2 flex gap-2">
               <button
                 type="button"
@@ -205,7 +208,7 @@ export function DbMaintenanceView({
             </div>
             <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <label className="text-xs font-semibold text-slate-600">
-                Flush (ms)
+                Tempo maximo de espera (ms)
                 <input
                   type="number"
                   min={100}
@@ -218,7 +221,7 @@ export function DbMaintenanceView({
                 />
               </label>
               <label className="text-xs font-semibold text-slate-600">
-                Tamanho do lote
+                Eventos por lote
                 <input
                   type="number"
                   min={10}
@@ -285,16 +288,19 @@ export function DbMaintenanceView({
               <div>{String(status?.lastStatus || 'never')}</div>
             </div>
             <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
-              <strong>Último ANALYZE:</strong>
+              <strong>Otimizacao de consultas:</strong>
               <div>{formatDateTime(status?.lastAnalyzeAt)}</div>
+              <small className="text-xs text-slate-500">Atualiza estatisticas internas para buscas mais rapidas.</small>
             </div>
             <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
-              <strong>Último VACUUM:</strong>
+              <strong>Compactacao do banco:</strong>
               <div>{formatDateTime(status?.lastVacuumAt)}</div>
+              <small className="text-xs text-slate-500">Recupera espaco em disco depois de limpezas grandes.</small>
             </div>
             <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
-              <strong>Último integrity_check:</strong>
+              <strong>Verificacao de integridade:</strong>
               <div>{formatDateTime(status?.lastIntegrityCheckAt)}</div>
+              <small className="text-xs text-slate-500">Confirma se o arquivo do banco esta consistente.</small>
             </div>
             <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
               <strong>Retenção aplicada:</strong>

@@ -391,7 +391,7 @@ export function BroadcastView({
             <EmptyStateMascot
               compact
               title="Nenhum destinatário encontrado."
-              description="Sincronize ou ajuste o filtro para exibir contatos e grupos nesta lista."
+              description="A lista usa contatos e grupos que o runtime ja conhece pelo WhatsApp. Em uma conexao nova ela pode ficar vazia ate chegar uma mensagem, o bot carregar chats recentes ou voce atualizar esta lista."
             />
           ) : (
             contacts.map(contact => (

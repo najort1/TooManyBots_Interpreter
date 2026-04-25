@@ -12,7 +12,7 @@ interface SidebarProps {
 
 const navItems: Array<{ id: DashboardView; label: string; iconClass: string }> = [
   { id: 'setup', label: 'Setup Inicial', iconClass: 'fa-solid fa-wand-magic-sparkles' },
-  { id: 'analytics', label: 'Dashboard', iconClass: 'fa-solid fa-chart-pie' },
+  { id: 'analytics', label: 'Visão Geral', iconClass: 'fa-solid fa-chart-pie' },
   { id: 'surveys', label: 'Pesquisas', iconClass: 'fa-solid fa-square-poll-vertical' },
   { id: 'observability', label: 'Observabilidade', iconClass: 'fa-solid fa-heart-pulse' },
   { id: 'handoff', label: 'Atendimento Humano', iconClass: 'fa-solid fa-headset' },

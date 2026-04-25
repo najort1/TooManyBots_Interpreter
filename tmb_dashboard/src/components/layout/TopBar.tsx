@@ -8,6 +8,7 @@ interface TopBarProps {
   onModeChange: (mode: DashboardMode) => void;
   botName: string;
   uptimeMs: number;
+  wsConnected: boolean;
   onOpenSidebar: () => void;
 }
 
@@ -20,6 +21,7 @@ export function TopBar({
   onModeChange,
   botName,
   uptimeMs,
+  wsConnected,
   onOpenSidebar,
 }: TopBarProps) {
   const showModeSwitch = availableModes.length > 1;
@@ -42,7 +44,22 @@ export function TopBar({
         />
         <div className="inline-flex items-center gap-2 rounded-full bg-[#ddfbe8] px-2.5 py-1 text-[0.74rem] font-bold tracking-[0.03em] text-[#0f5132]">
           <span className="h-2 w-2 rounded-full bg-[#22c55e] shadow-[0_0_0_5px_rgba(34,197,94,0.2)]" />
-          <span>ONLINE</span>
+          <span>Runtime online</span>
+        </div>
+        <div
+          className={[
+            'inline-flex items-center gap-2 rounded-full px-2.5 py-1 text-[0.74rem] font-bold tracking-[0.03em]',
+            wsConnected ? 'bg-[#e0f2fe] text-[#075985]' : 'bg-[#fff7ed] text-[#9a3412]',
+          ].join(' ')}
+          title={wsConnected ? 'Atualização em tempo real conectada' : 'Sem WebSocket. O dashboard usa polling enquanto reconecta.'}
+        >
+          <span
+            className={[
+              'h-2 w-2 rounded-full',
+              wsConnected ? 'bg-[#0ea5e9] shadow-[0_0_0_5px_rgba(14,165,233,0.18)]' : 'bg-[#f97316]',
+            ].join(' ')}
+          />
+          <span>{wsConnected ? 'Tempo real' : 'Reconectando'}</span>
         </div>
         <span
           className={[
