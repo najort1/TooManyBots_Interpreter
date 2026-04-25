@@ -212,9 +212,10 @@ export function SettingsView({
           </div>
 
           <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3">
-            <p className="m-0 text-sm font-semibold text-slate-700">Configurações de Cache</p>
+            <p className="m-0 text-sm font-semibold text-slate-700">Dados temporarios do runtime</p>
             <small className="text-xs text-slate-500">
-              Limpa cache em memória de sessões/blocos para diagnóstico sem reiniciar.
+              Use quando o dashboard parecer preso em fluxos ou sessoes antigas depois de editar um arquivo .tmb.
+              Isso nao apaga conversas nem o banco; apenas forca o runtime a reconstruir dados em memoria.
             </small>
             <div className="mt-2">
               <button
@@ -224,7 +225,7 @@ export function SettingsView({
                 disabled={busyClearCache}
               >
                 <i className="fa-regular fa-trash-can" aria-hidden="true" />
-                {busyClearCache ? 'Limpando...' : 'Limpar cache runtime'}
+                {busyClearCache ? 'Limpando...' : 'Limpar dados temporarios'}
               </button>
             </div>
           </div>
@@ -233,7 +234,7 @@ export function SettingsView({
 
       <article className={panelClass}>
         <header className="mb-3 flex items-center justify-between gap-3">
-          <h3 className="text-base font-extrabold">Informações do DB</h3>
+          <h3 className="text-base font-extrabold">Armazenamento do banco</h3>
           <button
             type="button"
             className={`${buttonBase} border-[#d4e0f1] bg-white/80 text-slate-700 hover:bg-slate-50`}
@@ -253,25 +254,34 @@ export function SettingsView({
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
-                <strong>Journal:</strong> {dbInfo.journalMode}
+                <strong>Modo de gravacao:</strong>
+                <div>{String(dbInfo.journalMode || '').toUpperCase() === 'WAL' ? 'Otimizado para uso continuo' : 'Padrao do SQLite'}</div>
+                <small className="text-xs text-slate-500">Valor tecnico: {dbInfo.journalMode}</small>
               </div>
               <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
-                <strong>Synchronous:</strong> {dbInfo.synchronous}
+                <strong>Seguranca de escrita:</strong>
+                <div>{dbInfo.synchronous || 'padrao'}</div>
+                <small className="text-xs text-slate-500">Controle interno do SQLite para gravar dados com seguranca.</small>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
-                <strong>DB:</strong> {formatBytes(dbInfo.fileSizeBytes)}
+                <strong>Banco principal</strong>
+                <div>{formatBytes(dbInfo.fileSizeBytes)}</div>
               </div>
               <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
-                <strong>WAL:</strong> {formatBytes(dbInfo.walSizeBytes)}
+                <strong>Fila de gravacao</strong>
+                <div>{formatBytes(dbInfo.walSizeBytes)}</div>
+                <small className="text-xs text-slate-500">Arquivo temporario usado pelo SQLite enquanto grava mudancas.</small>
               </div>
               <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
-                <strong>SHM:</strong> {formatBytes(dbInfo.shmSizeBytes)}
+                <strong>Controle interno</strong>
+                <div>{formatBytes(dbInfo.shmSizeBytes)}</div>
+                <small className="text-xs text-slate-500">Arquivo auxiliar do SQLite para coordenar acesso ao banco.</small>
               </div>
             </div>
             <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
-              <strong>Total Armazenamento:</strong> {formatMb(dbInfo.totalStorageBytes ?? (dbInfo.fileSizeBytes + dbInfo.walSizeBytes + dbInfo.shmSizeBytes))}
+              <strong>Total em disco:</strong> {formatMb(dbInfo.totalStorageBytes ?? (dbInfo.fileSizeBytes + dbInfo.walSizeBytes + dbInfo.shmSizeBytes))}
             </div>
             <div className="grid grid-cols-2 gap-2">
               <div className="rounded-xl border border-[#dce6f3] bg-[#f8fbff] p-3 text-sm">
