@@ -10,6 +10,9 @@ export const WS_REFRESH_EVENT_TYPES = new Set([
   'session-start',
   'session-end',
   'command-executed',
+  'flow-reload-start',
+  'flow-reload-success',
+  'flow-reload-error',
   'flow-error',
   'engine-error',
   'message-outgoing-error',
@@ -34,6 +37,78 @@ export function modeToQuery(mode: DashboardMode): 'conversation' | 'command' {
 export function trimLogs(logs: EventLog[], max = 200): EventLog[] {
   if (logs.length <= max) return logs;
   return logs.slice(logs.length - max);
+}
+
+export interface LogPresentation {
+  label: string;
+  text: string;
+  displayName: string;
+  isOutgoing: boolean;
+  isSystem: boolean;
+  isTechnical: boolean;
+  isError: boolean;
+}
+
+const SYSTEM_EVENT_LABELS: Record<string, string> = {
+  'session-start': 'Sessao iniciada',
+  'session-end': 'Sessao encerrada',
+  'flow-reload-start': 'Reload do fluxo iniciado',
+  'flow-reload-success': 'Fluxo recarregado',
+  'flow-reload-error': 'Falha ao recarregar fluxo',
+  'human-handoff-requested': 'Atendimento humano solicitado',
+  'human-handoff-resume-request': 'Retomada solicitada',
+  'human-handoff-resumed': 'Atendimento retomado pelo bot',
+  'human-handoff-ended': 'Atendimento humano encerrado',
+  'survey:response:completed': 'Pesquisa concluida',
+  'survey:response:abandoned': 'Pesquisa abandonada',
+  'survey:response:declined': 'Pesquisa recusada',
+  'survey:metrics:updated': 'Metricas de pesquisa atualizadas',
+  'survey:trigger:started': 'Pesquisa iniciada',
+  'survey:trigger:skipped': 'Pesquisa nao iniciada',
+  'message-media-captured': 'Midia armazenada',
+  'broadcast-dispatch': 'Anuncio em massa enviado',
+  'survey-broadcast-dispatch': 'Pesquisa enviada em massa',
+};
+
+const LOW_NOISE_SYSTEM_EVENTS = new Set([
+  'session-start',
+  'session-end',
+  'flow-reload-start',
+  'flow-reload-success',
+  'survey:metrics:updated',
+  'survey:trigger:started',
+  'survey:trigger:skipped',
+  'message-media-captured',
+]);
+
+export function getLogPresentation(log: EventLog): LogPresentation {
+  const eventType = String(log.eventType || '').trim().toLowerCase();
+  const direction = String(log.direction || '').trim().toLowerCase();
+  const isOutgoing =
+    direction === 'outgoing' ||
+    eventType.includes('outgoing') ||
+    eventType.startsWith('human-');
+  const isSystem = direction === 'system';
+  const isError = eventType.includes('error');
+  const displayName = String(
+    log.actorDisplayName ||
+    log.displayName ||
+    log.chatDisplayName ||
+    log.jid ||
+    'Desconhecido'
+  ).trim();
+  const systemText = SYSTEM_EVENT_LABELS[eventType] || 'Evento tecnico';
+  const text = String(log.messageText || '').trim() || systemText;
+
+  return {
+    label: isSystem ? 'Sistema' : (isOutgoing ? 'Bot/Atendente' : displayName || 'Usuario'),
+    text,
+    displayName,
+    isOutgoing,
+    isSystem,
+    isTechnical: isSystem && !isError && LOW_NOISE_SYSTEM_EVENTS.has(eventType),
+    isError,
+  };
 }
 
 export function readMetadataText(log: EventLog, key: string): string {
