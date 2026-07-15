@@ -1,12 +1,62 @@
 /**
- * Evento relâmpago cross-facção.
+ * Eventos do Fun — só o bot inicia (surpresa + cooldown).
+ * Tipos: cross_faction (trégua falsa) · casino_happy (happy hour)
  */
 
-export function createEventService({ eventRepository } = {}) {
+function numOr(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+export function createEventService({
+  eventRepository,
+  random = Math.random,
+} = {}) {
   if (!eventRepository) throw new Error('[fun/eventService] eventRepository required');
 
+  function getHappyHourStatus(scopeKey, now = Date.now()) {
+    const raw = eventRepository.get(scopeKey);
+    if (raw.eventType !== 'casino_happy' || raw.endsAt <= now) {
+      return { active: false, multiplier: 1, remainingMs: 0, endsAt: 0 };
+    }
+    return {
+      active: true,
+      eventType: 'casino_happy',
+      multiplier: Number(raw.multiplier) || 1.12,
+      remainingMs: Math.max(0, raw.endsAt - now),
+      endsAt: raw.endsAt,
+      startsAt: raw.startsAt,
+    };
+  }
+
+  function getActiveEvent(scopeKey, now = Date.now()) {
+    const happy = getHappyHourStatus(scopeKey, now);
+    if (happy.active) {
+      return {
+        active: true,
+        eventType: 'casino_happy',
+        multiplier: happy.multiplier,
+        endsAt: happy.endsAt,
+        remainingMs: happy.remainingMs,
+        label: 'HAPPY HOUR',
+      };
+    }
+    const cross = eventRepository.getActiveCrossEvent(scopeKey, now);
+    if (cross) {
+      return {
+        active: true,
+        eventType: 'cross_faction',
+        multiplier: Number(cross.multiplier) || 2,
+        endsAt: cross.endsAt,
+        remainingMs: Math.max(0, cross.endsAt - now),
+        label: cross.payload?.label || 'TRÉGUA FALSA',
+      };
+    }
+    return null;
+  }
+
   function getStatus(scopeKey, now = Date.now()) {
-    const active = eventRepository.getActiveCrossEvent(scopeKey, now);
+    const active = getActiveEvent(scopeKey, now);
     const raw = eventRepository.get(scopeKey);
     if (active) {
       return {
@@ -14,8 +64,9 @@ export function createEventService({ eventRepository } = {}) {
         eventType: active.eventType,
         multiplier: active.multiplier,
         endsAt: active.endsAt,
-        remainingMs: Math.max(0, active.endsAt - now),
+        remainingMs: active.remainingMs,
         lastSpawnAt: raw.lastSpawnAt,
+        label: active.label,
       };
     }
     return {
@@ -25,7 +76,16 @@ export function createEventService({ eventRepository } = {}) {
       endsAt: 0,
       remainingMs: 0,
       lastSpawnAt: raw.lastSpawnAt,
+      label: null,
     };
+  }
+
+  function cooldownRemaining(scopeKey, funConfig = {}, now = Date.now()) {
+    const cooldown = Math.max(0, Math.floor(numOr(funConfig.eventCooldownMs, 6 * 60 * 60_000)));
+    const current = eventRepository.get(scopeKey);
+    if (!current.lastSpawnAt || cooldown <= 0) return 0;
+    const left = cooldown - (now - current.lastSpawnAt);
+    return left > 0 ? left : 0;
   }
 
   function startCrossFaction({
@@ -34,21 +94,15 @@ export function createEventService({ eventRepository } = {}) {
     now = Date.now(),
     force = false,
   }) {
-    const duration = Math.max(5 * 60_000, Math.floor(Number(funConfig.eventDurationMs) || 90 * 60_000));
-    const cooldown = Math.max(0, Math.floor(Number(funConfig.eventCooldownMs) || 6 * 60 * 60_000));
+    const duration = Math.max(5 * 60_000, Math.floor(numOr(funConfig.eventDurationMs, 90 * 60_000)));
     const mult = Number(funConfig.eventCrossMultiplier) || 2;
-    const current = eventRepository.get(scopeKey);
 
-    if (!force && current.lastSpawnAt > 0 && now - current.lastSpawnAt < cooldown) {
-      return {
-        ok: false,
-        reason: 'cooldown',
-        retryInMs: cooldown - (now - current.lastSpawnAt),
-      };
-    }
-
-    if (!force && eventRepository.getActiveCrossEvent(scopeKey, now)) {
-      return { ok: false, reason: 'already-active', status: getStatus(scopeKey, now) };
+    if (!force) {
+      const cd = cooldownRemaining(scopeKey, funConfig, now);
+      if (cd > 0) return { ok: false, reason: 'cooldown', retryInMs: cd };
+      if (getActiveEvent(scopeKey, now)) {
+        return { ok: false, reason: 'already-active', status: getStatus(scopeKey, now) };
+      }
     }
 
     const event = eventRepository.upsert(scopeKey, {
@@ -62,10 +116,91 @@ export function createEventService({ eventRepository } = {}) {
 
     return {
       ok: true,
+      eventType: 'cross_faction',
       event,
       durationMs: duration,
       multiplier: mult,
+      label: 'TRÉGUA FALSA',
     };
+  }
+
+  function startHappyHour({
+    scopeKey,
+    funConfig = {},
+    now = Date.now(),
+    force = false,
+  }) {
+    const duration = Math.max(
+      5 * 60_000,
+      Math.floor(numOr(funConfig.happyHourDurationMs, 45 * 60_000))
+    );
+    const mult = Number(funConfig.happyHourPayoutMult) || 1.12;
+
+    if (!force) {
+      const cd = cooldownRemaining(scopeKey, funConfig, now);
+      if (cd > 0) return { ok: false, reason: 'cooldown', retryInMs: cd };
+      if (getActiveEvent(scopeKey, now)) {
+        return { ok: false, reason: 'already-active', status: getStatus(scopeKey, now) };
+      }
+    }
+
+    const event = eventRepository.upsert(scopeKey, {
+      eventType: 'casino_happy',
+      multiplier: mult,
+      startsAt: now,
+      endsAt: now + duration,
+      lastSpawnAt: now,
+      payload: { label: 'HAPPY HOUR' },
+    });
+
+    return {
+      ok: true,
+      eventType: 'casino_happy',
+      event,
+      durationMs: duration,
+      multiplier: mult,
+      label: 'HAPPY HOUR',
+    };
+  }
+
+  /**
+   * Sorteio automático (só bot). Chamado no fluxo de mensagens do grupo.
+   * @returns {{ ok: true, eventType, ... } | { ok: false, reason }}
+   */
+  function tryAutoSpawn({
+    scopeKey,
+    funConfig = {},
+    now = Date.now(),
+    forceRoll = false,
+  } = {}) {
+    if (funConfig.eventAutoSpawn === false) {
+      return { ok: false, reason: 'disabled' };
+    }
+
+    if (getActiveEvent(scopeKey, now)) {
+      return { ok: false, reason: 'already-active' };
+    }
+
+    const cd = cooldownRemaining(scopeKey, funConfig, now);
+    if (cd > 0) {
+      return { ok: false, reason: 'cooldown', retryInMs: cd };
+    }
+
+    const chance = Math.min(1, Math.max(0, Number(funConfig.eventAutoSpawnChance) ?? 0.028));
+    if (!forceRoll && random() > chance) {
+      return { ok: false, reason: 'no-roll' };
+    }
+
+    // pesos configuráveis (default: 50/50)
+    const happyWeight = Math.max(0, Number(funConfig.eventHappyWeight) ?? 0.5);
+    const crossWeight = Math.max(0, Number(funConfig.eventCrossWeight) ?? 0.5);
+    const total = happyWeight + crossWeight || 1;
+    const pick = random() * total;
+
+    if (pick < happyWeight) {
+      return startHappyHour({ scopeKey, funConfig, now, force: true });
+    }
+    return startCrossFaction({ scopeKey, funConfig, now, force: true });
   }
 
   /**
@@ -93,9 +228,34 @@ export function createEventService({ eventRepository } = {}) {
     };
   }
 
+  function formatAnnouncement(spawned) {
+    if (!spawned?.ok) return '';
+    const minutes = Math.max(1, Math.round((spawned.durationMs || 0) / 60000));
+    if (spawned.eventType === 'casino_happy') {
+      return [
+        '🍸 *HAPPY HOUR — CASSINO*',
+        `O bot abriu a mesa por *${minutes} min*.`,
+        `Payouts de roleta/slot/crash/bj em *x${spawned.multiplier}*.`,
+        '_Surpresa do cassino — aproveitem._',
+      ].join('\n');
+    }
+    return [
+      '⚡ *TRÉGUA FALSA*',
+      `Evento relâmpago por *${minutes} min* (o bot sorteou).`,
+      `Interagir com *outra facção* paga melhor em /pay, /aposta e /ship (*x${spawned.multiplier}*).`,
+      '_Panelinha isolada perde o meta._',
+    ].join('\n');
+  }
+
   return {
     getStatus,
+    getActiveEvent,
+    getHappyHourStatus,
     startCrossFaction,
+    startHappyHour,
+    tryAutoSpawn,
     getCrossMultiplier,
+    cooldownRemaining,
+    formatAnnouncement,
   };
 }
