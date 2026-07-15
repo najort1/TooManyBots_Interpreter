@@ -262,7 +262,7 @@ function resolveZenEndpoint(cfg) {
   return {
     baseUrl: String(cfg.zenBaseUrl || 'http://127.0.0.1:3000').trim(),
     model: String(cfg.zenModel || 'mimo-v2.5-free').trim() || 'mimo-v2.5-free',
-    timeoutMs: Math.max(500, Math.floor(Number(cfg.zenTimeoutMs) || 5_000)),
+    timeoutMs: Math.max(500, Math.floor(Number(cfg.zenTimeoutMs) || 20_000)),
     maxTokens: Math.max(16, Math.floor(Number(cfg.zenMaxTokens) || 400)),
     temperature: Number.isFinite(Number(cfg.zenTemperature)) ? Number(cfg.zenTemperature) : 0.85,
     apiKey: String(cfg.zenApiKey || '').trim(),
@@ -516,9 +516,10 @@ export function createFlavorService(deps = {}) {
       return safeFallback;
     }
 
+    // Cap alinhado com normalizeFunConfig (flavorTimeoutMs max 60s)
     const budgetMs = Math.max(
       1500,
-      Math.min(20_000, Math.floor(Number(cfg.flavorTimeoutMs) || 6_000))
+      Math.min(60_000, Math.floor(Number(cfg.flavorTimeoutMs) || 28_000))
     );
 
     const cascade = async () => {
