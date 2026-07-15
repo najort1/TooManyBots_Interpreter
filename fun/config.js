@@ -244,6 +244,38 @@ export function normalizeFunConfig(input) {
     tournamentEntryMin: normalizeInt(raw.tournamentEntryMin, DEFAULT_FUN_CONFIG.tournamentEntryMin, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
     tournamentEntryMax: normalizeInt(raw.tournamentEntryMax, DEFAULT_FUN_CONFIG.tournamentEntryMax, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
     tournamentSize: normalizeInt(raw.tournamentSize, DEFAULT_FUN_CONFIG.tournamentSize, { min: 4, max: 4, rounding: 'floor', clamp: true }),
+    bingoMin: normalizeInt(raw.bingoMin, DEFAULT_FUN_CONFIG.bingoMin, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    bingoMax: normalizeInt(raw.bingoMax, DEFAULT_FUN_CONFIG.bingoMax, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    bingoCooldownMs: normalizeInt(raw.bingoCooldownMs, DEFAULT_FUN_CONFIG.bingoCooldownMs, { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
+    bingoSize: normalizeInt(raw.bingoSize, DEFAULT_FUN_CONFIG.bingoSize, { min: 2, max: 8, rounding: 'floor', clamp: true }),
+    bingoMinPlayers: normalizeInt(raw.bingoMinPlayers, DEFAULT_FUN_CONFIG.bingoMinPlayers, { min: 2, max: 8, rounding: 'floor', clamp: true }),
+    bingoLobbyTtlMs: normalizeInt(raw.bingoLobbyTtlMs, DEFAULT_FUN_CONFIG.bingoLobbyTtlMs, { min: 60_000, max: 30 * 60_000, rounding: 'floor', clamp: true }),
+    bingoPoolMax: normalizeInt(raw.bingoPoolMax, DEFAULT_FUN_CONFIG.bingoPoolMax, { min: 9, max: 75, rounding: 'floor', clamp: true }),
+    bingoDrawCount: normalizeInt(raw.bingoDrawCount, DEFAULT_FUN_CONFIG.bingoDrawCount, { min: 5, max: 40, rounding: 'floor', clamp: true }),
+    bingoHouseEdge: Number.isFinite(Number(raw.bingoHouseEdge))
+      ? Math.min(0.2, Math.max(0, Number(raw.bingoHouseEdge)))
+      : DEFAULT_FUN_CONFIG.bingoHouseEdge,
+    bingoSoloLineMult: Number.isFinite(Number(raw.bingoSoloLineMult))
+      ? Math.min(20, Math.max(1.1, Number(raw.bingoSoloLineMult)))
+      : DEFAULT_FUN_CONFIG.bingoSoloLineMult,
+    bingoSoloFullMult: Number.isFinite(Number(raw.bingoSoloFullMult))
+      ? Math.min(50, Math.max(2, Number(raw.bingoSoloFullMult)))
+      : DEFAULT_FUN_CONFIG.bingoSoloFullMult,
+    bingoDefaultMode: (() => {
+      const t = String(raw.bingoDefaultMode ?? DEFAULT_FUN_CONFIG.bingoDefaultMode)
+        .trim()
+        .toLowerCase();
+      return t === 'classic' || t === 'classico' ? 'classic' : 'fast';
+    })(),
+    bingoClassicIntervalMs: normalizeInt(
+      raw.bingoClassicIntervalMs,
+      DEFAULT_FUN_CONFIG.bingoClassicIntervalMs,
+      { min: 0, max: 10_000, rounding: 'floor', clamp: true }
+    ),
+    bingoClassicEarlyEndOnFull: normalizeBoolean(
+      raw.bingoClassicEarlyEndOnFull,
+      DEFAULT_FUN_CONFIG.bingoClassicEarlyEndOnFull
+    ),
     happyHourDurationMs: normalizeInt(raw.happyHourDurationMs, DEFAULT_FUN_CONFIG.happyHourDurationMs, { min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
     happyHourPayoutMult: Number.isFinite(Number(raw.happyHourPayoutMult))
       ? Math.min(2, Math.max(1, Number(raw.happyHourPayoutMult)))
@@ -319,6 +351,14 @@ export function saveFunUserConfig(input) {
     dashboardEnabled: normalized.dashboardEnabled,
     dashboardHost: normalized.dashboardHost,
     dashboardPort: normalized.dashboardPort,
+    zenEnabled: normalized.zenEnabled,
+    zenBaseUrl: normalized.zenBaseUrl,
+    zenModel: normalized.zenModel,
+    zenTimeoutMs: normalized.zenTimeoutMs,
+    zenMaxTokens: normalized.zenMaxTokens,
+    zenTemperature: normalized.zenTemperature,
+    zenApiKey: normalized.zenApiKey,
+    flavorTimeoutMs: normalized.flavorTimeoutMs,
     ollamaEnabled: normalized.ollamaEnabled,
     ollamaBaseUrl: normalized.ollamaBaseUrl,
     ollamaModel: normalized.ollamaModel,

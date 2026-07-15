@@ -44,6 +44,7 @@ import {
   handleStandCommand,
   handleTournamentCommand,
   handleRankCasinoCommand,
+  handleBingoCommand,
 } from './handlers/casino.js';
 import { handleGroupScopeCommand } from './handlers/groupScope.js';
 import { handleStickerCommand } from './handlers/sticker.js';
@@ -249,6 +250,8 @@ export async function routeFunCommand(ctx) {
       return handleStandCommand(base);
     case FUN_COMMANDS.TOURNAMENT:
       return handleTournamentCommand(base);
+    case FUN_COMMANDS.BINGO:
+      return handleBingoCommand(base);
     case FUN_COMMANDS.RANK_CASINO:
       return handleRankCasinoCommand(base);
     case FUN_COMMANDS.GROUP_SCOPE:

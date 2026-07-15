@@ -1,5 +1,5 @@
 /**
- * Cassino Fun — roleta, slot, jackpot, duelo de dados, crash, blackjack, torneio.
+ * Cassino Fun — roleta, slot, jackpot, duelo de dados, crash, blackjack, torneio, bingo.
  * RNG no servidor; nunca depende de LLM.
  */
 
@@ -10,6 +10,20 @@ import {
   BLACKJACK_TTL_MS,
   TOURNAMENT_SIZE,
 } from '../constants.js';
+import {
+  BINGO_ROOM_USER,
+  BINGO_ROOM_KIND,
+  BINGO_DEFAULTS,
+  BINGO_MODES,
+  makeBingoCard,
+  pickDistinct,
+  evaluateBingoCard,
+  formatBingoCard,
+  resolveBingoRound,
+  soloBingoPayout,
+  normalizeBingoMode,
+  snapshotBingoPlayers,
+} from './bingoLogic.js';
 
 const RED_NUMBERS = new Set([
   1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36,
@@ -944,6 +958,690 @@ export function createCasinoService({
     return casinoRepository.getOpenTournament(scopeKey);
   }
 
+  function bingoOpts(funConfig = {}) {
+    const defaultMode = normalizeBingoMode(
+      funConfig.bingoDefaultMode ?? BINGO_DEFAULTS.mode
+    );
+    return {
+      min: Math.max(1, Math.floor(numOr(funConfig.bingoMin, funConfig.casinoMin || 5))),
+      max: Math.max(1, Math.floor(numOr(funConfig.bingoMax, funConfig.casinoMax || 100))),
+      size: Math.max(2, Math.min(8, Math.floor(numOr(funConfig.bingoSize, BINGO_DEFAULTS.size)))),
+      minPlayers: Math.max(2, Math.min(8, Math.floor(numOr(funConfig.bingoMinPlayers, BINGO_DEFAULTS.minPlayers)))),
+      lobbyTtlMs: Math.max(60_000, Math.floor(numOr(funConfig.bingoLobbyTtlMs, 5 * 60_000))),
+      poolMax: Math.max(9, Math.floor(numOr(funConfig.bingoPoolMax, BINGO_DEFAULTS.poolMax))),
+      drawCount: Math.max(5, Math.min(30, Math.floor(numOr(funConfig.bingoDrawCount, BINGO_DEFAULTS.drawCount)))),
+      houseEdge: Math.min(0.2, Math.max(0, Number(funConfig.bingoHouseEdge ?? BINGO_DEFAULTS.houseEdge))),
+      soloLineMult: Math.max(1.1, Number(funConfig.bingoSoloLineMult) || BINGO_DEFAULTS.soloLineMult),
+      soloFullMult: Math.max(2, Number(funConfig.bingoSoloFullMult) || BINGO_DEFAULTS.soloFullMult),
+      cooldownMs: Math.max(0, Math.floor(numOr(funConfig.bingoCooldownMs, 15_000))),
+      defaultMode,
+      classicIntervalMs: Math.max(0, Math.floor(numOr(funConfig.bingoClassicIntervalMs, BINGO_DEFAULTS.classicIntervalMs))),
+      classicEarlyEndOnFull:
+        funConfig.bingoClassicEarlyEndOnFull !== undefined
+          ? Boolean(funConfig.bingoClassicEarlyEndOnFull)
+          : BINGO_DEFAULTS.classicEarlyEndOnFull,
+    };
+  }
+
+  function readBingoRoom(scopeKey) {
+    return casinoRepository.getSessionRaw(BINGO_ROOM_USER, scopeKey, BINGO_ROOM_KIND);
+  }
+
+  function refundBingoPlayers(scopeKey, players, fee, now) {
+    const list = Array.isArray(players) ? players : [];
+    const entry = Math.max(0, Math.floor(Number(fee) || 0));
+    for (const p of list) {
+      const jid = String(p?.jid || p || '');
+      if (!jid || entry <= 0) continue;
+      repository.addCoins({
+        userJid: jid,
+        scopeKey,
+        amount: entry,
+        now,
+        reason: 'bingo-refund',
+      });
+    }
+  }
+
+  function mapBingoRoom(session) {
+    if (!session) return null;
+    const st = session.state || {};
+    const mode = normalizeBingoMode(st.mode || BINGO_MODES.FAST);
+    const status = String(st.status || 'open');
+    return {
+      id: session.id,
+      scopeKey: session.scopeKey,
+      entryFee: Number(st.entryFee) || session.stake || 0,
+      pot: Number(st.pot) || 0,
+      players: Array.isArray(st.players) ? st.players : [],
+      status,
+      mode,
+      balls: Array.isArray(st.balls) ? st.balls : [],
+      drawn: Array.isArray(st.drawn) ? st.drawn : [],
+      expiresAt: session.expiresAt,
+      createdAt: session.createdAt,
+      size: Number(st.size) || BINGO_DEFAULTS.size,
+    };
+  }
+
+  /**
+   * Sessão de bingo (open ou running). Expira → reembolso + apaga.
+   */
+  function getBingoSession(scopeKey, now = Date.now()) {
+    const session = readBingoRoom(scopeKey);
+    if (!session) return null;
+    if (Number(session.expiresAt) < Number(now)) {
+      const fee = Number(session.state?.entryFee) || session.stake || 0;
+      refundBingoPlayers(scopeKey, session.state?.players, fee, now);
+      casinoRepository.deleteSession(session.id);
+      return null;
+    }
+    return mapBingoRoom(session);
+  }
+
+  /** Só lobby aberto (join/leave/start). */
+  function getOpenBingoRoom(scopeKey, now = Date.now()) {
+    const room = getBingoSession(scopeKey, now);
+    if (!room || room.status !== 'open') return null;
+    return room;
+  }
+
+  function saveBingoRoom(scopeKey, data, ttlMs, now = Date.now()) {
+    return casinoRepository.upsertSession({
+      userJid: BINGO_ROOM_USER,
+      scopeKey,
+      kind: BINGO_ROOM_KIND,
+      stake: Math.max(0, Math.floor(Number(data.entryFee) || 0)),
+      ttlMs,
+      now,
+      id: data.id || undefined,
+      state: {
+        status: String(data.status || 'open'),
+        mode: normalizeBingoMode(data.mode || BINGO_MODES.FAST),
+        entryFee: Math.max(0, Math.floor(Number(data.entryFee) || 0)),
+        pot: Math.max(0, Math.floor(Number(data.pot) || 0)),
+        players: Array.isArray(data.players) ? data.players : [],
+        size: Math.max(2, Math.floor(Number(data.size) || BINGO_DEFAULTS.size)),
+        balls: Array.isArray(data.balls) ? data.balls : [],
+        drawn: Array.isArray(data.drawn) ? data.drawn : [],
+      },
+    });
+  }
+
+  function settleBingoWithDrawn({
+    scopeKey,
+    players,
+    fee,
+    pot,
+    drawn,
+    funConfig = {},
+    now = Date.now(),
+    mode = BINGO_MODES.FAST,
+  }) {
+    const opts = bingoOpts(funConfig);
+    const happy = happyMult(scopeKey, now);
+    const resolved = resolveBingoRound(players, drawn, pot, { houseEdge: opts.houseEdge });
+
+    let results = resolved.results;
+    if (!resolved.refund && happy > 1) {
+      results = results.map((r) => {
+        if (r.payout <= 0) return r;
+        return { ...r, payout: Math.max(1, Math.floor(r.payout * happy)) };
+      });
+    }
+
+    if (resolved.refund) {
+      refundBingoPlayers(scopeKey, players, fee, now);
+      for (const p of players) {
+        const jid = String(p?.jid || '');
+        if (!jid) continue;
+        casinoRepository.recordStats({
+          userJid: jid,
+          scopeKey,
+          wagered: fee,
+          won: fee,
+          lost: 0,
+          games: 1,
+          now,
+        });
+      }
+    } else {
+      for (const r of results) {
+        if (!r.jid) continue;
+        if (r.payout > 0) {
+          repository.addCoins({
+            userJid: r.jid,
+            scopeKey,
+            amount: r.payout,
+            now,
+            reason: 'bingo-win',
+          });
+        }
+        casinoRepository.recordStats({
+          userJid: r.jid,
+          scopeKey,
+          wagered: fee,
+          won: r.payout > 0 ? r.payout : 0,
+          lost: r.payout > 0 ? 0 : fee,
+          games: 1,
+          now,
+        });
+      }
+    }
+
+    const session = readBingoRoom(scopeKey);
+    if (session?.id) casinoRepository.deleteSession(session.id);
+
+    return {
+      ok: true,
+      finished: true,
+      classic: mode === BINGO_MODES.CLASSIC,
+      mode,
+      refund: resolved.refund,
+      tier: resolved.refund ? 'none' : resolved.tier,
+      drawn: Array.isArray(drawn) ? drawn : [],
+      pot,
+      netPot: resolved.netPot,
+      entryFee: fee,
+      happy,
+      players: results.map((r) => ({
+        jid: r.jid,
+        card: r.card,
+        full: r.full,
+        hasLine: r.hasLine,
+        lines: r.lines,
+        markedCount: r.markedCount,
+        payout: r.payout,
+        cardText: formatBingoCard(r.card, drawn),
+      })),
+      winners: results
+        .filter((r) => r.payout > 0)
+        .map((r) => ({ jid: r.jid, payout: r.payout, full: r.full })),
+    };
+  }
+
+  function runBingoGame({ scopeKey, room, funConfig = {}, now = Date.now() }) {
+    const opts = bingoOpts(funConfig);
+    const players = Array.isArray(room.players) ? room.players : [];
+    const fee = Math.max(0, Math.floor(Number(room.entryFee) || 0));
+    const pot = Math.max(0, Math.floor(Number(room.pot) || 0));
+    const drawn = pickDistinct(opts.drawCount, opts.poolMax, random);
+    return settleBingoWithDrawn({
+      scopeKey,
+      players,
+      fee,
+      pot,
+      drawn,
+      funConfig,
+      now,
+      mode: BINGO_MODES.FAST,
+    });
+  }
+
+  /**
+   * Prepara rodada clássica: status=running, bolas pré-sorteadas, drawn=[].
+   * Handler chama classicBingoTick a cada intervalo.
+   */
+  function beginClassicBingo({ scopeKey, room, funConfig = {}, now = Date.now() }) {
+    const opts = bingoOpts(funConfig);
+    const balls = pickDistinct(opts.drawCount, opts.poolMax, random);
+    const ttlMs = Math.max(
+      opts.lobbyTtlMs,
+      (balls.length + 2) * Math.max(opts.classicIntervalMs, 250) + 30_000
+    );
+    saveBingoRoom(
+      scopeKey,
+      {
+        id: room.id,
+        status: 'running',
+        mode: BINGO_MODES.CLASSIC,
+        entryFee: room.entryFee,
+        pot: room.pot,
+        players: room.players,
+        size: room.size,
+        balls,
+        drawn: [],
+      },
+      ttlMs,
+      now
+    );
+    return {
+      ok: true,
+      finished: false,
+      classic: true,
+      mode: BINGO_MODES.CLASSIC,
+      totalBalls: balls.length,
+      intervalMs: opts.classicIntervalMs,
+      pot: room.pot,
+      entryFee: room.entryFee,
+      playerCount: room.players.length,
+    };
+  }
+
+  /**
+   * Uma bola do modo clássico. Se acabou (ou cartela cheia cedo), liquida pot.
+   */
+  function classicBingoTick({ scopeKey, funConfig = {}, now = Date.now() }) {
+    const opts = bingoOpts(funConfig);
+    const room = getBingoSession(scopeKey, now);
+    if (!room) return { ok: false, reason: 'no-room' };
+    if (room.status !== 'running') {
+      return { ok: false, reason: 'not-running', room };
+    }
+
+    const balls = room.balls || [];
+    const drawn = [...(room.drawn || [])];
+    if (drawn.length >= balls.length) {
+      return settleBingoWithDrawn({
+        scopeKey,
+        players: room.players,
+        fee: room.entryFee,
+        pot: room.pot,
+        drawn,
+        funConfig,
+        now,
+        mode: BINGO_MODES.CLASSIC,
+      });
+    }
+
+    const prevSnap = snapshotBingoPlayers(room.players, drawn);
+    const number = Math.floor(Number(balls[drawn.length]) || 0);
+    drawn.push(number);
+    const snap = snapshotBingoPlayers(room.players, drawn);
+
+    const newLineJids = snap
+      .filter((p) => p.hasLine && !prevSnap.find((x) => x.jid === p.jid)?.hasLine)
+      .map((p) => p.jid);
+    const newFullJids = snap
+      .filter((p) => p.full && !prevSnap.find((x) => x.jid === p.jid)?.full)
+      .map((p) => p.jid);
+    const hitJids = snap
+      .filter((p) => p.card.includes(number))
+      .map((p) => p.jid);
+
+    const doneAll = drawn.length >= balls.length;
+    const earlyFull = opts.classicEarlyEndOnFull && newFullJids.length > 0;
+    const shouldSettle = doneAll || earlyFull;
+
+    if (shouldSettle) {
+      const settled = settleBingoWithDrawn({
+        scopeKey,
+        players: room.players,
+        fee: room.entryFee,
+        pot: room.pot,
+        drawn,
+        funConfig,
+        now,
+        mode: BINGO_MODES.CLASSIC,
+      });
+      return {
+        ...settled,
+        step: true,
+        number,
+        index: drawn.length,
+        total: balls.length,
+        earlyEnd: earlyFull && !doneAll,
+        hitJids,
+        newLineJids,
+        newFullJids,
+        snapshot: snap,
+      };
+    }
+
+    const remainingTtl = Math.max(30_000, Number(room.expiresAt) - now);
+    saveBingoRoom(
+      scopeKey,
+      {
+        id: room.id,
+        status: 'running',
+        mode: BINGO_MODES.CLASSIC,
+        entryFee: room.entryFee,
+        pot: room.pot,
+        players: room.players,
+        size: room.size,
+        balls,
+        drawn,
+      },
+      remainingTtl,
+      now
+    );
+
+    return {
+      ok: true,
+      finished: false,
+      step: true,
+      classic: true,
+      mode: BINGO_MODES.CLASSIC,
+      number,
+      index: drawn.length,
+      total: balls.length,
+      drawn,
+      pot: room.pot,
+      hitJids,
+      newLineJids,
+      newFullJids,
+      snapshot: snap,
+    };
+  }
+
+  function maybeAutoStartRoom({ scopeKey, room, funConfig, now, joinedMeta }) {
+    if (!room || room.players.length < bingoOpts(funConfig).size) {
+      return null;
+    }
+    if (room.mode === BINGO_MODES.CLASSIC) {
+      const prep = beginClassicBingo({ scopeKey, room, funConfig, now });
+      return {
+        ...prep,
+        joined: true,
+        autoStarted: true,
+        ...joinedMeta,
+      };
+    }
+    const finished = runBingoGame({ scopeKey, room, funConfig, now });
+    return {
+      ...finished,
+      joined: true,
+      autoStarted: true,
+      ...joinedMeta,
+    };
+  }
+
+  function joinBingo({
+    userJid,
+    scopeKey,
+    entryFee,
+    mode: modeInput,
+    funConfig = {},
+    now = Date.now(),
+  }) {
+    const opts = bingoOpts(funConfig);
+    let fee = Math.floor(Number(entryFee) || 0);
+    const running = getBingoSession(scopeKey, now);
+    if (running?.status === 'running') {
+      return { ok: false, reason: 'game-running', room: running };
+    }
+
+    let room = getOpenBingoRoom(scopeKey, now);
+    const requestedMode =
+      modeInput != null && String(modeInput).trim() !== ''
+        ? normalizeBingoMode(modeInput)
+        : opts.defaultMode;
+
+    if (room) {
+      fee = room.entryFee;
+      if (room.players.some((p) => p.jid === userJid)) {
+        return { ok: false, reason: 'already-in', room };
+      }
+      if (room.players.length >= opts.size) {
+        return { ok: false, reason: 'room-full', room };
+      }
+    } else {
+      if (fee <= 0) fee = opts.min;
+      if (fee < opts.min || fee > opts.max) {
+        return { ok: false, reason: 'invalid-amount', min: opts.min, max: opts.max };
+      }
+    }
+
+    const bal = repository.getUserStats(userJid, scopeKey)?.coins
+      ?? repository.ensureUserRow(userJid, scopeKey, now).coins;
+    if (bal < fee) return { ok: false, reason: 'insufficient-funds', coins: bal, fee };
+
+    const lock = repository.applyGameCoinDelta({
+      userJid,
+      scopeKey,
+      delta: -fee,
+      game: 'flip',
+      cooldownMs: 0,
+      now,
+      reason: 'bingo-entry',
+    });
+    if (!lock.ok) return { ok: false, reason: lock.reason, coins: lock.coins };
+
+    const card = makeBingoCard(random, { poolMax: opts.poolMax });
+    const player = { jid: userJid, card };
+    const mode = room ? room.mode : requestedMode;
+
+    if (!room) {
+      room = {
+        entryFee: fee,
+        pot: fee,
+        players: [player],
+        size: opts.size,
+        mode,
+        status: 'open',
+      };
+    } else {
+      room = {
+        ...room,
+        pot: room.pot + fee,
+        players: [...room.players, player],
+        size: opts.size,
+        mode: room.mode,
+        status: 'open',
+      };
+    }
+
+    const remainingTtl = room.expiresAt
+      ? Math.max(30_000, Number(room.expiresAt) - now)
+      : opts.lobbyTtlMs;
+
+    saveBingoRoom(scopeKey, room, room.id ? remainingTtl : opts.lobbyTtlMs, now);
+    room = getOpenBingoRoom(scopeKey, now);
+
+    const meta = {
+      myCard: card,
+      myCardText: formatBingoCard(card),
+      fee,
+      coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+    };
+
+    const auto = maybeAutoStartRoom({
+      scopeKey,
+      room,
+      funConfig,
+      now,
+      joinedMeta: meta,
+    });
+    if (auto) return auto;
+
+    return {
+      ok: true,
+      finished: false,
+      joined: true,
+      room,
+      need: Math.max(0, opts.size - (room?.players?.length || 0)),
+      minStart: opts.minPlayers,
+      ...meta,
+    };
+  }
+
+  function startBingo({ userJid, scopeKey, funConfig = {}, now = Date.now() }) {
+    const opts = bingoOpts(funConfig);
+    const session = getBingoSession(scopeKey, now);
+    if (!session) return { ok: false, reason: 'no-room' };
+    if (session.status === 'running') {
+      return { ok: false, reason: 'already-running', room: session };
+    }
+    if (session.status !== 'open') return { ok: false, reason: 'no-room' };
+
+    const room = session;
+    if (!room.players.some((p) => p.jid === userJid)) {
+      return { ok: false, reason: 'not-in', room };
+    }
+    if (room.players.length < opts.minPlayers) {
+      return {
+        ok: false,
+        reason: 'need-players',
+        have: room.players.length,
+        need: opts.minPlayers,
+        room,
+      };
+    }
+
+    if (room.mode === BINGO_MODES.CLASSIC) {
+      const prep = beginClassicBingo({ scopeKey, room, funConfig, now });
+      return {
+        ...prep,
+        startedBy: userJid,
+        coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+      };
+    }
+
+    const finished = runBingoGame({ scopeKey, room, funConfig, now });
+    return {
+      ...finished,
+      startedBy: userJid,
+      coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+    };
+  }
+
+  function leaveBingo({ userJid, scopeKey, now = Date.now() }) {
+    const session = getBingoSession(scopeKey, now);
+    if (!session) return { ok: false, reason: 'no-room' };
+    if (session.status === 'running') {
+      return { ok: false, reason: 'game-running', room: session };
+    }
+    const room = session.status === 'open' ? session : null;
+    if (!room) return { ok: false, reason: 'no-room' };
+
+    const idx = room.players.findIndex((p) => p.jid === userJid);
+    if (idx < 0) return { ok: false, reason: 'not-in', room };
+
+    const fee = room.entryFee;
+    const nextPlayers = room.players.filter((p) => p.jid !== userJid);
+    repository.addCoins({
+      userJid,
+      scopeKey,
+      amount: fee,
+      now,
+      reason: 'bingo-leave-refund',
+    });
+
+    if (nextPlayers.length === 0) {
+      const raw = readBingoRoom(scopeKey);
+      if (raw?.id) casinoRepository.deleteSession(raw.id);
+      return {
+        ok: true,
+        left: true,
+        closed: true,
+        fee,
+        coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+      };
+    }
+
+    const remainingTtl = Math.max(30_000, Number(room.expiresAt) - now);
+    saveBingoRoom(
+      scopeKey,
+      {
+        id: room.id,
+        status: 'open',
+        mode: room.mode,
+        entryFee: fee,
+        pot: Math.max(0, room.pot - fee),
+        players: nextPlayers,
+        size: room.size,
+        balls: [],
+        drawn: [],
+      },
+      remainingTtl,
+      now
+    );
+
+    return {
+      ok: true,
+      left: true,
+      closed: false,
+      fee,
+      room: getOpenBingoRoom(scopeKey, now),
+      coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+    };
+  }
+
+  function bingoStatus(scopeKey, now = Date.now()) {
+    return getBingoSession(scopeKey, now);
+  }
+
+  function bingoMyCard({ userJid, scopeKey, now = Date.now() }) {
+    const room = getBingoSession(scopeKey, now);
+    if (!room) return { ok: false, reason: 'no-room' };
+    const me = room.players.find((p) => p.jid === userJid);
+    if (!me) return { ok: false, reason: 'not-in', room };
+    return {
+      ok: true,
+      card: me.card,
+      cardText: formatBingoCard(me.card, room.drawn || []),
+      room,
+    };
+  }
+
+  function playBingoSolo({
+    userJid,
+    scopeKey,
+    amount,
+    funConfig = {},
+    now = Date.now(),
+  }) {
+    const opts = bingoOpts(funConfig);
+    const stake = Math.floor(Number(amount) || 0);
+    if (stake < opts.min || stake > opts.max) {
+      return { ok: false, reason: 'invalid-amount', min: opts.min, max: opts.max };
+    }
+
+    const existing = getBingoSession(scopeKey, now);
+    if (existing) {
+      return { ok: false, reason: 'room-open', room: existing };
+    }
+
+    const debit = debitStake({
+      userJid,
+      scopeKey,
+      stake,
+      game: 'bingo',
+      cooldownMs: opts.cooldownMs,
+      now,
+      reason: 'bingo-solo',
+    });
+    if (!debit.ok) return debit;
+
+    applyJackpotCut(scopeKey, stake, funConfig, now);
+
+    const card = makeBingoCard(random, { poolMax: opts.poolMax });
+    const drawn = pickDistinct(opts.drawCount, opts.poolMax, random);
+    const ev = evaluateBingoCard(card, drawn);
+    const happy = happyMult(scopeKey, now);
+    const payout = soloBingoPayout(ev, stake, {
+      lineMult: opts.soloLineMult,
+      fullMult: opts.soloFullMult,
+      happy,
+    });
+    const coins = finishSolo({
+      userJid,
+      scopeKey,
+      stake,
+      payout,
+      game: 'bingo',
+      now,
+    });
+
+    return {
+      ok: true,
+      solo: true,
+      mode: BINGO_MODES.FAST,
+      stake,
+      payout,
+      profit: payout - stake,
+      full: ev.full,
+      hasLine: ev.hasLine,
+      lines: ev.lines,
+      markedCount: ev.markedCount,
+      card,
+      drawn,
+      cardText: formatBingoCard(card, drawn),
+      happy,
+      coins,
+    };
+  }
+
   function rankCasino(scopeKey, limit = 10) {
     return casinoRepository.getLeaderboard(scopeKey, limit);
   }
@@ -967,6 +1665,14 @@ export function createCasinoService({
     standBlackjack,
     joinTournament,
     tournamentStatus,
+    joinBingo,
+    startBingo,
+    leaveBingo,
+    bingoStatus,
+    bingoMyCard,
+    playBingoSolo,
+    classicBingoTick,
+    formatBingoCard,
     rankCasino,
     getUserCasinoStats,
     formatRetry,

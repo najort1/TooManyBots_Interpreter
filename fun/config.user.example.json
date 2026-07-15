@@ -27,6 +27,7 @@
   "zenMaxTokens": 400,
   "zenTemperature": 0.85,
   "zenApiKey": "",
+  "flavorTimeoutMs": 28000,
   "ollamaEnabled": true,
   "ollamaBaseUrl": "http://127.0.0.1:11434",
   "ollamaModel": "gemma4:latest",

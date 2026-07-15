@@ -41,6 +41,7 @@ export const FUN_COMMANDS = Object.freeze({
   STAND: 'stand',
   TOURNAMENT: 'tournament',
   RANK_CASINO: 'rankcasino',
+  BINGO: 'bingo',
   // DM / escopo
   GROUP_SCOPE: 'group_scope',
   // Mídia
@@ -71,6 +72,7 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     FUN_COMMANDS.DICE_DUEL,
     FUN_COMMANDS.TOURNAMENT,
     FUN_COMMANDS.JACKPOT,
+    FUN_COMMANDS.BINGO,
   ])
 );
 
@@ -154,6 +156,8 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   torneio: FUN_COMMANDS.TOURNAMENT,
   tournament: FUN_COMMANDS.TOURNAMENT,
   torneiocassino: FUN_COMMANDS.TOURNAMENT,
+  bingo: FUN_COMMANDS.BINGO,
+  minbingo: FUN_COMMANDS.BINGO,
   rankcassino: FUN_COMMANDS.RANK_CASINO,
   rankcasino: FUN_COMMANDS.RANK_CASINO,
   topcassino: FUN_COMMANDS.RANK_CASINO,
@@ -271,17 +275,18 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   zenBaseUrl: 'http://127.0.0.1:3000',
   // mimo-v2.5-free responde content direto; deepseek-free gasta tokens em reasoning
   zenModel: 'mimo-v2.5-free',
-  zenTimeoutMs: 5_000,
+  // Free APIs e Ollama frio passam fácil de 5s — default realista
+  zenTimeoutMs: 20_000,
   zenMaxTokens: 400,
   /** Orçamento total Zen→Ollama→template por resposta de flavor (ms). */
-  flavorTimeoutMs: 6_000,
+  flavorTimeoutMs: 28_000,
   zenTemperature: 0.85,
   zenApiKey: '',
   // Ollama local (fallback)
   ollamaEnabled: true,
   ollamaBaseUrl: 'http://127.0.0.1:11434',
   ollamaModel: 'gemma4:latest',
-  ollamaTimeoutMs: 5_000,
+  ollamaTimeoutMs: 25_000,
   ollamaNumPredict: 400,
   ollamaTemperature: 0.85,
   ollamaMaxChars: 1000,
@@ -320,6 +325,24 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   tournamentEntryMin: 10,
   tournamentEntryMax: 80,
   tournamentSize: 4,
+  // Mini bingo: cartela 3×3 · modos rapido (lote) e classico (1 bola/s)
+  bingoMin: 5,
+  bingoMax: 100,
+  bingoCooldownMs: 15_000,
+  bingoSize: 4,
+  bingoMinPlayers: 2,
+  bingoLobbyTtlMs: 5 * 60_000,
+  bingoPoolMax: 30,
+  bingoDrawCount: 12,
+  bingoHouseEdge: 0.05,
+  bingoSoloLineMult: 2.5,
+  bingoSoloFullMult: 8,
+  /** 'fast' | 'classic' — default ao criar sala sem modo explícito */
+  bingoDefaultMode: 'fast',
+  /** Intervalo entre bolas no modo clássico (ms) */
+  bingoClassicIntervalMs: 1_000,
+  /** No clássico, encerra cedo se alguém fechar a cartela */
+  bingoClassicEarlyEndOnFull: true,
   happyHourDurationMs: 45 * 60_000,
   happyHourPayoutMult: 1.12,
   happyHourCooldownMs: 4 * 60 * 60_000,

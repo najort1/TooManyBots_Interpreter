@@ -179,9 +179,27 @@ export function createFunCasinoRepository({ getDatabase = getDb } = {}) {
 
   function purgeExpiredSessions(now = Date.now()) {
     ensureSchema();
+    // bingo_room: limpeza com reembolso fica no casinoService (não apagar sem refund)
     getDatabase()
-      .prepare(`DELETE FROM ${ANALYTICS_SCHEMA}.fun_casino_sessions WHERE expires_at < ?`)
+      .prepare(
+        `DELETE FROM ${ANALYTICS_SCHEMA}.fun_casino_sessions
+         WHERE expires_at < ? AND kind != 'bingo_room'`
+      )
       .run(Number(now) || Date.now());
+  }
+
+  function mapSessionRow(row) {
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      scopeKey: String(row.scope_key),
+      userJid: String(row.user_jid),
+      kind: String(row.kind),
+      stake: Number(row.stake) || 0,
+      state: parseJson(row.state_json, {}),
+      expiresAt: Number(row.expires_at) || 0,
+      createdAt: Number(row.created_at) || 0,
+    };
   }
 
   function getSession(userJid, scopeKey, kind, now = Date.now()) {
@@ -194,17 +212,22 @@ export function createFunCasinoRepository({ getDatabase = getDb } = {}) {
          ORDER BY created_at DESC LIMIT 1`
       )
       .get(String(scopeKey || ''), String(userJid || ''), String(kind || ''), Number(now) || Date.now());
-    if (!row) return null;
-    return {
-      id: String(row.id),
-      scopeKey: String(row.scope_key),
-      userJid: String(row.user_jid),
-      kind: String(row.kind),
-      stake: Number(row.stake) || 0,
-      state: parseJson(row.state_json, {}),
-      expiresAt: Number(row.expires_at) || 0,
-      createdAt: Number(row.created_at) || 0,
-    };
+    return mapSessionRow(row);
+  }
+
+  /**
+   * Sessão por scope/kind/user sem filtrar expires (ex.: bingo_room com refund).
+   */
+  function getSessionRaw(userJid, scopeKey, kind) {
+    ensureSchema();
+    const row = getDatabase()
+      .prepare(
+        `SELECT * FROM ${ANALYTICS_SCHEMA}.fun_casino_sessions
+         WHERE scope_key = ? AND user_jid = ? AND kind = ?
+         ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(String(scopeKey || ''), String(userJid || ''), String(kind || ''));
+    return mapSessionRow(row);
   }
 
   function upsertSession({
@@ -245,7 +268,7 @@ export function createFunCasinoRepository({ getDatabase = getDb } = {}) {
       ts
     );
 
-    return getSession(userJid, scopeKey, kind, ts);
+    return getSessionRaw(userJid, scopeKey, kind) || getSession(userJid, scopeKey, kind, ts);
   }
 
   function updateSession(id, { state, expiresAt, stake } = {}) {
@@ -263,16 +286,12 @@ export function createFunCasinoRepository({ getDatabase = getDb } = {}) {
        SET state_json = ?, expires_at = ?, stake = ?
        WHERE id = ?`
     ).run(JSON.stringify(nextState || {}), nextExp, nextStake, String(id));
-    return {
-      id: String(row.id),
-      scopeKey: String(row.scope_key),
-      userJid: String(row.user_jid),
-      kind: String(row.kind),
+    return mapSessionRow({
+      ...row,
       stake: nextStake,
-      state: nextState,
-      expiresAt: nextExp,
-      createdAt: Number(row.created_at) || 0,
-    };
+      state_json: JSON.stringify(nextState || {}),
+      expires_at: nextExp,
+    });
   }
 
   function deleteSession(id) {
@@ -358,6 +377,7 @@ export function createFunCasinoRepository({ getDatabase = getDb } = {}) {
     checkCooldown,
     touchCooldown,
     getSession,
+    getSessionRaw,
     upsertSession,
     updateSession,
     deleteSession,

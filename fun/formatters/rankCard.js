@@ -160,6 +160,7 @@ export function formatHelp(prefix = '/') {
     `• \`${p}bj 25\` → \`${p}hit\` / \`${p}stand\``,
     `• \`${p}desafio @user 30\` — duelo de dados (d20)`,
     `• \`${p}torneio 20\` · \`${p}rankcassino\``,
+    `• \`${p}bingo 15\` · \`${p}bingo classico 15\` · \`${p}bingo solo 15\``,
     '',
     '*Facções*',
     `• \`${p}faccao criar|entrar|sair|doar|rank|info\``,
