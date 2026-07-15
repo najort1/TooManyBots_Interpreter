@@ -98,7 +98,8 @@ export function createCasinoService({
 
   function applyJackpotCut(scopeKey, stake, funConfig, now) {
     const rate = Math.min(0.05, Math.max(0, Number(funConfig.jackpotRate) || 0.01));
-    const cut = Math.floor(stake * rate);
+    // round: stake 10 @ 5% → 1 (floor daria 0 e o pot nunca enchia com apostas pequenas)
+    const cut = Math.max(0, Math.round(Number(stake) * rate));
     if (cut > 0) casinoRepository.addJackpot(scopeKey, cut, now);
     return cut;
   }
