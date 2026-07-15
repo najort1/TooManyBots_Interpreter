@@ -168,11 +168,13 @@ export function createGameService({
     }
 
     const jobs = [
-      'entregou pizza no grupo',
-      'arregaçou nas tasks do bot',
-      'vendeu meme raro',
-      'fez freela de sticker',
-      'organizou a bagunça do chat',
+      'entregou pizza no grupo (e ainda pediu gorjeta em coin)',
+      'arregaçou nas tasks do bot como se fosse CLT emocional',
+      'vendeu meme raro no mercado paralelo do chat',
+      'fez freela de sticker e cobrou em moral',
+      'organizou a bagunça do grupo… ou piorou com estilo',
+      'passou o pano pro chefe imaginário e saiu pago',
+      'tirou o atraso de três dailys com um café e fé',
     ];
     const flavor = jobs[Math.floor(random() * jobs.length)] || jobs[0];
 
