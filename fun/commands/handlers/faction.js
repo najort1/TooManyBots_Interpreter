@@ -332,9 +332,7 @@ export async function handlePanelinhaCommand({
 }
 
 /**
- * Guia panelinha:
- * - replyCommandsInPrivate=false → texto completo no grupo.
- * - true → tenta privado; se falhar, grupo.
+ * Guia panelinha — mesmo critério do help (conteúdo garantido no chat).
  */
 export async function handlePanelinhaGuideCommand({
   funConfig,
@@ -345,6 +343,7 @@ export async function handlePanelinhaGuideCommand({
 }) {
   const text = formatPanelinhaGuide(funConfig.prefix || '/', funConfig);
   const wantPrivate = funConfig?.replyCommandsInPrivate !== false && isGroup;
+  const toGroup = typeof replyToChat === 'function' ? replyToChat : reply;
 
   if (!wantPrivate) {
     await reply(text);
@@ -352,22 +351,25 @@ export async function handlePanelinhaGuideCommand({
   }
 
   const sendPrivate = typeof replyPrivate === 'function' ? replyPrivate : null;
-  const toGroup = typeof replyToChat === 'function' ? replyToChat : reply;
-
   if (!sendPrivate) {
-    await reply(text);
+    await toGroup(text);
     return { handled: true, private: false };
   }
 
   try {
-    await sendPrivate(text);
+    await Promise.race([
+      sendPrivate(text),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('dm-timeout')), 8_000);
+      }),
+    ]);
   } catch {
     await toGroup(text);
     return { handled: true, private: false };
   }
 
-  await toGroup('📬 Te enviei o *guia de facções/panelinha* no privado.');
-  return { handled: true, private: true };
+  await toGroup(text);
+  return { handled: true, private: true, mirroredGroup: true };
 }
 
 export async function handlePonteCommand({

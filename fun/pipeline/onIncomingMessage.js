@@ -282,19 +282,27 @@ export async function handleFunIncomingMessage(deps, ctx) {
 
   /** Envia no privado do autor (útil em grupo para não poluir o chat). */
   const replyPrivate = async (body) => {
-    if (typeof sendText !== 'function') return;
+    if (typeof sendText !== 'function') throw new Error('sendText-unavailable');
     const content = String(body || '').trim();
     if (!content) return;
     const target = userJid || chatJid;
     if (!target || target === chatJid || String(target).endsWith('@g.us')) {
       throw new Error('no-private-target');
     }
-    await sendText(sock, target, content);
+    // timeout: Baileys às vezes trava no DM
+    await Promise.race([
+      sendText(sock, target, content),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('dm-timeout')), 8_000);
+      }),
+    ]);
   };
 
   /**
-   * Resposta padrão de comando: DM se replyCommandsInPrivate e o comando
-   * não for público (aposta/facção/social). Fallback pro grupo se DM falhar.
+   * Resposta de comando:
+   * - preferPrivate: tenta DM; se falhar/timeout → SEMPRE cai no chat onde o comando foi digitado.
+   *   (WhatsApp muitas vezes “aceita” o send sem entregar se a pessoa nunca abriu o PV do bot.)
+   * - senão: responde no chat atual.
    */
   const reply = async (body) => {
     if (!preferPrivate) {
@@ -304,6 +312,9 @@ export async function handleFunIncomingMessage(deps, ctx) {
     try {
       await replyPrivate(body);
     } catch (err) {
+      console.warn(
+        `[fun] DM falhou (${err?.message || 'erro'}) → respondendo no chat. cmd=${parsedCommand?.command || '?'}`
+      );
       getLogger?.()?.warn?.(
         {
           err: { message: err?.message || 'dm-failed' },
