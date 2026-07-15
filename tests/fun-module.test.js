@@ -29,6 +29,14 @@ import { createFunEffectsRepository } from '../fun/db/funEffectsRepository.js';
 import { resolveFunScope } from '../fun/pipeline/onIncomingMessage.js';
 import { renderRankCardPng, encodePngRgb } from '../fun/formatters/rankCardImage.js';
 import { DAY_MS, ACTION_TYPE } from '../fun/constants.js';
+import { createFunFactionRepository } from '../fun/db/funFactionRepository.js';
+import { createFunSocialRepository } from '../fun/db/funSocialRepository.js';
+import { createFunMissionRepository } from '../fun/db/funMissionRepository.js';
+import { createFunEventRepository } from '../fun/db/funEventRepository.js';
+import { createBridgeService } from '../fun/services/bridgeService.js';
+import { createFactionService } from '../fun/services/factionService.js';
+import { createMissionService } from '../fun/services/missionService.js';
+import { createEventService } from '../fun/services/eventService.js';
 
 await initDb();
 _resetDefaultFunStatsRepository();
@@ -256,6 +264,97 @@ test('rank coins e jogos solo/aposta', () => {
   const accepted = games.acceptBet({ userJid: b, scopeKey });
   assert.equal(accepted.ok, true);
   assert.ok(accepted.pot === 30);
+});
+
+test('P0 facções, ponte, missão e evento', () => {
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const factionRepo = createFunFactionRepository({ getDatabase: getDb });
+  const socialRepo = createFunSocialRepository({ getDatabase: getDb });
+  const missionRepo = createFunMissionRepository({ getDatabase: getDb });
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const bridge = createBridgeService({
+    socialRepository: socialRepo,
+    factionRepository: factionRepo,
+  });
+  const factions = createFactionService({
+    factionRepository: factionRepo,
+    repository: repo,
+    bridgeService: bridge,
+  });
+  const missions = createMissionService({
+    missionRepository: missionRepo,
+    factionRepository: factionRepo,
+    repository: repo,
+    bridgeService: bridge,
+  });
+  const events = createEventService({ eventRepository: eventRepo });
+
+  const scope = uniqueGroup();
+  const a = `5511911${String(Date.now()).slice(-6)}01@s.whatsapp.net`;
+  const b = `5511922${String(Date.now()).slice(-6)}02@s.whatsapp.net`;
+  const c = `5511933${String(Date.now()).slice(-6)}03@s.whatsapp.net`;
+  repo.addCoins({ userJid: a, scopeKey: scope, amount: 200, reason: 'seed' });
+  repo.addCoins({ userJid: b, scopeKey: scope, amount: 200, reason: 'seed' });
+  repo.addCoins({ userJid: c, scopeKey: scope, amount: 200, reason: 'seed' });
+
+  const f1 = factions.create({
+    scopeKey: scope,
+    userJid: a,
+    name: 'Fundao',
+    funConfig: { factionCreateCost: 50, factionMaxMembers: 8 },
+  });
+  assert.equal(f1.ok, true);
+  const f2 = factions.create({
+    scopeKey: scope,
+    userJid: b,
+    name: 'Mafia',
+    funConfig: { factionCreateCost: 50, factionMaxMembers: 8 },
+  });
+  assert.equal(f2.ok, true);
+  assert.equal(factions.join({
+    scopeKey: scope,
+    userJid: c,
+    name: 'Mafia',
+    funConfig: { factionMaxMembers: 8 },
+  }).ok, true);
+
+  const don = factions.donate({ scopeKey: scope, userJid: a, amount: 40 });
+  assert.equal(don.ok, true);
+  assert.equal(don.faction.vaultCoins, 40);
+
+  bridge.recordInteraction({ scopeKey: scope, fromJid: a, toJid: a, kind: 'pay' }); // no-op same
+  for (let i = 0; i < 8; i += 1) {
+    bridge.recordInteraction({ scopeKey: scope, fromJid: a, toJid: b, kind: 'pay' });
+  }
+  for (let i = 0; i < 2; i += 1) {
+    bridge.recordInteraction({ scopeKey: scope, fromJid: a, toJid: a, kind: 'pay' });
+  }
+  // internal for fundao alone doesn't count well - add internal between a and... only a in fundao
+  // cross a-b: external for both
+  const br = bridge.getFactionBridge(scope, f1.faction.id, { bridgeMinActions: 5, bridgeDebuffThreshold: 0.25 });
+  assert.ok(br.total >= 5);
+  assert.ok(br.external >= 5);
+
+  const report = bridge.listPanelinhaReport(scope, { bridgeMinActions: 5 });
+  assert.ok(report.rows.length >= 2);
+
+  const spawned = missions.spawn({
+    scopeKey: scope,
+    funConfig: { missionSquadSize: 2, missionRewardPerMember: 20, missionDurationMs: 3600000 },
+  });
+  assert.equal(spawned.ok, true);
+  assert.ok(spawned.mission.members.length >= 2);
+
+  const ev = events.startCrossFaction({
+    scopeKey: scope,
+    funConfig: { eventDurationMs: 600000, eventCooldownMs: 0, eventCrossMultiplier: 2 },
+    force: true,
+  });
+  assert.equal(ev.ok, true);
+  const st = events.getStatus(scope);
+  assert.equal(st.active, true);
+  assert.equal(st.multiplier, 2);
 });
 
 test('loja: compra boost e gasta coins', () => {
@@ -519,4 +618,125 @@ test('services xp/rank/daily still work', () => {
   assert.equal(xpService.awardXp({ userJid, scopeKey, xpMin: 15, xpMax: 25, cooldownMs: 0, now }).gained, 15);
   assert.equal(rankService.getProfile(userJid, scopeKey).rank, 1);
   assert.equal(dailyService.claimDaily({ userJid, scopeKey, now: now + 1, rewardXp: 50, rewardCoins: 5 }).claimed, true);
+});
+
+test('ollama config defaults + flavorService fallback', async () => {
+  const cfg = resolveFunConfig({});
+  assert.equal(cfg.ollamaEnabled, true);
+  assert.equal(cfg.ollamaModel, 'gemma4:latest');
+  assert.ok(cfg.ollamaBaseUrl.includes('11434'));
+
+  const { createFlavorService } = await import('../fun/llm/flavorService.js');
+
+  // offline / disabled → fallback sem chamar generate
+  let calls = 0;
+  const offline = createFlavorService({
+    getConfig: () => resolveFunConfig({ ollamaEnabled: false }),
+    generate: async () => {
+      calls += 1;
+      return 'não deveria';
+    },
+  });
+  const lineOff = await offline.line('faction_create', { name: 'Lobos' });
+  assert.ok(lineOff.length > 5);
+  assert.equal(calls, 0);
+
+  // generate falha → fallback
+  const failing = createFlavorService({
+    getConfig: () => resolveFunConfig({ ollamaEnabled: true, ollamaTimeoutMs: 500 }),
+    generate: async () => {
+      throw new Error('network');
+    },
+  });
+  const lineFail = await failing.line('flip_win', {});
+  assert.ok(lineFail.length > 5);
+
+  // generate ok → usa resposta sanitizada
+  const ok = createFlavorService({
+    getConfig: () => resolveFunConfig({ ollamaEnabled: true }),
+    generate: async () => '  "A moeda brilhou pro lado certo."  ',
+  });
+  const lineOk = await ok.line('flip_win', {});
+  assert.match(lineOk, /moeda/i);
+  assert.ok(!lineOk.startsWith('"'));
+
+  const italic = await ok.italicLine('flip_win', {});
+  assert.ok(italic.startsWith('_') && italic.endsWith('_'));
+});
+
+test('facade: flavorService injetado em /cf e /faccao criar', async () => {
+  const groupJid = uniqueGroup();
+  const userA = `5511777${String(Date.now()).slice(-6)}03@s.whatsapp.net`;
+  const sent = [];
+  const funConfig = resolveFunConfig({
+    enabled: true,
+    cooldownMs: 0,
+    flipMin: 5,
+    flipMax: 80,
+    flipCooldownMs: 0,
+    requireGroupWhitelist: true,
+    groupWhitelistJids: [groupJid],
+    factionCreateCost: 0,
+    ollamaEnabled: true,
+  });
+
+  const { createFlavorService } = await import('../fun/llm/flavorService.js');
+  const flavorService = createFlavorService({
+    getConfig: () => funConfig,
+    generate: async ({ prompt }) => {
+      if (String(prompt).includes('facção') || String(prompt).includes('panelinha')) {
+        return 'Narrador: Panelinha no ar, pessoal.';
+      }
+      return 'Sorte absurda no flip de teste.';
+    },
+  });
+
+  const funModule = createFunModule({
+    getConfig: () => funConfig,
+    getLogger: () => null,
+    getDatabase: getDb,
+    flavorService,
+    sendText: async (_s, jid, text) => {
+      sent.push({ jid, text });
+    },
+    getContactDisplayName: (jid) => (jid === userA ? 'Tester' : ''),
+    listContacts: () => [{ jid: userA, name: 'Tester' }],
+  });
+  funModule.init();
+  funModule._services.repository.addCoins({
+    userJid: userA,
+    scopeKey: groupJid,
+    amount: 100,
+    reason: 'seed',
+  });
+
+  sent.length = 0;
+  await funModule.onIncomingMessage({
+    sock: {},
+    chatJid: groupJid,
+    actorJid: userA,
+    isGroup: true,
+    text: '/faccao criar Os Testadores',
+    messageType: 'text',
+  });
+  assert.ok(
+    sent.some(m => /Nova facção|facção/i.test(m.text) && /Panelinha no ar/i.test(m.text)),
+    `faccao flavor missing: ${JSON.stringify(sent)}`
+  );
+
+  sent.length = 0;
+  // força resultado determinístico? gameService usa random — só checa que linha de flavor aparece no final se vitória/derrota
+  await funModule.onIncomingMessage({
+    sock: {},
+    chatJid: groupJid,
+    actorJid: userA,
+    isGroup: true,
+    text: '/cf 10 cara',
+    messageType: 'text',
+  });
+  assert.ok(
+    sent.some(m => /Cara ou coroa/i.test(m.text) && /Sorte absurda|moeda|lado|Errou|Acertou/i.test(m.text)),
+    `flip reply missing flavor path: ${JSON.stringify(sent)}`
+  );
+  assert.ok(funModule._services.flavorService);
 });
