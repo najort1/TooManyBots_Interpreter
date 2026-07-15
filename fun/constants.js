@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '5';
+export const FUN_SCHEMA_VERSION = '6';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -28,7 +28,46 @@ export const FUN_COMMANDS = Object.freeze({
   MISSION: 'mission',
   SQUAD: 'squad',
   EVENT: 'event',
+  // Cassino
+  ROULETTE: 'roulette',
+  SLOT: 'slot',
+  JACKPOT: 'jackpot',
+  DICE_DUEL: 'dice_duel',
+  CRASH: 'crash',
+  CASHOUT: 'cashout',
+  BLACKJACK: 'blackjack',
+  HIT: 'hit',
+  STAND: 'stand',
+  TOURNAMENT: 'tournament',
+  RANK_CASINO: 'rankcasino',
 });
+
+/**
+ * Com `replyCommandsInPrivate=true`, estes comandos continuam no grupo
+ * (duelo/aposta, facções e interações sociais que precisam de visibilidade).
+ */
+export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
+  new Set([
+    FUN_COMMANDS.BET,
+    FUN_COMMANDS.ACCEPT,
+    FUN_COMMANDS.DECLINE,
+    FUN_COMMANDS.FACTION,
+    FUN_COMMANDS.PANELINHA,
+    FUN_COMMANDS.PONTE,
+    FUN_COMMANDS.MISSION,
+    FUN_COMMANDS.SQUAD,
+    FUN_COMMANDS.EVENT,
+    // social: o outro jogador precisa ver no grupo
+    FUN_COMMANDS.MARRY,
+    FUN_COMMANDS.DIVORCE,
+    FUN_COMMANDS.SHIP,
+    FUN_COMMANDS.PAY,
+    // cassino social / mesa
+    FUN_COMMANDS.DICE_DUEL,
+    FUN_COMMANDS.TOURNAMENT,
+    FUN_COMMANDS.JACKPOT,
+  ])
+);
 
 export const FUN_COMMAND_ALIASES = Object.freeze({
   xp: FUN_COMMANDS.XP,
@@ -75,7 +114,37 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   work: FUN_COMMANDS.JOB,
   sorte: FUN_COMMANDS.LUCKY,
   lucky: FUN_COMMANDS.LUCKY,
-  roleta: FUN_COMMANDS.LUCKY,
+  roleta: FUN_COMMANDS.ROULETTE,
+  roulette: FUN_COMMANDS.ROULETTE,
+  roletae: FUN_COMMANDS.ROULETTE,
+  slot: FUN_COMMANDS.SLOT,
+  slots: FUN_COMMANDS.SLOT,
+  caça: FUN_COMMANDS.SLOT,
+  caca: FUN_COMMANDS.SLOT,
+  jackpot: FUN_COMMANDS.JACKPOT,
+  pot: FUN_COMMANDS.JACKPOT,
+  desafio: FUN_COMMANDS.DICE_DUEL,
+  dados: FUN_COMMANDS.DICE_DUEL,
+  d20: FUN_COMMANDS.DICE_DUEL,
+  dice: FUN_COMMANDS.DICE_DUEL,
+  crash: FUN_COMMANDS.CRASH,
+  foguete: FUN_COMMANDS.CRASH,
+  sair: FUN_COMMANDS.CASHOUT,
+  cashout: FUN_COMMANDS.CASHOUT,
+  descer: FUN_COMMANDS.CASHOUT,
+  bj: FUN_COMMANDS.BLACKJACK,
+  blackjack: FUN_COMMANDS.BLACKJACK,
+  21: FUN_COMMANDS.BLACKJACK,
+  hit: FUN_COMMANDS.HIT,
+  carta: FUN_COMMANDS.HIT,
+  stand: FUN_COMMANDS.STAND,
+  parar: FUN_COMMANDS.STAND,
+  torneio: FUN_COMMANDS.TOURNAMENT,
+  tournament: FUN_COMMANDS.TOURNAMENT,
+  torneiocassino: FUN_COMMANDS.TOURNAMENT,
+  rankcassino: FUN_COMMANDS.RANK_CASINO,
+  rankcasino: FUN_COMMANDS.RANK_CASINO,
+  topcassino: FUN_COMMANDS.RANK_CASINO,
   aposta: FUN_COMMANDS.BET,
   bet: FUN_COMMANDS.BET,
   apostar: FUN_COMMANDS.BET,
@@ -108,11 +177,15 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
 export const ACTION_TYPE = Object.freeze({
   MARRY: 'marry',
   BET_COINFLIP: 'bet_coinflip',
+  BET_DICE: 'bet_dice',
 });
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
 export const PROPOSAL_TTL_MS = 5 * 60 * 1000;
 export const BET_TTL_MS = 5 * 60 * 1000;
+export const CRASH_TTL_MS = 45_000;
+export const BLACKJACK_TTL_MS = 3 * 60_000;
+export const TOURNAMENT_SIZE = 4;
 
 /** Defaults do bot Fun standalone (não herda config do TMB). */
 export const DEFAULT_FUN_CONFIG = Object.freeze({
@@ -164,6 +237,11 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   eventDurationMs: 90 * 60_000,
   eventCrossMultiplier: 2,
   eventCooldownMs: 6 * 60 * 60_000,
+  // Eventos só o bot sorteia (surpresa)
+  eventAutoSpawn: true,
+  eventAutoSpawnChance: 0.028,
+  eventHappyWeight: 0.5,
+  eventCrossWeight: 0.5,
   // Ollama — flavor de mensagens (nunca decide resultado de jogo)
   ollamaEnabled: true,
   ollamaBaseUrl: 'http://127.0.0.1:11434',
@@ -172,4 +250,42 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   ollamaNumPredict: 72,
   ollamaTemperature: 0.85,
   ollamaMaxChars: 160,
+  // -1 = modelo fica carregado até o Ollama reiniciar / outro unload
+  ollamaKeepAlive: -1,
+  ollamaWarmupOnBoot: true,
+  ollamaWarmupTimeoutMs: 120_000,
+  // reafirma residência a cada N ms (0 = só keep_alive do request; default 10 min)
+  ollamaKeepAliveRefreshMs: 10 * 60_000,
+  /**
+   * Se true, respostas de comando vão no privado de quem pediu (menos spam no grupo).
+   * Exceções: FUN_PUBLIC_GROUP_COMMANDS (aposta, facção, missões, marry, ship, pay…).
+   * Default true — o grupo fica só com duelo/aposta/facção/social.
+   */
+  replyCommandsInPrivate: true,
+  // Cassino
+  casinoMin: 5,
+  casinoMax: 100,
+  casinoCooldownMs: 20_000,
+  casinoHouseEdge: 0.03,
+  jackpotRate: 0.01,
+  jackpotMinHit: 50,
+  rouletteCooldownMs: 15_000,
+  slotCooldownMs: 20_000,
+  crashMin: 5,
+  crashMax: 80,
+  crashCooldownMs: 30_000,
+  crashMaxMult: 12,
+  crashGrowthPerSec: 0.18,
+  crashTtlMs: 45_000,
+  blackjackMin: 5,
+  blackjackMax: 80,
+  blackjackCooldownMs: 25_000,
+  diceDuelMin: 5,
+  diceDuelMax: 150,
+  tournamentEntryMin: 10,
+  tournamentEntryMax: 80,
+  tournamentSize: 4,
+  happyHourDurationMs: 45 * 60_000,
+  happyHourPayoutMult: 1.12,
+  happyHourCooldownMs: 4 * 60 * 60_000,
 });

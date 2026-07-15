@@ -124,6 +124,16 @@ export function normalizeFunConfig(input) {
       ? Math.min(5, Math.max(1, Number(raw.eventCrossMultiplier)))
       : DEFAULT_FUN_CONFIG.eventCrossMultiplier,
     eventCooldownMs: normalizeInt(raw.eventCooldownMs, DEFAULT_FUN_CONFIG.eventCooldownMs, { min: 0, max: 7 * 24 * 60 * 60 * 1000, rounding: 'floor', clamp: true }),
+    eventAutoSpawn: normalizeBoolean(raw.eventAutoSpawn, DEFAULT_FUN_CONFIG.eventAutoSpawn),
+    eventAutoSpawnChance: Number.isFinite(Number(raw.eventAutoSpawnChance))
+      ? Math.min(1, Math.max(0, Number(raw.eventAutoSpawnChance)))
+      : DEFAULT_FUN_CONFIG.eventAutoSpawnChance,
+    eventHappyWeight: Number.isFinite(Number(raw.eventHappyWeight))
+      ? Math.max(0, Number(raw.eventHappyWeight))
+      : DEFAULT_FUN_CONFIG.eventHappyWeight,
+    eventCrossWeight: Number.isFinite(Number(raw.eventCrossWeight))
+      ? Math.max(0, Number(raw.eventCrossWeight))
+      : DEFAULT_FUN_CONFIG.eventCrossWeight,
     ollamaEnabled: normalizeBoolean(raw.ollamaEnabled, DEFAULT_FUN_CONFIG.ollamaEnabled),
     ollamaBaseUrl:
       toText(raw.ollamaBaseUrl, DEFAULT_FUN_CONFIG.ollamaBaseUrl) || DEFAULT_FUN_CONFIG.ollamaBaseUrl,
@@ -149,6 +159,65 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    // -1 forever | 0 unload | "30m" | segundos
+    ollamaKeepAlive:
+      raw.ollamaKeepAlive === undefined || raw.ollamaKeepAlive === null || raw.ollamaKeepAlive === ''
+        ? DEFAULT_FUN_CONFIG.ollamaKeepAlive
+        : typeof raw.ollamaKeepAlive === 'number'
+          ? raw.ollamaKeepAlive
+          : /^-?\d+(\.\d+)?$/.test(String(raw.ollamaKeepAlive).trim())
+            ? Number(raw.ollamaKeepAlive)
+            : String(raw.ollamaKeepAlive).trim(),
+    ollamaWarmupOnBoot: normalizeBoolean(raw.ollamaWarmupOnBoot, DEFAULT_FUN_CONFIG.ollamaWarmupOnBoot),
+    ollamaWarmupTimeoutMs: normalizeInt(
+      raw.ollamaWarmupTimeoutMs,
+      DEFAULT_FUN_CONFIG.ollamaWarmupTimeoutMs,
+      { min: 5_000, max: 600_000, rounding: 'floor', clamp: true }
+    ),
+    ollamaKeepAliveRefreshMs: normalizeInt(
+      raw.ollamaKeepAliveRefreshMs,
+      DEFAULT_FUN_CONFIG.ollamaKeepAliveRefreshMs,
+      { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    replyCommandsInPrivate: normalizeBoolean(
+      raw.replyCommandsInPrivate,
+      DEFAULT_FUN_CONFIG.replyCommandsInPrivate
+    ),
+    casinoMin: normalizeInt(raw.casinoMin, DEFAULT_FUN_CONFIG.casinoMin, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    casinoMax: normalizeInt(raw.casinoMax, DEFAULT_FUN_CONFIG.casinoMax, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    casinoCooldownMs: normalizeInt(raw.casinoCooldownMs, DEFAULT_FUN_CONFIG.casinoCooldownMs, { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
+    casinoHouseEdge: Number.isFinite(Number(raw.casinoHouseEdge))
+      ? Math.min(0.2, Math.max(0, Number(raw.casinoHouseEdge)))
+      : DEFAULT_FUN_CONFIG.casinoHouseEdge,
+    jackpotRate: Number.isFinite(Number(raw.jackpotRate))
+      ? Math.min(0.05, Math.max(0, Number(raw.jackpotRate)))
+      : DEFAULT_FUN_CONFIG.jackpotRate,
+    jackpotMinHit: normalizeInt(raw.jackpotMinHit, DEFAULT_FUN_CONFIG.jackpotMinHit, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    rouletteCooldownMs: normalizeInt(raw.rouletteCooldownMs, DEFAULT_FUN_CONFIG.rouletteCooldownMs, { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
+    slotCooldownMs: normalizeInt(raw.slotCooldownMs, DEFAULT_FUN_CONFIG.slotCooldownMs, { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
+    crashMin: normalizeInt(raw.crashMin, DEFAULT_FUN_CONFIG.crashMin, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    crashMax: normalizeInt(raw.crashMax, DEFAULT_FUN_CONFIG.crashMax, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    crashCooldownMs: normalizeInt(raw.crashCooldownMs, DEFAULT_FUN_CONFIG.crashCooldownMs, { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
+    crashMaxMult: Number.isFinite(Number(raw.crashMaxMult))
+      ? Math.min(50, Math.max(2, Number(raw.crashMaxMult)))
+      : DEFAULT_FUN_CONFIG.crashMaxMult,
+    crashGrowthPerSec: Number.isFinite(Number(raw.crashGrowthPerSec))
+      ? Math.min(1, Math.max(0.05, Number(raw.crashGrowthPerSec)))
+      : DEFAULT_FUN_CONFIG.crashGrowthPerSec,
+    crashTtlMs: normalizeInt(raw.crashTtlMs, DEFAULT_FUN_CONFIG.crashTtlMs, { min: 10_000, max: 120_000, rounding: 'floor', clamp: true }),
+    blackjackMin: normalizeInt(raw.blackjackMin, DEFAULT_FUN_CONFIG.blackjackMin, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    blackjackMax: normalizeInt(raw.blackjackMax, DEFAULT_FUN_CONFIG.blackjackMax, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    blackjackCooldownMs: normalizeInt(raw.blackjackCooldownMs, DEFAULT_FUN_CONFIG.blackjackCooldownMs, { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
+    diceDuelMin: normalizeInt(raw.diceDuelMin, DEFAULT_FUN_CONFIG.diceDuelMin, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    diceDuelMax: normalizeInt(raw.diceDuelMax, DEFAULT_FUN_CONFIG.diceDuelMax, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    tournamentEntryMin: normalizeInt(raw.tournamentEntryMin, DEFAULT_FUN_CONFIG.tournamentEntryMin, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    tournamentEntryMax: normalizeInt(raw.tournamentEntryMax, DEFAULT_FUN_CONFIG.tournamentEntryMax, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
+    tournamentSize: normalizeInt(raw.tournamentSize, DEFAULT_FUN_CONFIG.tournamentSize, { min: 4, max: 4, rounding: 'floor', clamp: true }),
+    happyHourDurationMs: normalizeInt(raw.happyHourDurationMs, DEFAULT_FUN_CONFIG.happyHourDurationMs, { min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
+    happyHourPayoutMult: Number.isFinite(Number(raw.happyHourPayoutMult))
+      ? Math.min(2, Math.max(1, Number(raw.happyHourPayoutMult)))
+      : DEFAULT_FUN_CONFIG.happyHourPayoutMult,
+    happyHourCooldownMs: normalizeInt(raw.happyHourCooldownMs, DEFAULT_FUN_CONFIG.happyHourCooldownMs, { min: 0, max: 7 * 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
   };
 }
 
@@ -226,6 +295,11 @@ export function saveFunUserConfig(input) {
     ollamaNumPredict: normalized.ollamaNumPredict,
     ollamaTemperature: normalized.ollamaTemperature,
     ollamaMaxChars: normalized.ollamaMaxChars,
+    ollamaKeepAlive: normalized.ollamaKeepAlive,
+    ollamaWarmupOnBoot: normalized.ollamaWarmupOnBoot,
+    ollamaWarmupTimeoutMs: normalized.ollamaWarmupTimeoutMs,
+    ollamaKeepAliveRefreshMs: normalized.ollamaKeepAliveRefreshMs,
+    replyCommandsInPrivate: normalized.replyCommandsInPrivate,
   };
   fs.writeFileSync(FUN_USER_CONFIG_PATH, JSON.stringify(payload, null, 2), 'utf-8');
   return normalizeFunConfig(payload);

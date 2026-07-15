@@ -25,5 +25,10 @@
   "ollamaTimeoutMs": 8000,
   "ollamaNumPredict": 72,
   "ollamaTemperature": 0.85,
-  "ollamaMaxChars": 160
+  "ollamaMaxChars": 160,
+  "ollamaKeepAlive": -1,
+  "ollamaWarmupOnBoot": true,
+  "ollamaWarmupTimeoutMs": 120000,
+  "ollamaKeepAliveRefreshMs": 600000,
+  "replyCommandsInPrivate": true
 }
