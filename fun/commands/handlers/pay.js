@@ -13,6 +13,8 @@ export async function handlePayCommand({
   quotedParticipant,
   sock,
   identityMap,
+  socialHooks,
+  funConfig,
 }) {
   const amount = parseAmountFromArgs(args);
   if (!amount) {
@@ -78,12 +80,27 @@ export async function handlePayCommand({
     (typeof getContactDisplayName === 'function' && getContactDisplayName(target)) ||
     target.split('@')[0];
 
+  let eventLine = null;
+  if (typeof socialHooks?.onSocialPair === 'function') {
+    const hook = socialHooks.onSocialPair({
+      scopeKey,
+      fromJid: userJid,
+      toJid: target,
+      kind: 'pay',
+      funConfig,
+    });
+    if (hook?.eventBonus) {
+      eventLine = `⚡ Evento: +${hook.eventBonus.bonusCoins} coins e XP pra ambos (*${hook.eventBonus.mult}x*)`;
+    }
+  }
+
   await reply(
     [
       '💸 *Pagamento*',
       `Você enviou *${result.amount}* coins para *${toName}*.`,
       `Seu saldo: *${result.fromCoins}*`,
       result.toCoins != null ? `Saldo dela(e): *${result.toCoins}*` : null,
+      eventLine,
     ]
       .filter(Boolean)
       .join('\n')
