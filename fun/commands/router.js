@@ -20,6 +20,17 @@ import {
   handleBuyCommand,
   handleTitleCommand,
 } from './handlers/shop.js';
+import {
+  handleFactionCommand,
+  handlePanelinhaCommand,
+  handlePanelinhaGuideCommand,
+  handlePonteCommand,
+} from './handlers/faction.js';
+import {
+  handleMissionCommand,
+  handleSquadCommand,
+  handleEventCommand,
+} from './handlers/mission.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -68,15 +79,24 @@ export async function routeFunCommand(ctx) {
     shopService,
     effectsRepository,
     repository,
+    factionService,
+    bridgeService,
+    missionService,
+    eventService,
+    socialHooks,
+    flavorService,
     getContactDisplayName,
     listContacts,
     reply,
+    replyPrivate,
     replyImage,
     mentionedJids,
     quotedParticipant,
     effectiveRates,
     sock,
     identityMap,
+    chatJid,
+    isGroup,
   } = ctx;
 
   const parsed = parseFunCommand(text, funConfig.prefix);
@@ -84,6 +104,8 @@ export async function routeFunCommand(ctx) {
 
   const base = {
     userJid,
+    chatJid,
+    isGroup,
     scopeKey,
     funConfig,
     rankService,
@@ -94,9 +116,16 @@ export async function routeFunCommand(ctx) {
     shopService,
     effectsRepository,
     repository,
+    factionService,
+    bridgeService,
+    missionService,
+    eventService,
+    socialHooks,
+    flavorService,
     getContactDisplayName,
     listContacts,
     reply,
+    replyPrivate: replyPrivate || reply,
     replyImage,
     args: parsed.args,
     mentionedJids: mentionedJids || [],
@@ -146,6 +175,20 @@ export async function routeFunCommand(ctx) {
       return handleBuyCommand(base);
     case FUN_COMMANDS.TITLE:
       return handleTitleCommand(base);
+    case FUN_COMMANDS.FACTION:
+      return handleFactionCommand(base);
+    case FUN_COMMANDS.PANELINHA:
+      return handlePanelinhaCommand(base);
+    case FUN_COMMANDS.PANELINHA_GUIDE:
+      return handlePanelinhaGuideCommand(base);
+    case FUN_COMMANDS.PONTE:
+      return handlePonteCommand(base);
+    case FUN_COMMANDS.MISSION:
+      return handleMissionCommand(base);
+    case FUN_COMMANDS.SQUAD:
+      return handleSquadCommand(base);
+    case FUN_COMMANDS.EVENT:
+      return handleEventCommand(base);
     default:
       return { handled: false };
   }

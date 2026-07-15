@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '4';
+export const FUN_SCHEMA_VERSION = '5';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -21,6 +21,13 @@ export const FUN_COMMANDS = Object.freeze({
   SHOP: 'shop',
   BUY: 'buy',
   TITLE: 'title',
+  FACTION: 'faction',
+  PANELINHA: 'panelinha',
+  PANELINHA_GUIDE: 'panelinha_guide',
+  PONTE: 'ponte',
+  MISSION: 'mission',
+  SQUAD: 'squad',
+  EVENT: 'event',
 });
 
 export const FUN_COMMAND_ALIASES = Object.freeze({
@@ -79,6 +86,23 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   buy: FUN_COMMANDS.BUY,
   titulo: FUN_COMMANDS.TITLE,
   title: FUN_COMMANDS.TITLE,
+  faccao: FUN_COMMANDS.FACTION,
+  facção: FUN_COMMANDS.FACTION,
+  faction: FUN_COMMANDS.FACTION,
+  panelinha: FUN_COMMANDS.PANELINHA,
+  // guia completo (DM) — nomes diferentes do relatório /panelinha
+  panelinhas: FUN_COMMANDS.PANELINHA_GUIDE,
+  comopanelinha: FUN_COMMANDS.PANELINHA_GUIDE,
+  guiapanelinha: FUN_COMMANDS.PANELINHA_GUIDE,
+  guiafaccao: FUN_COMMANDS.PANELINHA_GUIDE,
+  comofaccao: FUN_COMMANDS.PANELINHA_GUIDE,
+  ponte: FUN_COMMANDS.PONTE,
+  missao: FUN_COMMANDS.MISSION,
+  missão: FUN_COMMANDS.MISSION,
+  mission: FUN_COMMANDS.MISSION,
+  squad: FUN_COMMANDS.SQUAD,
+  evento: FUN_COMMANDS.EVENT,
+  event: FUN_COMMANDS.EVENT,
 });
 
 export const ACTION_TYPE = Object.freeze({
@@ -125,4 +149,27 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   betMax: 150,
   divorceCost: 40,
   titleMaxLen: 16,
+  // P0 — facções / ponte / missões / evento
+  factionsEnabled: true,
+  factionMaxMembers: 8,
+  factionLeaveCost: 25,
+  factionCreateCost: 50,
+  bridgeMinActions: 10,
+  bridgeDebuffThreshold: 0.25,
+  bridgeDebuffXpMult: 0.9,
+  missionSquadSize: 3,
+  missionRewardPerMember: 30,
+  missionDurationMs: 12 * 60 * 60_000,
+  missionAutoSpawn: true,
+  eventDurationMs: 90 * 60_000,
+  eventCrossMultiplier: 2,
+  eventCooldownMs: 6 * 60 * 60_000,
+  // Ollama — flavor de mensagens (nunca decide resultado de jogo)
+  ollamaEnabled: true,
+  ollamaBaseUrl: 'http://127.0.0.1:11434',
+  ollamaModel: 'gemma4:latest',
+  ollamaTimeoutMs: 8_000,
+  ollamaNumPredict: 72,
+  ollamaTemperature: 0.85,
+  ollamaMaxChars: 160,
 });

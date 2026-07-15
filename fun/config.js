@@ -104,6 +104,51 @@ export function normalizeFunConfig(input) {
     betMax: normalizeInt(raw.betMax, DEFAULT_FUN_CONFIG.betMax, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
     divorceCost: normalizeInt(raw.divorceCost, DEFAULT_FUN_CONFIG.divorceCost, { min: 0, max: 1_000_000, rounding: 'floor', clamp: true }),
     titleMaxLen: normalizeInt(raw.titleMaxLen, DEFAULT_FUN_CONFIG.titleMaxLen, { min: 4, max: 32, rounding: 'floor', clamp: true }),
+    factionsEnabled: normalizeBoolean(raw.factionsEnabled, DEFAULT_FUN_CONFIG.factionsEnabled),
+    factionMaxMembers: normalizeInt(raw.factionMaxMembers, DEFAULT_FUN_CONFIG.factionMaxMembers, { min: 2, max: 50, rounding: 'floor', clamp: true }),
+    factionLeaveCost: normalizeInt(raw.factionLeaveCost, DEFAULT_FUN_CONFIG.factionLeaveCost, { min: 0, max: 1_000_000, rounding: 'floor', clamp: true }),
+    factionCreateCost: normalizeInt(raw.factionCreateCost, DEFAULT_FUN_CONFIG.factionCreateCost, { min: 0, max: 1_000_000, rounding: 'floor', clamp: true }),
+    bridgeMinActions: normalizeInt(raw.bridgeMinActions, DEFAULT_FUN_CONFIG.bridgeMinActions, { min: 1, max: 1000, rounding: 'floor', clamp: true }),
+    bridgeDebuffThreshold: Number.isFinite(Number(raw.bridgeDebuffThreshold))
+      ? Math.min(1, Math.max(0, Number(raw.bridgeDebuffThreshold)))
+      : DEFAULT_FUN_CONFIG.bridgeDebuffThreshold,
+    bridgeDebuffXpMult: Number.isFinite(Number(raw.bridgeDebuffXpMult))
+      ? Math.min(1, Math.max(0.1, Number(raw.bridgeDebuffXpMult)))
+      : DEFAULT_FUN_CONFIG.bridgeDebuffXpMult,
+    missionSquadSize: normalizeInt(raw.missionSquadSize, DEFAULT_FUN_CONFIG.missionSquadSize, { min: 2, max: 6, rounding: 'floor', clamp: true }),
+    missionRewardPerMember: normalizeInt(raw.missionRewardPerMember, DEFAULT_FUN_CONFIG.missionRewardPerMember, { min: 0, max: 10000, rounding: 'floor', clamp: true }),
+    missionDurationMs: normalizeInt(raw.missionDurationMs, DEFAULT_FUN_CONFIG.missionDurationMs, { min: 60000, max: 7 * 24 * 60 * 60 * 1000, rounding: 'floor', clamp: true }),
+    missionAutoSpawn: normalizeBoolean(raw.missionAutoSpawn, DEFAULT_FUN_CONFIG.missionAutoSpawn),
+    eventDurationMs: normalizeInt(raw.eventDurationMs, DEFAULT_FUN_CONFIG.eventDurationMs, { min: 60000, max: 24 * 60 * 60 * 1000, rounding: 'floor', clamp: true }),
+    eventCrossMultiplier: Number.isFinite(Number(raw.eventCrossMultiplier))
+      ? Math.min(5, Math.max(1, Number(raw.eventCrossMultiplier)))
+      : DEFAULT_FUN_CONFIG.eventCrossMultiplier,
+    eventCooldownMs: normalizeInt(raw.eventCooldownMs, DEFAULT_FUN_CONFIG.eventCooldownMs, { min: 0, max: 7 * 24 * 60 * 60 * 1000, rounding: 'floor', clamp: true }),
+    ollamaEnabled: normalizeBoolean(raw.ollamaEnabled, DEFAULT_FUN_CONFIG.ollamaEnabled),
+    ollamaBaseUrl:
+      toText(raw.ollamaBaseUrl, DEFAULT_FUN_CONFIG.ollamaBaseUrl) || DEFAULT_FUN_CONFIG.ollamaBaseUrl,
+    ollamaModel: toText(raw.ollamaModel, DEFAULT_FUN_CONFIG.ollamaModel) || DEFAULT_FUN_CONFIG.ollamaModel,
+    ollamaTimeoutMs: normalizeInt(raw.ollamaTimeoutMs, DEFAULT_FUN_CONFIG.ollamaTimeoutMs, {
+      min: 500,
+      max: 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    ollamaNumPredict: normalizeInt(raw.ollamaNumPredict, DEFAULT_FUN_CONFIG.ollamaNumPredict, {
+      min: 16,
+      max: 200,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    ollamaTemperature: Number.isFinite(Number(raw.ollamaTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.ollamaTemperature)))
+      : DEFAULT_FUN_CONFIG.ollamaTemperature,
+    ollamaMaxChars: normalizeInt(raw.ollamaMaxChars, DEFAULT_FUN_CONFIG.ollamaMaxChars, {
+      min: 40,
+      max: 280,
+      rounding: 'floor',
+      clamp: true,
+    }),
   };
 }
 
@@ -174,6 +219,13 @@ export function saveFunUserConfig(input) {
     dashboardEnabled: normalized.dashboardEnabled,
     dashboardHost: normalized.dashboardHost,
     dashboardPort: normalized.dashboardPort,
+    ollamaEnabled: normalized.ollamaEnabled,
+    ollamaBaseUrl: normalized.ollamaBaseUrl,
+    ollamaModel: normalized.ollamaModel,
+    ollamaTimeoutMs: normalized.ollamaTimeoutMs,
+    ollamaNumPredict: normalized.ollamaNumPredict,
+    ollamaTemperature: normalized.ollamaTemperature,
+    ollamaMaxChars: normalized.ollamaMaxChars,
   };
   fs.writeFileSync(FUN_USER_CONFIG_PATH, JSON.stringify(payload, null, 2), 'utf-8');
   return normalizeFunConfig(payload);

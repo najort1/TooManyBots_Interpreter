@@ -3,6 +3,11 @@ import { createFunStatsRepository } from './db/funStatsRepository.js';
 import { createFunGroupRepository } from './db/funGroupRepository.js';
 import { createFunRelationshipRepository } from './db/funRelationshipRepository.js';
 import { createFunActionRepository } from './db/funActionRepository.js';
+import { createFunEffectsRepository } from './db/funEffectsRepository.js';
+import { createFunFactionRepository } from './db/funFactionRepository.js';
+import { createFunSocialRepository } from './db/funSocialRepository.js';
+import { createFunMissionRepository } from './db/funMissionRepository.js';
+import { createFunEventRepository } from './db/funEventRepository.js';
 import { createXpService } from './services/xpService.js';
 import { createRankService } from './services/rankService.js';
 import { createDailyService } from './services/dailyService.js';
@@ -10,7 +15,12 @@ import { createCoinsService } from './services/coinsService.js';
 import { createRelationshipService } from './services/relationshipService.js';
 import { createGameService } from './services/gameService.js';
 import { createShopService } from './services/shopService.js';
-import { createFunEffectsRepository } from './db/funEffectsRepository.js';
+import { createBridgeService } from './services/bridgeService.js';
+import { createFactionService } from './services/factionService.js';
+import { createMissionService } from './services/missionService.js';
+import { createEventService } from './services/eventService.js';
+import { createSocialHooks } from './services/socialHooks.js';
+import { createFlavorService } from './llm/flavorService.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
 import { getDb } from '../db/context.js';
 import { sendTextMessage, sendImageMessage } from '../engine/sender.js';
@@ -39,6 +49,11 @@ export function createFunModule(deps = {}) {
   const relationshipRepository = createFunRelationshipRepository({ getDatabase });
   const actionRepository = createFunActionRepository({ getDatabase });
   const effectsRepository = createFunEffectsRepository({ getDatabase });
+  const factionRepository = createFunFactionRepository({ getDatabase });
+  const socialRepository = createFunSocialRepository({ getDatabase });
+  const missionRepository = createFunMissionRepository({ getDatabase });
+  const eventRepository = createFunEventRepository({ getDatabase });
+
   const xpService = createXpService({ repository });
   const rankService = createRankService({ repository });
   const dailyService = createDailyService({ repository });
@@ -56,6 +71,37 @@ export function createFunModule(deps = {}) {
     repository,
     effectsRepository,
   });
+  const bridgeService = createBridgeService({
+    socialRepository,
+    factionRepository,
+    effectsRepository,
+  });
+  const factionService = createFactionService({
+    factionRepository,
+    repository,
+    bridgeService,
+  });
+  const missionService = createMissionService({
+    missionRepository,
+    factionRepository,
+    repository,
+    bridgeService,
+  });
+  const eventService = createEventService({ eventRepository });
+  const socialHooks = createSocialHooks({
+    bridgeService,
+    missionService,
+    eventService,
+    factionService,
+    repository,
+  });
+  const flavorService =
+    deps.flavorService ||
+    createFlavorService({
+      getConfig: () => resolveFunConfig(getConfig() || {}),
+      getLogger,
+      generate: deps.ollamaGenerate,
+    });
 
   let initialized = false;
 
@@ -99,6 +145,12 @@ export function createFunModule(deps = {}) {
         effectsRepository,
         repository,
         groupRepository,
+        factionService,
+        bridgeService,
+        missionService,
+        eventService,
+        socialHooks,
+        flavorService,
         getContactDisplayName: resolveContactName,
         listContacts: resolveContactList,
         sendText,
@@ -140,6 +192,12 @@ export function createFunModule(deps = {}) {
       gameService,
       shopService,
       effectsRepository,
+      factionService,
+      bridgeService,
+      missionService,
+      eventService,
+      socialHooks,
+      flavorService,
       identityMap,
     },
   };
@@ -161,3 +219,5 @@ export {
   levelFromTotalXp,
   progressInLevel,
 } from './services/levelCurve.js';
+export { createFlavorService } from './llm/flavorService.js';
+export { ollamaGenerate, ollamaPing } from './llm/ollamaClient.js';

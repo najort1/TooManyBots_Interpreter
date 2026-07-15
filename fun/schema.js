@@ -104,6 +104,75 @@ export function buildFunSchemaSql() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_effects_scope
       ON fun_user_effects(scope_key, effect_key);
 
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_factions (
+      id            TEXT PRIMARY KEY,
+      scope_key     TEXT    NOT NULL,
+      name          TEXT    NOT NULL,
+      name_key      TEXT    NOT NULL,
+      emoji         TEXT    NOT NULL DEFAULT '🏴‍☠️',
+      leader_jid    TEXT    NOT NULL,
+      vault_coins   INTEGER NOT NULL DEFAULT 0,
+      motto         TEXT    NOT NULL DEFAULT '',
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL,
+      UNIQUE (scope_key, name_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_factions_scope
+      ON fun_factions(scope_key);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_faction_members (
+      scope_key     TEXT    NOT NULL,
+      user_jid      TEXT    NOT NULL,
+      faction_id    TEXT    NOT NULL,
+      role          TEXT    NOT NULL DEFAULT 'member',
+      joined_at     INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, user_jid)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_faction_members_fac
+      ON fun_faction_members(faction_id);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_social_edges (
+      scope_key     TEXT    NOT NULL,
+      from_jid      TEXT    NOT NULL,
+      to_jid        TEXT    NOT NULL,
+      kind          TEXT    NOT NULL,
+      week_key      TEXT    NOT NULL,
+      count         INTEGER NOT NULL DEFAULT 0,
+      updated_at    INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, from_jid, to_jid, kind, week_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_social_week
+      ON fun_social_edges(scope_key, week_key);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_mixed_missions (
+      id            TEXT PRIMARY KEY,
+      scope_key     TEXT    NOT NULL,
+      status        TEXT    NOT NULL DEFAULT 'active',
+      members_json  TEXT    NOT NULL,
+      goals_json    TEXT    NOT NULL,
+      progress_json TEXT    NOT NULL DEFAULT '{}',
+      reward_each   INTEGER NOT NULL DEFAULT 30,
+      expires_at    INTEGER NOT NULL,
+      created_at    INTEGER NOT NULL,
+      completed_at  INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_missions_scope
+      ON fun_mixed_missions(scope_key, status, expires_at);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_scope_events (
+      scope_key     TEXT PRIMARY KEY,
+      event_type    TEXT    NOT NULL DEFAULT 'none',
+      multiplier    REAL    NOT NULL DEFAULT 1,
+      starts_at     INTEGER NOT NULL DEFAULT 0,
+      ends_at       INTEGER NOT NULL DEFAULT 0,
+      last_spawn_at INTEGER NOT NULL DEFAULT 0,
+      payload_json  TEXT    NOT NULL DEFAULT '{}'
+    );
+
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_module_meta (
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
