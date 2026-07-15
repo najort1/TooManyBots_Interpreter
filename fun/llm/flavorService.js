@@ -1,7 +1,7 @@
 import { ollamaGenerate, ollamaWarmup, ollamaTouch } from './ollamaClient.js';
 
 const SYSTEM_PROMPT = `Você é o narrador de um bot de diversão de WhatsApp em português brasileiro (pt-BR).
-Escreva UMA frase curta (máximo 140 caracteres), tom de grupo: irônico, leve, brincalhão.
+Escreva UMA frase, tom de grupo: irônico, leve, brincalhão.
 Regras rígidas:
 - NÃO invente números, coins, XP, vencedores, resultados ou regras de jogo.
 - NÃO use markdown, hashtags nem listas.
@@ -106,14 +106,25 @@ function pick(list) {
 function sanitizeFlavor(raw, maxLen = 160) {
   let s = String(raw || '')
     .replace(/\r/g, '')
+    // remove blocos de thinking acidentais
+    .replace(/<think>[\s\S]*?<\/think>/gi, ' ')
+    .replace(/```[\s\S]*?```/g, ' ')
     .split('\n')
     .map(l => l.trim())
-    .filter(Boolean)[0] || '';
+    .filter(Boolean)
+    // ignora linhas meta
+    .filter(l => !/^(thinking|raciocínio|step\s*\d)/i.test(l))[0] || '';
 
   s = s.replace(/^["'“”«»]+|["'“”«»]+$/g, '').trim();
-  s = s.replace(/^(narrador|bot|assistente)\s*:\s*/i, '').trim();
+  s = s.replace(/^(narrador|bot|assistente|resposta|final)\s*:\s*/i, '').trim();
+  // se o modelo devolveu várias frases, pega a primeira curta
+  if (s.length > maxLen) {
+    const cut = s.slice(0, maxLen);
+    const sp = cut.lastIndexOf(' ');
+    s = `${(sp > 40 ? cut.slice(0, sp) : cut).trim()}…`;
+  }
   if (/^\d+$/.test(s)) return '';
-  if (s.length > maxLen) s = `${s.slice(0, maxLen - 1).trim()}…`;
+  if (s.length < 6) return '';
   return s;
 }
 
@@ -154,10 +165,28 @@ function resolveEndpoint(cfg) {
     keepAlive: cfg.ollamaKeepAlive === undefined || cfg.ollamaKeepAlive === null || cfg.ollamaKeepAlive === ''
       ? -1
       : cfg.ollamaKeepAlive,
-    timeoutMs: Math.max(500, Math.floor(Number(cfg.ollamaTimeoutMs) || 8_000)),
+    timeoutMs: Math.max(500, Math.floor(Number(cfg.ollamaTimeoutMs) || 25_000)),
     warmupTimeoutMs: Math.max(5_000, Math.floor(Number(cfg.ollamaWarmupTimeoutMs) || 120_000)),
     refreshMs: Math.max(0, Math.floor(Number(cfg.ollamaKeepAliveRefreshMs) || 0)),
   };
+}
+
+function logFallback(getLogger, payload) {
+  const logger = typeof getLogger === 'function' ? getLogger() : null;
+  // pino do runtime está em level error — usa warn + console para o operador ver
+  try {
+    logger?.warn?.(payload, 'Fun flavor: fallback Ollama');
+  } catch {
+    // ignore
+  }
+  try {
+    const reason = payload?.reason || payload?.err?.message || 'unknown';
+    console.warn(
+      `[fun/ollama] fallback scenario=${payload?.scenario || '?'} reason=${reason} warm=${Boolean(payload?.warm)}`
+    );
+  } catch {
+    // ignore
+  }
 }
 
 /**
@@ -282,42 +311,68 @@ export function createFlavorService(deps = {}) {
     }
   }
 
+  async function generateOnce(cfg, ep, key, vars, { simple = false } = {}) {
+    const prompt = simple
+      ? `Uma frase curta (max 120 chars) em pt-BR, tom de grupo WhatsApp, cenário=${key}. Contexto: ${JSON.stringify(vars || {}).slice(0, 200)}. Só a frase:`
+      : buildUserPrompt(key, vars);
+
+    const raw = await generate({
+      baseUrl: ep.baseUrl,
+      model: ep.model,
+      system: simple
+        ? 'Responda somente com UMA frase curta em português brasileiro. Sem aspas, sem markdown, sem listas.'
+        : SYSTEM_PROMPT,
+      prompt,
+      timeoutMs: ep.timeoutMs,
+      keepAlive: ep.keepAlive,
+      think: false,
+      numPredict: Math.max(32, Math.floor(Number(cfg.ollamaNumPredict) || 80)),
+      temperature: Number.isFinite(Number(cfg.ollamaTemperature))
+        ? Number(cfg.ollamaTemperature)
+        : 0.85,
+    });
+    return sanitizeFlavor(raw, Math.floor(Number(cfg.ollamaMaxChars) || 160));
+  }
+
   async function line(scenario, vars = {}) {
     const cfg = getConfig() || {};
     const key = String(scenario || 'default');
     const safeFallback = fallback(key, vars);
 
-    if (!isEnabled(cfg)) return safeFallback;
+    if (!isEnabled(cfg)) {
+      return safeFallback;
+    }
 
     const ep = resolveEndpoint(cfg);
 
     try {
-      const raw = await generate({
-        baseUrl: ep.baseUrl,
-        model: ep.model,
-        system: SYSTEM_PROMPT,
-        prompt: buildUserPrompt(key, vars),
-        timeoutMs: ep.timeoutMs,
-        keepAlive: ep.keepAlive,
-        numPredict: Math.max(24, Math.floor(Number(cfg.ollamaNumPredict) || 72)),
-        temperature: Number.isFinite(Number(cfg.ollamaTemperature))
-          ? Number(cfg.ollamaTemperature)
-          : 0.85,
-      });
-      const clean = sanitizeFlavor(raw, Math.floor(Number(cfg.ollamaMaxChars) || 160));
-      if (!clean || clean.length < 6) return safeFallback;
+      let clean = await generateOnce(cfg, ep, key, vars, { simple: false });
+      // retry 1x se vazio (Gemma às vezes devolve blank)
+      if (!clean) {
+        clean = await generateOnce(cfg, ep, key, vars, { simple: true });
+      }
+      if (!clean) {
+        logFallback(getLogger, {
+          scenario: key,
+          reason: 'empty-response',
+          warm,
+          model: ep.model,
+          timeoutMs: ep.timeoutMs,
+        });
+        return safeFallback;
+      }
       warm = true;
       lastWarmAt = Date.now();
       return clean;
     } catch (err) {
-      getLogger?.()?.debug?.(
-        {
-          err: { message: err?.message || 'ollama-fail', name: err?.name },
-          scenario: key,
-          warm,
-        },
-        'Fun flavor: Ollama fallback'
-      );
+      logFallback(getLogger, {
+        scenario: key,
+        reason: err?.message || 'ollama-fail',
+        warm,
+        model: ep.model,
+        timeoutMs: ep.timeoutMs,
+        err: { message: err?.message || 'ollama-fail', name: err?.name },
+      });
       return safeFallback;
     }
   }

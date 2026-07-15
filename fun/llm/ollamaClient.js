@@ -1,6 +1,6 @@
 /**
  * Cliente HTTP mínimo para Ollama local.
- * Suporta keep_alive (modelo residente) + warmup sem gerar texto.
+ * Suporta keep_alive, think:false (Gemma4), fila serial e extração de thinking.
  */
 
 function joinUrl(baseUrl, path) {
@@ -13,7 +13,6 @@ function joinUrl(baseUrl, path) {
  * Normaliza keep_alive do Ollama:
  * - number: segundos (negativo = forever, 0 = unload)
  * - string: "30m", "24h", "-1"
- * - default: -1 (ficar carregado)
  */
 export function normalizeKeepAlive(value, fallback = -1) {
   if (value === null || value === undefined || value === '') return fallback;
@@ -21,9 +20,53 @@ export function normalizeKeepAlive(value, fallback = -1) {
   const s = String(value).trim();
   if (!s) return fallback;
   if (/^-?\d+$/.test(s)) return Number(s);
-  // duração Ollama: 10m, 24h, 30s
   if (/^-?\d+(\.\d+)?(ms|s|m|h)$/i.test(s)) return s;
   return fallback;
+}
+
+/** Fila serial — evita 2 generates simultâneos estourando timeout no mesmo modelo. */
+let generateChain = Promise.resolve();
+
+function enqueueGenerate(fn) {
+  const run = generateChain.then(fn, fn);
+  // não deixa rejeição quebrar a cadeia
+  generateChain = run.then(
+    () => undefined,
+    () => undefined
+  );
+  return run;
+}
+
+function extractTextFromOllamaPayload(data) {
+  if (!data || typeof data !== 'object') return '';
+  let text = String(data.response ?? '').trim();
+  if (text) return text;
+
+  // chat-style
+  if (data.message?.content) {
+    text = String(data.message.content).trim();
+    if (text) return text;
+  }
+
+  // thinking models às vezes deixam a frase no final do thinking
+  const thinking = String(data.thinking ?? data.message?.thinking ?? '').trim();
+  if (thinking) {
+    const lines = thinking
+      .split(/\n+/)
+      .map(l => l.trim())
+      .filter(Boolean);
+    // pega última linha “humana” (não meta)
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const l = lines[i]
+        .replace(/^["'“”]+|["'“”]+$/g, '')
+        .replace(/^(final|answer|resposta)\s*:\s*/i, '')
+        .trim();
+      if (l.length >= 8 && !/^(thinking|raciocínio|step)/i.test(l)) {
+        return l;
+      }
+    }
+  }
+  return '';
 }
 
 async function postGenerate(body, { baseUrl, timeoutMs, fetchImpl } = {}) {
@@ -33,7 +76,7 @@ async function postGenerate(body, { baseUrl, timeoutMs, fetchImpl } = {}) {
   }
 
   const controller = new AbortController();
-  const ms = Math.max(500, Math.floor(Number(timeoutMs) || 8_000));
+  const ms = Math.max(500, Math.floor(Number(timeoutMs) || 25_000));
   const timer = setTimeout(() => controller.abort(), ms);
 
   try {
@@ -50,22 +93,19 @@ async function postGenerate(body, { baseUrl, timeoutMs, fetchImpl } = {}) {
     }
 
     return await res.json();
+  } catch (err) {
+    if (err?.name === 'AbortError') {
+      const e = new Error(`ollama-timeout-${ms}ms`);
+      e.name = 'AbortError';
+      throw e;
+    }
+    throw err;
   } finally {
     clearTimeout(timer);
   }
 }
 
 /**
- * @param {object} opts
- * @param {string} [opts.baseUrl]
- * @param {string} [opts.model]
- * @param {string} opts.prompt
- * @param {string} [opts.system]
- * @param {number} [opts.timeoutMs]
- * @param {number} [opts.numPredict]
- * @param {number} [opts.temperature]
- * @param {string|number} [opts.keepAlive] — default -1 (não descarregar)
- * @param {typeof fetch} [opts.fetchImpl]
  * @returns {Promise<string>}
  */
 export async function ollamaGenerate({
@@ -73,39 +113,40 @@ export async function ollamaGenerate({
   model = 'gemma4:latest',
   prompt,
   system = '',
-  timeoutMs = 8_000,
-  numPredict = 72,
+  timeoutMs = 25_000,
+  numPredict = 80,
   temperature = 0.85,
   keepAlive = -1,
+  think = false,
   fetchImpl,
+  serialize = true,
 } = {}) {
   const text = String(prompt ?? '').trim();
   if (!text) return '';
 
-  const data = await postGenerate(
-    {
+  const run = async () => {
+    const body = {
       model: String(model || 'gemma4:latest'),
       prompt: text,
       system: String(system || ''),
       stream: false,
+      // Gemma4 / modelos com thinking: evita gastar tokens só no raciocínio
+      think: think === true,
       keep_alive: normalizeKeepAlive(keepAlive, -1),
       options: {
         temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.85,
-        num_predict: Math.max(16, Math.min(200, Math.floor(Number(numPredict) || 72))),
+        num_predict: Math.max(16, Math.min(200, Math.floor(Number(numPredict) || 80))),
       },
-    },
-    { baseUrl, timeoutMs, fetchImpl }
-  );
+    };
 
-  return String(data?.response ?? '').trim();
+    const data = await postGenerate(body, { baseUrl, timeoutMs, fetchImpl });
+    return extractTextFromOllamaPayload(data);
+  };
+
+  if (serialize === false) return run();
+  return enqueueGenerate(run);
 }
 
-/**
- * Carrega o modelo na VRAM/RAM e deixa residente (sem gerar texto útil).
- * Docs Ollama: POST /api/generate { model, keep_alive: -1 }
- *
- * @returns {Promise<{ ok: boolean, model: string, ms: number, reason?: string }>}
- */
 export async function ollamaWarmup({
   baseUrl = 'http://127.0.0.1:11434',
   model = 'gemma4:latest',
@@ -116,12 +157,16 @@ export async function ollamaWarmup({
   const started = Date.now();
   const modelName = String(model || 'gemma4:latest');
   try {
+    // load com generate mínimo (prompt vazio às vezes não carrega KV em algumas builds)
     await postGenerate(
       {
         model: modelName,
-        // prompt vazio + keep_alive carrega e mantém o modelo
-        keep_alive: normalizeKeepAlive(keepAlive, -1),
+        prompt: '.',
+        system: '',
         stream: false,
+        think: false,
+        keep_alive: normalizeKeepAlive(keepAlive, -1),
+        options: { num_predict: 1, temperature: 0 },
       },
       { baseUrl, timeoutMs, fetchImpl }
     );
@@ -131,27 +176,15 @@ export async function ollamaWarmup({
       ok: false,
       model: modelName,
       ms: Date.now() - started,
-      reason: err?.name === 'AbortError' ? 'timeout' : err?.message || 'error',
+      reason: err?.name === 'AbortError' ? err.message || 'timeout' : err?.message || 'error',
     };
   }
 }
 
-/**
- * Refresh leve do keep_alive (reafirma residência sem inferência pesada).
- */
-export async function ollamaTouch({
-  baseUrl = 'http://127.0.0.1:11434',
-  model = 'gemma4:latest',
-  keepAlive = -1,
-  timeoutMs = 30_000,
-  fetchImpl,
-} = {}) {
-  return ollamaWarmup({ baseUrl, model, keepAlive, timeoutMs, fetchImpl });
+export async function ollamaTouch(opts = {}) {
+  return ollamaWarmup({ ...opts, timeoutMs: opts.timeoutMs ?? 30_000 });
 }
 
-/**
- * Health check leve (lista tags).
- */
 export async function ollamaPing({
   baseUrl = 'http://127.0.0.1:11434',
   timeoutMs = 3_000,
