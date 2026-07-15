@@ -1,4 +1,4 @@
-import { ollamaGenerate } from './ollamaClient.js';
+import { ollamaGenerate, ollamaWarmup, ollamaTouch } from './ollamaClient.js';
 
 const SYSTEM_PROMPT = `Você é o narrador de um bot de diversão de WhatsApp em português brasileiro (pt-BR).
 Escreva UMA frase curta (máximo 140 caracteres), tom de grupo: irônico, leve, brincalhão.
@@ -110,11 +110,8 @@ function sanitizeFlavor(raw, maxLen = 160) {
     .map(l => l.trim())
     .filter(Boolean)[0] || '';
 
-  // remove cercas de aspas comuns
   s = s.replace(/^["'“”«»]+|["'“”«»]+$/g, '').trim();
-  // tira prefixos tipo "Narrador:"
   s = s.replace(/^(narrador|bot|assistente)\s*:\s*/i, '').trim();
-  // evita respostas que tentam ditar regras/números longos
   if (/^\d+$/.test(s)) return '';
   if (s.length > maxLen) s = `${s.slice(0, maxLen - 1).trim()}…`;
   return s;
@@ -150,20 +147,41 @@ function buildUserPrompt(scenario, vars) {
   return `${hint}\nContexto fixo (não invente além disso): ${facts || 'nenhum'}\nFrase:`;
 }
 
+function resolveEndpoint(cfg) {
+  return {
+    baseUrl: String(cfg.ollamaBaseUrl || 'http://127.0.0.1:11434').trim(),
+    model: String(cfg.ollamaModel || 'gemma4:latest').trim() || 'gemma4:latest',
+    keepAlive: cfg.ollamaKeepAlive === undefined || cfg.ollamaKeepAlive === null || cfg.ollamaKeepAlive === ''
+      ? -1
+      : cfg.ollamaKeepAlive,
+    timeoutMs: Math.max(500, Math.floor(Number(cfg.ollamaTimeoutMs) || 8_000)),
+    warmupTimeoutMs: Math.max(5_000, Math.floor(Number(cfg.ollamaWarmupTimeoutMs) || 120_000)),
+    refreshMs: Math.max(0, Math.floor(Number(cfg.ollamaKeepAliveRefreshMs) || 0)),
+  };
+}
+
 /**
  * @param {object} deps
- * @param {() => object} [deps.getConfig] — retorna funConfig atualizado
+ * @param {() => object} [deps.getConfig]
  * @param {() => object|null} [deps.getLogger]
- * @param {typeof ollamaGenerate} [deps.generate] — injetável p/ testes
+ * @param {typeof ollamaGenerate} [deps.generate]
+ * @param {typeof ollamaWarmup} [deps.warmup]
+ * @param {typeof ollamaTouch} [deps.touch]
  */
 export function createFlavorService(deps = {}) {
   const getConfig = deps.getConfig || (() => ({}));
   const getLogger = deps.getLogger || (() => null);
   const generate = deps.generate || ollamaGenerate;
+  const warmupFn = deps.warmup || ollamaWarmup;
+  const touchFn = deps.touch || ollamaTouch;
+
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let keepAliveTimer = null;
+  let warm = false;
+  let lastWarmAt = 0;
 
   function isEnabled(cfg) {
     if (cfg?.ollamaEnabled === false) return false;
-    // default ON se model configurado; ainda com fallback se offline
     return cfg?.ollamaEnabled !== false;
   }
 
@@ -177,11 +195,93 @@ export function createFlavorService(deps = {}) {
   }
 
   /**
-   * Gera uma linha de flavor. Nunca falha — retorna string.
-   * @param {string} scenario
-   * @param {Record<string, string|number|boolean>} [vars]
-   * @returns {Promise<string>}
+   * Pré-carrega o modelo e deixa residente (keep_alive).
+   * Chamar no boot do Fun — o custo de load fica no start, não no 1º comando.
    */
+  async function warmup() {
+    const cfg = getConfig() || {};
+    if (!isEnabled(cfg)) {
+      return { ok: false, reason: 'disabled', ms: 0 };
+    }
+    const ep = resolveEndpoint(cfg);
+    const result = await warmupFn({
+      baseUrl: ep.baseUrl,
+      model: ep.model,
+      keepAlive: ep.keepAlive,
+      timeoutMs: ep.warmupTimeoutMs,
+    });
+    if (result.ok) {
+      warm = true;
+      lastWarmAt = Date.now();
+      getLogger?.()?.info?.(
+        { model: result.model, ms: result.ms },
+        'Fun Ollama: modelo aquecido e residente'
+      );
+    } else {
+      warm = false;
+      getLogger?.()?.warn?.(
+        { model: result.model, ms: result.ms, reason: result.reason },
+        'Fun Ollama: warmup falhou — flavor usa fallback até o modelo responder'
+      );
+    }
+    return result;
+  }
+
+  /**
+   * Refresh periódico do keep_alive (opcional).
+   * Com keep_alive=-1 o Ollama já mantém; o refresh protege se outro client der unload
+   * ou se a política global do servidor for curta.
+   */
+  function startKeepAliveLoop() {
+    stopKeepAliveLoop();
+    const cfg = getConfig() || {};
+    if (!isEnabled(cfg)) return { started: false, reason: 'disabled' };
+
+    const ep = resolveEndpoint(cfg);
+    // default: 10 min se não configurado; 0 desliga
+    const refreshMs =
+      cfg.ollamaKeepAliveRefreshMs === 0
+        ? 0
+        : ep.refreshMs || 10 * 60_000;
+
+    if (refreshMs <= 0) return { started: false, reason: 'refresh-disabled' };
+
+    keepAliveTimer = setInterval(() => {
+      const live = getConfig() || {};
+      if (!isEnabled(live)) return;
+      const e = resolveEndpoint(live);
+      touchFn({
+        baseUrl: e.baseUrl,
+        model: e.model,
+        keepAlive: e.keepAlive,
+        timeoutMs: Math.min(e.warmupTimeoutMs, 60_000),
+      })
+        .then(r => {
+          if (r.ok) {
+            warm = true;
+            lastWarmAt = Date.now();
+          }
+        })
+        .catch(() => {
+          // silencioso
+        });
+    }, refreshMs);
+
+    // unref se existir (não segura o process só por causa do timer)
+    if (typeof keepAliveTimer.unref === 'function') {
+      keepAliveTimer.unref();
+    }
+
+    return { started: true, refreshMs };
+  }
+
+  function stopKeepAliveLoop() {
+    if (keepAliveTimer) {
+      clearInterval(keepAliveTimer);
+      keepAliveTimer = null;
+    }
+  }
+
   async function line(scenario, vars = {}) {
     const cfg = getConfig() || {};
     const key = String(scenario || 'default');
@@ -189,17 +289,16 @@ export function createFlavorService(deps = {}) {
 
     if (!isEnabled(cfg)) return safeFallback;
 
-    const baseUrl = String(cfg.ollamaBaseUrl || 'http://127.0.0.1:11434').trim();
-    const model = String(cfg.ollamaModel || 'gemma4:latest').trim() || 'gemma4:latest';
-    const timeoutMs = Math.max(500, Math.floor(Number(cfg.ollamaTimeoutMs) || 8_000));
+    const ep = resolveEndpoint(cfg);
 
     try {
       const raw = await generate({
-        baseUrl,
-        model,
+        baseUrl: ep.baseUrl,
+        model: ep.model,
         system: SYSTEM_PROMPT,
         prompt: buildUserPrompt(key, vars),
-        timeoutMs,
+        timeoutMs: ep.timeoutMs,
+        keepAlive: ep.keepAlive,
         numPredict: Math.max(24, Math.floor(Number(cfg.ollamaNumPredict) || 72)),
         temperature: Number.isFinite(Number(cfg.ollamaTemperature))
           ? Number(cfg.ollamaTemperature)
@@ -207,12 +306,15 @@ export function createFlavorService(deps = {}) {
       });
       const clean = sanitizeFlavor(raw, Math.floor(Number(cfg.ollamaMaxChars) || 160));
       if (!clean || clean.length < 6) return safeFallback;
+      warm = true;
+      lastWarmAt = Date.now();
       return clean;
     } catch (err) {
       getLogger?.()?.debug?.(
         {
           err: { message: err?.message || 'ollama-fail', name: err?.name },
           scenario: key,
+          warm,
         },
         'Fun flavor: Ollama fallback'
       );
@@ -220,12 +322,10 @@ export function createFlavorService(deps = {}) {
     }
   }
 
-  /** Linha em itálico pronta pro WhatsApp (com fallback). */
   async function italicLine(scenario, vars = {}) {
     const text = await line(scenario, vars);
     const t = String(text || '').trim();
     if (!t) return '';
-    // se já veio com _..._ mantém
     if (t.startsWith('_') && t.endsWith('_')) return t;
     return `_${t}_`;
   }
@@ -235,6 +335,11 @@ export function createFlavorService(deps = {}) {
     italicLine,
     fallback,
     sanitizeFlavor,
+    warmup,
+    startKeepAliveLoop,
+    stopKeepAliveLoop,
+    isWarm: () => warm,
+    lastWarmAt: () => lastWarmAt,
     isEnabled: () => isEnabled(getConfig() || {}),
   };
 }
