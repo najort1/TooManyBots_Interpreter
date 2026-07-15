@@ -235,6 +235,13 @@ export function buildFunSchemaSql() {
 
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_tournaments_scope
       ON fun_tournaments(scope_key, status, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_user_prefs (
+      user_jid              TEXT PRIMARY KEY,
+      preferred_scope_key   TEXT    NOT NULL DEFAULT '',
+      last_group_jid        TEXT    NOT NULL DEFAULT '',
+      updated_at            INTEGER NOT NULL
+    );
   `;
 }
 
