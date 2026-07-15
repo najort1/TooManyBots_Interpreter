@@ -1,8 +1,9 @@
 import { formatHelp } from '../../formatters/rankCard.js';
 
 /**
- * Help vai no privado para não poluir o grupo.
- * Com replyCommandsInPrivate, não avisa no grupo (já é o modo padrão).
+ * Help:
+ * - replyCommandsInPrivate=false → texto completo no grupo (sem DM).
+ * - replyCommandsInPrivate=true  → tenta privado; se falhar, manda no grupo.
  */
 export async function handleHelpCommand({
   funConfig,
@@ -10,30 +11,32 @@ export async function handleHelpCommand({
   replyPrivate,
   replyToChat,
   isGroup,
-  preferPrivate,
 }) {
   const text = formatHelp(funConfig.prefix || '/');
-  const sendPrivate = typeof replyPrivate === 'function' ? replyPrivate : reply;
-  const toGroup =
-    typeof replyToChat === 'function'
-      ? replyToChat
-      : async (body) => {
-          // quando reply já é DM, ainda precisamos de canal pro grupo
-          if (preferPrivate || funConfig?.replyCommandsInPrivate) return;
-          await reply(body);
-        };
+  const wantPrivate = funConfig?.replyCommandsInPrivate !== false && isGroup;
 
-  try {
-    await sendPrivate(text);
-  } catch {
+  // Modo público: tudo no chat atual
+  if (!wantPrivate) {
     await reply(text);
     return { handled: true, private: false };
   }
 
-  // Aviso curto só se o grupo ainda espera respostas públicas
-  if (isGroup && !preferPrivate && !funConfig?.replyCommandsInPrivate) {
-    await toGroup('📬 Te enviei o *help* no privado. Guia de facções: `/comopanelinha`');
+  const sendPrivate = typeof replyPrivate === 'function' ? replyPrivate : null;
+  const toGroup = typeof replyToChat === 'function' ? replyToChat : reply;
+
+  if (!sendPrivate) {
+    await reply(text);
+    return { handled: true, private: false };
   }
 
+  try {
+    await sendPrivate(text);
+  } catch {
+    await toGroup(text);
+    return { handled: true, private: false };
+  }
+
+  // DM aceito pelo cliente — aviso curto no grupo (help completo no PV)
+  await toGroup('📬 Te enviei o *help* no privado. Guia de facções: `/comopanelinha`');
   return { handled: true, private: true };
 }

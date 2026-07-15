@@ -77,6 +77,12 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.requireGroupWhitelist
     ),
     allowDm: normalizeBoolean(raw.allowDm, DEFAULT_FUN_CONFIG.allowDm),
+    dmCommandsOnly: normalizeBoolean(raw.dmCommandsOnly, DEFAULT_FUN_CONFIG.dmCommandsOnly),
+    dmMembershipCacheTtlMs: normalizeInt(
+      raw.dmMembershipCacheTtlMs,
+      DEFAULT_FUN_CONFIG.dmMembershipCacheTtlMs,
+      { min: 0, max: 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
     commandExclusive: normalizeBoolean(raw.commandExclusive, DEFAULT_FUN_CONFIG.commandExclusive),
     groupWhitelistJids: toStringArray(raw.groupWhitelistJids),
     debugMode: normalizeBoolean(raw.debugMode, DEFAULT_FUN_CONFIG.debugMode),

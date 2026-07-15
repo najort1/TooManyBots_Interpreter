@@ -21,6 +21,8 @@ import { createMissionService } from './services/missionService.js';
 import { createEventService } from './services/eventService.js';
 import { createCasinoService } from './services/casinoService.js';
 import { createFunCasinoRepository } from './db/funCasinoRepository.js';
+import { createFunUserPrefsRepository } from './db/funUserPrefsRepository.js';
+import { createGroupMembershipService } from './utils/groupMembership.js';
 import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
@@ -56,6 +58,12 @@ export function createFunModule(deps = {}) {
   const missionRepository = createFunMissionRepository({ getDatabase });
   const eventRepository = createFunEventRepository({ getDatabase });
   const casinoRepository = createFunCasinoRepository({ getDatabase });
+  const prefsRepository = deps.prefsRepository || createFunUserPrefsRepository({ getDatabase });
+  const membershipService =
+    deps.membershipService ||
+    createGroupMembershipService({
+      ttlMs: 5 * 60_000,
+    });
 
   const xpService = createXpService({ repository });
   const rankService = createRankService({ repository });
@@ -169,6 +177,8 @@ export function createFunModule(deps = {}) {
         getGroupWhitelistJids: resolveWhitelist,
         getLogger,
         identityMap,
+        membershipService,
+        prefsRepository,
       },
       {
         sock: ctx.sock,
@@ -237,6 +247,8 @@ export function createFunModule(deps = {}) {
       socialHooks,
       flavorService,
       identityMap,
+      membershipService,
+      prefsRepository,
     },
   };
 }

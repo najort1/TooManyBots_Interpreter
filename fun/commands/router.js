@@ -2,6 +2,7 @@ import { FUN_COMMAND_ALIASES, FUN_COMMANDS } from '../constants.js';
 import { handleXpCommand } from './handlers/xp.js';
 import { handleRankCommand } from './handlers/rank.js';
 import { handleRankCoinsCommand } from './handlers/rankCoins.js';
+import { handleRankMessagesCommand } from './handlers/rankMessages.js';
 import { handleDailyCommand } from './handlers/daily.js';
 import { handleHelpCommand } from './handlers/help.js';
 import { handlePayCommand } from './handlers/pay.js';
@@ -44,6 +45,7 @@ import {
   handleTournamentCommand,
   handleRankCasinoCommand,
 } from './handlers/casino.js';
+import { handleGroupScopeCommand } from './handlers/groupScope.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -113,6 +115,9 @@ export async function routeFunCommand(ctx) {
     chatJid,
     isGroup,
     preferPrivate,
+    membershipService,
+    prefsRepository,
+    dmGroups,
   } = ctx;
 
   const parsed = parseFunCommand(text, funConfig.prefix);
@@ -152,6 +157,9 @@ export async function routeFunCommand(ctx) {
     sock,
     identityMap,
     preferPrivate: Boolean(preferPrivate),
+    membershipService,
+    prefsRepository,
+    groups: dmGroups || null,
   };
 
   switch (parsed.command) {
@@ -162,6 +170,8 @@ export async function routeFunCommand(ctx) {
       return handleRankCommand(base);
     case FUN_COMMANDS.RANK_COINS:
       return handleRankCoinsCommand(base);
+    case FUN_COMMANDS.RANK_MESSAGES:
+      return handleRankMessagesCommand(base);
     case FUN_COMMANDS.DAILY:
       return handleDailyCommand(base);
     case FUN_COMMANDS.HELP:
@@ -230,6 +240,8 @@ export async function routeFunCommand(ctx) {
       return handleTournamentCommand(base);
     case FUN_COMMANDS.RANK_CASINO:
       return handleRankCasinoCommand(base);
+    case FUN_COMMANDS.GROUP_SCOPE:
+      return handleGroupScopeCommand(base);
     default:
       return { handled: false };
   }

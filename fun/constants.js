@@ -1,10 +1,11 @@
-export const FUN_SCHEMA_VERSION = '6';
+export const FUN_SCHEMA_VERSION = '7';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
   PERFIL: 'perfil',
   RANK: 'rank',
   RANK_COINS: 'rankcoins',
+  RANK_MESSAGES: 'rankmessages',
   DAILY: 'daily',
   HELP: 'help',
   PAY: 'pay',
@@ -40,6 +41,8 @@ export const FUN_COMMANDS = Object.freeze({
   STAND: 'stand',
   TOURNAMENT: 'tournament',
   RANK_CASINO: 'rankcasino',
+  // DM / escopo
+  GROUP_SCOPE: 'group_scope',
 });
 
 /**
@@ -81,6 +84,13 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   coinrank: FUN_COMMANDS.RANK_COINS,
   moedasrank: FUN_COMMANDS.RANK_COINS,
   rankmoedas: FUN_COMMANDS.RANK_COINS,
+  rankmessages: FUN_COMMANDS.RANK_MESSAGES,
+  rankmsg: FUN_COMMANDS.RANK_MESSAGES,
+  topmsg: FUN_COMMANDS.RANK_MESSAGES,
+  topmensagens: FUN_COMMANDS.RANK_MESSAGES,
+  mensagens: FUN_COMMANDS.RANK_MESSAGES,
+  topchat: FUN_COMMANDS.RANK_MESSAGES,
+  maisativos: FUN_COMMANDS.RANK_MESSAGES,
   daily: FUN_COMMANDS.DAILY,
   diario: FUN_COMMANDS.DAILY,
   help: FUN_COMMANDS.HELP,
@@ -145,6 +155,10 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   rankcassino: FUN_COMMANDS.RANK_CASINO,
   rankcasino: FUN_COMMANDS.RANK_CASINO,
   topcassino: FUN_COMMANDS.RANK_CASINO,
+  grupo: FUN_COMMANDS.GROUP_SCOPE,
+  group: FUN_COMMANDS.GROUP_SCOPE,
+  grupos: FUN_COMMANDS.GROUP_SCOPE,
+  meugrupo: FUN_COMMANDS.GROUP_SCOPE,
   aposta: FUN_COMMANDS.BET,
   bet: FUN_COMMANDS.BET,
   apostar: FUN_COMMANDS.BET,
@@ -199,7 +213,10 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   rankLimit: 10,
   announceLevelUp: true,
   requireGroupWhitelist: true,
-  allowDm: false,
+  // DM: comandos no privado se for membro de grupo na whitelist
+  allowDm: true,
+  dmCommandsOnly: true,
+  dmMembershipCacheTtlMs: 5 * 60_000,
   commandExclusive: true,
   groupWhitelistJids: [],
   debugMode: false,
@@ -246,8 +263,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   ollamaEnabled: true,
   ollamaBaseUrl: 'http://127.0.0.1:11434',
   ollamaModel: 'gemma4:latest',
-  ollamaTimeoutMs: 8_000,
-  ollamaNumPredict: 72,
+  ollamaTimeoutMs: 25_000,
+  ollamaNumPredict: 80,
   ollamaTemperature: 0.85,
   ollamaMaxChars: 160,
   // -1 = modelo fica carregado até o Ollama reiniciar / outro unload

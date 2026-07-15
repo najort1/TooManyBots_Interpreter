@@ -20,7 +20,9 @@ export function shouldReplyCommandInPrivate(command, funConfig, isGroup) {
 }
 
 /**
- * Elegibilidade de escopo (MVP: só grupos na whitelist do Fun; sem DM).
+ * Elegibilidade de escopo.
+ * - Grupo: whitelist.
+ * - DM: allowDm; scope real resolvido depois (membership + preferred group).
  */
 export function resolveFunScope({
   chatJid,
@@ -33,10 +35,11 @@ export function resolveFunScope({
   }
 
   if (!isGroup) {
-    if (!funConfig.allowDm) {
+    if (funConfig.allowDm === false) {
       return { eligible: false, reason: 'dm-disabled' };
     }
-    return { eligible: true, scopeKey: '*', reason: 'dm' };
+    // scopeKey preenchido após validar membership
+    return { eligible: true, scopeKey: '', reason: 'dm-pending', isDm: true };
   }
 
   const jid = String(chatJid || '');
@@ -54,7 +57,7 @@ export function resolveFunScope({
     }
   }
 
-  return { eligible: true, scopeKey: jid, reason: 'group' };
+  return { eligible: true, scopeKey: jid, reason: 'group', isDm: false };
 }
 
 function isCountableMessage({ text, messageType }) {
@@ -95,6 +98,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
     getGroupWhitelistJids,
     getLogger,
     identityMap,
+    membershipService,
+    prefsRepository,
   } = deps;
 
   const {
@@ -130,6 +135,10 @@ export async function handleFunIncomingMessage(deps, ctx) {
   }
 
   let userJid = String(actorJid || '').trim();
+  // Em DM o actor pode ser o remoteJid se actorJid vazio
+  if ((!userJid || !isUserJid(userJid)) && !isGroup && isUserJid(chatJid)) {
+    userJid = String(chatJid).trim();
+  }
   if (!userJid || !isUserJid(userJid)) {
     return { handled: false, skipFlows: false, reason: 'no-actor' };
   }
@@ -139,8 +148,104 @@ export async function handleFunIncomingMessage(deps, ctx) {
     if (resolved && isUserJid(resolved)) userJid = resolved;
   }
 
+  const prefix = funConfig.prefix || '/';
+  const parsedCommand = parseFunCommand(text, prefix);
+  const isCommand = parsedCommand != null;
+  const isDm = Boolean(scope.isDm);
+
+  // DM: só comandos (jogos com continuidade, saldo, etc.) — sem XP passivo
+  if (isDm && funConfig.dmCommandsOnly !== false && !isCommand) {
+    return { handled: false, skipFlows: false, reason: 'dm-commands-only' };
+  }
+
+  // Resolve escopo real no privado (membership whitelist)
+  if (isDm) {
+    const replyDmEarly = async (body) => {
+      if (typeof sendText !== 'function') return;
+      const content = String(body || '').trim();
+      if (!content) return;
+      await sendText(sock, userJid, content);
+    };
+
+    if (parsedCommand?.command === 'group_scope') {
+      // /grupo funciona mesmo sem preferred (lista memberships)
+      // scope placeholder; handler resolve membership
+      scope.scopeKey = '';
+      scope.reason = 'dm-group-pick';
+    } else if (membershipService?.resolveDmScope && prefsRepository) {
+      const prefs = prefsRepository.get(userJid);
+      const dm = await membershipService.resolveDmScope({
+        sock,
+        userJid,
+        funConfig,
+        preferredScopeKey: prefs.preferredScopeKey,
+        lastGroupJid: prefs.lastGroupJid,
+      });
+
+      if (!dm.ok) {
+        if (dm.reason === 'need-group-pick') {
+          const lines = [
+            'Você está em *vários* grupos liberados.',
+            'Escolha o escopo pro privado com `/grupo`:',
+            '',
+          ];
+          (dm.groups || []).forEach((g, i) => {
+            lines.push(`${i + 1}. *${g.name || 'Grupo'}*`);
+          });
+          lines.push('', 'Ex.: `/grupo 1`');
+          await replyDmEarly(lines.join('\n'));
+          return {
+            handled: true,
+            skipFlows: true,
+            reason: 'need-group-pick',
+            isDm: true,
+          };
+        }
+        if (dm.reason === 'not-member' || dm.reason === 'no-whitelist' || dm.reason === 'dm-needs-whitelist') {
+          await replyDmEarly(
+            [
+              'Privado só funciona se você for *membro de um grupo liberado* deste bot.',
+              'Entre no grupo da whitelist e use os comandos no privado de novo.',
+            ].join('\n')
+          );
+          return {
+            handled: true,
+            skipFlows: true,
+            reason: dm.reason,
+            isDm: true,
+          };
+        }
+        return { handled: false, skipFlows: false, reason: dm.reason || 'dm-scope-fail' };
+      }
+
+      scope.scopeKey = dm.scopeKey;
+      scope.reason = `dm:${dm.source}`;
+      scope.dmGroups = dm.groups;
+      // grava preferred se veio de single/last
+      if (dm.source === 'single' || dm.source === 'last-group') {
+        prefsRepository.setPreferredScope?.(userJid, dm.scopeKey);
+      }
+    } else {
+      // fallback sem membership service (testes legados): não aceita DM
+      return { handled: false, skipFlows: false, reason: 'dm-membership-unavailable' };
+    }
+  }
+
+  if (!scope.scopeKey && parsedCommand?.command !== 'group_scope') {
+    return { handled: false, skipFlows: false, reason: 'no-scope' };
+  }
+
+  // Em grupo: memoriza last group pro DM
+  if (!isDm && scope.scopeKey?.endsWith?.('@g.us') && prefsRepository?.touchLastGroup) {
+    try {
+      prefsRepository.touchLastGroup(userJid, scope.scopeKey);
+    } catch {
+      // ignore
+    }
+  }
+
   const effectiveRates =
-    typeof groupRepository?.resolveEffectiveRates === 'function'
+    typeof groupRepository?.resolveEffectiveRates === 'function' && scope.scopeKey
       ? groupRepository.resolveEffectiveRates(scope.scopeKey, funConfig)
       : {
           enabled: true,
@@ -158,9 +263,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     return { handled: false, skipFlows: false, reason: 'group-disabled' };
   }
 
-  const prefix = funConfig.prefix || '/';
-  const parsedCommand = parseFunCommand(text, prefix);
-  const isCommand = parsedCommand != null;
+  // No DM a resposta já é privada (chatJid = user)
   const preferPrivate = shouldReplyCommandInPrivate(
     parsedCommand?.command,
     funConfig,
@@ -260,6 +363,23 @@ export async function handleFunIncomingMessage(deps, ctx) {
 
   if (isCommand) {
     try {
+      // Comandos de mesa/social só no grupo
+      if (
+        isDm &&
+        parsedCommand?.command &&
+        FUN_PUBLIC_GROUP_COMMANDS.has(parsedCommand.command) &&
+        parsedCommand.command !== 'group_scope'
+      ) {
+        await reply(
+          [
+            'Esse comando é *só no grupo* (duelo, facção, social…).',
+            'No privado: jogos solo (`/bj`, `/crash`, `/roleta`, `/slot`), saldo, daily, rank…',
+            'Escolher grupo: `/grupo`',
+          ].join('\n')
+        );
+        return { handled: true, skipFlows: true, reason: 'dm-group-only-command' };
+      }
+
       const result = await routeFunCommand({
         text,
         funConfig,
@@ -294,10 +414,13 @@ export async function handleFunIncomingMessage(deps, ctx) {
         sock,
         identityMap,
         preferPrivate,
+        membershipService,
+        prefsRepository,
+        dmGroups: scope.dmGroups || null,
       });
 
-      // evento surpresa após atividade de comando
-      await maybeAutoEvent(Date.now());
+      // evento surpresa só em grupo
+      if (!isDm) await maybeAutoEvent(Date.now());
 
       const skipFlows = Boolean(funConfig.commandExclusive && result?.handled);
       return {

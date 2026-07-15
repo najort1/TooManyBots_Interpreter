@@ -8,7 +8,8 @@
   "rankLimit": 10,
   "announceLevelUp": true,
   "requireGroupWhitelist": true,
-  "allowDm": false,
+  "allowDm": true,
+  "dmCommandsOnly": true,
   "groupWhitelistJids": [
     "120363000000000000@g.us"
   ],
@@ -22,8 +23,8 @@
   "ollamaEnabled": true,
   "ollamaBaseUrl": "http://127.0.0.1:11434",
   "ollamaModel": "gemma4:latest",
-  "ollamaTimeoutMs": 8000,
-  "ollamaNumPredict": 72,
+  "ollamaTimeoutMs": 25000,
+  "ollamaNumPredict": 80,
   "ollamaTemperature": 0.85,
   "ollamaMaxChars": 160,
   "ollamaKeepAlive": -1,
