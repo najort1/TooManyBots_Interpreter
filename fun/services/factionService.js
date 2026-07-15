@@ -14,22 +14,18 @@ export function createFactionService({
     const cost = Math.max(0, Math.floor(Number(funConfig.factionCreateCost) || 50));
     const maxMembers = Math.max(2, Math.floor(Number(funConfig.factionMaxMembers) || 8));
 
-    if (cost > 0) {
-      const bal = repository.getUserStats(userJid, scopeKey)?.coins
-        ?? repository.ensureUserRow(userJid, scopeKey, now).coins;
-      if (bal < cost) {
-        return { ok: false, reason: 'insufficient-funds', coins: bal, cost };
-      }
+    if (factionRepository.getMember?.(scopeKey, userJid)) {
+      return { ok: false, reason: 'already-in-faction' };
     }
 
-    const created = factionRepository.createFaction({
-      scopeKey,
-      name,
-      leaderJid: userJid,
-      now,
-    });
-    if (!created.ok) return created;
+    const bal =
+      repository.getUserStats(userJid, scopeKey)?.coins
+      ?? repository.ensureUserRow(userJid, scopeKey, now).coins;
+    if (cost > 0 && bal < cost) {
+      return { ok: false, reason: 'insufficient-funds', coins: bal, cost };
+    }
 
+    // debita antes de criar; se create falhar (nome tomado), reembolsa
     if (cost > 0) {
       repository.addCoins({
         userJid,
@@ -38,6 +34,25 @@ export function createFactionService({
         now,
         reason: 'faction-create',
       });
+    }
+
+    const created = factionRepository.createFaction({
+      scopeKey,
+      name,
+      leaderJid: userJid,
+      now,
+    });
+    if (!created.ok) {
+      if (cost > 0) {
+        repository.addCoins({
+          userJid,
+          scopeKey,
+          amount: cost,
+          now,
+          reason: 'faction-create-refund',
+        });
+      }
+      return created;
     }
 
     return {

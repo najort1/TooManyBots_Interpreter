@@ -52,6 +52,10 @@ export function createRelationshipService({
       // pedido mútuo: aceita automaticamente
       actionRepository.deleteAction(reverse.id);
       const married = relationshipRepository.marry({ userJid: a, partnerJid: b, scopeKey: s, now });
+      if (married.ok) {
+        actionRepository.clearMarryInvolving?.({ scopeKey: s, userJid: a });
+        actionRepository.clearMarryInvolving?.({ scopeKey: s, userJid: b });
+      }
       return { ok: true, reason: 'mutual', married: true, result: married };
     }
 
@@ -85,6 +89,18 @@ export function createRelationshipService({
     });
     if (!pending) return { ok: false, reason: 'no-proposal' };
 
+    // revalida antes de casar (alvo/propositor pode ter casado entre o pedido e o /aceitar)
+    const uM = relationshipRepository.getMarriage(u, s);
+    if (uM) {
+      actionRepository.deleteAction(pending.id);
+      return { ok: false, reason: 'already-married', partnerJid: uM.partnerJid };
+    }
+    const fromM = relationshipRepository.getMarriage(pending.fromJid, s);
+    if (fromM) {
+      actionRepository.deleteAction(pending.id);
+      return { ok: false, reason: 'partner-married', partnerJid: fromM.partnerJid };
+    }
+
     const result = relationshipRepository.marry({
       userJid: pending.fromJid,
       partnerJid: u,
@@ -93,6 +109,9 @@ export function createRelationshipService({
     });
     actionRepository.deleteAction(pending.id);
     if (!result.ok) return result;
+    // limpa propostas residual (outros pretendentes envolvendo os recém-casados)
+    actionRepository.clearMarryInvolving?.({ scopeKey: s, userJid: u });
+    actionRepository.clearMarryInvolving?.({ scopeKey: s, userJid: pending.fromJid });
     return {
       ok: true,
       reason: 'ok',

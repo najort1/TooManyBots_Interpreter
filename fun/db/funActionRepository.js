@@ -149,12 +149,25 @@ export function createFunActionRepository({ getDatabase = getDb } = {}) {
     return rows.map(mapAction);
   }
 
+  /** Remove propostas marry em que o user é from ou to (após casar). */
+  function clearMarryInvolving({ scopeKey, userJid }) {
+    ensureSchema();
+    const db = getDatabase();
+    const s = String(scopeKey || '');
+    const u = String(userJid || '');
+    db.prepare(
+      `DELETE FROM ${ANALYTICS_SCHEMA}.fun_pending_actions
+       WHERE scope_key = ? AND action_type = ? AND (from_jid = ? OR to_jid = ?)`
+    ).run(s, 'marry', u, u);
+  }
+
   return {
     createAction,
     getLatestIncoming,
     deleteAction,
     deleteBetween,
     listOutgoing,
+    clearMarryInvolving,
     purgeExpired,
   };
 }
