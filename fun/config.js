@@ -140,6 +140,31 @@ export function normalizeFunConfig(input) {
     eventCrossWeight: Number.isFinite(Number(raw.eventCrossWeight))
       ? Math.max(0, Number(raw.eventCrossWeight))
       : DEFAULT_FUN_CONFIG.eventCrossWeight,
+    zenEnabled: normalizeBoolean(raw.zenEnabled, DEFAULT_FUN_CONFIG.zenEnabled),
+    zenBaseUrl: toText(raw.zenBaseUrl, DEFAULT_FUN_CONFIG.zenBaseUrl) || DEFAULT_FUN_CONFIG.zenBaseUrl,
+    zenModel: toText(raw.zenModel, DEFAULT_FUN_CONFIG.zenModel) || DEFAULT_FUN_CONFIG.zenModel,
+    zenTimeoutMs: normalizeInt(raw.zenTimeoutMs, DEFAULT_FUN_CONFIG.zenTimeoutMs, {
+      min: 500,
+      max: 120_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    flavorTimeoutMs: normalizeInt(raw.flavorTimeoutMs, DEFAULT_FUN_CONFIG.flavorTimeoutMs, {
+      min: 1000,
+      max: 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    zenMaxTokens: normalizeInt(raw.zenMaxTokens, DEFAULT_FUN_CONFIG.zenMaxTokens, {
+      min: 16,
+      max: 2000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    zenTemperature: Number.isFinite(Number(raw.zenTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.zenTemperature)))
+      : DEFAULT_FUN_CONFIG.zenTemperature,
+    zenApiKey: toText(raw.zenApiKey, DEFAULT_FUN_CONFIG.zenApiKey) || '',
     ollamaEnabled: normalizeBoolean(raw.ollamaEnabled, DEFAULT_FUN_CONFIG.ollamaEnabled),
     ollamaBaseUrl:
       toText(raw.ollamaBaseUrl, DEFAULT_FUN_CONFIG.ollamaBaseUrl) || DEFAULT_FUN_CONFIG.ollamaBaseUrl,
@@ -152,7 +177,7 @@ export function normalizeFunConfig(input) {
     }),
     ollamaNumPredict: normalizeInt(raw.ollamaNumPredict, DEFAULT_FUN_CONFIG.ollamaNumPredict, {
       min: 16,
-      max: 200,
+      max: 2000,
       rounding: 'floor',
       clamp: true,
     }),
@@ -161,7 +186,7 @@ export function normalizeFunConfig(input) {
       : DEFAULT_FUN_CONFIG.ollamaTemperature,
     ollamaMaxChars: normalizeInt(raw.ollamaMaxChars, DEFAULT_FUN_CONFIG.ollamaMaxChars, {
       min: 40,
-      max: 280,
+      max: 2000,
       rounding: 'floor',
       clamp: true,
     }),

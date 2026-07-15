@@ -265,14 +265,26 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   eventAutoSpawnChance: 0.028,
   eventHappyWeight: 0.5,
   eventCrossWeight: 0.5,
-  // Ollama — flavor de mensagens (nunca decide resultado de jogo)
+  // Flavor LLM — OpenCode Zen (principal) → Ollama (fallback) → template
+  // OpenCode Zen Proxy (OpenAI-compatible)
+  zenEnabled: true,
+  zenBaseUrl: 'http://127.0.0.1:3000',
+  // mimo-v2.5-free responde content direto; deepseek-free gasta tokens em reasoning
+  zenModel: 'mimo-v2.5-free',
+  zenTimeoutMs: 5_000,
+  zenMaxTokens: 400,
+  /** Orçamento total Zen→Ollama→template por resposta de flavor (ms). */
+  flavorTimeoutMs: 6_000,
+  zenTemperature: 0.85,
+  zenApiKey: '',
+  // Ollama local (fallback)
   ollamaEnabled: true,
   ollamaBaseUrl: 'http://127.0.0.1:11434',
   ollamaModel: 'gemma4:latest',
-  ollamaTimeoutMs: 25_000,
-  ollamaNumPredict: 80,
+  ollamaTimeoutMs: 5_000,
+  ollamaNumPredict: 400,
   ollamaTemperature: 0.85,
-  ollamaMaxChars: 160,
+  ollamaMaxChars: 1000,
   // -1 = modelo fica carregado até o Ollama reiniciar / outro unload
   ollamaKeepAlive: -1,
   ollamaWarmupOnBoot: true,

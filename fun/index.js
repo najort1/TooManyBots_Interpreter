@@ -275,3 +275,4 @@ export {
 } from './services/levelCurve.js';
 export { createFlavorService } from './llm/flavorService.js';
 export { ollamaGenerate, ollamaPing, ollamaWarmup, ollamaTouch } from './llm/ollamaClient.js';
+export { openaiChatComplete, openaiPing } from './llm/openaiClient.js';

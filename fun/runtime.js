@@ -161,22 +161,31 @@ export async function startFunBot(options = {}) {
   });
   funModule.init();
 
-  // Pré-aquece Ollama no boot: load VRAM + keep_alive=-1 (sem cold start no 1º /cf)
-  if (config.ollamaEnabled !== false && config.ollamaWarmupOnBoot !== false) {
+  // Flavor: Zen (principal) + Ollama (fallback local)
+  const zenOn = config.zenEnabled !== false;
+  const ollamaOn = config.ollamaEnabled !== false;
+  if (zenOn) {
+    console.log(
+      `[fun] Flavor LLM: Zen principal → ${config.zenBaseUrl || 'http://127.0.0.1:3000'} · model=${config.zenModel || 'deepseek-v4-flash-free'}`
+    );
+  }
+  if (ollamaOn && config.ollamaWarmupOnBoot !== false) {
     const model = config.ollamaModel || 'gemma4:latest';
-    console.log(`[fun] Aquecendo Ollama (${model})…`);
+    console.log(`[fun] Aquecendo Ollama fallback (${model})…`);
     try {
       const warm = await funModule.warmupLlm();
       if (warm?.ok) {
-        console.log(`[fun] Ollama pronto em ${warm.ms}ms — modelo residente (keep_alive)`);
+        console.log(`[fun] Ollama pronto em ${warm.ms}ms — fallback residente`);
       } else {
         console.warn(
-          `[fun] Ollama warmup falhou (${warm?.reason || 'erro'}). Flavor usa fallback até o modelo subir.`
+          `[fun] Ollama warmup falhou (${warm?.reason || 'erro'}). Fallback local sob demanda / template.`
         );
       }
     } catch (err) {
       console.warn(`[fun] Ollama warmup erro: ${err?.message || err}`);
     }
+  } else if (!zenOn && !ollamaOn) {
+    console.log('[fun] Flavor LLM desligado — só templates estáticos');
   }
 
   process.once('exit', () => {
