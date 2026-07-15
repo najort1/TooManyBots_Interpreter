@@ -177,6 +177,64 @@ export function buildFunSchemaSql() {
       key   TEXT PRIMARY KEY,
       value TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_jackpot (
+      scope_key   TEXT PRIMARY KEY,
+      pot         INTEGER NOT NULL DEFAULT 0,
+      updated_at  INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_casino_stats (
+      user_jid    TEXT    NOT NULL,
+      scope_key   TEXT    NOT NULL,
+      wagered     INTEGER NOT NULL DEFAULT 0,
+      won         INTEGER NOT NULL DEFAULT 0,
+      lost        INTEGER NOT NULL DEFAULT 0,
+      games       INTEGER NOT NULL DEFAULT 0,
+      updated_at  INTEGER NOT NULL,
+      PRIMARY KEY (user_jid, scope_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_casino_stats_scope
+      ON fun_casino_stats(scope_key, won DESC, lost ASC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_casino_sessions (
+      id          TEXT PRIMARY KEY,
+      scope_key   TEXT    NOT NULL,
+      user_jid    TEXT    NOT NULL,
+      kind        TEXT    NOT NULL,
+      stake       INTEGER NOT NULL DEFAULT 0,
+      state_json  TEXT    NOT NULL DEFAULT '{}',
+      expires_at  INTEGER NOT NULL,
+      created_at  INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_casino_sessions_user
+      ON fun_casino_sessions(scope_key, user_jid, kind, expires_at);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_casino_cooldowns (
+      user_jid    TEXT    NOT NULL,
+      scope_key   TEXT    NOT NULL,
+      game        TEXT    NOT NULL,
+      last_at     INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_jid, scope_key, game)
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_tournaments (
+      id            TEXT PRIMARY KEY,
+      scope_key     TEXT    NOT NULL,
+      entry_fee     INTEGER NOT NULL DEFAULT 0,
+      status        TEXT    NOT NULL DEFAULT 'open',
+      players_json  TEXT    NOT NULL DEFAULT '[]',
+      bracket_json  TEXT    NOT NULL DEFAULT '{}',
+      pot           INTEGER NOT NULL DEFAULT 0,
+      winner_jid    TEXT    NOT NULL DEFAULT '',
+      created_at    INTEGER NOT NULL,
+      updated_at    INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_tournaments_scope
+      ON fun_tournaments(scope_key, status, updated_at DESC);
   `;
 }
 
