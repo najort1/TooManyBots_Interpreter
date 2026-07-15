@@ -114,7 +114,7 @@ export async function ollamaGenerate({
   prompt,
   system = '',
   timeoutMs = 25_000,
-  numPredict = 80,
+  numPredict = 400,
   temperature = 0.85,
   keepAlive = -1,
   think = false,
@@ -135,7 +135,7 @@ export async function ollamaGenerate({
       keep_alive: normalizeKeepAlive(keepAlive, -1),
       options: {
         temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.85,
-        num_predict: Math.max(16, Math.min(200, Math.floor(Number(numPredict) || 80))),
+        num_predict: Math.max(16, Math.min(2000, Math.floor(Number(numPredict) || 400))),
       },
     };
 
