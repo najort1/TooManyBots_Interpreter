@@ -7,6 +7,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "fun": "node fun/start.js",
+    "fun:dev": "node --watch fun/start.js",
     "test": "node --test --import ./tests/test-env-setup.js tests/*.test.js",
     "dashboard:dev": "npm --prefix tmb_dashboard run dev",
     "dashboard:build": "npm --prefix tmb_dashboard run build",

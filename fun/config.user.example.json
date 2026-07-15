@@ -1,0 +1,22 @@
+{
+  "prefix": "/",
+  "cooldownMs": 60000,
+  "xpMin": 15,
+  "xpMax": 25,
+  "dailyXp": 150,
+  "dailyCoins": 50,
+  "rankLimit": 10,
+  "announceLevelUp": true,
+  "requireGroupWhitelist": true,
+  "allowDm": false,
+  "groupWhitelistJids": [
+    "120363000000000000@g.us"
+  ],
+  "rankCardImage": true,
+  "dashboardEnabled": true,
+  "dashboardHost": "127.0.0.1",
+  "dashboardPort": 8790,
+  "debugMode": false,
+  "logLevel": "info",
+  "dataDir": "./data/fun"
+}

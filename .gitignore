@@ -10,6 +10,7 @@ AGENTS.md
 GEMINI.md
 plano.md
 config.user.json
+fun/config.user.json
 data/
 /bots
 *.tmb
