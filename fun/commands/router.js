@@ -46,6 +46,7 @@ import {
   handleRankCasinoCommand,
 } from './handlers/casino.js';
 import { handleGroupScopeCommand } from './handlers/groupScope.js';
+import { handleStickerCommand } from './handlers/sticker.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -118,6 +119,11 @@ export async function routeFunCommand(ctx) {
     membershipService,
     prefsRepository,
     dmGroups,
+    rawMessage,
+    messageType,
+    mediaMimeType,
+    replySticker,
+    getLogger,
   } = ctx;
 
   const parsed = parseFunCommand(text, funConfig.prefix);
@@ -160,6 +166,11 @@ export async function routeFunCommand(ctx) {
     membershipService,
     prefsRepository,
     groups: dmGroups || null,
+    rawMessage: rawMessage || null,
+    messageType: messageType || '',
+    mediaMimeType: mediaMimeType || '',
+    replySticker,
+    getLogger,
   };
 
   switch (parsed.command) {
@@ -242,6 +253,8 @@ export async function routeFunCommand(ctx) {
       return handleRankCasinoCommand(base);
     case FUN_COMMANDS.GROUP_SCOPE:
       return handleGroupScopeCommand(base);
+    case FUN_COMMANDS.STICKER:
+      return handleStickerCommand(base);
     default:
       return { handled: false };
   }

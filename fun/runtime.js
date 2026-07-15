@@ -17,7 +17,7 @@ import path from 'path';
 import { initDb, getContactDisplayName, upsertContactDisplayName } from '../db/index.js';
 import { useSqliteAuthState } from '../db/authState.js';
 import { parseMessage } from '../engine/messageParser.js';
-import { sendTextMessage, sendImageMessage } from '../engine/sender.js';
+import { sendTextMessage, sendImageMessage, sendStickerMessage } from '../engine/sender.js';
 import { resolveIncomingActorJid } from '../runtime/contactUtils.js';
 import { createInstanceLock } from '../runtime/instanceLock.js';
 import { createReconnectController } from '../runtime/reconnectController.js';
@@ -156,6 +156,7 @@ export async function startFunBot(options = {}) {
     getLogger: () => logger,
     sendText: sendTextMessage,
     sendImage: sendImageMessage,
+    sendSticker: sendStickerMessage,
     getContactDisplayName,
   });
   funModule.init();
@@ -256,11 +257,13 @@ export async function startFunBot(options = {}) {
       isGroup: Boolean(parsed.isGroup),
       text: parsed.text ?? '',
       messageType: parsed.messageType || '',
+      mediaMimeType: parsed.mediaMimeType || '',
       messageId: parsed.id || '',
       messageKey: parsed.messageKey || msg?.key,
       mentionedJids,
       quotedParticipant,
       parsed,
+      rawMessage: msg,
     });
   }
 

@@ -27,7 +27,7 @@ import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
 import { getDb } from '../db/context.js';
-import { sendTextMessage, sendImageMessage } from '../engine/sender.js';
+import { sendTextMessage, sendImageMessage, sendStickerMessage } from '../engine/sender.js';
 import { getContactDisplayName, listContactDisplayNames } from '../db/index.js';
 import { createIdentityMap } from './utils/identity.js';
 
@@ -41,6 +41,7 @@ export function createFunModule(deps = {}) {
   const getDatabase = deps.getDatabase || getDb;
   const sendText = deps.sendText || sendTextMessage;
   const sendImage = deps.sendImage || sendImageMessage;
+  const sendSticker = deps.sendSticker || sendStickerMessage;
   const resolveContactName = deps.getContactDisplayName || getContactDisplayName;
   const resolveContactList = deps.listContacts || (() => listContactDisplayNames(5000));
   const resolveWhitelist =
@@ -174,6 +175,7 @@ export function createFunModule(deps = {}) {
         listContacts: resolveContactList,
         sendText,
         sendImage,
+        sendSticker,
         getGroupWhitelistJids: resolveWhitelist,
         getLogger,
         identityMap,
@@ -187,10 +189,12 @@ export function createFunModule(deps = {}) {
         isGroup: Boolean(ctx.isGroup ?? ctx.parsed?.isGroup),
         text: ctx.text ?? ctx.parsed?.text ?? '',
         messageType: ctx.messageType ?? ctx.parsed?.messageType ?? '',
+        mediaMimeType: ctx.mediaMimeType ?? ctx.parsed?.mediaMimeType ?? '',
         messageId: ctx.messageId ?? ctx.parsed?.id ?? '',
         messageKey: ctx.messageKey ?? ctx.parsed?.messageKey,
         mentionedJids: ctx.mentionedJids || ctx.parsed?.mentionedJids || [],
         quotedParticipant: ctx.quotedParticipant || '',
+        rawMessage: ctx.rawMessage || ctx.msg || null,
         appConfig: funConfig,
       }
     );

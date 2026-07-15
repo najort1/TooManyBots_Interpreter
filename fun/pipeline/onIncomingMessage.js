@@ -95,6 +95,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     listContacts,
     sendText,
     sendImage,
+    sendSticker,
     getGroupWhitelistJids,
     getLogger,
     identityMap,
@@ -109,9 +110,11 @@ export async function handleFunIncomingMessage(deps, ctx) {
     isGroup,
     text,
     messageType,
+    mediaMimeType = '',
     appConfig,
     mentionedJids = [],
     quotedParticipant = '',
+    rawMessage = null,
   } = ctx;
 
   if (!funConfig?.enabled) {
@@ -336,6 +339,14 @@ export async function handleFunIncomingMessage(deps, ctx) {
     }
   };
 
+  /** Figurinha sempre no chat atual (grupo ou DM), não no “modo privado de rank”. */
+  const replySticker = async (stickerBuffer) => {
+    if (typeof sendSticker !== 'function') {
+      throw new Error('sticker-sender-unavailable');
+    }
+    await sendSticker(sock, chatJid, stickerBuffer);
+  };
+
   /** Sorteio de evento pelo bot — anúncio sempre no grupo. */
   async function maybeAutoEvent(now = Date.now()) {
     if (!isGroup || !eventService?.tryAutoSpawn) return null;
@@ -408,6 +419,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
         replyPrivate,
         replyToChat,
         replyImage,
+        replySticker,
         mentionedJids,
         quotedParticipant,
         effectiveRates,
@@ -417,6 +429,10 @@ export async function handleFunIncomingMessage(deps, ctx) {
         membershipService,
         prefsRepository,
         dmGroups: scope.dmGroups || null,
+        rawMessage,
+        messageType,
+        mediaMimeType: mediaMimeType || ctx.mediaMimeType || '',
+        getLogger,
       });
 
       // evento surpresa só em grupo

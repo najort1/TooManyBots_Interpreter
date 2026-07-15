@@ -43,6 +43,8 @@ export const FUN_COMMANDS = Object.freeze({
   RANK_CASINO: 'rankcasino',
   // DM / escopo
   GROUP_SCOPE: 'group_scope',
+  // Mídia
+  STICKER: 'sticker',
 });
 
 /**
@@ -159,6 +161,10 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   group: FUN_COMMANDS.GROUP_SCOPE,
   grupos: FUN_COMMANDS.GROUP_SCOPE,
   meugrupo: FUN_COMMANDS.GROUP_SCOPE,
+  fig: FUN_COMMANDS.STICKER,
+  figurinha: FUN_COMMANDS.STICKER,
+  sticker: FUN_COMMANDS.STICKER,
+  s: FUN_COMMANDS.STICKER,
   aposta: FUN_COMMANDS.BET,
   bet: FUN_COMMANDS.BET,
   apostar: FUN_COMMANDS.BET,
