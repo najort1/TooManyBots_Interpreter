@@ -124,6 +124,51 @@ export function parseMessage(msg) {
     };
   }
 
+  if (content.videoMessage) {
+    return {
+      id: msg.key.id,
+      jid,
+      isGroup,
+      messageKey,
+      messageType: content.videoMessage.gifPlayback ? 'gif' : 'video',
+      mediaMimeType: String(content.videoMessage.mimetype || '').trim(),
+      mediaFileName: String(content.videoMessage.fileName || '').trim(),
+      text: content.videoMessage.caption ?? '',
+      listId: null,
+    };
+  }
+
+  if (content.stickerMessage) {
+    return {
+      id: msg.key.id,
+      jid,
+      isGroup,
+      messageKey,
+      messageType: 'sticker',
+      mediaMimeType: String(content.stickerMessage.mimetype || 'image/webp').trim(),
+      mediaFileName: '',
+      text: '',
+      listId: null,
+    };
+  }
+
+  if (content.documentMessage) {
+    const mime = String(content.documentMessage.mimetype || '').trim().toLowerCase();
+    const isImage = mime.startsWith('image/');
+    const isVideo = mime.startsWith('video/') || mime === 'image/gif';
+    return {
+      id: msg.key.id,
+      jid,
+      isGroup,
+      messageKey,
+      messageType: isImage ? 'document-image' : isVideo ? 'document-video' : 'document',
+      mediaMimeType: String(content.documentMessage.mimetype || '').trim(),
+      mediaFileName: String(content.documentMessage.fileName || '').trim(),
+      text: content.documentMessage.caption ?? content.documentMessage.title ?? '',
+      listId: null,
+    };
+  }
+
   // ── Outros tipos ainda não suportados no parser ────────────────────────────────────
   return {
     id: msg.key.id,

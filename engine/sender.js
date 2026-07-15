@@ -32,6 +32,21 @@ export async function sendImageMessage(sock, jid, { imageBuffer, caption = '', m
   await sock.sendMessage(jid, payload, withSendSource(options, 'service'));
 }
 
+/**
+ * Envia figurinha (WebP estático ou animado).
+ * @param {Buffer} stickerBuffer
+ */
+export async function sendStickerMessage(sock, jid, stickerBuffer, options = undefined) {
+  if (!stickerBuffer || !Buffer.isBuffer(stickerBuffer) || stickerBuffer.length === 0) {
+    throw new Error('sticker-buffer-invalid');
+  }
+  await sock.sendMessage(
+    jid,
+    { sticker: stickerBuffer },
+    withSendSource(options, 'service')
+  );
+}
+
 export async function sendBroadcastMessage(sock, jid, message, options = undefined) {
   if (!message || typeof message !== 'object') {
     throw new Error('Mensagem de broadcast invalida');
