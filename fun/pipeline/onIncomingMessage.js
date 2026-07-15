@@ -1,7 +1,23 @@
-import { isFunCommandText, routeFunCommand } from '../commands/router.js';
+import { isFunCommandText, parseFunCommand, routeFunCommand } from '../commands/router.js';
 import { formatLevelUp } from '../formatters/rankCard.js';
 import { isUserJid } from '../../runtime/contactUtils.js';
 import { getFunGroupWhitelistSet } from '../config.js';
+import { FUN_PUBLIC_GROUP_COMMANDS } from '../constants.js';
+
+/**
+ * Com replyCommandsInPrivate: manda no DM, exceto duelo/aposta/facção/social.
+ * @param {string|null|undefined} command
+ * @param {object} funConfig
+ * @param {boolean} isGroup
+ */
+export function shouldReplyCommandInPrivate(command, funConfig, isGroup) {
+  if (!isGroup) return false;
+  if (!funConfig?.replyCommandsInPrivate) return false;
+  const cmd = String(command || '').trim();
+  if (!cmd) return false;
+  if (FUN_PUBLIC_GROUP_COMMANDS.has(cmd)) return false;
+  return true;
+}
 
 /**
  * Elegibilidade de escopo (MVP: só grupos na whitelist do Fun; sem DM).
@@ -69,6 +85,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     bridgeService,
     missionService,
     eventService,
+    casinoService,
     socialHooks,
     flavorService,
     getContactDisplayName,
@@ -112,9 +129,14 @@ export async function handleFunIncomingMessage(deps, ctx) {
     return { handled: false, skipFlows: false, reason: scope.reason };
   }
 
-  const userJid = String(actorJid || '').trim();
+  let userJid = String(actorJid || '').trim();
   if (!userJid || !isUserJid(userJid)) {
     return { handled: false, skipFlows: false, reason: 'no-actor' };
+  }
+  // Prefer PN canônico para DM (mapa lid→pn se existir)
+  if (identityMap?.resolve) {
+    const resolved = String(identityMap.resolve(userJid) || '').trim();
+    if (resolved && isUserJid(resolved)) userJid = resolved;
   }
 
   const effectiveRates =
@@ -137,9 +159,15 @@ export async function handleFunIncomingMessage(deps, ctx) {
   }
 
   const prefix = funConfig.prefix || '/';
-  const isCommand = isFunCommandText(text, prefix);
+  const parsedCommand = parseFunCommand(text, prefix);
+  const isCommand = parsedCommand != null;
+  const preferPrivate = shouldReplyCommandInPrivate(
+    parsedCommand?.command,
+    funConfig,
+    isGroup
+  );
 
-  const reply = async (body) => {
+  const replyToChat = async (body) => {
     if (typeof sendText !== 'function') return;
     const content = String(body || '').trim();
     if (!content) return;
@@ -152,17 +180,83 @@ export async function handleFunIncomingMessage(deps, ctx) {
     const content = String(body || '').trim();
     if (!content) return;
     const target = userJid || chatJid;
+    if (!target || target === chatJid || String(target).endsWith('@g.us')) {
+      throw new Error('no-private-target');
+    }
     await sendText(sock, target, content);
+  };
+
+  /**
+   * Resposta padrão de comando: DM se replyCommandsInPrivate e o comando
+   * não for público (aposta/facção/social). Fallback pro grupo se DM falhar.
+   */
+  const reply = async (body) => {
+    if (!preferPrivate) {
+      await replyToChat(body);
+      return;
+    }
+    try {
+      await replyPrivate(body);
+    } catch (err) {
+      getLogger?.()?.warn?.(
+        {
+          err: { message: err?.message || 'dm-failed' },
+          userJid,
+          chatJid,
+          command: parsedCommand?.command,
+        },
+        'Fun: falha no DM — caindo pro grupo'
+      );
+      await replyToChat(body);
+    }
   };
 
   const replyImage = async (imageBuffer, caption = '') => {
     if (typeof sendImage !== 'function') return;
-    await sendImage(sock, chatJid, {
-      imageBuffer,
-      caption: String(caption || ''),
-      mimeType: 'image/png',
-    });
+    const target = preferPrivate ? userJid || chatJid : chatJid;
+    try {
+      await sendImage(sock, target, {
+        imageBuffer,
+        caption: String(caption || ''),
+        mimeType: 'image/png',
+      });
+    } catch {
+      if (preferPrivate && target !== chatJid) {
+        await sendImage(sock, chatJid, {
+          imageBuffer,
+          caption: String(caption || ''),
+          mimeType: 'image/png',
+        });
+      } else {
+        throw new Error('reply-image-failed');
+      }
+    }
   };
+
+  /** Sorteio de evento pelo bot — anúncio sempre no grupo. */
+  async function maybeAutoEvent(now = Date.now()) {
+    if (!isGroup || !eventService?.tryAutoSpawn) return null;
+    try {
+      const spawned = eventService.tryAutoSpawn({
+        scopeKey: scope.scopeKey,
+        funConfig,
+        now,
+      });
+      if (!spawned?.ok) return null;
+      const msg =
+        typeof eventService.formatAnnouncement === 'function'
+          ? eventService.formatAnnouncement(spawned)
+          : '';
+      if (msg) await replyToChat(msg);
+      return spawned;
+    } catch (err) {
+      getLogger?.()?.debug?.(
+        { err: { message: err?.message || 'auto-event' } },
+        'Fun auto-event failed'
+      );
+      return null;
+    }
+  }
 
   if (isCommand) {
     try {
@@ -185,19 +279,25 @@ export async function handleFunIncomingMessage(deps, ctx) {
         bridgeService,
         missionService,
         eventService,
+        casinoService,
         socialHooks,
         flavorService,
         getContactDisplayName,
         listContacts,
         reply,
         replyPrivate,
+        replyToChat,
         replyImage,
         mentionedJids,
         quotedParticipant,
         effectiveRates,
         sock,
         identityMap,
+        preferPrivate,
       });
+
+      // evento surpresa após atividade de comando
+      await maybeAutoEvent(Date.now());
 
       const skipFlows = Boolean(funConfig.commandExclusive && result?.handled);
       return {
@@ -271,6 +371,11 @@ export async function handleFunIncomingMessage(deps, ctx) {
         }
       }
       await reply(text);
+    }
+
+    // evento surpresa em mensagem normal do grupo (baixa chance + cooldown)
+    if (award.applied) {
+      await maybeAutoEvent(now);
     }
 
     return {

@@ -141,6 +141,13 @@ export async function startFunBot(options = {}) {
 
   await initDb();
   console.log(`[fun] Banco isolado em: ${dataDir}`);
+  console.log(
+    `[fun] Respostas de comando: ${
+      config.replyCommandsInPrivate !== false
+        ? 'PRIVADO (exceções: aposta/facção/social)'
+        : 'GRUPO'
+    }`
+  );
 
   const getConfig = () => config;
 
@@ -152,6 +159,32 @@ export async function startFunBot(options = {}) {
     getContactDisplayName,
   });
   funModule.init();
+
+  // Pré-aquece Ollama no boot: load VRAM + keep_alive=-1 (sem cold start no 1º /cf)
+  if (config.ollamaEnabled !== false && config.ollamaWarmupOnBoot !== false) {
+    const model = config.ollamaModel || 'gemma4:latest';
+    console.log(`[fun] Aquecendo Ollama (${model})…`);
+    try {
+      const warm = await funModule.warmupLlm();
+      if (warm?.ok) {
+        console.log(`[fun] Ollama pronto em ${warm.ms}ms — modelo residente (keep_alive)`);
+      } else {
+        console.warn(
+          `[fun] Ollama warmup falhou (${warm?.reason || 'erro'}). Flavor usa fallback até o modelo subir.`
+        );
+      }
+    } catch (err) {
+      console.warn(`[fun] Ollama warmup erro: ${err?.message || err}`);
+    }
+  }
+
+  process.once('exit', () => {
+    try {
+      funModule.stopLlmKeepAlive?.();
+    } catch {
+      // ignore
+    }
+  });
 
   let socketGeneration = 0;
   let currentSocket = null;

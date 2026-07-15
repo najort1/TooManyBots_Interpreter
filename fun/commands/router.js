@@ -31,6 +31,19 @@ import {
   handleSquadCommand,
   handleEventCommand,
 } from './handlers/mission.js';
+import {
+  handleRouletteCommand,
+  handleSlotCommand,
+  handleJackpotCommand,
+  handleDiceDuelCommand,
+  handleCrashCommand,
+  handleCashoutCommand,
+  handleBlackjackCommand,
+  handleHitCommand,
+  handleStandCommand,
+  handleTournamentCommand,
+  handleRankCasinoCommand,
+} from './handlers/casino.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -83,12 +96,14 @@ export async function routeFunCommand(ctx) {
     bridgeService,
     missionService,
     eventService,
+    casinoService,
     socialHooks,
     flavorService,
     getContactDisplayName,
     listContacts,
     reply,
     replyPrivate,
+    replyToChat,
     replyImage,
     mentionedJids,
     quotedParticipant,
@@ -97,6 +112,7 @@ export async function routeFunCommand(ctx) {
     identityMap,
     chatJid,
     isGroup,
+    preferPrivate,
   } = ctx;
 
   const parsed = parseFunCommand(text, funConfig.prefix);
@@ -120,12 +136,14 @@ export async function routeFunCommand(ctx) {
     bridgeService,
     missionService,
     eventService,
+    casinoService,
     socialHooks,
     flavorService,
     getContactDisplayName,
     listContacts,
     reply,
     replyPrivate: replyPrivate || reply,
+    replyToChat: replyToChat || reply,
     replyImage,
     args: parsed.args,
     mentionedJids: mentionedJids || [],
@@ -133,6 +151,7 @@ export async function routeFunCommand(ctx) {
     effectiveRates,
     sock,
     identityMap,
+    preferPrivate: Boolean(preferPrivate),
   };
 
   switch (parsed.command) {
@@ -189,6 +208,28 @@ export async function routeFunCommand(ctx) {
       return handleSquadCommand(base);
     case FUN_COMMANDS.EVENT:
       return handleEventCommand(base);
+    case FUN_COMMANDS.ROULETTE:
+      return handleRouletteCommand(base);
+    case FUN_COMMANDS.SLOT:
+      return handleSlotCommand(base);
+    case FUN_COMMANDS.JACKPOT:
+      return handleJackpotCommand(base);
+    case FUN_COMMANDS.DICE_DUEL:
+      return handleDiceDuelCommand(base);
+    case FUN_COMMANDS.CRASH:
+      return handleCrashCommand(base);
+    case FUN_COMMANDS.CASHOUT:
+      return handleCashoutCommand(base);
+    case FUN_COMMANDS.BLACKJACK:
+      return handleBlackjackCommand(base);
+    case FUN_COMMANDS.HIT:
+      return handleHitCommand(base);
+    case FUN_COMMANDS.STAND:
+      return handleStandCommand(base);
+    case FUN_COMMANDS.TOURNAMENT:
+      return handleTournamentCommand(base);
+    case FUN_COMMANDS.RANK_CASINO:
+      return handleRankCasinoCommand(base);
     default:
       return { handled: false };
   }

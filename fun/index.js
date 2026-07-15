@@ -19,6 +19,8 @@ import { createBridgeService } from './services/bridgeService.js';
 import { createFactionService } from './services/factionService.js';
 import { createMissionService } from './services/missionService.js';
 import { createEventService } from './services/eventService.js';
+import { createCasinoService } from './services/casinoService.js';
+import { createFunCasinoRepository } from './db/funCasinoRepository.js';
 import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
@@ -53,6 +55,7 @@ export function createFunModule(deps = {}) {
   const socialRepository = createFunSocialRepository({ getDatabase });
   const missionRepository = createFunMissionRepository({ getDatabase });
   const eventRepository = createFunEventRepository({ getDatabase });
+  const casinoRepository = createFunCasinoRepository({ getDatabase });
 
   const xpService = createXpService({ repository });
   const rankService = createRankService({ repository });
@@ -66,6 +69,13 @@ export function createFunModule(deps = {}) {
     repository,
     actionRepository,
     effectsRepository,
+  });
+  const casinoService = createCasinoService({
+    repository,
+    actionRepository,
+    casinoRepository,
+    effectsRepository,
+    eventRepository,
   });
   const shopService = createShopService({
     repository,
@@ -149,6 +159,7 @@ export function createFunModule(deps = {}) {
         bridgeService,
         missionService,
         eventService,
+        casinoService,
         socialHooks,
         flavorService,
         getContactDisplayName: resolveContactName,
@@ -175,9 +186,34 @@ export function createFunModule(deps = {}) {
     );
   }
 
+  /**
+   * Carrega gemma (ou modelo configurado) na memória do Ollama e inicia refresh.
+   * Custo no boot; comandos só geram texto (sem cold start).
+   */
+  async function warmupLlm() {
+    const funConfig = resolveFunConfig(getConfig() || {});
+    if (!funConfig.ollamaEnabled) {
+      return { ok: false, reason: 'disabled' };
+    }
+    const result = await flavorService.warmup();
+    if (result?.ok !== false) {
+      flavorService.startKeepAliveLoop?.();
+    } else {
+      // mesmo com falha, tenta loop — pode recuperar depois
+      flavorService.startKeepAliveLoop?.();
+    }
+    return result;
+  }
+
+  function stopLlmKeepAlive() {
+    flavorService.stopKeepAliveLoop?.();
+  }
+
   return {
     init,
     onIncomingMessage,
+    warmupLlm,
+    stopLlmKeepAlive,
     identityMap,
     _services: {
       repository,
@@ -196,6 +232,8 @@ export function createFunModule(deps = {}) {
       bridgeService,
       missionService,
       eventService,
+      casinoService,
+      casinoRepository,
       socialHooks,
       flavorService,
       identityMap,
@@ -220,4 +258,4 @@ export {
   progressInLevel,
 } from './services/levelCurve.js';
 export { createFlavorService } from './llm/flavorService.js';
-export { ollamaGenerate, ollamaPing } from './llm/ollamaClient.js';
+export { ollamaGenerate, ollamaPing, ollamaWarmup, ollamaTouch } from './llm/ollamaClient.js';
