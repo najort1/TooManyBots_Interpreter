@@ -1,4 +1,4 @@
-import test from 'node:test';
+﻿import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { initDb } from '../db/index.js';
@@ -49,7 +49,7 @@ function uniqueGroup() {
   return `120363${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 90 + 10)}@g.us`;
 }
 
-// ─── Curva ───────────────────────────────────────────────────────────────────
+// â”€â”€â”€ Curva â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 test('levelCurve: xpToNext e totalXpForLevel consistentes', () => {
   assert.equal(xpToNext(1), 100);
@@ -76,7 +76,7 @@ test('parseFunCommand: pay/marry/ship aliases', () => {
   assert.equal(isFunCommandText('/rank'), true);
 });
 
-// ─── award / cooldown / leaderboard / daily ──────────────────────────────────
+// â”€â”€â”€ award / cooldown / leaderboard / daily â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 test('awardXp cooldown e level-up', () => {
   const repo = createFunStatsRepository({ getDatabase: getDb });
@@ -121,7 +121,7 @@ test('claimDaily streak', () => {
   assert.equal(next.dailyStreak, 2);
 });
 
-// ─── Coins / pay ─────────────────────────────────────────────────────────────
+// â”€â”€â”€ Coins / pay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 test('transferCoins: pay entre users', () => {
   const repo = createFunStatsRepository({ getDatabase: getDb });
@@ -142,7 +142,7 @@ test('transferCoins: pay entre users', () => {
   assert.equal(coins.getBalance(to, scopeKey), 40);
 });
 
-// ─── Marry / ship ────────────────────────────────────────────────────────────
+// â”€â”€â”€ Marry / ship â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 test('marry com proposta aceitar/recusar + ship', () => {
   const relRepo = createFunRelationshipRepository({ getDatabase: getDb });
@@ -199,7 +199,7 @@ test('rank coins e jogos solo/aposta', () => {
   assert.equal(coinsBoard[0].userJid, a);
   assert.equal(rank.getUserCoinsRankPosition(b, scopeKey).rank, 2);
 
-  // random 0.1 < 0.5 → cai no lado escolhido
+  // random 0.1 < 0.5 â†’ cai no lado escolhido
   const flip = games.soloFlip({
     userJid: a,
     scopeKey,
@@ -213,7 +213,7 @@ test('rank coins e jogos solo/aposta', () => {
   assert.equal(flip.side, 'cara');
   assert.equal(flip.win, flip.side === flip.pick);
 
-  // random 0.9 >= 0.5 → cai no oposto
+  // random 0.9 >= 0.5 â†’ cai no oposto
   const gamesLose = createGameService({
     repository: repo,
     actionRepository: actRepo,
@@ -266,7 +266,7 @@ test('rank coins e jogos solo/aposta', () => {
   assert.ok(accepted.pot === 30);
 });
 
-test('P0 facções, ponte, missão e evento', () => {
+test('P0 facÃ§Ãµes, ponte, missÃ£o e evento', () => {
   const repo = createFunStatsRepository({ getDatabase: getDb });
   repo.ensureFunSchema();
   const factionRepo = createFunFactionRepository({ getDatabase: getDb });
@@ -386,7 +386,7 @@ test('loja: compra boost e gasta coins', () => {
 
 
 
-// ─── Group settings ──────────────────────────────────────────────────────────
+// â”€â”€â”€ Group settings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 test('fun_group_settings override rates', () => {
   const groups = createFunGroupRepository({ getDatabase: getDb });
@@ -416,7 +416,7 @@ test('fun_group_settings override rates', () => {
   assert.equal(eff.rankLimit, 5);
 });
 
-// ─── Rank card PNG ───────────────────────────────────────────────────────────
+// â”€â”€â”€ Rank card PNG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 test('rank card PNG valido', () => {
   const tiny = encodePngRgb(2, 2, Buffer.from([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]));
@@ -436,7 +436,7 @@ test('rank card PNG valido', () => {
   assert.ok(png.length > 200);
 });
 
-// ─── Facade integration ──────────────────────────────────────────────────────
+// â”€â”€â”€ Facade integration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 test('pay resolve LID mention para PN real', async () => {
   const {
@@ -461,7 +461,7 @@ test('pay resolve LID mention para PN real', async () => {
   map.remember(lid, pn);
   assert.equal(map.resolve(lid), pn);
   assert.equal(map.resolve('281350775005409'), pn);
-  // LID disfarçado de user jid
+  // LID disfarÃ§ado de user jid
   map.remember('281350775005409@s.whatsapp.net', pn);
   assert.equal(map.resolve('281350775005409@s.whatsapp.net'), pn);
 
@@ -499,7 +499,7 @@ test('pay resolve LID mention para PN real', async () => {
 
 test('facade: pay, rank image path, group rates', async () => {
   const groupJid = uniqueGroup();
-  // JIDs curtos estilo BR para não cair na heurística de LID opaco
+  // JIDs curtos estilo BR para nÃ£o cair na heurÃ­stica de LID opaco
   const userA = `5511999${String(Date.now()).slice(-6)}01@s.whatsapp.net`;
   const userB = `5511888${String(Date.now()).slice(-6)}02@s.whatsapp.net`;
   const sent = [];
@@ -628,20 +628,20 @@ test('ollama config defaults + flavorService fallback', async () => {
 
   const { createFlavorService } = await import('../fun/llm/flavorService.js');
 
-  // offline / disabled → fallback sem chamar generate
+  // offline / disabled â†’ fallback sem chamar generate
   let calls = 0;
   const offline = createFlavorService({
     getConfig: () => resolveFunConfig({ ollamaEnabled: false }),
     generate: async () => {
       calls += 1;
-      return 'não deveria';
+      return 'nÃ£o deveria';
     },
   });
   const lineOff = await offline.line('faction_create', { name: 'Lobos' });
   assert.ok(lineOff.length > 5);
   assert.equal(calls, 0);
 
-  // generate falha → fallback
+  // generate falha â†’ fallback
   const failing = createFlavorService({
     getConfig: () => resolveFunConfig({ ollamaEnabled: true, ollamaTimeoutMs: 500 }),
     generate: async () => {
@@ -651,7 +651,7 @@ test('ollama config defaults + flavorService fallback', async () => {
   const lineFail = await failing.line('flip_win', {});
   assert.ok(lineFail.length > 5);
 
-  // generate ok → usa resposta sanitizada
+  // generate ok â†’ usa resposta sanitizada
   const ok = createFlavorService({
     getConfig: () => resolveFunConfig({ ollamaEnabled: true }),
     generate: async () => '  "A moeda brilhou pro lado certo."  ',
@@ -684,7 +684,8 @@ test('facade: flavorService injetado em /cf e /faccao criar', async () => {
   const flavorService = createFlavorService({
     getConfig: () => funConfig,
     generate: async ({ prompt }) => {
-      if (String(prompt).includes('facção') || String(prompt).includes('panelinha')) {
+      const p = String(prompt);
+      if (/fac|panelinha/i.test(p)) {
         return 'Narrador: Panelinha no ar, pessoal.';
       }
       return 'Sorte absurda no flip de teste.';
@@ -720,12 +721,12 @@ test('facade: flavorService injetado em /cf e /faccao criar', async () => {
     messageType: 'text',
   });
   assert.ok(
-    sent.some(m => /Nova facção|facção/i.test(m.text) && /Panelinha no ar/i.test(m.text)),
+    sent.some(m => /Nova fac/i.test(m.text) && /Panelinha no ar/i.test(m.text)),
     `faccao flavor missing: ${JSON.stringify(sent)}`
   );
 
   sent.length = 0;
-  // força resultado determinístico? gameService usa random — só checa que linha de flavor aparece no final se vitória/derrota
+  // forÃ§a resultado determinÃ­stico? gameService usa random â€” sÃ³ checa que linha de flavor aparece no final se vitÃ³ria/derrota
   await funModule.onIncomingMessage({
     sock: {},
     chatJid: groupJid,
@@ -739,4 +740,109 @@ test('facade: flavorService injetado em /cf e /faccao criar', async () => {
     `flip reply missing flavor path: ${JSON.stringify(sent)}`
   );
   assert.ok(funModule._services.flavorService);
+});
+
+test('ollama keep_alive + warmup API', async () => {
+  const { normalizeKeepAlive, ollamaWarmup } = await import('../fun/llm/ollamaClient.js');
+  assert.equal(normalizeKeepAlive(-1), -1);
+  assert.equal(normalizeKeepAlive('30m'), '30m');
+  assert.equal(normalizeKeepAlive(undefined, -1), -1);
+
+  const { createFlavorService } = await import('../fun/llm/flavorService.js');
+  let warmCalls = 0;
+  let genKeepAlive = null;
+  const svc = createFlavorService({
+    getConfig: () =>
+      resolveFunConfig({
+        ollamaEnabled: true,
+        ollamaKeepAlive: -1,
+        ollamaKeepAliveRefreshMs: 0,
+      }),
+    warmup: async (opts) => {
+      warmCalls += 1;
+      assert.equal(opts.keepAlive, -1);
+      return { ok: true, model: opts.model, ms: 12 };
+    },
+    generate: async (opts) => {
+      genKeepAlive = opts.keepAlive;
+      return 'Frase quente de teste.';
+    },
+  });
+
+  const w = await svc.warmup();
+  assert.equal(w.ok, true);
+  assert.equal(warmCalls, 1);
+  assert.equal(svc.isWarm(), true);
+
+  const line = await svc.line('flip_win', {});
+  assert.match(line, /quente/i);
+  assert.equal(genKeepAlive, -1);
+
+  svc.stopKeepAliveLoop();
+});
+
+test('replyCommandsInPrivate: solo vai DM, aposta/facÃ§Ã£o no grupo', async () => {
+  const groupJid = uniqueGroup();
+  const userA = `5511666${String(Date.now()).slice(-6)}04@s.whatsapp.net`;
+  const sent = [];
+  const funConfig = resolveFunConfig({
+    enabled: true,
+    cooldownMs: 0,
+    flipCooldownMs: 0,
+    flipMin: 5,
+    flipMax: 80,
+    requireGroupWhitelist: true,
+    groupWhitelistJids: [groupJid],
+    replyCommandsInPrivate: true,
+    factionCreateCost: 0,
+    ollamaEnabled: false,
+  });
+
+  const funModule = createFunModule({
+    getConfig: () => funConfig,
+    getLogger: () => null,
+    getDatabase: getDb,
+    sendText: async (_s, jid, text) => {
+      sent.push({ jid, text });
+    },
+    getContactDisplayName: () => 'Tester',
+    listContacts: () => [{ jid: userA, name: 'Tester' }],
+  });
+  funModule.init();
+  funModule._services.repository.addCoins({
+    userJid: userA,
+    scopeKey: groupJid,
+    amount: 200,
+    reason: 'seed',
+  });
+
+  sent.length = 0;
+  await funModule.onIncomingMessage({
+    sock: {},
+    chatJid: groupJid,
+    actorJid: userA,
+    isGroup: true,
+    text: '/saldo',
+    messageType: 'text',
+  });
+  assert.ok(sent.length >= 1, 'saldo should reply');
+  assert.ok(
+    sent.every(m => m.jid === userA),
+    `saldo deve ir no DM: ${JSON.stringify(sent)}`
+  );
+
+  sent.length = 0;
+  await funModule.onIncomingMessage({
+    sock: {},
+    chatJid: groupJid,
+    actorJid: userA,
+    isGroup: true,
+    text: '/faccao criar DMTest',
+    messageType: 'text',
+  });
+  assert.ok(sent.some(m => /fac|Nova fac/i.test(m.text)));
+  assert.ok(
+    sent.every(m => m.jid === groupJid),
+    `faccao deve ficar no grupo: ${JSON.stringify(sent)}`
+  );
 });
