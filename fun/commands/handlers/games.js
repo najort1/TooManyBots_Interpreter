@@ -76,32 +76,20 @@ export async function handleFlipCommand({
     return { handled: true };
   }
 
-  if (result.win) {
-    await reply(
-      [
-        '🪙 *Cara ou coroa*',
-        `Você escolheu *${result.pick}* · saiu *${result.side}* ✅`,
-        `Ganhou *+${result.profit}* 🎉`,
-        result.usedLucky ? '🔮 Amuleto da loja usado.' : null,
-        `Saldo: *${result.coins}*`,
-      ]
-        .filter(Boolean)
-        .join('\n')
-    );
-  } else {
-    await reply(
-      [
-        '🪙 *Cara ou coroa*',
-        `Você escolheu *${result.pick}* · saiu *${result.side}* ❌`,
-        `Perdeu *${result.stake}* 😅`,
-        result.usedLucky ? '🔮 Amuleto usado (azar…)' : null,
-        `Saldo: *${result.coins}*`,
-      ]
-        .filter(Boolean)
-        .join('\n')
-    );
-  }
-  return { handled: true, result };
+  // vitória só se lado sorteado === escolha (defesa contra bugs antigos)
+  const won = Boolean(result.win) && result.pick === result.side;
+  const lines = [
+    '🪙 *Cara ou coroa*',
+    `Sua aposta: *${result.pick}*`,
+    `Moeda: *${result.side}*`,
+    won
+      ? `Acertou! *+${result.profit}* coins 🎉`
+      : `Errou. *−${result.stake}* coins 😅`,
+    result.usedLucky ? '🔮 Amuleto da loja usado nesta rodada.' : null,
+    `Saldo: *${result.coins}*`,
+  ];
+  await reply(lines.filter(Boolean).join('\n'));
+  return { handled: true, result: { ...result, win: won } };
 }
 
 export async function handleJobCommand({

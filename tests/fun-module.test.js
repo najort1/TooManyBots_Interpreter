@@ -203,6 +203,27 @@ test('rank coins e jogos solo/aposta', () => {
   assert.equal(flip.pick, 'cara');
   assert.equal(flip.win, true);
   assert.equal(flip.side, 'cara');
+  assert.equal(flip.win, flip.side === flip.pick);
+
+  // random 0.9 >= 0.5 → cai no oposto
+  const gamesLose = createGameService({
+    repository: repo,
+    actionRepository: actRepo,
+    random: () => 0.9,
+  });
+  repo.addCoins({ userJid: a, scopeKey, amount: 50, reason: 'seed2' });
+  const lose = gamesLose.soloFlip({
+    userJid: a,
+    scopeKey,
+    amount: 10,
+    choice: 'coroa',
+    funConfig: { flipMin: 5, flipMax: 100, flipCooldownMs: 0 },
+  });
+  assert.equal(lose.ok, true);
+  assert.equal(lose.pick, 'coroa');
+  assert.equal(lose.side, 'cara');
+  assert.equal(lose.win, false);
+  assert.equal(lose.win, lose.side === lose.pick);
 
   const noChoice = games.soloFlip({
     userJid: a,

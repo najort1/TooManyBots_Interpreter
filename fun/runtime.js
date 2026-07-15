@@ -397,7 +397,7 @@ export async function startFunBot(options = {}) {
 
   await ensureDashboard();
   messagesEnabled = true;
-  console.log('[fun] Pronto. /help · /rankcoins · /cf · /trabalhar · /aposta · /marry (aceitar/recusar)\n');
+  console.log('[fun] Pronto. /help · /cf 10 cara|coroa · /loja · /rankcoins · /aposta @user 10 cara\n');
 
   return { config, getSocket: () => currentSocket, funModule };
 }

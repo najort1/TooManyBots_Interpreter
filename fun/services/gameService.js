@@ -8,6 +8,10 @@ function rollBool(random = Math.random) {
   return random() < 0.5;
 }
 
+function oppositeSide(side) {
+  return side === 'cara' ? 'coroa' : 'cara';
+}
+
 function rollInt(min, max, random = Math.random) {
   const a = Math.floor(Number(min) || 0);
   const b = Math.max(a, Math.floor(Number(max) || a));
@@ -21,6 +25,12 @@ function formatRetry(ms) {
   const m = Math.floor(sec / 60);
   const s = sec % 60;
   return s ? `${m}m ${s}s` : `${m}m`;
+}
+
+/** Default só quando valor é null/undefined/NaN — 0 é válido (sem cooldown). */
+function numOr(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 export function createGameService({
@@ -56,9 +66,9 @@ export function createGameService({
     funConfig = {},
     now = Date.now(),
   }) {
-    const min = Number(funConfig.flipMin) || 5;
-    const max = Number(funConfig.flipMax) || 80;
-    const cd = Number(funConfig.flipCooldownMs) || 45_000;
+    const min = numOr(funConfig.flipMin, 5);
+    const max = numOr(funConfig.flipMax, 80);
+    const cd = Math.max(0, Math.floor(numOr(funConfig.flipCooldownMs, 45_000)));
     const stake = Math.floor(Number(amount) || 0);
     const pick = parseCoinSide(choice);
 
@@ -105,9 +115,11 @@ export function createGameService({
       effectsRepository.consumeCharge(userJid, scopeKey, 'flip_lucky', now);
     }
 
-    // Resultado real da moeda (com viés do amuleto em favor da escolha do jogador)
+    // 1) sorteia o resultado da moeda (50/50, ou enviesado pro lado escolhido se amuleto)
+    // 2) só ganha se o resultado === escolha do jogador
+    // NUNCA sortear "vitória" separado do lado da moeda.
     const landOnPick = random() < winChance;
-    const resultSide = landOnPick ? pick : pick === 'cara' ? 'coroa' : 'cara';
+    const resultSide = landOnPick ? pick : oppositeSide(pick);
     const win = resultSide === pick;
 
     if (win) {
@@ -118,36 +130,25 @@ export function createGameService({
         now,
         reason: 'flip-win',
       });
-      const coins = repository.getUserStats(userJid, scopeKey)?.coins || 0;
-      return {
-        ok: true,
-        win: true,
-        pick,
-        side: resultSide,
-        stake,
-        profit: stake,
-        coins,
-        usedLucky,
-      };
     }
 
     const coins = repository.getUserStats(userJid, scopeKey)?.coins || 0;
     return {
       ok: true,
-      win: false,
+      win,
       pick,
       side: resultSide,
       stake,
-      profit: -stake,
+      profit: win ? stake : -stake,
       coins,
       usedLucky,
     };
   }
 
   function doJob({ userJid, scopeKey, funConfig = {}, now = Date.now() }) {
-    const min = Number(funConfig.jobMin) || 8;
-    const max = Number(funConfig.jobMax) || 28;
-    const cd = Number(funConfig.jobCooldownMs) || 5 * 60_000;
+    const min = numOr(funConfig.jobMin, 5);
+    const max = numOr(funConfig.jobMax, 14);
+    const cd = Math.max(0, Math.floor(numOr(funConfig.jobCooldownMs, 2 * 60 * 60_000)));
     const gain = rollInt(min, max, random);
 
     const result = repository.applyGameCoinDelta({
@@ -184,9 +185,9 @@ export function createGameService({
   }
 
   function doLucky({ userJid, scopeKey, funConfig = {}, now = Date.now() }) {
-    const min = Number(funConfig.luckyMin) || 5;
-    const max = Number(funConfig.luckyMax) || 60;
-    const cd = Number(funConfig.luckyCooldownMs) || 60 * 60_000;
+    const min = numOr(funConfig.luckyMin, 5);
+    const max = numOr(funConfig.luckyMax, 40);
+    const cd = Math.max(0, Math.floor(numOr(funConfig.luckyCooldownMs, 3 * 60 * 60_000)));
     // 40% chance de zero, 60% ganha
     const hit = random() < 0.6;
     const gain = hit ? rollInt(min, max, random) : 0;
@@ -225,8 +226,8 @@ export function createGameService({
     funConfig = {},
     now = Date.now(),
   }) {
-    const min = Number(funConfig.betMin) || 5;
-    const max = Number(funConfig.betMax) || 200;
+    const min = numOr(funConfig.betMin, 5);
+    const max = numOr(funConfig.betMax, 150);
     const stake = Math.floor(Number(amount) || 0);
     const a = String(fromJid || '').trim();
     const b = String(toJid || '').trim();
