@@ -8,6 +8,15 @@ function nameOf(getContactDisplayName, jid) {
   );
 }
 
+async function flavorItalic(flavorService, scenario, vars) {
+  if (!flavorService?.italicLine) return null;
+  try {
+    return await flavorService.italicLine(scenario, vars);
+  } catch {
+    return null;
+  }
+}
+
 export async function handleMarryCommand({
   userJid,
   scopeKey,
@@ -21,6 +30,7 @@ export async function handleMarryCommand({
   sock,
   identityMap,
   funConfig,
+  flavorService,
 }) {
   const contacts = typeof listContacts === 'function' ? listContacts() : [];
   const resolved = await resolveUserTarget({
@@ -68,10 +78,16 @@ export async function handleMarryCommand({
   }
 
   if (result.married && result.reason === 'mutual') {
-    await reply(`💍 Pedido mútuo! *${me}* e *${other}* se casaram neste grupo!`);
+    const fl = await flavorItalic(flavorService, 'marry_mutual', { a: me, b: other });
+    await reply(
+      [`💍 Pedido mútuo! *${me}* e *${other}* se casaram neste grupo!`, fl]
+        .filter(Boolean)
+        .join('\n')
+    );
     return { handled: true, result };
   }
 
+  const fl = await flavorItalic(flavorService, 'marry_propose', { me, other });
   await reply(
     [
       '💍 *Pedido de casamento*',
@@ -81,8 +97,11 @@ export async function handleMarryCommand({
       `• \`${p}aceitar\` — sim 💍`,
       `• \`${p}recusar\` — não 💔`,
       '',
+      fl,
       '_Expira em 5 minutos._',
-    ].join('\n')
+    ]
+      .filter(Boolean)
+      .join('\n')
   );
   return { handled: true, result };
 }

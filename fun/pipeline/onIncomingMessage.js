@@ -65,6 +65,12 @@ export async function handleFunIncomingMessage(deps, ctx) {
     effectsRepository,
     repository,
     groupRepository,
+    factionService,
+    bridgeService,
+    missionService,
+    eventService,
+    socialHooks,
+    flavorService,
     getContactDisplayName,
     listContacts,
     sendText,
@@ -140,6 +146,15 @@ export async function handleFunIncomingMessage(deps, ctx) {
     await sendText(sock, chatJid, content);
   };
 
+  /** Envia no privado do autor (útil em grupo para não poluir o chat). */
+  const replyPrivate = async (body) => {
+    if (typeof sendText !== 'function') return;
+    const content = String(body || '').trim();
+    if (!content) return;
+    const target = userJid || chatJid;
+    await sendText(sock, target, content);
+  };
+
   const replyImage = async (imageBuffer, caption = '') => {
     if (typeof sendImage !== 'function') return;
     await sendImage(sock, chatJid, {
@@ -155,6 +170,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
         text,
         funConfig,
         userJid,
+        chatJid,
+        isGroup,
         scopeKey: scope.scopeKey,
         rankService,
         dailyService,
@@ -164,9 +181,16 @@ export async function handleFunIncomingMessage(deps, ctx) {
         shopService,
         effectsRepository,
         repository,
+        factionService,
+        bridgeService,
+        missionService,
+        eventService,
+        socialHooks,
+        flavorService,
         getContactDisplayName,
         listContacts,
         reply,
+        replyPrivate,
         replyImage,
         mentionedJids,
         quotedParticipant,
@@ -228,15 +252,25 @@ export async function handleFunIncomingMessage(deps, ctx) {
         typeof getContactDisplayName === 'function'
           ? getContactDisplayName(userJid)
           : '';
-      await reply(
-        formatLevelUp({
-          displayName: name,
-          userJid,
-          previousLevel: award.previousLevel,
-          level: award.level,
-          xp: award.xp,
-        })
-      );
+      let text = formatLevelUp({
+        displayName: name,
+        userJid,
+        previousLevel: award.previousLevel,
+        level: award.level,
+        xp: award.xp,
+      });
+      if (flavorService?.italicLine) {
+        try {
+          const fl = await flavorService.italicLine('level_up', {
+            level: award.level,
+            user: name || userJid?.split?.('@')?.[0] || '',
+          });
+          if (fl) text = `${text}\n${fl}`;
+        } catch {
+          // flavor opcional
+        }
+      }
+      await reply(text);
     }
 
     return {

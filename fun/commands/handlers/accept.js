@@ -7,6 +7,15 @@ function nameOf(getContactDisplayName, jid) {
   );
 }
 
+async function flavorItalic(flavorService, scenario, vars) {
+  if (!flavorService?.italicLine) return null;
+  try {
+    return await flavorService.italicLine(scenario, vars);
+  } catch {
+    return null;
+  }
+}
+
 export async function handleAcceptCommand({
   userJid,
   scopeKey,
@@ -14,6 +23,9 @@ export async function handleAcceptCommand({
   gameService,
   getContactDisplayName,
   reply,
+  socialHooks,
+  funConfig,
+  flavorService,
 }) {
   const pending = gameService.peekIncoming(userJid, scopeKey);
   if (!pending) {
@@ -31,8 +43,20 @@ export async function handleAcceptCommand({
       await reply('Pedido expirado ou inválido.');
       return { handled: true };
     }
+    if (typeof socialHooks?.onSocialPair === 'function') {
+      socialHooks.onSocialPair({
+        scopeKey,
+        fromJid: result.fromJid,
+        toJid: result.toJid,
+        kind: 'marry',
+        funConfig,
+      });
+    }
+    const a = nameOf(getContactDisplayName, result.fromJid);
+    const b = nameOf(getContactDisplayName, result.toJid);
+    const fl = await flavorItalic(flavorService, 'marry_accept', { a, b });
     await reply(
-      `💍 *Casamento confirmado!*\n*${nameOf(getContactDisplayName, result.fromJid)}* ❤️ *${nameOf(getContactDisplayName, result.toJid)}*`
+      [`💍 *Casamento confirmado!*`, `*${a}* ❤️ *${b}*`, fl].filter(Boolean).join('\n')
     );
     return { handled: true, result };
   }
@@ -52,19 +76,44 @@ export async function handleAcceptCommand({
       return { handled: true };
     }
 
+    let missionLine = null;
+    if (typeof socialHooks?.onSocialPair === 'function') {
+      const hook = socialHooks.onSocialPair({
+        scopeKey,
+        fromJid: result.fromJid,
+        toJid: result.toJid,
+        kind: 'bet',
+        funConfig,
+      });
+      if (hook?.mission?.completed) {
+        missionLine = '🏁 Squad completou a missão mista! Recompensas enviadas.';
+      } else if (hook?.eventBonus) {
+        missionLine = `⚡ Evento: +${hook.eventBonus.bonusCoins} coins cross-facção`;
+      }
+    }
+
     const challengerPick = pending.payload?.choice || '?';
     const oppPick = challengerPick === 'cara' ? 'coroa' : 'cara';
+    const winnerName = nameOf(getContactDisplayName, result.winnerJid);
+    const loserName = nameOf(getContactDisplayName, result.loserJid);
+    const fl = await flavorItalic(flavorService, 'bet_result', {
+      winner: winnerName,
+      loser: loserName,
+      side: result.side,
+    });
     await reply(
       [
         '🪙 *Cara ou coroa — resultado*',
         `*${nameOf(getContactDisplayName, result.fromJid)}* era *${challengerPick}* · *${nameOf(getContactDisplayName, result.toJid)}* era *${oppPick}*`,
         `Saiu: *${result.side}*`,
-        `🏆 Vencedor: *${nameOf(getContactDisplayName, result.winnerJid)}* (pot *${result.pot}*)`,
-        `💀 Perdeu: *${nameOf(getContactDisplayName, result.loserJid)}*`,
+        `🏆 Vencedor: *${winnerName}* (pot *${result.pot}*)`,
+        `💀 Perdeu: *${loserName}*`,
         result.shieldRefund
           ? `🛡️ Escudo devolveu *${result.shieldRefund}* coins ao perdedor`
           : null,
         `Saldo vencedor: *${result.winnerCoins}*`,
+        missionLine,
+        fl,
       ]
         .filter(Boolean)
         .join('\n')

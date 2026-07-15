@@ -1,6 +1,15 @@
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 
+async function flavorItalic(flavorService, scenario, vars) {
+  if (!flavorService?.italicLine) return null;
+  try {
+    return await flavorService.italicLine(scenario, vars);
+  } catch {
+    return null;
+  }
+}
+
 export async function handleShipCommand({
   userJid,
   scopeKey,
@@ -12,6 +21,9 @@ export async function handleShipCommand({
   mentionedJids,
   sock,
   identityMap,
+  socialHooks,
+  funConfig,
+  flavorService,
 }) {
   const contacts = typeof listContacts === 'function' ? listContacts() : [];
   const mentions = Array.isArray(mentionedJids) ? [...mentionedJids] : [];
@@ -89,13 +101,43 @@ export async function handleShipCommand({
   const filled = Math.round((result.percent / 100) * barLen);
   const bar = '█'.repeat(filled) + '░'.repeat(barLen - filled);
 
+  let extra = null;
+  if (typeof socialHooks?.onSocialPair === 'function') {
+    const hook = socialHooks.onSocialPair({
+      scopeKey,
+      fromJid: a,
+      toJid: b,
+      kind: 'ship',
+      funConfig,
+    });
+    if (hook?.eventBonus) {
+      extra = `⚡ Evento cross-facção: +${hook.eventBonus.bonusCoins} coins pra ambos`;
+    }
+    if (hook?.mission?.completed) {
+      extra = (extra ? `${extra}\n` : '') + '🏁 Objetivo de missão mista completo!';
+    } else if (hook?.mission?.updated && hook.mission.mission) {
+      // silent partial ok
+    }
+  }
+
+  const fl = await flavorItalic(flavorService, 'ship', {
+    a: name(a),
+    b: name(b),
+    percent: result.percent,
+    label: result.label,
+  });
+
   await reply(
     [
       '💘 *Ship*',
       `*${name(a)}* × *${name(b)}*`,
       `${bar} *${result.percent}%*`,
       result.label,
-    ].join('\n')
+      extra,
+      fl,
+    ]
+      .filter(Boolean)
+      .join('\n')
   );
   return { handled: true, result };
 }

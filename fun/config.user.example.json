@@ -18,5 +18,12 @@
   "dashboardPort": 8790,
   "debugMode": false,
   "logLevel": "info",
-  "dataDir": "./data/fun"
+  "dataDir": "./data/fun",
+  "ollamaEnabled": true,
+  "ollamaBaseUrl": "http://127.0.0.1:11434",
+  "ollamaModel": "gemma4:latest",
+  "ollamaTimeoutMs": 8000,
+  "ollamaNumPredict": 72,
+  "ollamaTemperature": 0.85,
+  "ollamaMaxChars": 160
 }
