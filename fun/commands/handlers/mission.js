@@ -110,60 +110,49 @@ export async function handleEventCommand({
   funConfig,
   reply,
   args,
-  flavorService,
 }) {
   const sub = String(args[0] || '')
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
 
-  if (sub === 'start' || sub === 'iniciar' || sub === 'spawn') {
-    const started = eventService.startCrossFaction({
-      scopeKey,
-      funConfig,
-      force: false,
-    });
-    if (!started.ok) {
-      if (started.reason === 'already-active') {
-        const s = started.status;
-        await reply(
-          `Evento já ativo. Multiplicador *${s.multiplier}x* · ~${Math.ceil(s.remainingMs / 60000)} min restantes.`
-        );
-        return { handled: true };
-      }
-      if (started.reason === 'cooldown') {
-        const min = Math.ceil(started.retryInMs / 60000);
-        await reply(`Aguarde ~${min} min pro próximo evento relâmpago.`);
-        return { handled: true };
-      }
-      await reply('Não deu pra iniciar o evento.');
-      return { handled: true };
-    }
-    const minutes = Math.round(started.durationMs / 60000);
-    const fl = await flavorItalic(flavorService, 'event_start', {
-      minutes,
-      multiplier: started.multiplier,
-    });
+  // Usuários não iniciam eventos — só consultam status
+  if (sub === 'start' || sub === 'iniciar' || sub === 'spawn' || sub === 'happy' || sub === 'happyhour' || sub === 'cassino') {
     await reply(
       [
-        '⚡ *TRÉGUA FALSA*',
-        `Nas próximas *${minutes} min*, interagir com *outra facção* paga melhor.`,
-        `Bônus: coins + XP em \`/pay\`, \`/aposta\` e \`/ship\` cross-facção (*${started.multiplier}x*).`,
-        '',
-        fl || '_Panelinha isolada perde o meta._',
+        'Os *eventos são sorteados pelo bot* — ninguém inicia na mão.',
+        'Use `/evento` pra ver se tem algo rolando.',
+        '_Trégua falsa e happy hour aparecem de surpresa no grupo._',
       ].join('\n')
     );
-    return { handled: true, result: started };
+    return { handled: true, denied: true };
   }
 
   const status = eventService.getStatus(scopeKey);
   if (!status.active) {
+    const cdMs = eventService.cooldownRemaining?.(scopeKey, funConfig) || 0;
+    const cdMin = cdMs > 0 ? Math.ceil(cdMs / 60000) : 0;
     await reply(
       [
-        'Nenhum evento relâmpago ativo.',
-        'Use `/evento start` pra abrir uma janela cross-facção (com cooldown).',
+        'Nenhum evento ativo agora.',
+        'O bot sorteia sozinho: *trégua falsa* (cross-facção) ou *happy hour* (cassino).',
+        cdMin > 0 ? `Próxima janela de sorteio em ~*${cdMin}* min (cooldown).` : 'Fica de olho no chat — pode cair a qualquer momento.',
       ].join('\n')
     );
     return { handled: true };
+  }
+
+  if (status.eventType === 'casino_happy') {
+    await reply(
+      [
+        '🍸 *Happy hour ativo*',
+        `Payouts cassino *x${status.multiplier}*`,
+        `Tempo restante: ~*${Math.ceil(status.remainingMs / 60000)}* min`,
+        'Vale: `/roleta` · `/slot` · `/crash` · `/bj`',
+      ].join('\n')
+    );
+    return { handled: true, status };
   }
 
   await reply(

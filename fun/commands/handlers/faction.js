@@ -333,12 +333,15 @@ export async function handlePanelinhaCommand({
 
 /**
  * Guia completo — sempre tenta DM, como /help.
+ * Com replyCommandsInPrivate, sem aviso no grupo.
  */
 export async function handlePanelinhaGuideCommand({
   funConfig,
   reply,
   replyPrivate,
+  replyToChat,
   isGroup,
+  preferPrivate,
 }) {
   const text = formatPanelinhaGuide(funConfig.prefix || '/', funConfig);
   const sendPrivate = typeof replyPrivate === 'function' ? replyPrivate : reply;
@@ -350,8 +353,9 @@ export async function handlePanelinhaGuideCommand({
     return { handled: true, private: false };
   }
 
-  if (isGroup) {
-    await reply('📬 Te enviei o *guia de facções/panelinha* no privado.');
+  if (isGroup && !preferPrivate && !funConfig?.replyCommandsInPrivate) {
+    const toGroup = typeof replyToChat === 'function' ? replyToChat : reply;
+    await toGroup('📬 Te enviei o *guia de facções/panelinha* no privado.');
   }
   return { handled: true, private: true };
 }

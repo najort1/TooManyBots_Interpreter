@@ -21,6 +21,7 @@ export async function handleAcceptCommand({
   scopeKey,
   relationshipService,
   gameService,
+  casinoService,
   getContactDisplayName,
   reply,
   socialHooks,
@@ -121,6 +122,46 @@ export async function handleAcceptCommand({
     return { handled: true, result };
   }
 
+  if (pending.actionType === ACTION_TYPE.BET_DICE) {
+    if (!casinoService) {
+      await reply('Duelo de dados indisponível.');
+      return { handled: true };
+    }
+    const result = casinoService.acceptDiceDuel({ userJid, scopeKey });
+    if (!result.ok) {
+      if (result.reason === 'a-insufficient') {
+        await reply('Quem desafiou não tem coins suficientes agora.');
+        return { handled: true };
+      }
+      if (result.reason === 'b-insufficient') {
+        await reply(`Você não tem coins suficientes (precisa de *${pending.payload?.amount || '?'}*).`);
+        return { handled: true };
+      }
+      await reply('Desafio expirado ou inválido.');
+      return { handled: true };
+    }
+    if (result.tie) {
+      await reply(
+        [
+          '🎲 *Dados — empate*',
+          `*${nameOf(getContactDisplayName, result.fromJid)}* tirou *${result.aRoll}* · *${nameOf(getContactDisplayName, result.toJid)}* tirou *${result.bRoll}*`,
+          'Stake devolvida aos dois.',
+        ].join('\n')
+      );
+      return { handled: true, result };
+    }
+    await reply(
+      [
+        '🎲 *Dados — resultado*',
+        `*${nameOf(getContactDisplayName, result.fromJid)}* tirou *${result.aRoll}*`,
+        `*${nameOf(getContactDisplayName, result.toJid)}* tirou *${result.bRoll}*`,
+        `🏆 *${nameOf(getContactDisplayName, result.winnerJid)}* leva pot *${result.pot}*`,
+        `Saldo vencedor: *${result.winnerCoins}*`,
+      ].join('\n')
+    );
+    return { handled: true, result };
+  }
+
   await reply('Não entendi o pedido pendente. Tente de novo.');
   return { handled: true };
 }
@@ -130,6 +171,7 @@ export async function handleDeclineCommand({
   scopeKey,
   relationshipService,
   gameService,
+  casinoService,
   getContactDisplayName,
   reply,
 }) {
@@ -159,6 +201,20 @@ export async function handleDeclineCommand({
     }
     await reply(
       `🪙 *${nameOf(getContactDisplayName, result.toJid)}* recusou a aposta de *${result.amount}* coins de *${nameOf(getContactDisplayName, result.fromJid)}*.`
+    );
+    return { handled: true, result };
+  }
+
+  if (pending.actionType === ACTION_TYPE.BET_DICE) {
+    const result = casinoService?.declineDiceDuel?.({ userJid, scopeKey }) || {
+      ok: false,
+    };
+    if (!result.ok) {
+      await reply('Desafio expirado ou inválido.');
+      return { handled: true };
+    }
+    await reply(
+      `🎲 *${nameOf(getContactDisplayName, result.toJid)}* recusou o desafio de *${result.amount}* coins de *${nameOf(getContactDisplayName, result.fromJid)}*.`
     );
     return { handled: true, result };
   }
