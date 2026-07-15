@@ -625,25 +625,27 @@ test('ollama config defaults + flavorService fallback', async () => {
   assert.equal(cfg.ollamaEnabled, true);
   assert.equal(cfg.ollamaModel, 'gemma4:latest');
   assert.ok(cfg.ollamaBaseUrl.includes('11434'));
+  assert.equal(cfg.zenEnabled, true);
+  assert.ok(String(cfg.zenBaseUrl || '').includes('3000'));
 
   const { createFlavorService } = await import('../fun/llm/flavorService.js');
 
-  // offline / disabled â†’ fallback sem chamar generate
+  // offline / disabled → fallback sem chamar generate
   let calls = 0;
   const offline = createFlavorService({
-    getConfig: () => resolveFunConfig({ ollamaEnabled: false }),
+    getConfig: () => resolveFunConfig({ ollamaEnabled: false, zenEnabled: false }),
     generate: async () => {
       calls += 1;
-      return 'nÃ£o deveria';
+      return 'nao deveria';
     },
   });
   const lineOff = await offline.line('faction_create', { name: 'Lobos' });
   assert.ok(lineOff.length > 5);
   assert.equal(calls, 0);
 
-  // generate falha â†’ fallback
+  // generate falha → fallback (zen desligado)
   const failing = createFlavorService({
-    getConfig: () => resolveFunConfig({ ollamaEnabled: true, ollamaTimeoutMs: 500 }),
+    getConfig: () => resolveFunConfig({ ollamaEnabled: true, zenEnabled: false, ollamaTimeoutMs: 500 }),
     generate: async () => {
       throw new Error('network');
     },
@@ -651,9 +653,9 @@ test('ollama config defaults + flavorService fallback', async () => {
   const lineFail = await failing.line('flip_win', {});
   assert.ok(lineFail.length > 5);
 
-  // generate ok â†’ usa resposta sanitizada
+  // generate ok → usa resposta sanitizada
   const ok = createFlavorService({
-    getConfig: () => resolveFunConfig({ ollamaEnabled: true }),
+    getConfig: () => resolveFunConfig({ ollamaEnabled: true, zenEnabled: false }),
     generate: async () => '  "A moeda brilhou pro lado certo."  ',
   });
   const lineOk = await ok.line('flip_win', {});
@@ -662,6 +664,18 @@ test('ollama config defaults + flavorService fallback', async () => {
 
   const italic = await ok.italicLine('flip_win', {});
   assert.ok(italic.startsWith('_') && italic.endsWith('_'));
+
+  // cascata: zen falha → ollama mock
+  const cascade = createFlavorService({
+    getConfig: () => resolveFunConfig({ zenEnabled: true, ollamaEnabled: true }),
+    zenGenerate: async () => {
+      throw new Error('zen-down');
+    },
+    generate: async () => 'Frase do ollama mock.',
+  });
+  const lineCascade = await cascade.line('ship', { percent: 10 });
+  assert.match(lineCascade, /ollama mock/i);
+  assert.equal(cascade.lastProvider(), 'ollama');
 });
 
 test('facade: flavorService injetado em /cf e /faccao criar', async () => {
@@ -678,6 +692,7 @@ test('facade: flavorService injetado em /cf e /faccao criar', async () => {
     groupWhitelistJids: [groupJid],
     factionCreateCost: 0,
     ollamaEnabled: true,
+    zenEnabled: false,
   });
 
   const { createFlavorService } = await import('../fun/llm/flavorService.js');
@@ -755,6 +770,7 @@ test('ollama keep_alive + warmup API', async () => {
     getConfig: () =>
       resolveFunConfig({
         ollamaEnabled: true,
+        zenEnabled: false,
         ollamaKeepAlive: -1,
         ollamaKeepAliveRefreshMs: 0,
       }),
