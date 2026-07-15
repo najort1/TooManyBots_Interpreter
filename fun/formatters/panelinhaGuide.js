@@ -68,7 +68,7 @@ export function formatPanelinhaGuide(prefix = '/', funConfig = {}) {
     'Não fecha só com a sua panelinha.',
     '',
     '─── *Evento relâmpago* ───',
-    '`' + p + 'evento start` — por ~90 min, interagir com *outra facção*',
+    '`' + p + 'evento` — status. O *bot sorteia* trégua falsa / happy hour sozinho.',
     '(`/pay`, `/aposta`, `/ship`) dá bônus de coins/XP.',
     '',
     '─── *Resumo* ───',
