@@ -13,12 +13,20 @@ export function createRankService({ repository } = {}) {
     return repository.getCoinsLeaderboard(scopeKey, limit);
   }
 
+  function getMessagesLeaderboard(scopeKey, limit = 10) {
+    return repository.getMessagesLeaderboard(scopeKey, limit);
+  }
+
   function getUserRankPosition(userJid, scopeKey) {
     return repository.getUserRankPosition(userJid, scopeKey);
   }
 
   function getUserCoinsRankPosition(userJid, scopeKey) {
     return repository.getUserCoinsRankPosition(userJid, scopeKey);
+  }
+
+  function getUserMessagesRankPosition(userJid, scopeKey) {
+    return repository.getUserMessagesRankPosition(userJid, scopeKey);
   }
 
   function getProfile(userJid, scopeKey) {
@@ -34,8 +42,10 @@ export function createRankService({ repository } = {}) {
   return {
     getLeaderboard,
     getCoinsLeaderboard,
+    getMessagesLeaderboard,
     getUserRankPosition,
     getUserCoinsRankPosition,
+    getUserMessagesRankPosition,
     getProfile,
   };
 }

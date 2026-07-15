@@ -154,6 +154,13 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
 
       const lastXpAt = Number(row.last_xp_at) || 0;
       if (cooldown > 0 && lastXpAt > 0 && ts - lastXpAt < cooldown) {
+        // conta mensagem mesmo no cooldown de XP (rank de atividade)
+        const nextMsg = (Number(row.message_count) || 0) + 1;
+        db.prepare(
+          `UPDATE ${ANALYTICS_SCHEMA}.fun_user_stats
+           SET message_count = ?, updated_at = ?
+           WHERE user_jid = ? AND scope_key = ?`
+        ).run(nextMsg, ts, u, s);
         const stats = mapStatsRow(row);
         return {
           applied: false,
@@ -163,7 +170,7 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
           leveledUp: false,
           previousLevel: stats.level,
           reason: 'cooldown',
-          messageCount: stats.messageCount,
+          messageCount: nextMsg,
           coins: stats.coins,
         };
       }
@@ -373,6 +380,75 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     const totalRow = db
       .prepare(
         `SELECT COUNT(*) AS total FROM ${ANALYTICS_SCHEMA}.fun_user_stats WHERE scope_key = ?`
+      )
+      .get(s);
+    return {
+      rank: (Number(better?.better) || 0) + 1,
+      total: Number(totalRow?.total) || 0,
+      stats,
+    };
+  }
+
+  function getMessagesLeaderboard(scopeKey, limit = 10) {
+    ensureFunSchema();
+    const db = getDatabase();
+    const s = String(scopeKey || '');
+    const lim = Math.max(1, Math.min(50, Math.floor(Number(limit) || 10)));
+
+    const rows = db
+      .prepare(
+        `SELECT * FROM ${ANALYTICS_SCHEMA}.fun_user_stats
+         WHERE scope_key = ? AND message_count > 0
+         ORDER BY message_count DESC, updated_at DESC
+         LIMIT ?`
+      )
+      .all(s, lim);
+
+    return rows.map((row, index) => ({
+      rank: index + 1,
+      ...mapStatsRow(row),
+    }));
+  }
+
+  function getUserMessagesRankPosition(userJid, scopeKey) {
+    ensureFunSchema();
+    const db = getDatabase();
+    const u = String(userJid || '');
+    const s = String(scopeKey || '');
+    const stats = getUserStats(u, s);
+    if (!stats || !stats.messageCount) {
+      const totalRow = db
+        .prepare(
+          `SELECT COUNT(*) AS total FROM ${ANALYTICS_SCHEMA}.fun_user_stats
+           WHERE scope_key = ? AND message_count > 0`
+        )
+        .get(s);
+      return { rank: null, total: Number(totalRow?.total) || 0, stats: stats || null };
+    }
+    const better = db
+      .prepare(
+        `SELECT COUNT(*) AS better FROM ${ANALYTICS_SCHEMA}.fun_user_stats
+         WHERE scope_key = ?
+           AND message_count > 0
+           AND (
+             message_count > ?
+             OR (message_count = ? AND updated_at > ?)
+             OR (message_count = ? AND updated_at = ? AND user_jid < ?)
+           )`
+      )
+      .get(
+        s,
+        stats.messageCount,
+        stats.messageCount,
+        stats.updatedAt,
+        stats.messageCount,
+        stats.updatedAt,
+        u
+      );
+    const totalRow = db
+      .prepare(
+        `SELECT COUNT(*) AS total FROM ${ANALYTICS_SCHEMA}.fun_user_stats
+         WHERE scope_key = ? AND message_count > 0`
       )
       .get(s);
     return {
@@ -774,8 +850,10 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     claimDaily,
     getLeaderboard,
     getCoinsLeaderboard,
+    getMessagesLeaderboard,
     getUserRankPosition,
     getUserCoinsRankPosition,
+    getUserMessagesRankPosition,
     transferCoins,
     addCoins,
     applyGameCoinDelta,
