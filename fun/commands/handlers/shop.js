@@ -24,8 +24,12 @@ export async function handleShopCommand({ reply, effectsRepository, userJid, sco
     );
   }
 
-  lines.push('Comprar: `/comprar boost_xp`');
-  lines.push('Título: `/titulo MeuNick` (custa o item title)');
+  lines.push('Comprar: `/comprar chave_armas` · `/comprar boost_xp`');
+  lines.push('Título: `/titulo MeuNick`');
+  lines.push('');
+  lines.push('_Chave de armas é *só sua* — não libera o grupo._');
+  lines.push('_Rua (estoque finito + preço vivo):_ `/mercado` · `/armas`');
+  lines.push('_Players:_ `/bazar` · farm: `/assaltar banco` · for fun: `/assaltar @user`');
 
   if (effectsRepository) {
     const active = effectsRepository.listActiveEffects(userJid, scopeKey);
@@ -118,6 +122,14 @@ async function replyBuyResult(reply, result) {
       await reply(`Faltam coins. Preço *${result.price}*, você tem *${result.coins}*.`);
       return { handled: true };
     }
+    if (result?.reason === 'already-owned') {
+      await reply(
+        result.item?.id === 'chave_armas'
+          ? 'Você *já tem* a chave de armas nesta conta. É individual — não vende de novo.'
+          : 'Você já tem esse unlock.'
+      );
+      return { handled: true };
+    }
     if (result?.reason === 'title-required') {
       await reply(`Informe o título (até ${result.maxLen} caracteres).`);
       return { handled: true };
@@ -133,6 +145,9 @@ async function replyBuyResult(reply, result) {
     item.description,
     `Saldo: *${result.coins}*`,
   ];
+  if (item.id === 'chave_armas') {
+    lines.push('_Só *você* acessa `/armas` com isso. O grupo continua na corrida._');
+  }
   if (result.title) lines.push(`Título: *${result.title}*`);
   await reply(lines.join('\n'));
   return { handled: true, result };

@@ -332,44 +332,12 @@ export async function handlePanelinhaCommand({
 }
 
 /**
- * Guia panelinha — mesmo critério do help (conteúdo garantido no chat).
+ * Guia panelinha — sempre no chat atual (sem DM).
  */
-export async function handlePanelinhaGuideCommand({
-  funConfig,
-  reply,
-  replyPrivate,
-  replyToChat,
-  isGroup,
-}) {
+export async function handlePanelinhaGuideCommand({ funConfig, reply }) {
   const text = formatPanelinhaGuide(funConfig.prefix || '/', funConfig);
-  const wantPrivate = funConfig?.replyCommandsInPrivate !== false && isGroup;
-  const toGroup = typeof replyToChat === 'function' ? replyToChat : reply;
-
-  if (!wantPrivate) {
-    await reply(text);
-    return { handled: true, private: false };
-  }
-
-  const sendPrivate = typeof replyPrivate === 'function' ? replyPrivate : null;
-  if (!sendPrivate) {
-    await toGroup(text);
-    return { handled: true, private: false };
-  }
-
-  try {
-    await Promise.race([
-      sendPrivate(text),
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('dm-timeout')), 8_000);
-      }),
-    ]);
-  } catch {
-    await toGroup(text);
-    return { handled: true, private: false };
-  }
-
-  await toGroup(text);
-  return { handled: true, private: true, mirroredGroup: true };
+  await reply(text);
+  return { handled: true, private: false };
 }
 
 export async function handlePonteCommand({

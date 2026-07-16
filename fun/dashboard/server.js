@@ -66,6 +66,7 @@ export function startFunDashboardServer(deps = {}) {
     casinoRepository = null,
     eventRepository = null,
     factionRepository = null,
+    jobService = null,
   } = funModule._services;
 
   const config = getConfig();
@@ -345,6 +346,82 @@ export function startFunDashboardServer(deps = {}) {
         } catch (err) {
           sendJson(res, 200, { error: String(err?.message || err) });
         }
+        return;
+      }
+
+      // --- Profissões / teste web ---
+      if (req.method === 'POST' && path === '/api/fun/job/open') {
+        if (!jobService) {
+          sendJson(res, 503, { error: 'job-service-unavailable' });
+          return;
+        }
+        const body = await readBody(req);
+        const cfg = getConfig();
+        const opened = jobService.openAttempt({
+          token: body.token || url.searchParams.get('t') || '',
+          code: body.code || '',
+          funConfig: cfg,
+        });
+        if (!opened.ok) {
+          sendJson(res, 400, { ok: false, reason: opened.reason });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          attemptId: opened.attempt.id,
+          jobId: opened.job?.id,
+          jobName: opened.job?.name,
+          emoji: opened.job?.emoji,
+          game: opened.game,
+          gameConfig: opened.gameConfig,
+          status: opened.attempt.status,
+          expiresAt: opened.attempt.expiresAt,
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/api/fun/job/finish') {
+        if (!jobService) {
+          sendJson(res, 503, { error: 'job-service-unavailable' });
+          return;
+        }
+        const body = await readBody(req);
+        const cfg = getConfig();
+        const finished = jobService.finishAttempt({
+          attemptId: body.attemptId || '',
+          token: body.token || '',
+          score: body.score,
+          durationMs: body.durationMs,
+          metrics: body.metrics || {},
+          funConfig: cfg,
+        });
+        if (!finished.ok) {
+          sendJson(res, 400, { ok: false, reason: finished.reason });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          passed: finished.passed,
+          reason: finished.reason || null,
+          jobId: finished.job?.id,
+          jobName: finished.job?.name,
+          emoji: finished.job?.emoji,
+          salary: finished.salary ?? null,
+          workers: finished.workers ?? null,
+          score: finished.attempt?.score,
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/job/catalog') {
+        const scope = String(url.searchParams.get('scope') || '').trim();
+        if (!jobService) {
+          sendJson(res, 200, { jobs: [] });
+          return;
+        }
+        sendJson(res, 200, {
+          jobs: scope ? jobService.listWithMarket(scope) : jobService.listJobs(),
+        });
         return;
       }
 

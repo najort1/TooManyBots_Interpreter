@@ -21,7 +21,11 @@ import { createMissionService } from './services/missionService.js';
 import { createEventService } from './services/eventService.js';
 import { createCasinoService } from './services/casinoService.js';
 import { createTarotService } from './services/tarotService.js';
+import { createMarketService } from './services/marketService.js';
+import { createJobService } from './services/jobService.js';
 import { createFunCasinoRepository } from './db/funCasinoRepository.js';
+import { createFunMarketRepository } from './db/funMarketRepository.js';
+import { createFunJobRepository } from './db/funJobRepository.js';
 import { createFunUserPrefsRepository } from './db/funUserPrefsRepository.js';
 import { createGroupMembershipService } from './utils/groupMembership.js';
 import { createSocialHooks } from './services/socialHooks.js';
@@ -60,6 +64,10 @@ export function createFunModule(deps = {}) {
   const missionRepository = createFunMissionRepository({ getDatabase });
   const eventRepository = createFunEventRepository({ getDatabase });
   const casinoRepository = createFunCasinoRepository({ getDatabase });
+  const marketRepository =
+    deps.marketRepository || createFunMarketRepository({ getDatabase });
+  const jobRepository =
+    deps.jobRepository || createFunJobRepository({ getDatabase });
   const prefsRepository = deps.prefsRepository || createFunUserPrefsRepository({ getDatabase });
   const membershipService =
     deps.membershipService ||
@@ -109,12 +117,30 @@ export function createFunModule(deps = {}) {
     repository,
     bridgeService,
   });
+  const marketService =
+    deps.marketService ||
+    createMarketService({
+      repository,
+      marketRepository,
+      effectsRepository,
+      factionService,
+      casinoRepository,
+      getLogger,
+      generateZen: deps.openaiChatComplete,
+      generateOllama: deps.ollamaGenerate,
+    });
   const missionService = createMissionService({
     missionRepository,
     factionRepository,
     repository,
     bridgeService,
   });
+  const jobService =
+    deps.jobService ||
+    createJobService({
+      repository,
+      jobRepository,
+    });
   const eventService = createEventService({ eventRepository });
   const socialHooks = createSocialHooks({
     bridgeService,
@@ -179,6 +205,8 @@ export function createFunModule(deps = {}) {
         eventService,
         casinoService,
         tarotService,
+        marketService,
+        jobService,
         socialHooks,
         flavorService,
         getContactDisplayName: resolveContactName,
@@ -258,6 +286,10 @@ export function createFunModule(deps = {}) {
       eventService,
       casinoService,
       tarotService,
+      marketService,
+      marketRepository,
+      jobService,
+      jobRepository,
       casinoRepository,
       socialHooks,
       flavorService,

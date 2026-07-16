@@ -81,6 +81,7 @@ export function formatXpProfile({
   coinsTotal = 0,
   messagesRank = null,
   messagesTotal = 0,
+  employment = null,
 }) {
   const xp = Number(stats?.xp) || 0;
   const progress = progressInLevel(xp);
@@ -118,6 +119,11 @@ export function formatXpProfile({
     streak > 0
       ? `• Daily streak: *${streak}* · último ${formatRelative(stats?.lastDailyAt)}`
       : `• Daily: ainda sem streak (use \`/daily\`)`,
+    employment?.job
+      ? `• 💼 ${employment.job.emoji} *${employment.job.name}* · ~*${employment.salary}*c/dia (${employment.workers} no cargo)`
+      : isSelf
+        ? `• 💼 Sem emprego · \`/emprego\``
+        : null,
     '',
     '*Atividade*',
     `• Mensagens: *${messages}* · rank *${rankLabel(messagesRank, messagesTotal || total)}*`,
@@ -243,16 +249,25 @@ export function formatHelp(prefix = '/') {
     `• \`${p}daily\` · \`${p}coins\` / \`${p}saldo\``,
     `• \`${p}pay 50 @user\` — transferir coins`,
     '',
-    '*Loja*',
-    `• \`${p}loja\` · \`${p}comprar boost_xp\` · \`${p}titulo Lenda\``,
+    '*Loja & rua*',
+    `• \`${p}loja\` · \`${p}comprar chave_armas\` · \`${p}comprar boost_xp\``,
+    `• \`${p}mercado\` · \`${p}armas\` · \`${p}adquirir gasolina|pistola\``,
+    `• \`${p}inventario\` · \`${p}bazar\` · \`${p}vender <id> <preço>\``,
+    `• \`${p}assaltar banco\` · \`${p}assaltar lojinha\` · \`${p}assaltar @user\``,
+    `• \`${p}assaltar\` — tabela de EV · \`${p}consertar <id>\``,
     '',
     '*Social*',
     `• \`${p}marry @user\` → \`${p}aceitar\` / \`${p}recusar\``,
     `• \`${p}divorce\` · \`${p}ship @a @b\``,
     '',
+    '*Emprego*',
+    `• \`${p}emprego\` — cargos · \`${p}emprego bombeiro\` — teste no celular`,
+    `• \`${p}demitir sim\` — sair do cargo · salário no \`${p}daily\``,
+    `• \`${p}trabalhar\` — freela (à parte do CLT)`,
+    '',
     '*Jogos*',
     `• \`${p}cf 20 cara\` — cara ou coroa`,
-    `• \`${p}trabalhar\` · \`${p}sorte\``,
+    `• \`${p}sorte\``,
     `• \`${p}aposta @user 20 cara\` — duelo de moeda`,
     '',
     '*Cassino*',

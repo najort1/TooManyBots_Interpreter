@@ -49,6 +49,21 @@ import {
 import { handleGroupScopeCommand } from './handlers/groupScope.js';
 import { handleStickerCommand } from './handlers/sticker.js';
 import { handleTarotCommand } from './handlers/tarot.js';
+import {
+  handleGalleryCommand,
+  handleWeaponsCommand,
+  handleInventoryCommand,
+  handleBazaarCommand,
+  handleSellItemCommand,
+  handleBuyCollectibleCommand,
+  handleRepairItemCommand,
+  handleMarketEventCommand,
+  handleAssaultCommand,
+} from './handlers/market.js';
+import {
+  handleEmploymentCommand,
+  handleResignCommand,
+} from './handlers/employment.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -103,6 +118,8 @@ export async function routeFunCommand(ctx) {
     eventService,
     casinoService,
     tarotService,
+    marketService,
+    jobService,
     socialHooks,
     flavorService,
     getContactDisplayName,
@@ -152,6 +169,8 @@ export async function routeFunCommand(ctx) {
     eventService,
     casinoService,
     tarotService,
+    marketService,
+    jobService,
     socialHooks,
     flavorService,
     getContactDisplayName,
@@ -257,6 +276,28 @@ export async function routeFunCommand(ctx) {
       return handleBingoCommand(base);
     case FUN_COMMANDS.TAROT:
       return handleTarotCommand(base);
+    case FUN_COMMANDS.GALLERY:
+      return handleGalleryCommand(base);
+    case FUN_COMMANDS.WEAPONS:
+      return handleWeaponsCommand(base);
+    case FUN_COMMANDS.INVENTORY:
+      return handleInventoryCommand(base);
+    case FUN_COMMANDS.BAZAAR:
+      return handleBazaarCommand(base);
+    case FUN_COMMANDS.SELL_ITEM:
+      return handleSellItemCommand(base);
+    case FUN_COMMANDS.BUY_COLLECTIBLE:
+      return handleBuyCollectibleCommand(base);
+    case FUN_COMMANDS.REPAIR_ITEM:
+      return handleRepairItemCommand(base);
+    case FUN_COMMANDS.MARKET_EVENT:
+      return handleMarketEventCommand(base);
+    case FUN_COMMANDS.ASSAULT:
+      return handleAssaultCommand(base);
+    case FUN_COMMANDS.EMPLOYMENT:
+      return handleEmploymentCommand(base);
+    case FUN_COMMANDS.RESIGN:
+      return handleResignCommand(base);
     case FUN_COMMANDS.RANK_CASINO:
       return handleRankCasinoCommand(base);
     case FUN_COMMANDS.GROUP_SCOPE:

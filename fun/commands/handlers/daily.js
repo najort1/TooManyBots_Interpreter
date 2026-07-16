@@ -7,6 +7,8 @@ export async function handleDailyCommand({
   effectsRepository,
   bridgeService,
   socialHooks,
+  jobService,
+  repository,
   funConfig,
   reply,
   effectiveRates,
@@ -48,6 +50,41 @@ export async function handleDailyCommand({
   }
   if (result.claimed && panelinha) {
     text += '\n💀 Debuff *Panelinha oficial*: menos XP de daily. Melhore a `/ponte`.';
+  }
+
+  // salário de profissão + reset de inatividade
+  if (result.claimed && jobService?.applyDailySalary) {
+    const pay = jobService.applyDailySalary({ userJid, scopeKey, now });
+    if (pay?.paid > 0 && pay.job) {
+      text += `\n${pay.job.emoji} *Salário ${pay.job.name}:* +*${pay.paid}*c (${pay.workers} no cargo)`;
+      result.coins = pay.coins;
+      result.jobSalary = pay.paid;
+    }
+  }
+
+  // se daily bloqueado (already-claimed), não mexe em missed;
+  // inatividade: quando last_daily está velho e user tem emprego (checado em background-ish via perfil ou start)
+  if (!result.claimed && result.reason === 'already-claimed' && jobService?.processInactivity) {
+    // no-op no claim bloqueado
+  }
+
+  // ao falhar claim por already, não demite; demissão por inatividade:
+  // se o usuário tem emprego e last_daily_at > 48h sem claim bem-sucedido — processado quando tenta daily após janela
+  if (result.claimed === false && jobService?.processInactivity && repository) {
+    const stats = repository.getUserStats?.(userJid, scopeKey);
+    const last = Number(stats?.lastDailyAt) || 0;
+    // se passou > 48h do last daily e está tentando de novo (already or ok path handled)
+    if (last > 0 && now - last > 48 * 60 * 60_000) {
+      const fire = jobService.processInactivity({
+        userJid,
+        scopeKey,
+        lastDailyAt: last,
+        now,
+      });
+      if (fire?.fired) {
+        text += `\n🪪 *Demitido por inatividade* (${fire.jobId}). 3 dailys perdidos.`;
+      }
+    }
   }
 
   if (result.claimed && typeof socialHooks?.onDaily === 'function') {

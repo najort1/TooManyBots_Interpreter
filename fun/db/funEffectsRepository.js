@@ -3,6 +3,15 @@ import { ensureFunSchema as applyFunSchema } from '../schema.js';
 
 const ANALYTICS_SCHEMA = 'analytics';
 
+/** Unlocks por usuário que não devem sumir (ex.: chave de armas). */
+const PERMANENT_EFFECT_KEYS = new Set(['weapons_license', 'title']);
+
+function isPermanentEffect(effect) {
+  if (!effect) return false;
+  if (PERMANENT_EFFECT_KEYS.has(effect.effectKey)) return true;
+  return Boolean(effect.payload?.permanent);
+}
+
 function mapEffect(row) {
   if (!row) return null;
   let payload = {};
@@ -47,8 +56,13 @@ export function createFunEffectsRepository({ getDatabase = getDb } = {}) {
       ).run(String(userJid), String(scopeKey), String(effectKey));
       return null;
     }
-    // charge depleted
-    if (effect.expiresAt === 0 && effect.charges <= 0 && effect.effectKey !== 'title') {
+    // charge depleted (unlocks permanentes e título não somem)
+    if (
+      effect.expiresAt === 0 &&
+      effect.charges <= 0 &&
+      effect.effectKey !== 'title' &&
+      !isPermanentEffect(effect)
+    ) {
       return null;
     }
     return effect;
@@ -68,7 +82,7 @@ export function createFunEffectsRepository({ getDatabase = getDb } = {}) {
       .filter(e => {
         if (!e) return false;
         if (e.expiresAt > 0) return e.expiresAt >= (Number(now) || Date.now());
-        if (e.effectKey === 'title') return true;
+        if (e.effectKey === 'title' || isPermanentEffect(e)) return true;
         return e.charges > 0;
       });
   }
@@ -144,12 +158,14 @@ export function createFunEffectsRepository({ getDatabase = getDb } = {}) {
 
   /**
    * Consome 1 charge. Retorna effect consumido ou null.
+   * Unlocks permanentes (weapons_license etc.) nunca são consumidos.
    */
   function consumeCharge(userJid, scopeKey, effectKey, now = Date.now()) {
     ensureSchema();
     const db = getDatabase();
     const effect = getEffect(userJid, scopeKey, effectKey, now);
     if (!effect || effect.charges <= 0) return null;
+    if (isPermanentEffect(effect)) return null;
 
     const next = effect.charges - 1;
     if (next <= 0) {

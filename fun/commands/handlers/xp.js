@@ -14,6 +14,7 @@ export async function handleXpCommand({
   effectsRepository,
   casinoService,
   factionService,
+  jobService,
   getContactDisplayName,
   listContacts,
   reply,
@@ -127,6 +128,15 @@ export async function handleXpCommand({
     activeBuffs = listActiveEffects(targetJid, scopeKey) || [];
   }
 
+  let employment = null;
+  try {
+    if (jobService?.getEmployment) {
+      employment = jobService.getEmployment(targetJid, scopeKey);
+    }
+  } catch {
+    employment = null;
+  }
+
   const text = formatXpProfile({
     displayName: name,
     userJid: targetJid,
@@ -143,6 +153,7 @@ export async function handleXpCommand({
     viewerName,
     casino,
     factionLabel,
+    employment,
   });
 
   await reply(text);
