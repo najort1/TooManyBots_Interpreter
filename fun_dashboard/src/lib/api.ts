@@ -8,9 +8,14 @@ import type {
   RankEntry,
 } from "./types";
 
+/**
+ * Fetch do painel — NUNCA manda API key no JS do browser.
+ * Auth: cookie httpOnly `fun_dash_key` (setado pelo middleware após login).
+ */
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
+    credentials: "same-origin",
     headers: {
       "Content-Type": "application/json",
       ...(init?.headers || {}),
@@ -19,6 +24,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
+    if (res.status === 401) {
+      throw new Error(
+        (data as { error?: string }).error || "unauthorized — faça login com a API key"
+      );
+    }
+    if (res.status === 429) {
+      throw new Error("rate-limit — muitas requisições, aguarde um minuto");
+    }
     throw new Error(
       (data as { error?: string }).error || res.statusText || "request-failed"
     );
