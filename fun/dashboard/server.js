@@ -1,10 +1,11 @@
 /**
- * Dashboard HTTP mínimo do bot Fun (isolado do TMB).
- * Endpoints + UI simples para leaderboard e settings por grupo.
+ * Fun Dashboard API — HTTP JSON only.
+ * UI: Next.js em `fun_dashboard/` (não embute HTML monolítico).
  */
 
 import http from 'http';
 import { URL } from 'url';
+import { getDefaultOutboundGuard } from '../../engine/outboundGuard.js';
 
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
@@ -18,18 +19,10 @@ function sendJson(res, status, body) {
   res.end(payload);
 }
 
-function sendHtml(res, status, html) {
-  res.writeHead(status, {
-    'Content-Type': 'text/html; charset=utf-8',
-    'Content-Length': Buffer.byteLength(html),
-  });
-  res.end(html);
-}
-
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', c => chunks.push(c));
+    req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       try {
         const raw = Buffer.concat(chunks).toString('utf8');
@@ -43,219 +36,11 @@ function readBody(req) {
   });
 }
 
-function buildUiHtml({ host, port }) {
-  return `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Fun Bot · Dashboard</title>
-  <style>
-    :root {
-      --bg: #fafafa; --surface: #fff; --border: #e4e4e7;
-      --text: #18181b; --muted: #71717a; --ink: #09090b;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; font-family: Inter, system-ui, sans-serif;
-      background: var(--bg); color: var(--text);
-      line-height: 1.45;
-    }
-    header {
-      border-bottom: 1px solid var(--border);
-      background: var(--surface);
-      padding: 1rem 1.5rem;
-    }
-    header h1 { margin: 0; font-size: 1.1rem; font-weight: 600; }
-    header p { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.875rem; }
-    main { max-width: 920px; margin: 0 auto; padding: 1.5rem; display: grid; gap: 1.25rem; }
-    section {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 1rem 1.1rem;
-    }
-    h2 { margin: 0 0 0.75rem; font-size: 0.95rem; font-weight: 600; }
-    label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: 0.25rem; }
-    input, select, button {
-      font: inherit; border-radius: 6px; border: 1px solid var(--border);
-      padding: 0.45rem 0.6rem;
-    }
-    input, select { width: 100%; background: #fff; color: var(--text); }
-    button {
-      background: var(--ink); color: #fafafa; border: none;
-      cursor: pointer; font-weight: 500; padding: 0.5rem 0.9rem;
-    }
-    button.secondary { background: #f4f4f5; color: var(--text); border: 1px solid var(--border); }
-    button:disabled { opacity: 0.5; cursor: not-allowed; }
-    .row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; }
-    @media (max-width: 640px) { .row { grid-template-columns: 1fr; } }
-    table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
-    th, td { text-align: left; padding: 0.45rem 0.35rem; border-bottom: 1px solid var(--border); }
-    th { color: var(--muted); font-weight: 500; font-size: 0.75rem; }
-    .muted { color: var(--muted); font-size: 0.8rem; }
-    .actions { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-top: 0.85rem; }
-    .toast { font-size: 0.85rem; color: var(--muted); min-height: 1.2em; }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>Fun Bot</h1>
-    <p>Leaderboard e ajustes por grupo · ${host}:${port}</p>
-  </header>
-  <main>
-    <section>
-      <h2>Ranking</h2>
-      <div class="row">
-        <div>
-          <label for="scope">Grupo (scope)</label>
-          <select id="scope"></select>
-        </div>
-        <div>
-          <label for="limit">Top</label>
-          <input id="limit" type="number" min="1" max="50" value="10" />
-        </div>
-      </div>
-      <div class="actions">
-        <button type="button" id="btn-rank">Atualizar ranking</button>
-      </div>
-      <p class="toast" id="rank-status"></p>
-      <table>
-        <thead><tr><th>#</th><th>Usuário</th><th>Lv</th><th>XP</th><th>Coins</th></tr></thead>
-        <tbody id="rank-body"><tr><td colspan="5" class="muted">Carregue um grupo.</td></tr></tbody>
-      </table>
-    </section>
-
-    <section>
-      <h2>Settings do grupo</h2>
-      <p class="muted">Sobrescreve XP/cooldown/daily só neste grupo. Whitelist global fica no wizard / config.user.json.</p>
-      <div class="row" style="margin-top:0.75rem">
-        <div>
-          <label for="set-group">Grupo</label>
-          <select id="set-group"></select>
-        </div>
-        <div>
-          <label for="set-enabled">Ativo</label>
-          <select id="set-enabled">
-            <option value="1">Sim</option>
-            <option value="0">Não</option>
-          </select>
-        </div>
-      </div>
-      <div class="row" style="margin-top:0.75rem">
-        <div><label>XP min</label><input id="set-xpmin" type="number" value="15" /></div>
-        <div><label>XP max</label><input id="set-xpmax" type="number" value="25" /></div>
-      </div>
-      <div class="row" style="margin-top:0.75rem">
-        <div><label>Cooldown (ms)</label><input id="set-cd" type="number" value="60000" /></div>
-        <div><label>Rank limit</label><input id="set-rank" type="number" value="10" /></div>
-      </div>
-      <div class="row" style="margin-top:0.75rem">
-        <div><label>Daily XP</label><input id="set-dxp" type="number" value="150" /></div>
-        <div><label>Daily coins</label><input id="set-dcoins" type="number" value="50" /></div>
-      </div>
-      <div class="actions">
-        <button type="button" id="btn-load-set" class="secondary">Carregar</button>
-        <button type="button" id="btn-save-set">Salvar settings</button>
-      </div>
-      <p class="toast" id="set-status"></p>
-    </section>
-  </main>
-  <script>
-    const $ = id => document.getElementById(id);
-
-    async function api(path, opts) {
-      const res = await fetch(path, opts);
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || res.statusText);
-      return data;
-    }
-
-    async function loadGroups() {
-      const data = await api('/api/fun/groups');
-      const groups = data.groups || [];
-      for (const sel of [$('scope'), $('set-group')]) {
-        sel.innerHTML = '';
-        if (!groups.length) {
-          const o = document.createElement('option');
-          o.value = '';
-          o.textContent = 'Nenhum grupo na whitelist';
-          sel.appendChild(o);
-          continue;
-        }
-        for (const g of groups) {
-          const o = document.createElement('option');
-          o.value = g.jid;
-          o.textContent = g.name ? g.name + ' · ' + g.jid : g.jid;
-          sel.appendChild(o);
-        }
-      }
-    }
-
-    async function loadRank() {
-      const scope = $('scope').value;
-      const limit = $('limit').value || 10;
-      $('rank-status').textContent = 'Carregando…';
-      if (!scope) {
-        $('rank-status').textContent = 'Sem grupo.';
-        return;
-      }
-      const data = await api('/api/fun/leaderboard?scope=' + encodeURIComponent(scope) + '&limit=' + limit);
-      const rows = data.entries || [];
-      $('rank-body').innerHTML = rows.length
-        ? rows.map(e => '<tr><td>' + e.rank + '</td><td>' + (e.displayName || e.userJid) + '</td><td>' + e.level + '</td><td>' + e.xp + '</td><td>' + e.coins + '</td></tr>').join('')
-        : '<tr><td colspan="5" class="muted">Vazio.</td></tr>';
-      $('rank-status').textContent = rows.length + ' jogador(es)';
-    }
-
-    async function loadSettings() {
-      const groupJid = $('set-group').value;
-      if (!groupJid) return;
-      $('set-status').textContent = 'Carregando…';
-      const data = await api('/api/fun/groups/' + encodeURIComponent(groupJid) + '/settings');
-      const s = data.settings || data.defaults || {};
-      $('set-enabled').value = s.enabled === false ? '0' : '1';
-      $('set-xpmin').value = s.xpMin ?? 15;
-      $('set-xpmax').value = s.xpMax ?? 25;
-      $('set-cd').value = s.cooldownMs ?? 60000;
-      $('set-rank').value = s.rankLimit ?? 10;
-      $('set-dxp').value = s.dailyXp ?? 150;
-      $('set-dcoins').value = s.dailyCoins ?? 50;
-      $('set-status').textContent = data.settings ? 'Override do grupo' : 'Defaults globais (ainda sem override)';
-    }
-
-    async function saveSettings() {
-      const groupJid = $('set-group').value;
-      if (!groupJid) return;
-      $('set-status').textContent = 'Salvando…';
-      await api('/api/fun/groups/' + encodeURIComponent(groupJid) + '/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enabled: $('set-enabled').value === '1',
-          xpMin: Number($('set-xpmin').value),
-          xpMax: Number($('set-xpmax').value),
-          cooldownMs: Number($('set-cd').value),
-          rankLimit: Number($('set-rank').value),
-          dailyXp: Number($('set-dxp').value),
-          dailyCoins: Number($('set-dcoins').value),
-          levelUpAnnounce: true,
-        }),
-      });
-      $('set-status').textContent = 'Salvo.';
-    }
-
-    $('btn-rank').onclick = () => loadRank().catch(e => { $('rank-status').textContent = e.message; });
-    $('btn-load-set').onclick = () => loadSettings().catch(e => { $('set-status').textContent = e.message; });
-    $('btn-save-set').onclick = () => saveSettings().catch(e => { $('set-status').textContent = e.message; });
-
-    loadGroups()
-      .then(() => loadRank().catch(() => {}))
-      .then(() => loadSettings().catch(() => {}))
-      .catch(e => { $('rank-status').textContent = e.message; });
-  </script>
-</body>
-</html>`;
+function withDisplayName(getContactDisplayName, entry) {
+  return {
+    ...entry,
+    displayName: getContactDisplayName(entry.userJid) || entry.displayName || '',
+  };
 }
 
 /**
@@ -275,11 +60,18 @@ export function startFunDashboardServer(deps = {}) {
     throw new Error('[fun/dashboard] funModule com _services é obrigatório');
   }
 
-  const { repository, groupRepository } = funModule._services;
+  const {
+    repository,
+    groupRepository,
+    casinoRepository = null,
+    eventRepository = null,
+    factionRepository = null,
+  } = funModule._services;
 
   const config = getConfig();
   const host = String(config.dashboardHost || '127.0.0.1');
   const port = Number(config.dashboardPort) || 8790;
+  const uiPort = Number(process.env.FUN_DASHBOARD_UI_PORT || 3001);
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -296,19 +88,31 @@ export function startFunDashboardServer(deps = {}) {
       const url = new URL(req.url || '/', `http://${host}:${port}`);
       const path = url.pathname;
 
+      // UI vive no Next — API só aponta o endereço
       if (req.method === 'GET' && (path === '/' || path === '/index.html')) {
-        sendHtml(res, 200, buildUiHtml({ host, port }));
+        sendJson(res, 200, {
+          ok: true,
+          service: 'fun-dashboard-api',
+          message: 'UI Next.js em fun_dashboard',
+          ui: `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${uiPort}`,
+          api: `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}/api/fun/health`,
+        });
         return;
       }
 
       if (req.method === 'GET' && path === '/api/fun/health') {
-        sendJson(res, 200, { ok: true, service: 'fun-dashboard' });
+        sendJson(res, 200, {
+          ok: true,
+          service: 'fun-dashboard-api',
+          ts: Date.now(),
+        });
         return;
       }
 
       if (req.method === 'GET' && path === '/api/fun/config') {
         const cfg = getConfig();
         sendJson(res, 200, {
+          prefix: cfg.prefix || '/',
           groupWhitelistJids: cfg.groupWhitelistJids || [],
           xpMin: cfg.xpMin,
           xpMax: cfg.xpMax,
@@ -316,6 +120,21 @@ export function startFunDashboardServer(deps = {}) {
           dailyXp: cfg.dailyXp,
           dailyCoins: cfg.dailyCoins,
           rankLimit: cfg.rankLimit,
+          allowDm: cfg.allowDm !== false,
+          replyCommandsInPrivate: cfg.replyCommandsInPrivate !== false,
+          zenEnabled: cfg.zenEnabled !== false,
+          zenBaseUrl: cfg.zenBaseUrl || '',
+          zenModel: cfg.zenModel || '',
+          ollamaEnabled: cfg.ollamaEnabled !== false,
+          ollamaModel: cfg.ollamaModel || '',
+          tarotEnabled: cfg.tarotEnabled !== false,
+          tarotCooldownMs: cfg.tarotCooldownMs,
+          bingoMin: cfg.bingoMin,
+          bingoMax: cfg.bingoMax,
+          casinoMin: cfg.casinoMin,
+          casinoMax: cfg.casinoMax,
+          dashboardHost: cfg.dashboardHost,
+          dashboardPort: cfg.dashboardPort,
         });
         return;
       }
@@ -323,27 +142,209 @@ export function startFunDashboardServer(deps = {}) {
       if (req.method === 'GET' && path === '/api/fun/groups') {
         const cfg = getConfig();
         const jids = Array.isArray(cfg.groupWhitelistJids) ? cfg.groupWhitelistJids : [];
-        const groups = jids.map(jid => ({
-          jid,
-          name: getContactDisplayName(jid) || '',
-          settings: groupRepository.getGroupSettings(jid),
-        }));
+        const groups = jids.map((jid) => {
+          const settings = groupRepository.getGroupSettings(jid);
+          const players = repository.countUsersInScope(jid);
+          let jackpot = 0;
+          try {
+            jackpot = casinoRepository?.getJackpot?.(jid)?.pot || 0;
+          } catch {
+            jackpot = 0;
+          }
+          let event = null;
+          try {
+            event = eventRepository?.get?.(jid) || null;
+          } catch {
+            event = null;
+          }
+          return {
+            jid,
+            name: getContactDisplayName(jid) || '',
+            settings,
+            players,
+            jackpot,
+            eventType: event?.eventType || 'none',
+            eventEndsAt: event?.endsAt || 0,
+          };
+        });
         sendJson(res, 200, { groups });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/overview') {
+        const cfg = getConfig();
+        const scope = String(url.searchParams.get('scope') || '').trim();
+        const jids = Array.isArray(cfg.groupWhitelistJids) ? cfg.groupWhitelistJids : [];
+        const scopeKey = scope || jids[0] || '';
+
+        let players = 0;
+        let jackpot = 0;
+        let event = null;
+        let factions = 0;
+        let topXp = [];
+        let topCoins = [];
+
+        if (scopeKey) {
+          players = repository.countUsersInScope(scopeKey);
+          try {
+            jackpot = casinoRepository?.getJackpot?.(scopeKey)?.pot || 0;
+          } catch {
+            jackpot = 0;
+          }
+          try {
+            event = eventRepository?.get?.(scopeKey) || null;
+          } catch {
+            event = null;
+          }
+          try {
+            factions = factionRepository?.listByScope?.(scopeKey)?.length || 0;
+          } catch {
+            factions = 0;
+          }
+          topXp = (repository.getLeaderboard(scopeKey, 5) || []).map((e) =>
+            withDisplayName(getContactDisplayName, e)
+          );
+          topCoins = (repository.getCoinsLeaderboard?.(scopeKey, 5) || []).map((e) =>
+            withDisplayName(getContactDisplayName, e)
+          );
+        }
+
+        let outbound = null;
+        try {
+          outbound = getDefaultOutboundGuard().stats();
+        } catch {
+          outbound = null;
+        }
+
+        sendJson(res, 200, {
+          scope: scopeKey,
+          groups: jids.length,
+          players,
+          jackpot,
+          factions,
+          event: event
+            ? {
+                eventType: event.eventType,
+                multiplier: event.multiplier,
+                endsAt: event.endsAt,
+                active:
+                  event.eventType &&
+                  event.eventType !== 'none' &&
+                  Number(event.endsAt) > Date.now(),
+              }
+            : null,
+          topXp,
+          topCoins,
+          outbound: outbound
+            ? {
+                globalLastMinute: outbound.globalLastMinute,
+                globalLastHour: outbound.globalLastHour,
+                dropped: outbound.dropped,
+                maxPerMinute: outbound.config?.maxPerMinute,
+                maxPerHour: outbound.config?.maxPerHour,
+              }
+            : null,
+          features: {
+            zen: cfg.zenEnabled !== false,
+            ollama: cfg.ollamaEnabled !== false,
+            tarot: cfg.tarotEnabled !== false,
+            privateReplies: cfg.replyCommandsInPrivate !== false,
+          },
+        });
         return;
       }
 
       if (req.method === 'GET' && path === '/api/fun/leaderboard') {
         const scope = String(url.searchParams.get('scope') || '').trim();
         const limit = Number(url.searchParams.get('limit') || 10);
+        const kind = String(url.searchParams.get('kind') || 'xp').trim().toLowerCase();
         if (!scope) {
           sendJson(res, 400, { error: 'scope obrigatorio' });
           return;
         }
-        const entries = repository.getLeaderboard(scope, limit).map(e => ({
-          ...e,
-          displayName: getContactDisplayName(e.userJid) || '',
-        }));
-        sendJson(res, 200, { scope, entries, total: repository.countUsersInScope(scope) });
+        let entries = [];
+        if (kind === 'coins') {
+          entries = repository.getCoinsLeaderboard?.(scope, limit) || [];
+        } else if (kind === 'messages' || kind === 'msg') {
+          entries = repository.getMessagesLeaderboard?.(scope, limit) || [];
+        } else {
+          entries = repository.getLeaderboard(scope, limit) || [];
+        }
+        entries = entries.map((e) => withDisplayName(getContactDisplayName, e));
+        sendJson(res, 200, {
+          scope,
+          kind,
+          entries,
+          total: repository.countUsersInScope(scope),
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/casino') {
+        const scope = String(url.searchParams.get('scope') || '').trim();
+        const limit = Number(url.searchParams.get('limit') || 10);
+        if (!scope) {
+          sendJson(res, 400, { error: 'scope obrigatorio' });
+          return;
+        }
+        if (!casinoRepository) {
+          sendJson(res, 200, {
+            scope,
+            jackpot: 0,
+            board: [],
+            tournament: null,
+          });
+          return;
+        }
+        const jackpot = casinoRepository.getJackpot(scope);
+        const board = (casinoRepository.getLeaderboard(scope, limit) || []).map((e) =>
+          withDisplayName(getContactDisplayName, e)
+        );
+        const tournament = casinoRepository.getOpenTournament?.(scope) || null;
+        sendJson(res, 200, {
+          scope,
+          jackpot: jackpot?.pot || 0,
+          jackpotUpdatedAt: jackpot?.updatedAt || 0,
+          board,
+          tournament,
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/factions') {
+        const scope = String(url.searchParams.get('scope') || '').trim();
+        if (!scope) {
+          sendJson(res, 400, { error: 'scope obrigatorio' });
+          return;
+        }
+        const list = factionRepository?.listByScope?.(scope) || [];
+        sendJson(res, 200, {
+          scope,
+          factions: list.map((f) => ({
+            ...f,
+            leaderName: getContactDisplayName(f.leaderJid) || '',
+          })),
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/event') {
+        const scope = String(url.searchParams.get('scope') || '').trim();
+        if (!scope) {
+          sendJson(res, 400, { error: 'scope obrigatorio' });
+          return;
+        }
+        const event = eventRepository?.get?.(scope) || null;
+        sendJson(res, 200, { scope, event });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/outbound') {
+        try {
+          sendJson(res, 200, getDefaultOutboundGuard().stats());
+        } catch (err) {
+          sendJson(res, 200, { error: String(err?.message || err) });
+        }
         return;
       }
 
@@ -377,7 +378,8 @@ export function startFunDashboardServer(deps = {}) {
   return new Promise((resolve, reject) => {
     server.once('error', reject);
     server.listen(port, host, () => {
-      console.log(`[fun] Dashboard: http://${host}:${port}`);
+      console.log(`[fun] Dashboard API: http://${host}:${port}`);
+      console.log(`[fun] Dashboard UI (Next): http://127.0.0.1:${uiPort}  → npm run fun:dashboard`);
       resolve(server);
     });
   });
