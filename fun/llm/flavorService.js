@@ -22,6 +22,49 @@ No máximo 3 emojis. Só o texto final.`;
 /** System enxuto pro Zen (modelos free se perdem com prompt longo). */
 const ZEN_SYSTEM_PROMPT = `Narrador de zap BR. Só pt-BR de verdade (1–3 frases, até 1000 chars). Tom: zoação de grupo, ironia leve, às vezes um duplo sentido sutil — nunca forçado nem IA genérica. Sem markdown, sem aspas, sem inglês, sem ofensa pesada. Não invente números de jogo. Máx 3 emojis. Só o texto final.`;
 
+/**
+ * Roteiro besteirol de assalto — história LONGA (não uma frase).
+ * Usado só nos cenários assault_*.
+ */
+const ASSAULT_STORY_SYSTEM = `Você é roteirista de FILME BESTEIROL brasileiro de assalto (tipo comédia de ação barata de bairro).
+
+Escreva um ROTEIRO CURTO DE CINEMA, em português do Brasil, bem narrado, engraçado e cinematográfico.
+
+FORMATO OBRIGATÓRIO (use exatamente estes marcadores de cena):
+🎬 TÍTULO: (nome inventado do filme, em caps ou estilo cartaz)
+CENA 1 — PREPARAÇÃO
+(parágrafo: o plano, o nervoso, a arma, o clima)
+CENA 2 — AÇÃO
+(parágrafo: a entrada, o caos, diálogos curtos entre aspas se quiser)
+CENA 3 — FUGA / CONSEQUÊNCIA
+(parágrafo: fuga, mico ou vitória, sirene, vizinho, etc.)
+EPÍLOGO
+(1–2 frases de fechamento irônico pro grupo do zap)
+
+TAMANHO: entre 900 e 1800 caracteres. Várias frases por cena. NÃO seja curto. NÃO resuma em 2 linhas.
+
+TOM: besteirol, exagerado, gíria BR, vergonha alheia carinhosa. Pode ter diálogos.
+
+NÃO:
+- inventar quantia de coins, saldo, multa, XP, chance % ou placar (o bot já mostra os números)
+- gore, ofensa pesada, preconceito, conteúdo sexual explícito
+- inglês, lista com bullets, "como IA", meta sobre o prompt
+- aspas envolvendo o texto inteiro
+
+Só o roteiro final.`;
+
+const ASSAULT_STORY_ZEN_SYSTEM = `Roteirista de filme besteirol BR de assalto. Escreva ROTEIRO LONGO (900–1800 chars) com:
+🎬 TÍTULO:
+CENA 1 — PREPARAÇÃO
+CENA 2 — AÇÃO
+CENA 3 — FUGA / CONSEQUÊNCIA
+EPÍLOGO
+Várias frases por cena, humor de bairro, diálogos ok. pt-BR. NÃO invente coins/saldo/multa/%. Sem gore nem ofensa pesada. Só o roteiro.`;
+
+function isAssaultScenario(key) {
+  return String(key || '').startsWith('assault_');
+}
+
 /** Fallbacks estáticos — sempre seguros se LLM falhar. */
 const FALLBACKS = {
   faction_create: (v) =>
@@ -145,6 +188,150 @@ const FALLBACKS = {
       'Level up no chat. XP bem gasto zoando os outros.',
       `Nível *${v.level || '?'}*. Continua mandando mensagem, campeão da atividade.`,
     ]),
+  // Assaltos — roteiro besteirol LONGO (fallback se LLM cair)
+  assault_bank_win: (v) => {
+    const a = v.attacker || 'O Protagonista';
+    const w = v.weapon || 'uma arma de respeito';
+    return pick([
+      [
+        `🎬 TÍTULO: "${a.toUpperCase()} CONTRA O CAIXA ELETRÔNICO"`,
+        ``,
+        `CENA 1 — PREPARAÇÃO`,
+        `${a} ensaiava o plano no espelho do banheiro do posto: voz grave, queixo pra cima, *${w}* escondida num saco de pão. "Hoje o banco paga o almoço de todo mundo", murmurou, como se o destino tivesse ouvido. O destino, claro, tava ocupado.`,
+        ``,
+        `CENA 2 — AÇÃO`,
+        `A porta giratória engasgou. ${a} entrou devagar, estilo filme dos anos 90, e gritou "é um saque… digamos, acelerado!". O segurança olhou o relógio (intervalo do café). A gerente ergueu as mãos com um "aí não, gente". *${w}* fez o discurso. O caixa abriu. Alguém pediu pra não sujar o chão com o extrato.`,
+        ``,
+        `CENA 3 — FUGA / CONSEQUÊNCIA`,
+        `Sirene atrasada, típica. ${a} saiu correndo como quem perdeu o ônibus, saco na mão, coração a mil. Um idoso na fila comentou: "na minha época o assalto tinha educação". A câmera do banco pegou o melhor ângulo — o do mico e o da vitória ao mesmo tempo.`,
+        ``,
+        `EPÍLOGO`,
+        `Corte pro grupo do zap: ${a} rico de moral (e de loot). Créditos com funk baixo. Continua… se o cooldown deixar.`,
+      ].join('\n'),
+      [
+        `🎬 TÍTULO: "O ASSALTO QUE DEU CERTO (MILAGRE BRASILEIRO)"`,
+        ``,
+        `CENA 1 — PREPARAÇÃO`,
+        `No estacionamento, ${a} respirava fundo e contava até três errado. *${w}* pesava mais na consciência do que na mão. O plano cabia num post-it: entrar, assustar, sair, não tropeçar.`,
+        ``,
+        `CENA 2 — AÇÃO`,
+        `Dentro do banco o ar-condicionado gelava o drama. "${a} não veio pagar boleto!", ecoou. Clientes no chão (metade por medo, metade por dor nas costas). O caixa tremeu, a gaveta abriu, e o universo — por uma vez — colaborou com o bandido.`,
+        ``,
+        `CENA 3 — FUGA / CONSEQUÊNCIA`,
+        `Fuga de cinema B: porta, sol na cara, possível moto, possível Uber do crime. O alarme tocou quando ${a} já tava na esquina inventando álibi. Sucesso bagunçado, mas sucesso.`,
+        ``,
+        `EPÍLOGO`,
+        `Fim… por enquanto. ${a} entra pra história do grupo como "aquele que meteu o louco no banco e voltou pra contar".`,
+      ].join('\n'),
+    ]);
+  },
+  assault_bank_fail: (v) => {
+    const a = v.attacker || 'O Protagonista';
+    const w = v.weapon || 'a arma';
+    return pick([
+      [
+        `🎬 TÍTULO: "${a.toUpperCase()} E O BANCO QUE NÃO COLABOROU"`,
+        ``,
+        `CENA 1 — PREPARAÇÃO`,
+        `${a} passou a manhã no YouTube de "como assaltar sem assaltar de verdade". Imprimiu um mapa torto, escondeu *${w}* e jurou que seria "rápido e limpo". Spoiler: não foi.`,
+        ``,
+        `CENA 2 — AÇÃO`,
+        `Entrou no banco com confiança de comercial de perfume. "Todo mundo quieto!" — a senha do caixa não quietou. A porta trancou do jeito errado, o segurança voltou do café cedo, e *${w}* parecia mais envergonhada que o dono. Alguém filmou. Claro que filmou.`,
+        ``,
+        `CENA 3 — FUGA / CONSEQUÊNCIA`,
+        `A "fuga" foi um tropeço na esteira de publicidade do banco. Sirene, gritaria, e ${a} inventando "era performance de arte urbana". Multa de vergonha no bolso, moral no chão encerado.`,
+        ``,
+        `EPÍLOGO`,
+        `Créditos: ${a} 0 × Banco 1. O grupo já tem o meme pronto. Continua no próximo cooldown… se tiver coragem.`,
+      ].join('\n'),
+    ]);
+  },
+  assault_shop_win: (v) => {
+    const a = v.attacker || 'O Protagonista';
+    const w = v.weapon || 'uma arma';
+    return pick([
+      [
+        `🎬 TÍTULO: "A LOJINHA E O CLIENTE ESPECIAL"`,
+        ``,
+        `CENA 1 — PREPARAÇÃO`,
+        `${a} estudou a lojinha da esquina como se fosse Fort Knox: horário do pão quente, gato no balcão, ventilador barulhento. *${w}* foi de "argumento de venda". O plano: entrar, convencer, sair com o caixa do dia.`,
+        ``,
+        `CENA 2 — AÇÃO`,
+        `"Boa tarde, é um assalto educado", anunciou ${a}. O dono largou o pão de forma. A balança tremeu. *${w}* fez o comercial. Em trinta segundos de caos besteirol, a gaveta abriu e o troco do bairro mudou de dono.`,
+        ``,
+        `CENA 3 — FUGA / CONSEQUÊNCIA`,
+        `${a} saiu com pressa de quem esqueceu o leite na lista. O gato miou julgamento. Um vizinho gritou "é o ${a} de novo?" — fama local conquistada. Sirene? Talvez amanhã.`,
+        ``,
+        `EPÍLOGO`,
+        `Vitória de mercearia, glória de filme B. ${a} volta pro zap como lenda do quarteirão. Fim (até a próxima lojinha).`,
+      ].join('\n'),
+    ]);
+  },
+  assault_shop_fail: (v) => {
+    const a = v.attacker || 'O Protagonista';
+    const w = v.weapon || 'a arma';
+    return pick([
+      [
+        `🎬 TÍTULO: "O DONO DA LOJA ERA MAIS MALANDRO"`,
+        ``,
+        `CENA 1 — PREPARAÇÃO`,
+        `${a} treinou o grito no chuveiro. *${w}* brilhava de expectativa. A lojinha parecia fácil: uma porta, um caixa, zero orçamento de Hollywood.`,
+        ``,
+        `CENA 2 — AÇÃO`,
+        `"É um assalto!" — "Aceita cartão de fidelidade?", respondeu o dono, sem piscar. ${a} perdeu o timing. *${w}* não intimidou nem o saco de arroz. O botão de pânico ganhou a cena. Clientes aplaudiram o plot twist.`,
+        ``,
+        `CENA 3 — FUGA / CONSEQUÊNCIA`,
+        `Fuga de comédia: esbarrou na prateleira de biscoito, derrubou o varal de panfleto, saiu com a dignidade em promoção. Multinha de mico no bolso. O dono acenou: "volta pra comprar, viu".`,
+        ``,
+        `EPÍLOGO`,
+        `${a} 0 × Lojinha 1. O bairro ri. O zap também. Roteiro arquivado sob "nunca mais… até amanhã".`,
+      ].join('\n'),
+    ]);
+  },
+  assault_player_win: (v) => {
+    const a = v.attacker || 'Fulano';
+    const t = v.target || 'Beltrano';
+    const w = v.weapon || 'a arma';
+    return pick([
+      [
+        `🎬 TÍTULO: "${a.toUpperCase()} VS ${t.toUpperCase()}: AMIZADE COM JUROS"`,
+        ``,
+        `CENA 1 — PREPARAÇÃO`,
+        `No grupo, o clima tava de paz. ${a} via o perfil de ${t} e pensava em "redistribuição de renda improvisada". *${w}* saiu do inventário como coadjuvante estrela. For fun — mas o bolso não sabe o que é brincadeira.`,
+        ``,
+        `CENA 2 — AÇÃO`,
+        `Emboscada digital-cinematográfica: ${a} aparece, ${t} nem processa. "Passa o que tem no bolso virtual!" *${w}* convence mais que argumento. ${t} resiste um frame… e cede. O chat é a plateia; alguém já mandou kkkkk.`,
+        ``,
+        `CENA 3 — FUGA / CONSEQUÊNCIA`,
+        `${a} some no cooldown com a moral alta. ${t} conta os coins que faltam e jura vingança no próximo daily. Amizade? Em manutenção. Loot? Real.`,
+        ``,
+        `EPÍLOGO`,
+        `PvP com gosto de novela. ${a} ganhou a rodada. ${t} ganhou material pra reclamar no grupo. Continua…`,
+      ].join('\n'),
+    ]);
+  },
+  assault_player_fail: (v) => {
+    const a = v.attacker || 'Fulano';
+    const t = v.target || 'Beltrano';
+    const w = v.weapon || 'a arma';
+    return pick([
+      [
+        `🎬 TÍTULO: "O ASSALTO ENTRE AMIGOS QUE VIROU MICO"`,
+        ``,
+        `CENA 1 — PREPARAÇÃO`,
+        `${a} planejou o golpe em ${t} com a seriedade de um final de campeonato. *${w}* carregada de esperança. O grupo mal sabia que ia ganhar conteúdo grátis.`,
+        ``,
+        `CENA 2 — AÇÃO`,
+        `Chegou a hora: ${a} avança, ${t} desvia (ou a sorte desvia por ele). *${w}* falha no carisma. O plano desmonta em público. Alguém manda "KKKK fraco". ${a} tenta improvisar um "era brincadeira" — tarde demais.`,
+        ``,
+        `CENA 3 — FUGA / CONSEQUÊNCIA`,
+        `Fuga constrangedora pro cooldown. Multa de vergonha. ${t} intacto, talvez até rindo. ${a} revisa a carreira de vilão.`,
+        ``,
+        `EPÍLOGO`,
+        `Placar: ${t} defendeu o bolso. ${a} defendeu… nada. O zap arquiva o episódio em "clássicos do mico".`,
+      ].join('\n'),
+    ]);
+  },
   default: () =>
     pick([
       'O chat reage em silêncio… por enquanto.',
@@ -191,18 +378,19 @@ function sanitizeFlavor(raw, maxLen = 160) {
     .filter(Boolean)
     .filter((l) => !/^(thinking|raciocínio|step\s*\d)/i.test(l));
 
-  // prefere primeira linha boa; se todas forem meta, falha
-  let s = '';
+  // junta até 3 linhas boas (mini-histórias de assalto etc.); se todas forem meta, falha
+  const good = [];
   for (const line of lines) {
     let cand = line
       .replace(/^["'“”«»]+|["'“”«»]+$/g, '')
       .replace(/^(narrador|bot|assistente|resposta|final)\s*:\s*/i, '')
       .trim();
     if (cand.length < 6 || looksLikeMetaReasoning(cand)) continue;
-    s = cand;
-    break;
+    good.push(cand);
+    if (good.length >= 3) break;
   }
-  if (!s) return '';
+  if (!good.length) return '';
+  let s = good.join(' ').replace(/\s+/g, ' ').trim();
 
   if (s.length > maxLen) {
     const cut = s.slice(0, maxLen);
@@ -238,10 +426,86 @@ function buildUserPrompt(scenario, vars) {
     lucky_hit: 'Deu sorte no comando de sorte — raro e gostoso.',
     lucky_miss: 'Azar no comando de sorte — clássico, sem drama falso.',
     level_up: 'Level up de XP — orgulho irônico de ranqueiro de grupo.',
+    assault_bank_win:
+      'ROTEIRO BESTEIROL LONGO: assalto a BANCO que DEU CERTO. Elenco: attacker, weapon. Várias cenas, diálogos, exagero cômico. NÃO invente coins/saldo/chance%.',
+    assault_bank_fail:
+      'ROTEIRO BESTEIROL LONGO: assalto a BANCO que FALHOU. Mico épico, fuga torta. NÃO invente multa/coins.',
+    assault_shop_win:
+      'ROTEIRO BESTEIROL LONGO: assalto a LOJINHA que DEU CERTO. Humor de bairro, dono, gato no balcão. NÃO invente coins.',
+    assault_shop_fail:
+      'ROTEIRO BESTEIROL LONGO: assalto a LOJINHA que FALHOU. Dono mais malandro. NÃO invente coins.',
+    assault_player_win:
+      'ROTEIRO BESTEIROL LONGO: assalto PvP entre amigos (attacker vs target) que DEU CERTO. For fun no zap. NÃO invente quantias. Sem bullying pesado.',
+    assault_player_fail:
+      'ROTEIRO BESTEIROL LONGO: assalto PvP que FALHOU (attacker vs target). Mico de grupo. NÃO invente multa/coins.',
   };
 
-  const hint = scenarioHints[scenario] || 'Comentário de narrador de grupo BR sobre o que rolou.';
-  return `${hint}\nContexto fixo (não invente além disso): ${facts || 'nenhum'}\nTexto (1 a 3 frases, pt-BR de zap):`;
+  const assault = isAssaultScenario(scenario);
+  const hint =
+    scenarioHints[scenario] || 'Comentário de narrador de grupo BR sobre o que rolou.';
+  const shape = assault
+    ? `Escreva o ROTEIRO COMPLETO (900–1800 caracteres) com:
+🎬 TÍTULO:
+CENA 1 — PREPARAÇÃO
+CENA 2 — AÇÃO
+CENA 3 — FUGA / CONSEQUÊNCIA
+EPÍLOGO
+Várias frases por cena. NÃO encurte. Sem inventar números de jogo:`
+    : 'Texto (1 a 3 frases, pt-BR de zap):';
+  return `${hint}\nContexto fixo (não invente além disso): ${facts || 'nenhum'}\n${shape}`;
+}
+
+/** Sanitiza roteiro longo de assalto — mantém parágrafos/cenas. */
+function sanitizeAssaultStory(raw, maxLen = 2200) {
+  let text = String(raw || '')
+    .replace(/\r/g, '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '\n')
+    .replace(/```[\s\S]*?```/g, '\n')
+    .trim();
+  if (!text || looksLikeMetaReasoning(text.slice(0, 200))) {
+    // tenta achar o começo do roteiro
+    const idx = text.search(/🎬|T[IÍ]TULO|CENA\s*1/i);
+    if (idx > 0) text = text.slice(idx);
+  }
+
+  const lines = text
+    .split('\n')
+    .map((l) => l.trimEnd())
+    .filter((l) => {
+      const t = l.trim();
+      if (!t) return true; // keep blank for paragraph breaks
+      if (/^(thinking|raciocínio|step\s*\d|contexto:|regras?:)/i.test(t)) return false;
+      if (looksLikeMetaReasoning(t) && t.length < 120) return false;
+      return true;
+    });
+
+  // colapsa 3+ linhas em branco
+  const cleaned = [];
+  let blanks = 0;
+  for (const line of lines) {
+    if (!line.trim()) {
+      blanks += 1;
+      if (blanks <= 1) cleaned.push('');
+      continue;
+    }
+    blanks = 0;
+    let cand = line
+      .replace(/^["'“”«»]+|["'“”«»]+$/g, '')
+      .replace(/^(narrador|bot|assistente|roteiro|resposta|final)\s*:\s*/i, '')
+      .trimEnd();
+    cleaned.push(cand);
+  }
+
+  let s = cleaned.join('\n').trim();
+  if (s.length < 80) return ''; // curto demais = falhou (preferir fallback longo)
+
+  if (s.length > maxLen) {
+    const cut = s.slice(0, maxLen);
+    const sp = Math.max(cut.lastIndexOf('\n\n'), cut.lastIndexOf('\n'), cut.lastIndexOf('. '));
+    s = `${(sp > 200 ? cut.slice(0, sp) : cut).trim()}…`;
+  }
+  if (looksLikeMetaReasoning(s.slice(0, 120))) return '';
+  return s;
 }
 
 function resolveOllamaEndpoint(cfg) {
@@ -337,8 +601,34 @@ export function createFlavorService(deps = {}) {
     }
   }
 
-  function buildPromptParts(cfg, key, vars, simple, { forZen = false } = {}) {
-    const maxChars = Math.floor(Number(cfg.ollamaMaxChars) || 1000);
+  function buildPromptParts(cfg, key, vars, simple, { forZen = false, assault = false } = {}) {
+    const maxChars = assault
+      ? Math.max(1800, Math.floor(Number(cfg.assaultStoryMaxChars) || 2200))
+      : Math.floor(Number(cfg.ollamaMaxChars) || 1000);
+
+    if (assault) {
+      const facts = Object.entries(vars || {})
+        .filter(([, v]) => v != null && String(v).trim() !== '')
+        .map(([k, v]) => `${k}=${String(v).slice(0, 100)}`)
+        .join('; ');
+      const outcome = /_win$/.test(key) ? 'SUCESSO' : /_fail$/.test(key) ? 'FALHA' : 'resultado';
+      const where = key.includes('bank')
+        ? 'BANCO'
+        : key.includes('shop')
+          ? 'LOJINHA'
+          : 'JOGADOR (PvP no zap)';
+      const prompt = simple
+        ? `Roteiro besteirol LONGO (900–1800 chars) de assalto a ${where} com ${outcome}. Dados: ${facts}. Formato: 🎬 TÍTULO + CENA 1/2/3 + EPÍLOGO. Só o roteiro:`
+        : buildUserPrompt(key, vars);
+      return {
+        prompt,
+        system: forZen ? ASSAULT_STORY_ZEN_SYSTEM : ASSAULT_STORY_SYSTEM,
+        maxChars,
+        assault: true,
+        maxTokens: Math.max(700, Math.floor(Number(cfg.assaultStoryMaxTokens) || 1100)),
+      };
+    }
+
     let prompt;
     if (forZen) {
       // prompt curto funciona melhor nos free models do Zen
@@ -359,14 +649,15 @@ export function createFlavorService(deps = {}) {
       : forZen
         ? ZEN_SYSTEM_PROMPT
         : SYSTEM_PROMPT;
-    return { prompt, system, maxChars };
+    return { prompt, system, maxChars, assault: false, maxTokens: null };
   }
 
-  async function tryZen(cfg, key, vars, { simple = false } = {}) {
+  async function tryZen(cfg, key, vars, { simple = false, assault = false } = {}) {
     if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
     const ep = resolveZenEndpoint(cfg);
-    const { prompt, system, maxChars } = buildPromptParts(cfg, key, vars, simple, {
+    const { prompt, system, maxChars, maxTokens } = buildPromptParts(cfg, key, vars, simple, {
       forZen: true,
+      assault,
     });
     try {
       const raw = await generateZen({
@@ -374,12 +665,16 @@ export function createFlavorService(deps = {}) {
         model: ep.model,
         system,
         prompt,
-        timeoutMs: ep.timeoutMs,
-        maxTokens: ep.maxTokens,
-        temperature: ep.temperature,
+        timeoutMs: assault
+          ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.assaultStoryTimeoutMs) || 35_000))
+          : ep.timeoutMs,
+        maxTokens: assault ? maxTokens || 1100 : ep.maxTokens,
+        temperature: assault ? Math.min(1, (ep.temperature || 0.85) + 0.05) : ep.temperature,
         apiKey: ep.apiKey,
       });
-      const clean = sanitizeFlavor(raw, maxChars);
+      const clean = assault
+        ? sanitizeAssaultStory(raw, maxChars)
+        : sanitizeFlavor(raw, maxChars);
       if (!clean) return { ok: false, reason: 'zen-empty', model: ep.model };
       return { ok: true, text: clean, provider: 'zen', model: ep.model };
     } catch (err) {
@@ -392,11 +687,12 @@ export function createFlavorService(deps = {}) {
     }
   }
 
-  async function tryOllama(cfg, key, vars, { simple = false } = {}) {
+  async function tryOllama(cfg, key, vars, { simple = false, assault = false } = {}) {
     if (!ollamaOn(cfg)) return { ok: false, reason: 'ollama-disabled' };
     const ep = resolveOllamaEndpoint(cfg);
-    const { prompt, system, maxChars } = buildPromptParts(cfg, key, vars, simple, {
+    const { prompt, system, maxChars, maxTokens } = buildPromptParts(cfg, key, vars, simple, {
       forZen: false,
+      assault,
     });
     try {
       const raw = await generateOllama({
@@ -404,15 +700,22 @@ export function createFlavorService(deps = {}) {
         model: ep.model,
         system,
         prompt,
-        timeoutMs: ep.timeoutMs,
+        timeoutMs: assault
+          ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.assaultStoryTimeoutMs) || 40_000))
+          : ep.timeoutMs,
         keepAlive: ep.keepAlive,
         think: false,
-        numPredict: Math.max(32, Math.floor(Number(cfg.ollamaNumPredict) || 80)),
+        numPredict: assault
+          ? Math.max(600, Math.floor(Number(cfg.assaultStoryMaxTokens) || 1100))
+          : Math.max(32, Math.floor(Number(cfg.ollamaNumPredict) || 80)),
         temperature: Number.isFinite(Number(cfg.ollamaTemperature))
           ? Number(cfg.ollamaTemperature)
           : 0.85,
       });
-      const clean = sanitizeFlavor(raw, maxChars);
+      void maxTokens;
+      const clean = assault
+        ? sanitizeAssaultStory(raw, maxChars)
+        : sanitizeFlavor(raw, maxChars);
       if (!clean) return { ok: false, reason: 'ollama-empty', model: ep.model };
       warm = true;
       lastWarmAt = Date.now();
@@ -506,10 +809,15 @@ export function createFlavorService(deps = {}) {
   /**
    * Cascata: Zen → Ollama → template estático.
    * Budget curto (default 6s) pra não travar /sorte /trabalhar /ship no WhatsApp.
+   * Cenários assault_* usam assaultStory (roteiro longo).
    */
   async function line(scenario, vars = {}) {
-    const cfg = getConfig() || {};
     const key = String(scenario || 'default');
+    if (isAssaultScenario(key)) {
+      return assaultStory(key, vars);
+    }
+
+    const cfg = getConfig() || {};
     const safeFallback = fallback(key, vars);
 
     if (!isEnabled(cfg)) {
@@ -586,7 +894,95 @@ export function createFlavorService(deps = {}) {
     }
   }
 
+  /**
+   * Roteiro besteirol LONGO de assalto (não frase curta).
+   * Zen → Ollama → template multi-cena. Budget maior que flavor normal.
+   */
+  async function assaultStory(scenario, vars = {}) {
+    const cfg = getConfig() || {};
+    const key = String(scenario || 'assault_bank_win');
+    const safeFallback = fallback(key, vars);
+
+    if (!isEnabled(cfg)) {
+      return safeFallback;
+    }
+
+    const budgetMs = Math.max(
+      8_000,
+      Math.min(
+        90_000,
+        Math.floor(Number(cfg.assaultStoryTimeoutMs) || Number(cfg.flavorTimeoutMs) || 45_000)
+      )
+    );
+
+    const cascade = async () => {
+      let zenResult = await tryZen(cfg, key, vars, { simple: false, assault: true });
+      // se veio curto/vazio, tenta prompt “simple” ainda no modo assault (não o de 1–3 frases)
+      if (!zenResult.ok && zenResult.reason === 'zen-empty') {
+        zenResult = await tryZen(cfg, key, vars, { simple: true, assault: true });
+      }
+      if (zenResult.ok) {
+        lastProvider = 'zen';
+        return zenResult.text;
+      }
+      if (zenOn(cfg)) {
+        logFlavor(getLogger, {
+          scenario: key,
+          provider: 'zen',
+          reason: zenResult.reason,
+          model: zenResult.model,
+          err: zenResult.err
+            ? { message: zenResult.err.message, name: zenResult.err.name }
+            : undefined,
+        });
+      }
+
+      let ollamaResult = await tryOllama(cfg, key, vars, { simple: false, assault: true });
+      if (!ollamaResult.ok && ollamaResult.reason === 'ollama-empty') {
+        ollamaResult = await tryOllama(cfg, key, vars, { simple: true, assault: true });
+      }
+      if (ollamaResult.ok) {
+        lastProvider = 'ollama';
+        return ollamaResult.text;
+      }
+      if (ollamaOn(cfg)) {
+        logFlavor(getLogger, {
+          scenario: key,
+          provider: 'ollama',
+          reason: ollamaResult.reason,
+          model: ollamaResult.model,
+          warm,
+          err: ollamaResult.err
+            ? { message: ollamaResult.err.message, name: ollamaResult.err.name }
+            : undefined,
+        });
+      }
+
+      lastProvider = 'template';
+      return safeFallback;
+    };
+
+    try {
+      return await Promise.race([
+        cascade(),
+        new Promise((resolve) => {
+          setTimeout(() => {
+            lastProvider = 'template-timeout';
+            resolve(safeFallback);
+          }, budgetMs);
+        }),
+      ]);
+    } catch {
+      lastProvider = 'template';
+      return safeFallback;
+    }
+  }
+
   async function italicLine(scenario, vars = {}) {
+    // assalto: não envolve o roteiro inteiro em itálico (fica ilegível)
+    if (isAssaultScenario(scenario)) {
+      return assaultStory(scenario, vars);
+    }
     const text = await line(scenario, vars);
     const t = String(text || '').trim();
     if (!t) return '';
@@ -597,8 +993,10 @@ export function createFlavorService(deps = {}) {
   return {
     line,
     italicLine,
+    assaultStory,
     fallback,
     sanitizeFlavor,
+    sanitizeAssaultStory,
     warmup,
     startKeepAliveLoop,
     stopKeepAliveLoop,
