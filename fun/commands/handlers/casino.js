@@ -588,43 +588,57 @@ export async function handleTournamentCommand({
   return { handled: true, result };
 }
 
-function modeLabel(mode) {
-  return mode === 'classic' ? 'clássico' : 'rápido';
+function formatProfit(n) {
+  const v = Math.floor(Number(n) || 0);
+  if (v > 0) return `+${v}`;
+  if (v < 0) return `${v}`;
+  return '0';
 }
 
 function formatBingoResultMessage(result, getContactDisplayName) {
   const drawn = (result.drawn || []).join(', ');
+  const fee = Math.max(0, Math.floor(Number(result.entryFee) || 0));
   const lines = [
-    result.classic ? '🎱 *Bingo clássico — fim!*' : '🎱 *Bingo rápido!*',
+    '🎱 *Bingo!*',
     `Sorteados (${result.drawn?.length || 0}): ${drawn}`,
     '',
   ];
 
   if (result.refund) {
-    lines.push('Ninguém fechou linha — *entrada devolvida* a todos.');
+    lines.push('Ninguém fechou linha — *entrada devolvida* a todos (lucro 0).');
   } else if (result.tier === 'full') {
     lines.push('🏆 *Cartela cheia!*');
   } else if (result.tier === 'line') {
     lines.push('✨ *Linha!*');
   }
 
+  lines.push('', `💰 *Extrato* (entrada *${fee}* saiu ao entrar na sala)`);
   for (const w of result.winners || []) {
     lines.push(
-      `→ *${nameOf(getContactDisplayName, w.jid)}* +${w.payout}${w.full ? ' (cheia)' : ''}`
+      `🥇 *${nameOf(getContactDisplayName, w.jid)}* recebeu *${w.payout}* · lucro *${formatProfit(w.profit)}* · saldo *${w.coins ?? '?'}*${w.full ? ' (cheia)' : ''}`
+    );
+  }
+  for (const l of result.losers || []) {
+    lines.push(
+      `💀 *${nameOf(getContactDisplayName, l.jid)}* perdeu a entrada · *${formatProfit(l.profit)}* · saldo *${l.coins ?? '?'}*`
     );
   }
 
   if (result.pot != null) {
-    lines.push('', `Pot: *${result.pot}*${result.happy > 1 ? ` · happy ×${result.happy}` : ''}`);
+    const cut = Math.max(0, Math.floor(Number(result.houseCut) || 0));
+    lines.push(
+      '',
+      `Pot *${result.pot}*${cut > 0 ? ` · casa *${cut}*` : ''}${result.happy > 1 ? ` · happy ×${result.happy}` : ''}`
+    );
   }
 
   const players = (result.players || []).slice(0, 6);
-  for (const p of players) {
+  for (const pl of players) {
     lines.push(
       '',
-      `*${nameOf(getContactDisplayName, p.jid)}* (${p.markedCount}/9)`,
+      `*${nameOf(getContactDisplayName, pl.jid)}* (${pl.markedCount}/9)`,
       '```',
-      p.cardText || '',
+      pl.cardText || '',
       '```'
     );
   }
@@ -632,78 +646,10 @@ function formatBingoResultMessage(result, getContactDisplayName) {
   return lines.filter((l) => l != null).join('\n');
 }
 
-function formatClassicStepMessage(step, getContactDisplayName) {
-  const lines = [
-    `🎱 *${step.number}*  (${step.index}/${step.total})`,
-  ];
-  if (step.hitJids?.length) {
-    lines.push(
-      `Marcou: ${step.hitJids.map((j) => nameOf(getContactDisplayName, j)).join(', ')}`
-    );
-  } else {
-    lines.push('_Ninguém tinha esse número._');
-  }
-  if (step.newLineJids?.length) {
-    lines.push(
-      `✨ Linha: ${step.newLineJids.map((j) => nameOf(getContactDisplayName, j)).join(', ')}`
-    );
-  }
-  if (step.newFullJids?.length) {
-    lines.push(
-      `🏆 Cheia: ${step.newFullJids.map((j) => nameOf(getContactDisplayName, j)).join(', ')}`
-    );
-  }
-  // placar compacto
-  const board = (step.snapshot || [])
-    .map((p) => `${nameOf(getContactDisplayName, p.jid)} ${p.markedCount}/9`)
-    .join(' · ');
-  if (board) lines.push(board);
-  return lines.join('\n');
-}
-
-function delay(ms) {
-  const n = Math.max(0, Math.floor(Number(ms) || 0));
-  if (n <= 0) return Promise.resolve();
-  return new Promise((resolve) => setTimeout(resolve, n));
-}
-
 /**
- * Loop do modo clássico: 1 bola por intervalo, marcação automática.
- */
-async function runClassicBingoLoop({
-  casinoService,
-  scopeKey,
-  funConfig,
-  reply,
-  getContactDisplayName,
-  intervalMs,
-}) {
-  const ms = Math.max(0, Math.floor(Number(intervalMs) || 0));
-  let last = null;
-  // safety: drawCount max 40 + margem
-  for (let i = 0; i < 50; i += 1) {
-    await delay(ms);
-    const step = casinoService.classicBingoTick({ scopeKey, funConfig });
-    if (!step.ok) {
-      await reply('Bingo interrompido — sala sumiu no meio do sorteio.');
-      return { handled: true, result: step };
-    }
-    last = step;
-    if (step.step && step.number != null) {
-      await reply(formatClassicStepMessage(step, getContactDisplayName));
-    }
-    if (step.finished) {
-      await reply(formatBingoResultMessage(step, getContactDisplayName));
-      return { handled: true, result: step };
-    }
-  }
-  await reply('Bingo clássico demorou demais e foi interrompido.');
-  return { handled: true, result: last };
-}
-
-/**
- * Parse: /bingo 15 | /bingo classico 15 | /bingo 15 rapido | /bingo solo 10
- * @returns {{ kind: string, fee: number|null, mode: string|null, rest: string[] }}
+ * Parse: /bingo 15 | /bingo solo 10 | /bingo start
+ * Tokens "classico" são ignorados (modo depreciado).
+ * @returns {{ kind: string, fee: number|null, askedClassic: boolean, rest: string[] }}
  */
 function parseBingoArgs(args = []) {
   const tokens = (args || []).map((a) => String(a || '').trim()).filter(Boolean);
@@ -713,42 +659,49 @@ function parseBingoArgs(args = []) {
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '');
 
-  if (!tokens.length) return { kind: 'join', fee: null, mode: null, rest: [] };
+  if (!tokens.length) return { kind: 'join', fee: null, askedClassic: false, rest: [] };
 
   const head = norm(tokens[0]);
-  if (['help', 'ajuda', '?'].includes(head)) return { kind: 'help', fee: null, mode: null, rest: [] };
-  if (['status', 'info', 'sala'].includes(head)) return { kind: 'status', fee: null, mode: null, rest: [] };
-  if (['cartela', 'card', 'minha'].includes(head)) return { kind: 'cartela', fee: null, mode: null, rest: [] };
-  if (['sair', 'leave', 'exit'].includes(head)) return { kind: 'sair', fee: null, mode: null, rest: [] };
+  if (['help', 'ajuda', '?'].includes(head)) {
+    return { kind: 'help', fee: null, askedClassic: false, rest: [] };
+  }
+  if (['status', 'info', 'sala'].includes(head)) {
+    return { kind: 'status', fee: null, askedClassic: false, rest: [] };
+  }
+  if (['cartela', 'card', 'minha'].includes(head)) {
+    return { kind: 'cartela', fee: null, askedClassic: false, rest: [] };
+  }
+  if (['sair', 'leave', 'exit'].includes(head)) {
+    return { kind: 'sair', fee: null, askedClassic: false, rest: [] };
+  }
   if (['start', 'comecar', 'começar', 'sortear'].includes(head)) {
-    return { kind: 'start', fee: null, mode: null, rest: tokens.slice(1) };
+    return { kind: 'start', fee: null, askedClassic: false, rest: tokens.slice(1) };
   }
   if (['solo', 'sozinho'].includes(head)) {
     return {
       kind: 'solo',
       fee: parseAmountFromArgs(tokens.slice(1)),
-      mode: null,
+      askedClassic: false,
       rest: tokens.slice(1),
     };
   }
 
-  let mode = null;
   let fee = null;
+  let askedClassic = false;
   for (const raw of tokens) {
     const t = norm(raw);
-    if (['rapido', 'rapida', 'fast', 'quick', 'instant'].includes(t)) {
-      mode = 'fast';
+    if (['classico', 'classica', 'classic', 'lento', 'tempo', 'realtime', 'real'].includes(t)) {
+      askedClassic = true;
       continue;
     }
-    if (['classico', 'classica', 'classic', 'lento', 'tempo', 'realtime'].includes(t)) {
-      mode = 'classic';
+    if (['rapido', 'rapida', 'fast', 'quick', 'instant'].includes(t)) {
       continue;
     }
     if (/^\d+$/.test(raw) && fee == null) {
       fee = Number(raw);
     }
   }
-  return { kind: 'join', fee, mode, rest: tokens };
+  return { kind: 'join', fee, askedClassic, rest: tokens };
 }
 
 export async function handleBingoCommand({
@@ -766,20 +719,15 @@ export async function handleBingoCommand({
   if (parsed.kind === 'help') {
     await reply(
       [
-        '🎱 *Mini Bingo* (3×3 · marcação automática)',
-        '',
-        '*Modos*',
-        `• *Rápido* — sorteia tudo de uma vez (default)`,
-        `• *Clássico* — 1 número por segundo, bem visual`,
-        '',
-        `• \`${p}bingo 15\` — sala rápida`,
-        `• \`${p}bingo classico 15\` — sala clássica`,
-        `• \`${p}bingo rapido 15\` — força rápido`,
+        '🎱 *Mini Bingo* (3×3 · sorteio em 1 mensagem)',
+        `• \`${p}bingo 15\` — cria/entra na sala`,
         `• \`${p}bingo\` — entra na sala aberta`,
         `• \`${p}bingo start\` — começa (2+)`,
-        `• \`${p}bingo solo 15\` — sozinho (sempre rápido)`,
+        `• \`${p}bingo solo 15\` — sozinho vs casa`,
         `• \`${p}bingo status\` · \`${p}bingo cartela\` · \`${p}bingo sair\``,
         `Entrada *${funConfig.bingoMin || 5}*–*${funConfig.bingoMax || 100}*`,
+        '',
+        '_Modo clássico (bola a bola) foi removido — gerava flood e risco de ban no WhatsApp._',
       ].join('\n')
     );
     return { handled: true };
@@ -788,26 +736,20 @@ export async function handleBingoCommand({
   if (parsed.kind === 'status') {
     const room = casinoService.bingoStatus(scopeKey);
     if (!room) {
-      await reply(`Nenhuma sala. Use \`${p}bingo 15\` ou \`${p}bingo classico 15\`.`);
+      await reply(`Nenhuma sala. Use \`${p}bingo 15\`.`);
       return { handled: true };
     }
-    const running = room.status === 'running';
     await reply(
       [
-        running ? '🎱 *Bingo em andamento*' : '🎱 *Sala de bingo*',
-        `Modo *${modeLabel(room.mode)}* · entrada *${room.entryFee}* · pot *${room.pot}*`,
-        running
-          ? `Bolas *${(room.drawn || []).length}/${(room.balls || []).length || '?'}*`
-          : `Jogadores *${room.players.length}/${room.size || funConfig.bingoSize || 4}*`,
+        '🎱 *Sala de bingo*',
+        `Entrada *${room.entryFee}* · pot *${room.pot}*`,
+        `Jogadores *${room.players.length}/${room.size || funConfig.bingoSize || 4}*`,
         room.players
           .map((pl, i) => `${i + 1}. ${nameOf(getContactDisplayName, pl.jid)}`)
           .join('\n'),
-        running
-          ? ''
-          : `Com 2+ use \`${p}bingo start\` · cheio começa sozinho.`,
-      ]
-        .filter((l) => l !== '')
-        .join('\n')
+        '',
+        `Com 2+ use \`${p}bingo start\` · cheio começa sozinho.`,
+      ].join('\n')
     );
     return { handled: true };
   }
@@ -825,7 +767,6 @@ export async function handleBingoCommand({
     await reply(
       [
         '🎱 *Sua cartela*',
-        `Modo *${modeLabel(mine.room.mode)}*`,
         '```',
         mine.cardText,
         '```',
@@ -861,11 +802,7 @@ export async function handleBingoCommand({
     const result = casinoService.startBingo({ userJid, scopeKey, funConfig });
     if (!result.ok) {
       if (result.reason === 'no-room') {
-        await reply(`Nenhuma sala. Crie com \`${p}bingo 15\` ou \`${p}bingo classico 15\`.`);
-        return { handled: true };
-      }
-      if (result.reason === 'already-running') {
-        await reply('Bingo clássico já está rolando neste grupo.');
+        await reply(`Nenhuma sala. Crie com \`${p}bingo 15\`.`);
         return { handled: true };
       }
       if (result.reason === 'not-in') {
@@ -878,25 +815,6 @@ export async function handleBingoCommand({
       }
       await reply('Não deu pra começar o bingo.');
       return { handled: true };
-    }
-
-    if (result.classic && !result.finished) {
-      const sec = Math.max(0, (result.intervalMs || 1000) / 1000);
-      await reply(
-        [
-          '🎱 *Bingo clássico começou!*',
-          `Pot *${result.pot}* · *${result.totalBalls}* bolas · 1 a cada *${sec}s*`,
-          'Marcação automática — só curtir o sorteio 👀',
-        ].join('\n')
-      );
-      return runClassicBingoLoop({
-        casinoService,
-        scopeKey,
-        funConfig,
-        reply,
-        getContactDisplayName,
-        intervalMs: result.intervalMs,
-      });
     }
 
     await reply(formatBingoResultMessage(result, getContactDisplayName));
@@ -944,7 +862,7 @@ export async function handleBingoCommand({
 
     await reply(
       [
-        '🎱 *Bingo solo* (rápido)',
+        '🎱 *Bingo solo*',
         outcome,
         `Aposta *${result.stake}* → *${result.payout}* (${result.profit >= 0 ? '+' : ''}${result.profit})`,
         `Sorteados: ${(result.drawn || []).join(', ')}`,
@@ -957,12 +875,11 @@ export async function handleBingoCommand({
     return { handled: true, result };
   }
 
-  // join / create
+  // join / create (sempre rápido)
   const result = casinoService.joinBingo({
     userJid,
     scopeKey,
     entryFee: parsed.fee || 0,
-    mode: parsed.mode,
     funConfig,
   });
 
@@ -972,7 +889,7 @@ export async function handleBingoCommand({
       return { handled: true };
     }
     if (result.reason === 'game-running') {
-      await reply('Bingo clássico em andamento — espere terminar.');
+      await reply('Bingo em andamento — espere terminar.');
       return { handled: true };
     }
     if (result.reason === 'room-full') {
@@ -991,46 +908,39 @@ export async function handleBingoCommand({
     return { handled: true };
   }
 
-  // auto-start clássico (sala cheia)
-  if (result.classic && !result.finished) {
-    await reply(
-      [
-        '🎱 *Sala cheia — clássico começou!*',
-        `Pot *${result.pot}* · *${result.totalBalls}* bolas`,
-      ].join('\n')
-    );
-    return runClassicBingoLoop({
-      casinoService,
-      scopeKey,
-      funConfig,
-      reply,
-      getContactDisplayName,
-      intervalMs: result.intervalMs,
-    });
-  }
-
   if (result.finished) {
     await reply(formatBingoResultMessage(result, getContactDisplayName));
     return { handled: true, result };
   }
 
-  const roomMode = result.room?.mode || parsed.mode || 'fast';
+  const feeNote =
+    parsed.fee != null &&
+    parsed.fee > 0 &&
+    Number(parsed.fee) !== Number(result.fee)
+      ? `\n_Sala já existia: taxa da sala é *${result.fee}* (seu *${parsed.fee}* não muda a entrada)._`
+      : '';
+  const classicNote = parsed.askedClassic
+    ? '\n_Modo clássico foi desativado (muitas msgs → risco de ban). Usando sorteio em 1 mensagem._'
+    : '';
+
   await reply(
     [
       '🎱 *Entrou no bingo*',
-      `Modo *${modeLabel(roomMode)}* · taxa *${result.fee}* · pot *${result.room.pot}*`,
+      `Entrada *−${result.fee}* cobrada agora · pot *${result.room.pot}*`,
       `Jogadores *${result.room.players.length}/${result.room.size || funConfig.bingoSize || 4}* — faltam *${result.need}* pro auto-start`,
       `Com *${result.minStart}+* alguém pode \`${p}bingo start\``,
-      roomMode === 'classic'
-        ? '_Clássico: 1 número por segundo, cartela marcada sozinha._'
-        : '_Rápido: no start, tudo de uma vez._',
+      '_No start: sorteio de uma vez (sem bola a bola)._',
+      feeNote,
+      classicNote,
       '',
       '*Sua cartela*',
       '```',
       result.myCardText,
       '```',
-      `Saldo: *${result.coins}*`,
-    ].join('\n')
+      `Saldo agora: *${result.coins}* _(já com a entrada descontada)_`,
+    ]
+      .filter(Boolean)
+      .join('\n')
   );
   return { handled: true, result };
 }

@@ -261,21 +261,42 @@ export function normalizeFunConfig(input) {
     bingoSoloFullMult: Number.isFinite(Number(raw.bingoSoloFullMult))
       ? Math.min(50, Math.max(2, Number(raw.bingoSoloFullMult)))
       : DEFAULT_FUN_CONFIG.bingoSoloFullMult,
-    bingoDefaultMode: (() => {
-      const t = String(raw.bingoDefaultMode ?? DEFAULT_FUN_CONFIG.bingoDefaultMode)
-        .trim()
-        .toLowerCase();
-      return t === 'classic' || t === 'classico' ? 'classic' : 'fast';
-    })(),
-    bingoClassicIntervalMs: normalizeInt(
-      raw.bingoClassicIntervalMs,
-      DEFAULT_FUN_CONFIG.bingoClassicIntervalMs,
-      { min: 0, max: 10_000, rounding: 'floor', clamp: true }
-    ),
-    bingoClassicEarlyEndOnFull: normalizeBoolean(
-      raw.bingoClassicEarlyEndOnFull,
-      DEFAULT_FUN_CONFIG.bingoClassicEarlyEndOnFull
-    ),
+    // clássico depreciado — sempre fast
+    bingoDefaultMode: 'fast',
+    tarotEnabled: normalizeBoolean(raw.tarotEnabled, DEFAULT_FUN_CONFIG.tarotEnabled),
+    tarotCooldownMs: normalizeInt(raw.tarotCooldownMs, DEFAULT_FUN_CONFIG.tarotCooldownMs, {
+      min: 0,
+      max: 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    tarotMaxChars: normalizeInt(raw.tarotMaxChars, DEFAULT_FUN_CONFIG.tarotMaxChars, {
+      min: 400,
+      max: 3000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    tarotCardCount: normalizeInt(raw.tarotCardCount, DEFAULT_FUN_CONFIG.tarotCardCount, {
+      min: 1,
+      max: 5,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    tarotTimeoutMs: normalizeInt(raw.tarotTimeoutMs, DEFAULT_FUN_CONFIG.tarotTimeoutMs, {
+      min: 3000,
+      max: 120_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    tarotMaxTokens: normalizeInt(raw.tarotMaxTokens, DEFAULT_FUN_CONFIG.tarotMaxTokens, {
+      min: 64,
+      max: 2000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    tarotTemperature: Number.isFinite(Number(raw.tarotTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.tarotTemperature)))
+      : DEFAULT_FUN_CONFIG.tarotTemperature,
     happyHourDurationMs: normalizeInt(raw.happyHourDurationMs, DEFAULT_FUN_CONFIG.happyHourDurationMs, { min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
     happyHourPayoutMult: Number.isFinite(Number(raw.happyHourPayoutMult))
       ? Math.min(2, Math.max(1, Number(raw.happyHourPayoutMult)))

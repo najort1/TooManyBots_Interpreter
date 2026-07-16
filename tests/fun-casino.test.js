@@ -22,7 +22,7 @@ import {
   formatBingoCard,
   pickDistinct,
   normalizeBingoMode,
-  snapshotBingoPlayers,
+  isDeprecatedClassicToken,
 } from '../fun/services/bingoLogic.js';
 import { FUN_COMMANDS, ACTION_TYPE } from '../fun/constants.js';
 
@@ -475,16 +475,10 @@ test('bingoLogic: cartela, linha, full, pot e solo payout', () => {
   assert.equal(card2.length, 9);
   assert.equal(new Set(card2).size, 9);
 
-  assert.equal(normalizeBingoMode('classico'), 'classic');
+  // clássico depreciado → sempre fast
+  assert.equal(normalizeBingoMode('classico'), 'fast');
   assert.equal(normalizeBingoMode('rapido'), 'fast');
   assert.equal(normalizeBingoMode(''), 'fast');
-
-  const snap = snapshotBingoPlayers(
-    [{ jid: 'x@s.whatsapp.net', card: [1, 2, 3, 4, 5, 6, 7, 8, 9] }],
-    [1, 2, 3]
-  );
-  assert.equal(snap[0].hasLine, true);
-  assert.equal(snap[0].markedCount, 3);
 });
 
 test('bingo multiplayer: join, cartela, start com linha e reembolso se vazio', () => {
@@ -729,7 +723,10 @@ test('bingo: lobby expirado devolve entrada', () => {
   assert.equal(repo.getUserStats(u, scope).coins, 50);
 });
 
-test('bingo clássico: bolas 1 a 1, marcação auto, settle no fim', () => {
+test('bingo: clássico depreciado — join força modo fast e start fecha em 1 passo', () => {
+  assert.equal(isDeprecatedClassicToken('classico'), true);
+  assert.equal(isDeprecatedClassicToken('rapido'), false);
+
   const repo = createFunStatsRepository({ getDatabase: getDb });
   repo.ensureFunSchema();
   const actionRepo = createFunActionRepository({ getDatabase: getDb });
@@ -755,11 +752,10 @@ test('bingo clássico: bolas 1 a 1, marcação auto, settle no fim', () => {
     bingoDrawCount: 12,
     bingoPoolMax: 30,
     bingoHouseEdge: 0,
-    bingoClassicIntervalMs: 0,
-    bingoClassicEarlyEndOnFull: true,
     bingoCooldownMs: 0,
   });
 
+  // mode: 'classic' é ignorado
   const j1 = casino.joinBingo({
     userJid: a,
     scopeKey: scope,
@@ -768,52 +764,30 @@ test('bingo clássico: bolas 1 a 1, marcação auto, settle no fim', () => {
     funConfig: cfg,
   });
   assert.equal(j1.ok, true);
-  assert.equal(j1.room.mode, 'classic');
+  assert.equal(j1.room.mode, 'fast');
 
   const j2 = casino.joinBingo({
     userJid: b,
     scopeKey: scope,
     entryFee: 0,
+    mode: 'classic',
     funConfig: cfg,
   });
   assert.equal(j2.ok, true);
-  assert.equal(j2.room.mode, 'classic');
+  assert.equal(j2.room.mode, 'fast');
 
   const start = casino.startBingo({ userJid: a, scopeKey: scope, funConfig: cfg });
   assert.equal(start.ok, true);
-  assert.equal(start.classic, true);
-  assert.equal(start.finished, false);
-  assert.equal(start.totalBalls, 12);
-
-  // mid-game: não sai, não entra solo
-  const leaveBlocked = casino.leaveBingo({ userJid: a, scopeKey: scope });
-  assert.equal(leaveBlocked.ok, false);
-  assert.equal(leaveBlocked.reason, 'game-running');
-
-  let final = null;
-  for (let i = 0; i < 20; i += 1) {
-    const step = casino.classicBingoTick({ scopeKey: scope, funConfig: cfg });
-    assert.equal(step.ok, true);
-    if (step.step) {
-      assert.ok(step.number >= 1 && step.number <= 30);
-      assert.ok(step.index >= 1);
-    }
-    if (step.finished) {
-      final = step;
-      break;
-    }
-  }
-  assert.ok(final);
-  assert.equal(final.finished, true);
-  assert.equal(final.classic, true);
-  // cartelas 1..9 + bolas 1..12 + early full → full winners
-  assert.equal(final.refund, false);
-  assert.equal(final.tier, 'full');
-  assert.ok(final.winners.length >= 1);
+  assert.equal(start.finished, true);
+  assert.equal(start.classic, false);
+  assert.ok(Array.isArray(start.drawn));
+  assert.equal(start.drawn.length, 12);
   assert.equal(casino.bingoStatus(scope), null);
+  // classicBingoTick não existe mais
+  assert.equal(typeof casino.classicBingoTick, 'undefined');
 });
 
-test('bingo: parse modos e join rapido default', () => {
+test('bingo: join rapido default', () => {
   const repo = createFunStatsRepository({ getDatabase: getDb });
   repo.ensureFunSchema();
   const actionRepo = createFunActionRepository({ getDatabase: getDb });
@@ -832,7 +806,7 @@ test('bingo: parse modos e join rapido default', () => {
     userJid: u,
     scopeKey: scope,
     entryFee: 10,
-    funConfig: resolveFunConfig({ bingoDefaultMode: 'fast', bingoMin: 5, bingoMax: 100 }),
+    funConfig: resolveFunConfig({ bingoMin: 5, bingoMax: 100 }),
   });
   assert.equal(j.ok, true);
   assert.equal(j.room.mode, 'fast');

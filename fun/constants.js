@@ -42,6 +42,7 @@ export const FUN_COMMANDS = Object.freeze({
   TOURNAMENT: 'tournament',
   RANK_CASINO: 'rankcasino',
   BINGO: 'bingo',
+  TAROT: 'tarot',
   // DM / escopo
   GROUP_SCOPE: 'group_scope',
   // Mídia
@@ -73,6 +74,8 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     FUN_COMMANDS.TOURNAMENT,
     FUN_COMMANDS.JACKPOT,
     FUN_COMMANDS.BINGO,
+    // tarô de grupo: a leitura é o entretenimento público
+    FUN_COMMANDS.TAROT,
   ])
 );
 
@@ -158,6 +161,13 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   torneiocassino: FUN_COMMANDS.TOURNAMENT,
   bingo: FUN_COMMANDS.BINGO,
   minbingo: FUN_COMMANDS.BINGO,
+  tarot: FUN_COMMANDS.TAROT,
+  taro: FUN_COMMANDS.TAROT,
+  tarô: FUN_COMMANDS.TAROT,
+  oraculo: FUN_COMMANDS.TAROT,
+  oráculo: FUN_COMMANDS.TAROT,
+  cartas: FUN_COMMANDS.TAROT,
+  vidente: FUN_COMMANDS.TAROT,
   rankcassino: FUN_COMMANDS.RANK_CASINO,
   rankcasino: FUN_COMMANDS.RANK_CASINO,
   topcassino: FUN_COMMANDS.RANK_CASINO,
@@ -325,7 +335,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   tournamentEntryMin: 10,
   tournamentEntryMax: 80,
   tournamentSize: 4,
-  // Mini bingo: cartela 3×3 · modos rapido (lote) e classico (1 bola/s)
+  // Mini bingo: cartela 3×3 · só modo rápido (1 msg no fim; clássico removido — flood WA)
   bingoMin: 5,
   bingoMax: 100,
   bingoCooldownMs: 15_000,
@@ -337,12 +347,15 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   bingoHouseEdge: 0.05,
   bingoSoloLineMult: 2.5,
   bingoSoloFullMult: 8,
-  /** 'fast' | 'classic' — default ao criar sala sem modo explícito */
   bingoDefaultMode: 'fast',
-  /** Intervalo entre bolas no modo clássico (ms) */
-  bingoClassicIntervalMs: 1_000,
-  /** No clássico, encerra cedo se alguém fechar a cartela */
-  bingoClassicEarlyEndOnFull: true,
+  // Tarô (tiragem local + leitura Zen)
+  tarotEnabled: true,
+  tarotCooldownMs: 45_000,
+  tarotMaxChars: 3000,
+  tarotCardCount: 3,
+  tarotTimeoutMs: 25_000,
+  tarotMaxTokens: 900,
+  tarotTemperature: 0.9,
   happyHourDurationMs: 45 * 60_000,
   happyHourPayoutMult: 1.12,
   happyHourCooldownMs: 4 * 60 * 60_000,

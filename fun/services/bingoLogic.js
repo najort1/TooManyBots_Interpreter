@@ -1,6 +1,8 @@
 /**
  * Mini Bingo — lógica pura (sem I/O).
- * Cartela 3×3 · pool 1..poolMax · sorteio em lote (sessão curta).
+ * Cartela 3×3 · pool 1..poolMax · sorteio em lote (1 mensagem no fim).
+ *
+ * Modo clássico (1 bola/s) foi REMOVIDO: flood de msgs → risco de ban WA.
  */
 
 export const BINGO_ROOM_USER = '__bingo__';
@@ -8,6 +10,7 @@ export const BINGO_ROOM_KIND = 'bingo_room';
 
 export const BINGO_MODES = Object.freeze({
   FAST: 'fast',
+  /** @deprecated sempre resolvido para FAST */
   CLASSIC: 'classic',
 });
 
@@ -21,27 +24,28 @@ export const BINGO_DEFAULTS = Object.freeze({
   soloLineMult: 2.5,
   soloFullMult: 8,
   mode: BINGO_MODES.FAST,
-  classicIntervalMs: 1_000,
-  classicEarlyEndOnFull: true,
 });
 
 /**
- * @param {unknown} raw
- * @returns {'fast'|'classic'}
+ * Só existe modo rápido. Pedidos de "clássico" viram fast (depreciado).
+ * @param {unknown} [_raw]
+ * @returns {'fast'}
  */
-export function normalizeBingoMode(raw) {
+export function normalizeBingoMode(_raw) {
+  return BINGO_MODES.FAST;
+}
+
+/**
+ * True se o token do usuário pedia o modo clássico (para avisar depreciação).
+ * @param {unknown} raw
+ */
+export function isDeprecatedClassicToken(raw) {
   const t = String(raw ?? '')
     .trim()
     .toLowerCase()
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '');
-  if (['classic', 'classico', 'classica', 'lento', 'tempo', 'realtime', 'real'].includes(t)) {
-    return BINGO_MODES.CLASSIC;
-  }
-  if (['fast', 'rapido', 'rapida', 'quick', 'instant', 'instantaneo'].includes(t)) {
-    return BINGO_MODES.FAST;
-  }
-  return BINGO_MODES.FAST;
+  return ['classic', 'classico', 'classica', 'lento', 'tempo', 'realtime', 'real'].includes(t);
 }
 
 /**
