@@ -161,6 +161,40 @@ export async function startFunBot(options = {}) {
   });
   funModule.init();
 
+  let socketGeneration = 0;
+  let currentSocket = null;
+  let saveCreds = null;
+  let dashboardStarted = false;
+  let messagesEnabled = false;
+  /** @type {ReturnType<typeof createConnectionOpenGate> | null} */
+  let openGate = null;
+
+  /**
+   * Dashboard API independente do WhatsApp (QR/ban/logout).
+   * Dados vêm do SQLite; mensagens WA só depois da sessão aberta.
+   */
+  async function ensureDashboard() {
+    if (dashboardStarted) return;
+    if (!config.dashboardEnabled) {
+      console.log('[fun] Dashboard desligado (dashboardEnabled=false)');
+      return;
+    }
+    try {
+      await startFunDashboardServer({
+        getConfig,
+        funModule,
+        getContactDisplayName,
+        getLogger: () => logger,
+      });
+      dashboardStarted = true;
+    } catch (err) {
+      console.warn('[fun] Dashboard nao iniciou:', String(err?.message || err));
+    }
+  }
+
+  // API cedo — antes de Ollama/WA (UI Next não precisa de QR)
+  await ensureDashboard();
+
   // Flavor: Zen (principal) + Ollama (fallback local)
   const zenOn = config.zenEnabled !== false;
   const ollamaOn = config.ollamaEnabled !== false;
@@ -195,14 +229,6 @@ export async function startFunBot(options = {}) {
       // ignore
     }
   });
-
-  let socketGeneration = 0;
-  let currentSocket = null;
-  let saveCreds = null;
-  let dashboardStarted = false;
-  let messagesEnabled = false;
-  /** @type {ReturnType<typeof createConnectionOpenGate> | null} */
-  let openGate = null;
 
   const reconnectController = createReconnectController({
     minDelayMs: 3000,
@@ -274,22 +300,6 @@ export async function startFunBot(options = {}) {
       parsed,
       rawMessage: msg,
     });
-  }
-
-  async function ensureDashboard() {
-    if (dashboardStarted) return;
-    if (!config.dashboardEnabled) return;
-    try {
-      await startFunDashboardServer({
-        getConfig,
-        funModule,
-        getContactDisplayName,
-        getLogger: () => logger,
-      });
-      dashboardStarted = true;
-    } catch (err) {
-      console.warn('[fun] Dashboard nao iniciou:', String(err?.message || err));
-    }
   }
 
   async function connectToWhatsApp({ isReconnect = false } = {}) {
@@ -373,6 +383,7 @@ export async function startFunBot(options = {}) {
       if (connection === 'open') {
         reconnectController.reset?.();
         console.log('[fun] Conectado ao WhatsApp.\n');
+        messagesEnabled = true;
         openGate?.signalOpen('connection-open');
       }
 
@@ -440,9 +451,28 @@ export async function startFunBot(options = {}) {
     );
   }
 
+  // Dashboard já pode ter subido no boot; garante se falhou antes
   await ensureDashboard();
-  messagesEnabled = true;
-  console.log('[fun] Pronto. /help · /cf 10 cara|coroa · /loja · /rankcoins · /aposta @user 10 cara\n');
+  messagesEnabled = isSocketReady(currentSocket || sock);
+  if (!messagesEnabled) {
+    console.warn(
+      '[fun] WhatsApp offline (QR/ban/logout). Dashboard API no ar; msgs só após conectar.'
+    );
+    const poll = setInterval(() => {
+      if (isSocketReady(currentSocket)) {
+        messagesEnabled = true;
+        clearInterval(poll);
+        console.log('[fun] Sessao WhatsApp pronta — mensagens habilitadas.');
+      }
+    }, 3000);
+    // para o poll se o processo ficar dias no ar sem sessão
+    setTimeout(() => clearInterval(poll), 7 * 24 * 60 * 60 * 1000);
+  }
+  console.log(
+    messagesEnabled
+      ? '[fun] Pronto. /help · /cf · /bingo · /tarot · /loja\n'
+      : '[fun] API dashboard ativa. Escaneie o QR quando o ban acabar.\n'
+  );
 
   return { config, getSocket: () => currentSocket, funModule };
 }
