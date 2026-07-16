@@ -31,11 +31,22 @@ export function createRankService({ repository } = {}) {
 
   function getProfile(userJid, scopeKey) {
     const position = repository.getUserRankPosition(userJid, scopeKey);
-    const stats = position.stats || repository.getUserStats(userJid, scopeKey);
+    const stats =
+      position.stats ||
+      repository.getUserStats(userJid, scopeKey) ||
+      repository.ensureUserRow(userJid, scopeKey);
+
+    const coinsPos = repository.getUserCoinsRankPosition(userJid, scopeKey);
+    const msgPos = repository.getUserMessagesRankPosition(userJid, scopeKey);
+
     return {
       stats: stats || null,
       rank: position.rank,
       total: position.total,
+      coinsRank: coinsPos?.rank ?? null,
+      coinsTotal: coinsPos?.total ?? position.total,
+      messagesRank: msgPos?.rank ?? null,
+      messagesTotal: msgPos?.total ?? position.total,
     };
   }
 

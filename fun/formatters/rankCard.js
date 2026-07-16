@@ -25,6 +25,46 @@ function formatMsRemaining(ms) {
   return `${s}s`;
 }
 
+function progressBar(ratio, width = 10) {
+  const r = Math.min(1, Math.max(0, Number(ratio) || 0));
+  const filled = Math.round(r * width);
+  return `${'█'.repeat(filled)}${'░'.repeat(Math.max(0, width - filled))}`;
+}
+
+function formatRelative(ts) {
+  const t = Number(ts) || 0;
+  if (t <= 0) return 'nunca';
+  const diff = Date.now() - t;
+  if (diff < 0) return 'em breve';
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return 'agora';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `há ${min}m`;
+  const h = Math.floor(min / 60);
+  if (h < 48) return `há ${h}h`;
+  const d = Math.floor(h / 24);
+  if (d < 60) return `há ${d}d`;
+  return `há ${Math.floor(d / 30)} mês(es)`;
+}
+
+function rankLabel(rank, total) {
+  if (rank == null || rank <= 0) return '—';
+  const of = total > 0 ? `/${total}` : '';
+  return `#${rank}${of}`;
+}
+
+/**
+ * Perfil rico (próprio ou de outro).
+ * @param {object} opts
+ * @param {boolean} [opts.isSelf]
+ * @param {string} [opts.viewerName] — quem pediu (quando vendo outro)
+ * @param {object|null} [opts.casino] — { profit, wagered, won, lost, games }
+ * @param {string} [opts.factionLabel]
+ * @param {number|null} [opts.coinsRank]
+ * @param {number|null} [opts.messagesRank]
+ * @param {number} [opts.coinsTotal]
+ * @param {number} [opts.messagesTotal]
+ */
 export function formatXpProfile({
   displayName: name,
   userJid,
@@ -33,6 +73,14 @@ export function formatXpProfile({
   total,
   partnerName,
   activeBuffs = [],
+  isSelf = true,
+  viewerName = '',
+  casino = null,
+  factionLabel = '',
+  coinsRank = null,
+  coinsTotal = 0,
+  messagesRank = null,
+  messagesTotal = 0,
 }) {
   const xp = Number(stats?.xp) || 0;
   const progress = progressInLevel(xp);
@@ -40,29 +88,82 @@ export function formatXpProfile({
   const streak = Number(stats?.dailyStreak) || 0;
   const coins = Number(stats?.coins) || 0;
   const title = String(stats?.title || '').trim();
-  const pos = rank != null ? `#${rank}` : '—';
-  const of = total > 0 ? `/${total}` : '';
+  const messages = Number(stats?.messageCount) || 0;
+  const xpAwards = Number(stats?.xpAwardedCount) || 0;
   const who = title
     ? `${displayName(name, userJid)} · _${title}_`
     : displayName(name, userJid);
 
+  const ratio =
+    progress.xpForNext > 0 ? progress.xpIntoLevel / progress.xpForNext : 0;
+  const bar = progressBar(ratio);
+
+  const header = isSelf
+    ? `📊 *Seu perfil* — ${who}`
+    : `📊 *Perfil de* ${who}`;
+
   const lines = [
-    `📊 *Perfil* — ${who}`,
-    `• Level *${level}* · XP *${xp}*`,
-    `• Próximo: *${progress.xpIntoLevel}/${progress.xpForNext}* XP`,
-    `• Rank *${pos}${of}* neste grupo`,
-    `• Coins: *${coins}*  (loja: \`/loja\`)`,
-  ];
-  if (streak > 0) lines.push(`• Daily streak: *${streak}*`);
-  if (partnerName) lines.push(`• Casado(a) com: *${partnerName}*`);
+    header,
+    !isSelf && viewerName
+      ? `_pedido por ${viewerName}_`
+      : null,
+    '',
+    '*Nível*',
+    `• Lv *${level}* · *${xp}* XP`,
+    `• ${bar} *${progress.xpIntoLevel}/${progress.xpForNext}*`,
+    `• Rank XP *${rankLabel(rank, total)}*`,
+    '',
+    '*Economia*',
+    `• Coins: *${coins}* · rank *${rankLabel(coinsRank, coinsTotal || total)}*`,
+    streak > 0
+      ? `• Daily streak: *${streak}* · último ${formatRelative(stats?.lastDailyAt)}`
+      : `• Daily: ainda sem streak (use \`/daily\`)`,
+    '',
+    '*Atividade*',
+    `• Mensagens: *${messages}* · rank *${rankLabel(messagesRank, messagesTotal || total)}*`,
+    `• XP creditado: *${xpAwards}*×`,
+    stats?.createdAt
+      ? `• No grupo desde: ${formatRelative(stats.createdAt)}`
+      : null,
+    stats?.lastXpAt
+      ? `• Último XP: ${formatRelative(stats.lastXpAt)}`
+      : null,
+  ].filter((l) => l != null);
+
+  if (casino && (casino.games > 0 || casino.wagered > 0)) {
+    const profit = Number(casino.profit) || 0;
+    const sign = profit > 0 ? '+' : '';
+    lines.push(
+      '',
+      '*Cassino*',
+      `• Lucro *${sign}${profit}* · jogos *${Number(casino.games) || 0}*`,
+      `• Apostado *${Number(casino.wagered) || 0}* · ganho *${Number(casino.won) || 0}*`
+    );
+  }
+
+  const social = [];
+  if (partnerName) social.push(`• Casado(a) com: *${partnerName}*`);
+  if (factionLabel) social.push(`• Facção: *${factionLabel}*`);
+  if (social.length) {
+    lines.push('', '*Social*', ...social);
+  }
+
   if (activeBuffs?.length) {
-    const bits = activeBuffs.map(e => {
-      if (e.expiresAt > 0) return e.effectKey;
+    const bits = activeBuffs.map((e) => {
+      if (e.expiresAt > 0) {
+        const left = formatMsRemaining(e.expiresAt - Date.now());
+        return `${e.effectKey} (${left})`;
+      }
       if (e.charges > 0) return `${e.effectKey}×${e.charges}`;
       return e.effectKey;
     });
-    lines.push(`• Buffs: ${bits.join(', ')}`);
+    lines.push('', '*Buffs*', `• ${bits.join(', ')}`);
   }
+
+  if (isSelf) {
+    lines.push('', `_Ver outro: \`/perfil @pessoa\` ou responda a msg_`);
+  }
+
   return lines.join('\n');
 }
 
@@ -136,7 +237,7 @@ export function formatHelp(prefix = '/') {
     '🎮 *Comandos Fun*',
     '',
     '*Perfil & rank*',
-    `• \`${p}xp\` / \`${p}perfil\` — nível e XP`,
+    `• \`${p}xp\` / \`${p}perfil\` — seu perfil · \`${p}perfil @user\` — de outro`,
     `• \`${p}rank\` — top XP · \`${p}rankcoins\` — top coins`,
     `• \`${p}topmsg\` — quem mais manda mensagem no grupo`,
     `• \`${p}daily\` · \`${p}coins\` / \`${p}saldo\``,
