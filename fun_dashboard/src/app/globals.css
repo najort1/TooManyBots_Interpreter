@@ -28,3 +28,511 @@ body {
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
 }
+
+/* ——— Bombeiro mini-game ——— */
+.fire-stage {
+  min-height: 70dvh;
+  overflow: hidden;
+  border-radius: 1rem;
+}
+
+.fire-sky {
+  background:
+    radial-gradient(ellipse 80% 50% at 50% 100%, rgba(249, 115, 22, 0.15), transparent 55%),
+    radial-gradient(ellipse 60% 40% at 20% 0%, rgba(239, 68, 68, 0.12), transparent 50%),
+    linear-gradient(180deg, #09090b 0%, #18181b 55%, #1c1917 100%);
+}
+
+.fire-pulse {
+  animation: fire-pulse 0.55s ease-in-out infinite alternate;
+}
+
+.fire-pulse-sm {
+  animation: fire-pulse 0.8s ease-in-out infinite alternate;
+}
+
+.fire-pulse-hard {
+  animation: fire-pulse-hard 0.35s ease-in-out infinite alternate;
+}
+
+@keyframes fire-pulse {
+  from {
+    transform: scale(1);
+    filter: brightness(1);
+  }
+  to {
+    transform: scale(1.04);
+    filter: brightness(1.12);
+  }
+}
+
+@keyframes fire-pulse-hard {
+  from {
+    transform: scale(1) rotate(-0.5deg);
+    filter: brightness(1);
+  }
+  to {
+    transform: scale(1.06) rotate(0.5deg);
+    filter: brightness(1.2);
+  }
+}
+
+.fire-splash {
+  animation: fire-cell-splash 0.35s ease-out;
+}
+
+@keyframes fire-cell-splash {
+  0% {
+    box-shadow: inset 0 0 0 0 rgba(56, 189, 248, 0.5);
+  }
+  40% {
+    box-shadow: inset 0 0 24px 4px rgba(56, 189, 248, 0.45);
+  }
+  100% {
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+}
+
+.fire-water-drops {
+  background:
+    radial-gradient(circle at 30% 40%, rgba(125, 211, 252, 0.7) 0 2px, transparent 3px),
+    radial-gradient(circle at 70% 30%, rgba(186, 230, 253, 0.8) 0 2px, transparent 3px),
+    radial-gradient(circle at 50% 65%, rgba(56, 189, 248, 0.6) 0 3px, transparent 4px),
+    radial-gradient(circle at 20% 70%, rgba(14, 165, 233, 0.5) 0 2px, transparent 3px);
+  animation: fire-drops 0.4s ease-out forwards;
+}
+
+@keyframes fire-drops {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(10px) scale(1.2);
+  }
+}
+
+.fire-shake {
+  animation: fire-shake 0.28s ease-in-out;
+}
+
+@keyframes fire-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-4px);
+  }
+  75% {
+    transform: translateX(4px);
+  }
+}
+
+.fire-flash-red {
+  animation: fire-flash 0.28s ease-out;
+}
+
+@keyframes fire-flash {
+  0% {
+    box-shadow: inset 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+  30% {
+    box-shadow: inset 0 0 60px 10px rgba(239, 68, 68, 0.25);
+  }
+  100% {
+    box-shadow: inset 0 0 0 0 transparent;
+  }
+}
+
+.fire-cell {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+/* ——— Hacker firewall (estação cyber neon) ——— */
+.fw-stage {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.fw-bg {
+  background:
+    radial-gradient(ellipse 70% 50% at 50% 0%, rgba(6, 182, 212, 0.12), transparent 55%),
+    radial-gradient(ellipse 40% 30% at 10% 80%, rgba(239, 68, 68, 0.08), transparent 50%),
+    radial-gradient(ellipse 40% 30% at 90% 80%, rgba(16, 185, 129, 0.08), transparent 50%),
+    linear-gradient(180deg, #020617 0%, #0a1628 40%, #020617 100%);
+}
+
+.fw-circuits {
+  opacity: 0.35;
+  background-image:
+    linear-gradient(rgba(34, 211, 238, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(34, 211, 238, 0.06) 1px, transparent 1px),
+    radial-gradient(circle at 20% 30%, rgba(16, 185, 129, 0.15) 0 1px, transparent 2px),
+    radial-gradient(circle at 80% 20%, rgba(6, 182, 212, 0.12) 0 1px, transparent 2px),
+    radial-gradient(circle at 50% 70%, rgba(52, 211, 153, 0.1) 0 1px, transparent 2px);
+  background-size:
+    24px 24px,
+    24px 24px,
+    100% 100%,
+    100% 100%,
+    100% 100%;
+}
+
+.fw-glow-cyan {
+  text-shadow: 0 0 12px rgba(34, 211, 238, 0.7), 0 0 28px rgba(6, 182, 212, 0.35);
+}
+
+.fw-intro-ring {
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.3),
+    0 0 24px rgba(6, 182, 212, 0.25);
+}
+
+.fw-mission {
+  box-shadow:
+    0 0 0 1px rgba(6, 182, 212, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.fw-progress-bar {
+  background: linear-gradient(90deg, #059669, #34d399, #6ee7b7);
+  box-shadow: 0 0 12px rgba(52, 211, 153, 0.65);
+}
+
+.fw-arena {
+  position: relative;
+  min-height: 240px;
+  padding: 10px 0 6px;
+}
+
+.fw-side-panel {
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  width: 14%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.fw-virus-panel {
+  left: 1%;
+}
+
+.fw-shield-panel {
+  right: 1%;
+}
+
+.fw-bio-symbol {
+  font-size: 1.75rem;
+  color: #f87171;
+  text-shadow: 0 0 16px rgba(248, 113, 113, 0.9);
+  animation: fw-bio-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes fw-bio-pulse {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.12);
+    opacity: 1;
+  }
+}
+
+.fw-shield-bar {
+  width: 6px;
+  flex: 1;
+  max-height: 120px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #22d3ee, #06b6d4, #0891b2);
+  box-shadow:
+    0 0 12px rgba(34, 211, 238, 0.8),
+    0 0 24px rgba(6, 182, 212, 0.4);
+  animation: fw-shield-flow 2s ease-in-out infinite;
+}
+
+@keyframes fw-shield-flow {
+  0%,
+  100% {
+    opacity: 0.75;
+    filter: brightness(1);
+  }
+  50% {
+    opacity: 1;
+    filter: brightness(1.25);
+  }
+}
+
+.fw-side-label {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+}
+
+/* faixas laterais: corredor das ameaças */
+.fw-lane {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  width: 30%;
+  border-radius: 12px;
+  background: repeating-linear-gradient(
+    -45deg,
+    rgba(127, 29, 29, 0.14),
+    rgba(127, 29, 29, 0.14) 6px,
+    rgba(0, 0, 0, 0.12) 6px,
+    rgba(0, 0, 0, 0.12) 12px
+  );
+  border: 1px solid rgba(248, 113, 113, 0.2);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.fw-lane-left {
+  left: 0;
+}
+
+.fw-lane-right {
+  right: 0;
+}
+
+/* linha do escudo = hit zone */
+.fw-shield {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  width: 0;
+  border-left: 2px dashed rgba(34, 211, 238, 0.95);
+  box-shadow: 0 0 14px rgba(34, 211, 238, 0.65);
+  z-index: 5;
+  pointer-events: none;
+}
+
+.fw-shield-left {
+  left: 30%;
+}
+
+.fw-shield-right {
+  right: 30%;
+}
+
+.fw-shield-tag {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%) rotate(-90deg);
+  font-size: 8px;
+  letter-spacing: 0.16em;
+  color: rgba(165, 243, 252, 0.95);
+  font-weight: 700;
+  white-space: nowrap;
+  background: rgba(2, 6, 23, 0.9);
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid rgba(34, 211, 238, 0.35);
+}
+
+.fw-shield-right .fw-shield-tag {
+  transform: translate(50%, -50%) rotate(90deg);
+  left: auto;
+  right: 0;
+}
+
+.fw-shield-left .fw-shield-tag {
+  left: 0;
+}
+
+.fw-virus {
+  touch-action: manipulation;
+  cursor: pointer;
+}
+
+.fw-core {
+  filter: drop-shadow(0 0 20px rgba(6, 182, 212, 0.15));
+}
+
+.fw-terminal-frame {
+  border-radius: 14px 14px 6px 6px;
+  padding: 3px;
+  background: linear-gradient(145deg, #334155, #0f172a 40%, #164e63 100%);
+  box-shadow:
+    0 0 0 1px rgba(34, 211, 238, 0.35),
+    0 0 24px rgba(6, 182, 212, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.fw-terminal-screen {
+  border-radius: 11px;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0%, rgba(16, 185, 129, 0.08), transparent 55%),
+    #000;
+  border: 1px solid rgba(6, 182, 212, 0.25);
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.8);
+}
+
+.fw-target-num {
+  text-shadow:
+    0 0 8px rgba(52, 211, 153, 0.95),
+    0 0 24px rgba(16, 185, 129, 0.55),
+    0 0 48px rgba(5, 150, 105, 0.35);
+}
+
+.fw-scanner {
+  border-radius: 8px;
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  background: linear-gradient(180deg, rgba(8, 47, 73, 0.5), rgba(0, 0, 0, 0.9));
+  box-shadow:
+    0 0 12px rgba(34, 211, 238, 0.2),
+    inset 0 0 16px rgba(6, 182, 212, 0.08);
+}
+
+.fw-cursor {
+  animation: fw-blink 1s step-end infinite;
+}
+
+@keyframes fw-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.fw-laptop-base {
+  background: linear-gradient(180deg, #475569, #1e293b);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+}
+
+.fw-key {
+  border-radius: 12px;
+  border: 1px solid rgba(148, 163, 184, 0.25);
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.fw-key::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 120%, rgba(34, 211, 238, 0.2), transparent 55%);
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+
+.fw-key:active::after {
+  opacity: 1;
+}
+
+.fw-key-default {
+  color: #ecfeff;
+  background: linear-gradient(165deg, #1e293b 0%, #0f172a 55%, #020617 100%);
+  box-shadow:
+    0 2px 0 #020617,
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 0 12px rgba(6, 182, 212, 0.08);
+}
+
+.fw-key-danger {
+  color: #fecaca;
+  background: linear-gradient(165deg, #7f1d1d 0%, #450a0a 100%);
+  border-color: rgba(248, 113, 113, 0.45);
+  box-shadow:
+    0 2px 0 #450a0a,
+    0 0 14px rgba(239, 68, 68, 0.25);
+}
+
+.fw-key-muted {
+  color: #94a3b8;
+  background: linear-gradient(165deg, #334155 0%, #1e293b 100%);
+  box-shadow: 0 2px 0 #0f172a;
+}
+
+.fw-crack-btn {
+  border-radius: 14px;
+  border: 1px solid rgba(110, 231, 183, 0.6);
+  color: #022c22;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent 40%),
+    linear-gradient(90deg, #059669, #10b981, #34d399, #10b981, #059669);
+  background-size: 100% 100%, 200% 100%;
+  animation: fw-crack-pulse 2.2s ease-in-out infinite;
+  box-shadow:
+    0 0 20px rgba(16, 185, 129, 0.55),
+    0 0 40px rgba(5, 150, 105, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+@keyframes fw-crack-pulse {
+  0%,
+  100% {
+    background-position:
+      0 0,
+      0% 0;
+    box-shadow:
+      0 0 18px rgba(16, 185, 129, 0.5),
+      0 0 36px rgba(5, 150, 105, 0.25),
+      inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  }
+  50% {
+    background-position:
+      0 0,
+      100% 0;
+    box-shadow:
+      0 0 28px rgba(52, 211, 153, 0.75),
+      0 0 52px rgba(16, 185, 129, 0.4),
+      inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  }
+}
+
+.fw-footer {
+  box-shadow: inset 0 0 20px rgba(6, 182, 212, 0.06);
+}
+
+.fw-shake {
+  animation: fire-shake 0.25s ease-in-out;
+}
+
+.fw-flash-red {
+  animation: fire-flash 0.25s ease-out;
+}
+
+.fw-flash-ok {
+  box-shadow: inset 0 0 50px rgba(16, 185, 129, 0.28);
+}
+
+.fw-flash-bad {
+  box-shadow: inset 0 0 50px rgba(245, 158, 11, 0.2);
+}
+
+.fw-laptop {
+  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.45));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fire-pulse,
+  .fire-pulse-sm,
+  .fire-pulse-hard,
+  .fire-splash,
+  .fire-water-drops,
+  .fire-shake,
+  .fire-flash-red,
+  .fw-shake,
+  .fw-flash-red,
+  .fw-bio-pulse,
+  .fw-shield-flow,
+  .fw-crack-pulse,
+  .fw-cursor {
+    animation: none !important;
+  }
+}
