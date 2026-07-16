@@ -53,6 +53,14 @@ export function createShopService({
       };
     }
 
+    // Unlock permanente é por usuário (ex.: chave de armas) — não vende de novo
+    if (item.kind === 'permanent' || item.payload?.permanent) {
+      const owned = effectsRepository.getEffect(u, s, item.effectKey, now);
+      if (owned) {
+        return { ok: false, reason: 'already-owned', item };
+      }
+    }
+
     const debited = repository.addCoins({
       userJid: u,
       scopeKey: s,
@@ -71,6 +79,16 @@ export function createShopService({
         effectKey: item.effectKey,
         durationMs: item.durationMs,
         payload: item.payload || {},
+        now,
+      });
+    } else if (item.kind === 'permanent' || item.payload?.permanent) {
+      // 1 charge permanente por userJid+scope — nunca consumida; só esse usuário beneficia
+      effectsRepository.addCharges({
+        userJid: u,
+        scopeKey: s,
+        effectKey: item.effectKey,
+        charges: 1,
+        payload: { ...(item.payload || {}), permanent: true },
         now,
       });
     } else if (item.kind === 'charge') {

@@ -1,9 +1,20 @@
 /**
- * Catálogo da loja Fun — sinks de coins com benefício real.
- * Preços em coins; ids estáveis usados em /comprar <id>
+ * Catálogo da loja Fun (/loja) — buffs + chave de armas.
+ * Itens utilitários/armas com estoque dinâmico ficam em /mercado e /armas.
  */
 
 export const SHOP_ITEMS = Object.freeze([
+  {
+    id: 'chave_armas',
+    name: 'Chave da loja de armas',
+    emoji: '🔑',
+    price: 220,
+    description:
+      'Só pra você: libera /armas na sua conta neste grupo. Não compartilha com o resto — quem não compra fica de fora',
+    kind: 'permanent',
+    effectKey: 'weapons_license',
+    payload: { permanent: true },
+  },
   {
     id: 'boost_xp',
     name: 'Boost de XP',
@@ -49,63 +60,20 @@ export const SHOP_ITEMS = Object.freeze([
     payload: { refundRatio: 0.5 },
   },
   {
-    id: 'xp_pack',
-    name: 'Pacote de XP',
-    emoji: '📘',
-    price: 80,
-    description: '+200 XP na hora',
-    kind: 'instant',
-    effectKey: null,
-    payload: { xp: 200 },
-  },
-  {
     id: 'title',
     name: 'Título custom',
     emoji: '🏷️',
     price: 150,
-    description: 'Define um título (até 16 chars) no /xp e ranks',
+    description: 'Define um título (até 16 chars) no /perfil e ranks',
     kind: 'title',
     effectKey: 'title',
     payload: {},
-  },
-  {
-    id: 'roulette_charm',
-    name: 'Ficha da roleta',
-    emoji: '🔴',
-    price: 65,
-    description: 'Próxima /roleta em cor: leve boost de sorte',
-    kind: 'charge',
-    effectKey: 'roulette_charm',
-    charges: 1,
-    payload: { colorBoost: 0.05 },
-  },
-  {
-    id: 'slot_charm',
-    name: 'Alavanca dourada',
-    emoji: '🎰',
-    price: 75,
-    description: 'Próximo /slot com payout x1.25 se ganhar',
-    kind: 'charge',
-    effectKey: 'slot_charm',
-    charges: 1,
-    payload: { payoutMult: 1.25 },
-  },
-  {
-    id: 'crash_parachute',
-    name: 'Paraquedas',
-    emoji: '🪂',
-    price: 85,
-    description: 'Reserva de loja (uso futuro no crash)',
-    kind: 'charge',
-    effectKey: 'crash_parachute',
-    charges: 1,
-    payload: { minCashout: 1.2 },
   },
 ]);
 
 export function getShopItem(id) {
   const key = String(id || '').trim().toLowerCase();
-  return SHOP_ITEMS.find(i => i.id === key) || null;
+  return SHOP_ITEMS.find((i) => i.id === key) || null;
 }
 
 export function listShopItems() {
