@@ -20,6 +20,7 @@ import { createFactionService } from './services/factionService.js';
 import { createMissionService } from './services/missionService.js';
 import { createEventService } from './services/eventService.js';
 import { createCasinoService } from './services/casinoService.js';
+import { createTarotService } from './services/tarotService.js';
 import { createFunCasinoRepository } from './db/funCasinoRepository.js';
 import { createFunUserPrefsRepository } from './db/funUserPrefsRepository.js';
 import { createGroupMembershipService } from './utils/groupMembership.js';
@@ -86,6 +87,14 @@ export function createFunModule(deps = {}) {
     effectsRepository,
     eventRepository,
   });
+  const tarotService =
+    deps.tarotService ||
+    createTarotService({
+      casinoRepository,
+      getLogger,
+      generateZen: deps.openaiChatComplete,
+      generateOllama: deps.ollamaGenerate,
+    });
   const shopService = createShopService({
     repository,
     effectsRepository,
@@ -169,6 +178,7 @@ export function createFunModule(deps = {}) {
         missionService,
         eventService,
         casinoService,
+        tarotService,
         socialHooks,
         flavorService,
         getContactDisplayName: resolveContactName,
@@ -247,6 +257,7 @@ export function createFunModule(deps = {}) {
       missionService,
       eventService,
       casinoService,
+      tarotService,
       casinoRepository,
       socialHooks,
       flavorService,
