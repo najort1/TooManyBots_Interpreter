@@ -242,6 +242,134 @@ export function buildFunSchemaSql() {
       last_group_jid        TEXT    NOT NULL DEFAULT '',
       updated_at            INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_market_prices (
+      scope_key       TEXT    NOT NULL,
+      item_id         TEXT    NOT NULL,
+      price           INTEGER NOT NULL,
+      previous_price  INTEGER NOT NULL DEFAULT 0,
+      trend           TEXT    NOT NULL DEFAULT 'flat',
+      last_event_id   TEXT    NOT NULL DEFAULT '',
+      updated_at      INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, item_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_market_events (
+      id              TEXT PRIMARY KEY,
+      scope_key       TEXT    NOT NULL,
+      title           TEXT    NOT NULL,
+      description     TEXT    NOT NULL DEFAULT '',
+      category        TEXT    NOT NULL DEFAULT '',
+      impact_pct      REAL    NOT NULL DEFAULT 0,
+      source          TEXT    NOT NULL DEFAULT 'template',
+      created_at      INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_market_events_scope
+      ON fun_market_events(scope_key, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_market_price_history (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_key       TEXT    NOT NULL,
+      item_id         TEXT    NOT NULL,
+      price           INTEGER NOT NULL,
+      previous_price  INTEGER NOT NULL DEFAULT 0,
+      event_id        TEXT    NOT NULL DEFAULT '',
+      created_at      INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_market_hist
+      ON fun_market_price_history(scope_key, item_id, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_market_meta (
+      scope_key       TEXT PRIMARY KEY,
+      last_event_at   INTEGER NOT NULL DEFAULT 0,
+      next_event_at   INTEGER NOT NULL DEFAULT 0,
+      last_restock_at INTEGER NOT NULL DEFAULT 0,
+      updated_at      INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_inventory (
+      id              TEXT PRIMARY KEY,
+      user_jid        TEXT    NOT NULL,
+      scope_key       TEXT    NOT NULL,
+      item_id         TEXT    NOT NULL,
+      condition       TEXT    NOT NULL DEFAULT 'ok',
+      acquired_at     INTEGER NOT NULL,
+      acquired_price  INTEGER NOT NULL DEFAULT 0,
+      broken_at       INTEGER NOT NULL DEFAULT 0,
+      uses_left       INTEGER NOT NULL DEFAULT -1
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_market_stock (
+      scope_key       TEXT    NOT NULL,
+      item_id         TEXT    NOT NULL,
+      stock           INTEGER NOT NULL DEFAULT 0,
+      updated_at      INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, item_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_inventory_user
+      ON fun_inventory(scope_key, user_jid);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_bazaar_listings (
+      id              TEXT PRIMARY KEY,
+      scope_key       TEXT    NOT NULL,
+      seller_jid      TEXT    NOT NULL,
+      inventory_id    TEXT    NOT NULL,
+      item_id         TEXT    NOT NULL,
+      price           INTEGER NOT NULL,
+      created_at      INTEGER NOT NULL,
+      status          TEXT    NOT NULL DEFAULT 'open'
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_bazaar_scope
+      ON fun_bazaar_listings(scope_key, status, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_user_jobs (
+      user_jid        TEXT    NOT NULL,
+      scope_key       TEXT    NOT NULL,
+      job_id          TEXT    NOT NULL,
+      hired_at        INTEGER NOT NULL,
+      missed_dailies  INTEGER NOT NULL DEFAULT 0,
+      updated_at      INTEGER NOT NULL,
+      PRIMARY KEY (user_jid, scope_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_user_jobs_scope
+      ON fun_user_jobs(scope_key, job_id);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_job_attempts (
+      id              TEXT PRIMARY KEY,
+      user_jid        TEXT    NOT NULL,
+      scope_key       TEXT    NOT NULL,
+      job_id          TEXT    NOT NULL,
+      status          TEXT    NOT NULL DEFAULT 'pending',
+      code            TEXT    NOT NULL DEFAULT '',
+      token_nonce     TEXT    NOT NULL DEFAULT '',
+      score           INTEGER NOT NULL DEFAULT 0,
+      metrics_json    TEXT    NOT NULL DEFAULT '{}',
+      created_at      INTEGER NOT NULL,
+      started_at      INTEGER NOT NULL DEFAULT 0,
+      finished_at     INTEGER NOT NULL DEFAULT 0,
+      expires_at      INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_job_attempts_user
+      ON fun_job_attempts(scope_key, user_jid, job_id, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_job_attempts_code
+      ON fun_job_attempts(code);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_job_cooldowns (
+      user_jid          TEXT    NOT NULL,
+      scope_key         TEXT    NOT NULL,
+      job_id            TEXT    NOT NULL,
+      next_attempt_at   INTEGER NOT NULL DEFAULT 0,
+      attempt_count     INTEGER NOT NULL DEFAULT 0,
+      updated_at        INTEGER NOT NULL,
+      PRIMARY KEY (user_jid, scope_key, job_id)
+    );
   `;
 }
 
@@ -284,6 +412,30 @@ export function ensureFunSchema(db) {
     }
     if (!statsNames.has('title')) {
       db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_user_stats ADD COLUMN title TEXT NOT NULL DEFAULT ''`);
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const invCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_inventory)`).all();
+    const invNames = new Set(invCols.map((c) => String(c.name || '')));
+    if (invNames.size && !invNames.has('uses_left')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_inventory ADD COLUMN uses_left INTEGER NOT NULL DEFAULT -1`
+      );
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const metaCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_market_meta)`).all();
+    const metaNames = new Set(metaCols.map((c) => String(c.name || '')));
+    if (metaNames.size && !metaNames.has('last_restock_at')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_market_meta ADD COLUMN last_restock_at INTEGER NOT NULL DEFAULT 0`
+      );
     }
   } catch {
     // ignore

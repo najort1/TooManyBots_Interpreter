@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '7';
+export const FUN_SCHEMA_VERSION = '10';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -16,7 +16,11 @@ export const FUN_COMMANDS = Object.freeze({
   ACCEPT: 'accept',
   DECLINE: 'decline',
   FLIP: 'flip',
+  /** Freela — /trabalhar */
   JOB: 'job',
+  /** Profissão CLT — /emprego */
+  EMPLOYMENT: 'employment',
+  RESIGN: 'resign',
   LUCKY: 'lucky',
   BET: 'bet',
   SHOP: 'shop',
@@ -43,6 +47,16 @@ export const FUN_COMMANDS = Object.freeze({
   RANK_CASINO: 'rankcasino',
   BINGO: 'bingo',
   TAROT: 'tarot',
+  // Colecionáveis / mercado
+  GALLERY: 'gallery',
+  INVENTORY: 'inventory',
+  BAZAAR: 'bazaar',
+  SELL_ITEM: 'sell_item',
+  BUY_COLLECTIBLE: 'buy_collectible',
+  REPAIR_ITEM: 'repair_item',
+  MARKET_EVENT: 'market_event',
+  WEAPONS: 'weapons',
+  ASSAULT: 'assault',
   // DM / escopo
   GROUP_SCOPE: 'group_scope',
   // Mídia
@@ -76,6 +90,12 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     FUN_COMMANDS.BINGO,
     // tarô de grupo: a leitura é o entretenimento público
     FUN_COMMANDS.TAROT,
+    // assalto/armas: precisa de visibilidade no grupo
+    FUN_COMMANDS.ASSAULT,
+    FUN_COMMANDS.WEAPONS,
+    FUN_COMMANDS.BAZAAR,
+    // emprego: anúncio curto no grupo no start
+    FUN_COMMANDS.EMPLOYMENT,
   ])
 );
 
@@ -129,6 +149,15 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   job: FUN_COMMANDS.JOB,
   trabalhar: FUN_COMMANDS.JOB,
   work: FUN_COMMANDS.JOB,
+  emprego: FUN_COMMANDS.EMPLOYMENT,
+  empregos: FUN_COMMANDS.EMPLOYMENT,
+  profissao: FUN_COMMANDS.EMPLOYMENT,
+  profissão: FUN_COMMANDS.EMPLOYMENT,
+  carreira: FUN_COMMANDS.EMPLOYMENT,
+  demitir: FUN_COMMANDS.RESIGN,
+  demissao: FUN_COMMANDS.RESIGN,
+  demissão: FUN_COMMANDS.RESIGN,
+  resign: FUN_COMMANDS.RESIGN,
   sorte: FUN_COMMANDS.LUCKY,
   lucky: FUN_COMMANDS.LUCKY,
   roleta: FUN_COMMANDS.ROULETTE,
@@ -187,6 +216,34 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   store: FUN_COMMANDS.SHOP,
   comprar: FUN_COMMANDS.BUY,
   buy: FUN_COMMANDS.BUY,
+  galeria: FUN_COMMANDS.GALLERY,
+  gallery: FUN_COMMANDS.GALLERY,
+  mercado: FUN_COMMANDS.GALLERY,
+  rua: FUN_COMMANDS.GALLERY,
+  utilitarios: FUN_COMMANDS.GALLERY,
+  inventario: FUN_COMMANDS.INVENTORY,
+  inventory: FUN_COMMANDS.INVENTORY,
+  itens: FUN_COMMANDS.INVENTORY,
+  bag: FUN_COMMANDS.INVENTORY,
+  bazar: FUN_COMMANDS.BAZAAR,
+  feira: FUN_COMMANDS.BAZAAR,
+  playerstore: FUN_COMMANDS.BAZAAR,
+  vender: FUN_COMMANDS.SELL_ITEM,
+  sell: FUN_COMMANDS.SELL_ITEM,
+  adquirir: FUN_COMMANDS.BUY_COLLECTIBLE,
+  comprararte: FUN_COMMANDS.BUY_COLLECTIBLE,
+  consertar: FUN_COMMANDS.REPAIR_ITEM,
+  reparar: FUN_COMMANDS.REPAIR_ITEM,
+  repair: FUN_COMMANDS.REPAIR_ITEM,
+  mercadoevento: FUN_COMMANDS.MARKET_EVENT,
+  artevento: FUN_COMMANDS.MARKET_EVENT,
+  armas: FUN_COMMANDS.WEAPONS,
+  weapons: FUN_COMMANDS.WEAPONS,
+  armamento: FUN_COMMANDS.WEAPONS,
+  assaltar: FUN_COMMANDS.ASSAULT,
+  assalto: FUN_COMMANDS.ASSAULT,
+  roubar: FUN_COMMANDS.ASSAULT,
+  assault: FUN_COMMANDS.ASSAULT,
   titulo: FUN_COMMANDS.TITLE,
   title: FUN_COMMANDS.TITLE,
   faccao: FUN_COMMANDS.FACTION,
@@ -311,7 +368,11 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
    * Exceções: FUN_PUBLIC_GROUP_COMMANDS (aposta, facção, missões, marry, ship, pay…).
    * Default true — o grupo fica só com duelo/aposta/facção/social.
    */
-  replyCommandsInPrivate: true,
+  /**
+   * false = tudo no grupo/chat atual.
+   * DM em massa → WhatsApp restringe / ban por spam. NÃO ligar em produção de grupo.
+   */
+  replyCommandsInPrivate: false,
   // Cassino
   casinoMin: 5,
   casinoMax: 100,
@@ -348,6 +409,38 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   bingoSoloLineMult: 2.5,
   bingoSoloFullMult: 8,
   bingoDefaultMode: 'fast',
+  // Mercado de colecionáveis (galeria dinâmica)
+  marketEnabled: true,
+  marketEventMinMs: 45 * 60_000,
+  marketEventMaxMs: 3 * 60 * 60_000,
+  marketBreakChance: 0.06,
+  marketRepairRate: 0.22,
+  marketAnnounce: true,
+  /** Reposição de estoque (armas + rua) em tempo real — 7 dias */
+  marketRestockMs: 7 * 24 * 60 * 60_000,
+  assaultCooldownMs: 10 * 60_000,
+  assaultMinSteal: 8,
+  /** PvP: ganho real mas menor que banco/lojinha */
+  assaultMaxStealRatio: 0.12,
+  assaultBaseChance: 0.38,
+  // Profissões / testes (link público cloudflared)
+  publicBaseUrl: '',
+  jobTestPath: '/job/play',
+  jobTokenSecret: '',
+  jobLinkTtlMs: 15 * 60_000,
+  dashboardUiPort: 3001,
+  /** Multa de falha: % do saldo, com piso e teto (não sangra whale) */
+  assaultFailFinePct: 0.012,
+  assaultFailFineMin: 5,
+  assaultFailFineMax: 30,
+  /** Heists NPC — fonte principal de coin do loop de armas */
+  heistShopMin: 48,
+  heistShopMax: 100,
+  heistShopBaseChance: 0.5,
+  heistBankMin: 150,
+  heistBankMax: 340,
+  heistBankBaseChance: 0.34,
+  heistBankCooldownMs: 12 * 60_000,
   // Tarô (tiragem local + leitura Zen)
   tarotEnabled: true,
   tarotCooldownMs: 45_000,
