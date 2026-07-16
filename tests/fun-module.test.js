@@ -107,6 +107,58 @@ test('leaderboard e rank position', () => {
   assert.equal(repo.getUserRankPosition(a, scopeKey).rank, 2);
 });
 
+test('perfil: formatXpProfile rico + rankService ranks', async () => {
+  const { formatXpProfile } = await import('../fun/formatters/rankCard.js');
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const scope = uniqueGroup();
+  const a = uniqueJid('55120');
+  const b = uniqueJid('55121');
+  const now = Date.now();
+  repo.awardXp({ userJid: a, scopeKey: scope, amount: 80, now, cooldownMs: 0 });
+  repo.addCoins({ userJid: a, scopeKey: scope, amount: 40, reason: 'seed' });
+  repo.awardXp({ userJid: b, scopeKey: scope, amount: 30, now: now + 1, cooldownMs: 0 });
+
+  const ranks = createRankService({ repository: repo });
+  const profile = ranks.getProfile(a, scope);
+  assert.equal(profile.rank, 1);
+  assert.ok(profile.coinsRank >= 1);
+  assert.ok(profile.stats.messageCount >= 1);
+
+  const textSelf = formatXpProfile({
+    displayName: 'Alice',
+    userJid: a,
+    stats: profile.stats,
+    rank: profile.rank,
+    total: profile.total,
+    coinsRank: profile.coinsRank,
+    coinsTotal: profile.coinsTotal,
+    messagesRank: profile.messagesRank,
+    messagesTotal: profile.messagesTotal,
+    isSelf: true,
+    casino: { profit: 12, wagered: 50, won: 62, lost: 0, games: 3 },
+    factionLabel: '🏴‍☠️ Panelinha',
+    partnerName: 'Bob',
+  });
+  assert.match(textSelf, /Seu perfil/);
+  assert.match(textSelf, /Cassino/);
+  assert.match(textSelf, /Panelinha/);
+  assert.match(textSelf, /Bob/);
+  assert.match(textSelf, /Mensagens/);
+
+  const textOther = formatXpProfile({
+    displayName: 'Alice',
+    userJid: a,
+    stats: profile.stats,
+    rank: profile.rank,
+    total: profile.total,
+    isSelf: false,
+    viewerName: 'Carol',
+  });
+  assert.match(textOther, /Perfil de/);
+  assert.match(textOther, /Carol/);
+});
+
 test('claimDaily streak', () => {
   const repo = createFunStatsRepository({ getDatabase: getDb });
   repo.ensureFunSchema();
