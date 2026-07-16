@@ -5,18 +5,20 @@ import { getFunGroupWhitelistSet } from '../config.js';
 import { FUN_PUBLIC_GROUP_COMMANDS } from '../constants.js';
 
 /**
- * Com replyCommandsInPrivate: manda no DM, exceto duelo/aposta/facção/social.
+ * Respostas no privado desabilitadas por padrão (ban/spam do WhatsApp).
+ * Mesmo com replyCommandsInPrivate=true no config, o pipeline NÃO envia DM —
+ * tudo cai no chat atual (grupo). Flag mantida só por compat de testes legados.
+ *
  * @param {string|null|undefined} command
  * @param {object} funConfig
  * @param {boolean} isGroup
  */
 export function shouldReplyCommandInPrivate(command, funConfig, isGroup) {
-  if (!isGroup) return false;
-  if (!funConfig?.replyCommandsInPrivate) return false;
-  const cmd = String(command || '').trim();
-  if (!cmd) return false;
-  if (FUN_PUBLIC_GROUP_COMMANDS.has(cmd)) return false;
-  return true;
+  void command;
+  void funConfig;
+  void isGroup;
+  // Hard-off: DM do bot = risco alto de restrição WhatsApp
+  return false;
 }
 
 /**
@@ -90,6 +92,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
     eventService,
     casinoService,
     tarotService,
+    marketService,
+    jobService,
     socialHooks,
     flavorService,
     getContactDisplayName,
@@ -281,74 +285,26 @@ export async function handleFunIncomingMessage(deps, ctx) {
     await sendText(sock, chatJid, content);
   };
 
-  /** Envia no privado do autor (útil em grupo para não poluir o chat). */
+  /**
+   * Legado: handlers que pediam “privado” agora vão pro MESMO chat (grupo).
+   * Nunca envia 1:1 — evita ban por spam do WhatsApp.
+   */
   const replyPrivate = async (body) => {
-    if (typeof sendText !== 'function') throw new Error('sendText-unavailable');
-    const content = String(body || '').trim();
-    if (!content) return;
-    const target = userJid || chatJid;
-    if (!target || target === chatJid || String(target).endsWith('@g.us')) {
-      throw new Error('no-private-target');
-    }
-    // timeout: Baileys às vezes trava no DM
-    await Promise.race([
-      sendText(sock, target, content),
-      new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('dm-timeout')), 8_000);
-      }),
-    ]);
+    await replyToChat(body);
   };
 
-  /**
-   * Resposta de comando:
-   * - preferPrivate: tenta DM; se falhar/timeout → SEMPRE cai no chat onde o comando foi digitado.
-   *   (WhatsApp muitas vezes “aceita” o send sem entregar se a pessoa nunca abriu o PV do bot.)
-   * - senão: responde no chat atual.
-   */
+  /** Sempre no chat atual (grupo ou DM se o user escreveu no PV). */
   const reply = async (body) => {
-    if (!preferPrivate) {
-      await replyToChat(body);
-      return;
-    }
-    try {
-      await replyPrivate(body);
-    } catch (err) {
-      console.warn(
-        `[fun] DM falhou (${err?.message || 'erro'}) → respondendo no chat. cmd=${parsedCommand?.command || '?'}`
-      );
-      getLogger?.()?.warn?.(
-        {
-          err: { message: err?.message || 'dm-failed' },
-          userJid,
-          chatJid,
-          command: parsedCommand?.command,
-        },
-        'Fun: falha no DM — caindo pro grupo'
-      );
-      await replyToChat(body);
-    }
+    await replyToChat(body);
   };
 
   const replyImage = async (imageBuffer, caption = '') => {
     if (typeof sendImage !== 'function') return;
-    const target = preferPrivate ? userJid || chatJid : chatJid;
-    try {
-      await sendImage(sock, target, {
-        imageBuffer,
-        caption: String(caption || ''),
-        mimeType: 'image/png',
-      });
-    } catch {
-      if (preferPrivate && target !== chatJid) {
-        await sendImage(sock, chatJid, {
-          imageBuffer,
-          caption: String(caption || ''),
-          mimeType: 'image/png',
-        });
-      } else {
-        throw new Error('reply-image-failed');
-      }
-    }
+    await sendImage(sock, chatJid, {
+      imageBuffer,
+      caption: String(caption || ''),
+      mimeType: 'image/png',
+    });
   };
 
   /** Figurinha sempre no chat atual (grupo ou DM), não no “modo privado de rank”. */
@@ -379,6 +335,44 @@ export async function handleFunIncomingMessage(deps, ctx) {
       getLogger?.()?.debug?.(
         { err: { message: err?.message || 'auto-event' } },
         'Fun auto-event failed'
+      );
+      return null;
+    }
+  }
+
+  /** Evento de mercado de arte (preços da galeria). */
+  async function maybeAutoMarket(now = Date.now()) {
+    if (!isGroup || !marketService?.tryAutoMarketEvent) return null;
+    try {
+      const hit = await marketService.tryAutoMarketEvent({
+        scopeKey: scope.scopeKey,
+        funConfig,
+        now,
+      });
+      if (!hit?.ok || !hit.announce) return hit;
+      const msg = marketService.formatEventAnnouncement(hit, getContactDisplayName);
+      if (msg) await replyToChat(msg);
+      // se quebrou item, tenta avisar o dono no PV
+      if (hit.broken?.userJid && typeof sendText === 'function') {
+        try {
+          await sendText(
+            sock,
+            hit.broken.userJid,
+            [
+              '💥 *Sua peça quebrou no ateliê!*',
+              `*${hit.broken.itemName}* precisa de conserto (*${hit.broken.repairCost}* coins).`,
+              `\`/consertar ${String(hit.broken.inventoryId).slice(0, 8)}\` · \`/inventario\``,
+            ].join('\n')
+          );
+        } catch {
+          // ignore DM fail
+        }
+      }
+      return hit;
+    } catch (err) {
+      getLogger?.()?.debug?.(
+        { err: { message: err?.message || 'auto-market' } },
+        'Fun auto-market failed'
       );
       return null;
     }
@@ -424,6 +418,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
         eventService,
         casinoService,
         tarotService,
+        marketService,
+        jobService,
         socialHooks,
         flavorService,
         getContactDisplayName,
@@ -448,8 +444,11 @@ export async function handleFunIncomingMessage(deps, ctx) {
         getLogger,
       });
 
-      // evento surpresa só em grupo
-      if (!isDm) await maybeAutoEvent(Date.now());
+      // evento surpresa + mercado de arte só em grupo
+      if (!isDm) {
+        await maybeAutoEvent(Date.now());
+        await maybeAutoMarket(Date.now());
+      }
 
       const skipFlows = Boolean(funConfig.commandExclusive && result?.handled);
       return {
@@ -525,9 +524,10 @@ export async function handleFunIncomingMessage(deps, ctx) {
       await reply(text);
     }
 
-    // evento surpresa em mensagem normal do grupo (baixa chance + cooldown)
+    // evento surpresa + mercado em mensagem normal do grupo
     if (award.applied) {
       await maybeAutoEvent(now);
+      await maybeAutoMarket(now);
     }
 
     return {

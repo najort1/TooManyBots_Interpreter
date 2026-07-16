@@ -263,6 +263,116 @@ export function normalizeFunConfig(input) {
       : DEFAULT_FUN_CONFIG.bingoSoloFullMult,
     // clássico depreciado — sempre fast
     bingoDefaultMode: 'fast',
+    marketEnabled: normalizeBoolean(raw.marketEnabled, DEFAULT_FUN_CONFIG.marketEnabled),
+    marketEventMinMs: normalizeInt(raw.marketEventMinMs, DEFAULT_FUN_CONFIG.marketEventMinMs, {
+      min: 5 * 60_000,
+      max: 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    marketEventMaxMs: normalizeInt(raw.marketEventMaxMs, DEFAULT_FUN_CONFIG.marketEventMaxMs, {
+      min: 10 * 60_000,
+      max: 48 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    marketBreakChance: Number.isFinite(Number(raw.marketBreakChance))
+      ? Math.min(0.35, Math.max(0, Number(raw.marketBreakChance)))
+      : DEFAULT_FUN_CONFIG.marketBreakChance,
+    marketRepairRate: Number.isFinite(Number(raw.marketRepairRate))
+      ? Math.min(0.6, Math.max(0.05, Number(raw.marketRepairRate)))
+      : DEFAULT_FUN_CONFIG.marketRepairRate,
+    marketAnnounce: normalizeBoolean(raw.marketAnnounce, DEFAULT_FUN_CONFIG.marketAnnounce),
+    marketRestockMs: normalizeInt(raw.marketRestockMs, DEFAULT_FUN_CONFIG.marketRestockMs, {
+      min: 60 * 60_000,
+      max: 30 * 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    assaultCooldownMs: normalizeInt(raw.assaultCooldownMs, DEFAULT_FUN_CONFIG.assaultCooldownMs, {
+      min: 0,
+      max: 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    assaultMinSteal: normalizeInt(raw.assaultMinSteal, DEFAULT_FUN_CONFIG.assaultMinSteal, {
+      min: 1,
+      max: 10_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    assaultMaxStealRatio: Number.isFinite(Number(raw.assaultMaxStealRatio))
+      ? Math.min(0.5, Math.max(0.05, Number(raw.assaultMaxStealRatio)))
+      : DEFAULT_FUN_CONFIG.assaultMaxStealRatio,
+    assaultBaseChance: Number.isFinite(Number(raw.assaultBaseChance))
+      ? Math.min(0.9, Math.max(0.05, Number(raw.assaultBaseChance)))
+      : DEFAULT_FUN_CONFIG.assaultBaseChance,
+    publicBaseUrl: toText(raw.publicBaseUrl, DEFAULT_FUN_CONFIG.publicBaseUrl || ''),
+    jobTestPath: toText(raw.jobTestPath, DEFAULT_FUN_CONFIG.jobTestPath || '/job/play') || '/job/play',
+    jobTokenSecret: toText(raw.jobTokenSecret, DEFAULT_FUN_CONFIG.jobTokenSecret || ''),
+    jobLinkTtlMs: normalizeInt(raw.jobLinkTtlMs, DEFAULT_FUN_CONFIG.jobLinkTtlMs, {
+      min: 60_000,
+      max: 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    dashboardUiPort: normalizeInt(raw.dashboardUiPort, DEFAULT_FUN_CONFIG.dashboardUiPort || 3001, {
+      min: 1,
+      max: 65535,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    assaultFailFinePct: Number.isFinite(Number(raw.assaultFailFinePct))
+      ? Math.min(0.1, Math.max(0, Number(raw.assaultFailFinePct)))
+      : DEFAULT_FUN_CONFIG.assaultFailFinePct,
+    assaultFailFineMin: normalizeInt(raw.assaultFailFineMin, DEFAULT_FUN_CONFIG.assaultFailFineMin, {
+      min: 0,
+      max: 500,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    assaultFailFineMax: normalizeInt(raw.assaultFailFineMax, DEFAULT_FUN_CONFIG.assaultFailFineMax, {
+      min: 1,
+      max: 5000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    heistShopMin: normalizeInt(raw.heistShopMin, DEFAULT_FUN_CONFIG.heistShopMin, {
+      min: 1,
+      max: 50_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    heistShopMax: normalizeInt(raw.heistShopMax, DEFAULT_FUN_CONFIG.heistShopMax, {
+      min: 1,
+      max: 100_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    heistShopBaseChance: Number.isFinite(Number(raw.heistShopBaseChance))
+      ? Math.min(0.9, Math.max(0.05, Number(raw.heistShopBaseChance)))
+      : DEFAULT_FUN_CONFIG.heistShopBaseChance,
+    heistBankMin: normalizeInt(raw.heistBankMin, DEFAULT_FUN_CONFIG.heistBankMin, {
+      min: 1,
+      max: 100_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    heistBankMax: normalizeInt(raw.heistBankMax, DEFAULT_FUN_CONFIG.heistBankMax, {
+      min: 1,
+      max: 200_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    heistBankBaseChance: Number.isFinite(Number(raw.heistBankBaseChance))
+      ? Math.min(0.9, Math.max(0.05, Number(raw.heistBankBaseChance)))
+      : DEFAULT_FUN_CONFIG.heistBankBaseChance,
+    heistBankCooldownMs: normalizeInt(raw.heistBankCooldownMs, DEFAULT_FUN_CONFIG.heistBankCooldownMs, {
+      min: 0,
+      max: 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
     tarotEnabled: normalizeBoolean(raw.tarotEnabled, DEFAULT_FUN_CONFIG.tarotEnabled),
     tarotCooldownMs: normalizeInt(raw.tarotCooldownMs, DEFAULT_FUN_CONFIG.tarotCooldownMs, {
       min: 0,

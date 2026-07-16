@@ -849,7 +849,7 @@ test('ollama keep_alive + warmup API', async () => {
   svc.stopKeepAliveLoop();
 });
 
-test('replyCommandsInPrivate: solo vai DM, aposta/facÃ§Ã£o no grupo', async () => {
+test('respostas no grupo: saldo e aposta ficam no chat do grupo (sem DM)', async () => {
   const groupJid = uniqueGroup();
   const userA = `5511666${String(Date.now()).slice(-6)}04@s.whatsapp.net`;
   const sent = [];
@@ -861,7 +861,7 @@ test('replyCommandsInPrivate: solo vai DM, aposta/facÃ§Ã£o no grupo', async 
     flipMax: 80,
     requireGroupWhitelist: true,
     groupWhitelistJids: [groupJid],
-    replyCommandsInPrivate: true,
+    replyCommandsInPrivate: true, // flag legada ignorada — nunca DM
     factionCreateCost: 0,
     ollamaEnabled: false,
   });
@@ -895,8 +895,8 @@ test('replyCommandsInPrivate: solo vai DM, aposta/facÃ§Ã£o no grupo', async 
   });
   assert.ok(sent.length >= 1, 'saldo should reply');
   assert.ok(
-    sent.every(m => m.jid === userA),
-    `saldo deve ir no DM: ${JSON.stringify(sent)}`
+    sent.every((m) => m.jid === groupJid),
+    `saldo deve ficar no grupo (sem DM): ${JSON.stringify(sent)}`
   );
 
   sent.length = 0;
@@ -908,9 +908,9 @@ test('replyCommandsInPrivate: solo vai DM, aposta/facÃ§Ã£o no grupo', async 
     text: '/faccao criar DMTest',
     messageType: 'text',
   });
-  assert.ok(sent.some(m => /fac|Nova fac/i.test(m.text)));
+  assert.ok(sent.some((m) => /fac|Nova fac/i.test(m.text)));
   assert.ok(
-    sent.every(m => m.jid === groupJid),
+    sent.every((m) => m.jid === groupJid),
     `faccao deve ficar no grupo: ${JSON.stringify(sent)}`
   );
 });
