@@ -22,7 +22,6 @@ import {
   resolveBingoRound,
   soloBingoPayout,
   normalizeBingoMode,
-  snapshotBingoPlayers,
 } from './bingoLogic.js';
 
 const RED_NUMBERS = new Set([
@@ -975,11 +974,6 @@ export function createCasinoService({
       soloFullMult: Math.max(2, Number(funConfig.bingoSoloFullMult) || BINGO_DEFAULTS.soloFullMult),
       cooldownMs: Math.max(0, Math.floor(numOr(funConfig.bingoCooldownMs, 15_000))),
       defaultMode,
-      classicIntervalMs: Math.max(0, Math.floor(numOr(funConfig.bingoClassicIntervalMs, BINGO_DEFAULTS.classicIntervalMs))),
-      classicEarlyEndOnFull:
-        funConfig.bingoClassicEarlyEndOnFull !== undefined
-          ? Boolean(funConfig.bingoClassicEarlyEndOnFull)
-          : BINGO_DEFAULTS.classicEarlyEndOnFull,
     };
   }
 
@@ -1132,6 +1126,27 @@ export function createCasinoService({
     const session = readBingoRoom(scopeKey);
     if (session?.id) casinoRepository.deleteSession(session.id);
 
+    const houseCut = Math.max(0, Math.floor(Number(pot) || 0) - Math.floor(Number(resolved.netPot) || 0));
+    const playersOut = results.map((r) => {
+      const payout = Math.max(0, Math.floor(Number(r.payout) || 0));
+      // entrada já saiu no join; lucro real = payout - fee (perdedor: -fee)
+      const profit = resolved.refund ? 0 : payout - fee;
+      const coins = repository.getUserStats(r.jid, scopeKey)?.coins || 0;
+      return {
+        jid: r.jid,
+        card: r.card,
+        full: r.full,
+        hasLine: r.hasLine,
+        lines: r.lines,
+        markedCount: r.markedCount,
+        payout,
+        fee,
+        profit,
+        coins,
+        cardText: formatBingoCard(r.card, drawn),
+      };
+    });
+
     return {
       ok: true,
       finished: true,
@@ -1142,21 +1157,28 @@ export function createCasinoService({
       drawn: Array.isArray(drawn) ? drawn : [],
       pot,
       netPot: resolved.netPot,
+      houseCut,
       entryFee: fee,
       happy,
-      players: results.map((r) => ({
-        jid: r.jid,
-        card: r.card,
-        full: r.full,
-        hasLine: r.hasLine,
-        lines: r.lines,
-        markedCount: r.markedCount,
-        payout: r.payout,
-        cardText: formatBingoCard(r.card, drawn),
-      })),
-      winners: results
+      players: playersOut,
+      winners: playersOut
         .filter((r) => r.payout > 0)
-        .map((r) => ({ jid: r.jid, payout: r.payout, full: r.full })),
+        .map((r) => ({
+          jid: r.jid,
+          payout: r.payout,
+          full: r.full,
+          profit: r.profit,
+          fee: r.fee,
+          coins: r.coins,
+        })),
+      losers: playersOut
+        .filter((r) => !resolved.refund && r.payout <= 0)
+        .map((r) => ({
+          jid: r.jid,
+          fee: r.fee,
+          profit: r.profit,
+          coins: r.coins,
+        })),
     };
   }
 
@@ -1178,165 +1200,11 @@ export function createCasinoService({
     });
   }
 
-  /**
-   * Prepara rodada clássica: status=running, bolas pré-sorteadas, drawn=[].
-   * Handler chama classicBingoTick a cada intervalo.
-   */
-  function beginClassicBingo({ scopeKey, room, funConfig = {}, now = Date.now() }) {
-    const opts = bingoOpts(funConfig);
-    const balls = pickDistinct(opts.drawCount, opts.poolMax, random);
-    const ttlMs = Math.max(
-      opts.lobbyTtlMs,
-      (balls.length + 2) * Math.max(opts.classicIntervalMs, 250) + 30_000
-    );
-    saveBingoRoom(
-      scopeKey,
-      {
-        id: room.id,
-        status: 'running',
-        mode: BINGO_MODES.CLASSIC,
-        entryFee: room.entryFee,
-        pot: room.pot,
-        players: room.players,
-        size: room.size,
-        balls,
-        drawn: [],
-      },
-      ttlMs,
-      now
-    );
-    return {
-      ok: true,
-      finished: false,
-      classic: true,
-      mode: BINGO_MODES.CLASSIC,
-      totalBalls: balls.length,
-      intervalMs: opts.classicIntervalMs,
-      pot: room.pot,
-      entryFee: room.entryFee,
-      playerCount: room.players.length,
-    };
-  }
-
-  /**
-   * Uma bola do modo clássico. Se acabou (ou cartela cheia cedo), liquida pot.
-   */
-  function classicBingoTick({ scopeKey, funConfig = {}, now = Date.now() }) {
-    const opts = bingoOpts(funConfig);
-    const room = getBingoSession(scopeKey, now);
-    if (!room) return { ok: false, reason: 'no-room' };
-    if (room.status !== 'running') {
-      return { ok: false, reason: 'not-running', room };
-    }
-
-    const balls = room.balls || [];
-    const drawn = [...(room.drawn || [])];
-    if (drawn.length >= balls.length) {
-      return settleBingoWithDrawn({
-        scopeKey,
-        players: room.players,
-        fee: room.entryFee,
-        pot: room.pot,
-        drawn,
-        funConfig,
-        now,
-        mode: BINGO_MODES.CLASSIC,
-      });
-    }
-
-    const prevSnap = snapshotBingoPlayers(room.players, drawn);
-    const number = Math.floor(Number(balls[drawn.length]) || 0);
-    drawn.push(number);
-    const snap = snapshotBingoPlayers(room.players, drawn);
-
-    const newLineJids = snap
-      .filter((p) => p.hasLine && !prevSnap.find((x) => x.jid === p.jid)?.hasLine)
-      .map((p) => p.jid);
-    const newFullJids = snap
-      .filter((p) => p.full && !prevSnap.find((x) => x.jid === p.jid)?.full)
-      .map((p) => p.jid);
-    const hitJids = snap
-      .filter((p) => p.card.includes(number))
-      .map((p) => p.jid);
-
-    const doneAll = drawn.length >= balls.length;
-    const earlyFull = opts.classicEarlyEndOnFull && newFullJids.length > 0;
-    const shouldSettle = doneAll || earlyFull;
-
-    if (shouldSettle) {
-      const settled = settleBingoWithDrawn({
-        scopeKey,
-        players: room.players,
-        fee: room.entryFee,
-        pot: room.pot,
-        drawn,
-        funConfig,
-        now,
-        mode: BINGO_MODES.CLASSIC,
-      });
-      return {
-        ...settled,
-        step: true,
-        number,
-        index: drawn.length,
-        total: balls.length,
-        earlyEnd: earlyFull && !doneAll,
-        hitJids,
-        newLineJids,
-        newFullJids,
-        snapshot: snap,
-      };
-    }
-
-    const remainingTtl = Math.max(30_000, Number(room.expiresAt) - now);
-    saveBingoRoom(
-      scopeKey,
-      {
-        id: room.id,
-        status: 'running',
-        mode: BINGO_MODES.CLASSIC,
-        entryFee: room.entryFee,
-        pot: room.pot,
-        players: room.players,
-        size: room.size,
-        balls,
-        drawn,
-      },
-      remainingTtl,
-      now
-    );
-
-    return {
-      ok: true,
-      finished: false,
-      step: true,
-      classic: true,
-      mode: BINGO_MODES.CLASSIC,
-      number,
-      index: drawn.length,
-      total: balls.length,
-      drawn,
-      pot: room.pot,
-      hitJids,
-      newLineJids,
-      newFullJids,
-      snapshot: snap,
-    };
-  }
-
   function maybeAutoStartRoom({ scopeKey, room, funConfig, now, joinedMeta }) {
     if (!room || room.players.length < bingoOpts(funConfig).size) {
       return null;
     }
-    if (room.mode === BINGO_MODES.CLASSIC) {
-      const prep = beginClassicBingo({ scopeKey, room, funConfig, now });
-      return {
-        ...prep,
-        joined: true,
-        autoStarted: true,
-        ...joinedMeta,
-      };
-    }
+    // só modo rápido — 1 resposta no fim (sem flood de bolas)
     const finished = runBingoGame({ scopeKey, room, funConfig, now });
     return {
       ...finished,
@@ -1362,10 +1230,10 @@ export function createCasinoService({
     }
 
     let room = getOpenBingoRoom(scopeKey, now);
-    const requestedMode =
-      modeInput != null && String(modeInput).trim() !== ''
-        ? normalizeBingoMode(modeInput)
-        : opts.defaultMode;
+    // modo clássico depreciado — sempre rápido
+    const mode = BINGO_MODES.FAST;
+    void modeInput;
+    void opts.defaultMode;
 
     if (room) {
       fee = room.entryFee;
@@ -1399,7 +1267,6 @@ export function createCasinoService({
 
     const card = makeBingoCard(random, { poolMax: opts.poolMax });
     const player = { jid: userJid, card };
-    const mode = room ? room.mode : requestedMode;
 
     if (!room) {
       room = {
@@ -1475,15 +1342,6 @@ export function createCasinoService({
         have: room.players.length,
         need: opts.minPlayers,
         room,
-      };
-    }
-
-    if (room.mode === BINGO_MODES.CLASSIC) {
-      const prep = beginClassicBingo({ scopeKey, room, funConfig, now });
-      return {
-        ...prep,
-        startedBy: userJid,
-        coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
       };
     }
 
@@ -1671,7 +1529,6 @@ export function createCasinoService({
     bingoStatus,
     bingoMyCard,
     playBingoSolo,
-    classicBingoTick,
     formatBingoCard,
     rankCasino,
     getUserCasinoStats,
