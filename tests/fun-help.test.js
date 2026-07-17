@@ -23,6 +23,7 @@ test('help por tema resolve aliases', () => {
   assert.equal(resolveHelpTopic('bolsa'), 'economia');
   assert.equal(resolveHelpTopic('cassino'), 'cassino');
   assert.equal(resolveHelpTopic('faccao'), 'faccoes');
+  assert.equal(resolveHelpTopic('panelinha'), 'faccoes');
   assert.equal(resolveHelpTopic('fig'), 'midia');
   assert.equal(resolveHelpTopic('xyz'), null);
 });
@@ -36,7 +37,7 @@ test('help temas renderizam comandos-chave', () => {
   assert.ok(cas.includes('bingo') || cas.includes('Bingo') || cas.includes('/bj'));
 
   const fac = formatHelp('/', 'faccoes');
-  assert.ok(fac.includes('panelinha') || fac.includes('faccao'));
+  assert.ok(fac.includes('panelinha'));
 });
 
 test('help tema desconhecido volta pro índice', () => {

@@ -155,7 +155,7 @@ export function formatXpProfile({
 
   const social = [];
   if (partnerName) social.push(`• Casado(a) com: *${partnerName}*`);
-  if (factionLabel) social.push(`• Facção: *${factionLabel}*`);
+  if (factionLabel) social.push(`• Panelinha: *${factionLabel}*`);
   if (social.length) {
     lines.push('', '*Social*', ...social);
   }

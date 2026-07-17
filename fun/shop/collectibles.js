@@ -2,7 +2,7 @@
  * Economia utilitária Fun — itens com dependência entre si.
  *
  * Regras de design:
- * - Nenhuma peça é “só coleção”: tudo tem uso (assalto, defesa, facção, combustível).
+ * - Nenhuma peça é “só coleção”: tudo tem uso (assalto, defesa, panelinha, combustível).
  * - Armas exigem licença individual (chave_armas na /loja, por usuário) e munição (exceto faca).
  * - Veículos exigem gasolina pra fuga no assalto / vantagem.
  * - Estoque do bot é finito por grupo (market stock).
@@ -34,7 +34,7 @@ export const ITEM_CATEGORIES = Object.freeze([
  * @property {boolean} utilityShop — na /mercado (galeria utilitária)
  * @property {number} [assaultPower] — poder no assalto
  * @property {number} [defensePower] — defesa passiva
- * @property {boolean} [factionTrophy] — conta no arsenal da facção
+ * @property {boolean} [factionTrophy] — conta no arsenal da panelinha
  */
 
 /** @type {ReadonlyArray<GameItem>} */
@@ -173,7 +173,7 @@ export const COLLECTIBLES = Object.freeze([
     basePrice: 480,
     rarity: 'epica',
     description: 'Barulho de filme. Munição some rápido.',
-    benefit: 'Assalto máximo. Consome 1 munição. Facção valoriza no arsenal.',
+    benefit: 'Assalto máximo. Consome 1 munição. Panelinha valoriza no arsenal.',
     requires: 'municao',
     stockMax: 2,
     uses: 10,

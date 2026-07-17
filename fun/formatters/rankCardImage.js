@@ -708,7 +708,7 @@ function drawBadgeIcon(ctx, kind, cx, cy, color) {
   ctx.restore();
 }
 
-/** Chip de conquista (emprego, facção, casamento, cassino) — ícone + rótulo + valor. */
+/** Chip de conquista (emprego, panelinha, casamento, cassino) — ícone + rótulo + valor. */
 function drawInfoChip(ctx, x, y, w, h, theme, chip) {
   fillRoundRect(ctx, x, y, w, h, h / 2, hexToRgba(chip.color, 0.14));
   strokeRoundRect(ctx, x, y, w, h, h / 2, hexToRgba(chip.color, 0.55), 1.5);
@@ -819,7 +819,7 @@ export function renderProfileCardPng({
   if (factionLabel) {
     chips.push({
       icon: 'flag',
-      sub: 'Facção',
+      sub: 'Panelinha',
       label: shortName(factionLabel, '', 26),
       color: t.accent2 || t.accent,
     });
@@ -952,7 +952,7 @@ export function renderProfileCardPng({
     ctx.fillText(k.value, x + 16, y + 58);
   });
 
-  // ── Chips de conquista (emprego / facção / casamento / cassino) ──
+  // ── Chips de conquista (emprego / panelinha / casamento / cassino) ──
   if (chips.length) {
     ctx.fillStyle = t.muted;
     ctx.font = `700 11px ${FONT}`;

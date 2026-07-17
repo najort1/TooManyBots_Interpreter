@@ -114,7 +114,7 @@ export async function handleInventoryCommand({
   }
   const arsenal = marketService.factionArsenal?.(scopeKey) || [];
   if (arsenal.length) {
-    lines.push('*Arsenal das facções* (troféus)');
+    lines.push('*Arsenal das panelinhas* (troféus)');
     for (const f of arsenal.slice(0, 5)) {
       lines.push(`${f.emoji || '🏴‍☠️'} ${f.name}: ${f.pieces} arma(s) · poder ${f.score}`);
     }

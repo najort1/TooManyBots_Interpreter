@@ -1,5 +1,5 @@
 /**
- * Facções oficiais + cofre.
+ * Panelinhas oficiais + cofre (API interna: faction*).
  */
 
 export function createFactionService({

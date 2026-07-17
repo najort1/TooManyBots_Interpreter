@@ -112,7 +112,7 @@ export async function handleShipCommand({
       funConfig,
     });
     if (hook?.eventBonus) {
-      extra = `⚡ Evento cross-facção: +${hook.eventBonus.bonusCoins} coins pra ambos`;
+      extra = `⚡ Evento cross-panelinha: +${hook.eventBonus.bonusCoins} coins pra ambos`;
     }
     if (hook?.mission?.completed) {
       extra = (extra ? `${extra}\n` : '') + '🏁 Objetivo de missão mista completo!';

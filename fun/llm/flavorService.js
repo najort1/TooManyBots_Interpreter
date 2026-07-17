@@ -135,21 +135,21 @@ const FALLBACKS = {
     pick([
       `*${v.user || 'Fulano'}* largou o *${v.name || 'barco'}*. Porta bateu, ego não.`,
       v.dissolved
-        ? `*${v.name || 'A facção'}* acabou. Ficou só o mico e o histórico.`
+        ? `*${v.name || 'A panelinha'}* acabou. Ficou só o mico e o histórico.`
         : `*${v.user || 'Alguém'}* saiu do *${v.name || 'time'}*. O chat já inventou o motivo.`,
       `Saída confirmada. Às vezes é só “preciso de um tempo”… da panelinha.`,
     ]),
   mission_spawn: () =>
     pick([
       'Squad misto no ar. Ou colaboram, ou viram print de vergonha.',
-      'Missão entre facções diferentes. Paz falsa, prêmio real.',
+      'Missão entre panelinhas diferentes. Paz falsa, prêmio real.',
       'Operação Mistura: daily, aposta e ship. Quem falhar, paga o mico.',
     ]),
   event_start: (v) =>
     pick([
       `Trégua falsa por uns *${v.minutes || '?'}* min. Falar com “o inimigo” agora rende.`,
       'Evento: sair da bolha da panelinha tá valendo mais. Coincidência? Não.',
-      'Janela cross-facção aberta. Isolado perde o meta — e a moral.',
+      'Janela cross-panelinha aberta. Isolado perde o meta — e a moral.',
     ]),
   marry_propose: (v) =>
     pick([
@@ -591,11 +591,11 @@ function buildUserPrompt(scenario, vars) {
     .join('; ');
 
   const scenarioHints = {
-    faction_create: 'Zoação leve sobre panelinha/facção recém-criada no grupo.',
-    faction_join: 'Comente alguém entrando na facção — tom de “bem-vindo ao caos”.',
-    faction_leave: 'Comente saída de facção sem ser cruel de verdade.',
-    mission_spawn: 'Missão mista entre facções: cooperação forçada, prêmio real.',
-    event_start: 'Evento relâmpago (trégua falsa / cross-facção) — sai da bolha.',
+    faction_create: 'Zoação leve sobre panelinha recém-criada no grupo.',
+    faction_join: 'Comente alguém entrando na panelinha — tom de “bem-vindo ao caos”.',
+    faction_leave: 'Comente saída de panelinha sem ser cruel de verdade.',
+    mission_spawn: 'Missão mista entre panelinhas: cooperação forçada, prêmio real.',
+    event_start: 'Evento relâmpago (trégua falsa / cross-panelinha) — sai da bolha.',
     marry_propose: 'Pedido de casamento no zap: vergonha alheia e torcida do grupo.',
     marry_accept: 'Casamento aceito: parabéns com pitada de deboche carinhoso.',
     marry_mutual: 'Pedido mútuo: raro, quase assustador, engraçado.',

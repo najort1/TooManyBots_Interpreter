@@ -39,8 +39,8 @@ export const HELP_TOPICS = Object.freeze([
   },
   {
     id: 'faccoes',
-    title: 'Facções',
-    aliases: ['faccoes', 'faccao', 'panelinha', 'missao', 'guerra'],
+    title: 'Panelinhas',
+    aliases: ['faccoes', 'faccao', 'panelinha', 'panelinhas', 'missao', 'guerra', 'times'],
   },
   { id: 'midia', title: 'Mídia', aliases: ['midia', 'media', 'fig', 'figurinha', 'sticker'] },
   { id: 'privado', title: 'Privado', aliases: ['privado', 'dm', 'pv', 'grupo'] },
@@ -68,7 +68,7 @@ function formatIndex(p) {
     `• \`${p}ajuda basico\` · \`${p}ajuda economia\``,
     `• \`${p}ajuda social\` · \`${p}ajuda emprego\``,
     `• \`${p}ajuda jogos\` · \`${p}ajuda cassino\``,
-    `• \`${p}ajuda zoeira\` · \`${p}ajuda faccoes\``,
+    `• \`${p}ajuda zoeira\` · \`${p}ajuda panelinha\``,
     `• \`${p}ajuda midia\` · \`${p}ajuda privado\``,
     '',
     '*Atalhos do dia*',
@@ -183,13 +183,14 @@ function topicZoeira(p) {
 
 function topicFaccoes(p) {
   return [
-    '🏴‍☠️ *Facções*',
+    '🏴‍☠️ *Panelinhas*',
     '',
-    `\`${p}faccao criar|entrar|sair|doar|rank|info\``,
-    `\`${p}panelinha\` — placar · \`${p}comopanelinha\` — guia`,
+    `\`${p}panelinha criar|entrar|sair|doar|rank|info\``,
+    `\`${p}panelinha\` — relatório CIA · \`${p}comopanelinha\` — guia`,
     `\`${p}ponte\` · \`${p}missao\` · \`${p}squad\``,
     `\`${p}evento\` — status (trégua/happy o *bot* sorteia)`,
     '',
+    `_Alias legado: \`${p}faccao\` (mesmo comando)_`,
     `_Voltar: \`${p}ajuda\`_`,
   ].join('\n');
 }

@@ -6,7 +6,7 @@ function formatMission(mission, getContactDisplayName) {
     '🎯 *Operação Mistura*',
     `Status: *${mission.status}* · expira em ${new Date(mission.expiresAt).toLocaleString('pt-BR')}`,
     '',
-    '*Squad (facções diferentes):*',
+    '*Squad (panelinhas diferentes):*',
   ];
   for (const m of mission.members || []) {
     lines.push(
@@ -60,11 +60,11 @@ export async function handleMissionCommand({
     if (!spawned.ok) {
       if (spawned.reason === 'need-factions') {
         await reply(
-          `Precisa de pelo menos *2 facções* com membros. Agora: ${spawned.factions || 0}.`
+          `Precisa de pelo menos *2 panelinhas* com membros. Agora: ${spawned.factions || 0}.`
         );
         return { handled: true };
       }
-      await reply('Não deu pra montar o squad. Crie mais facções ou entre em alguma.');
+      await reply('Não deu pra montar o squad. Crie mais panelinhas ou entre em alguma.');
       return { handled: true };
     }
     const fl = await flavorItalic(flavorService, 'mission_spawn', {
@@ -80,7 +80,7 @@ export async function handleMissionCommand({
     await reply(
       [
         'Nenhuma missão mista ativa.',
-        'Use `/missao spawn` (ou aguarde o bot sortear) depois de ter 2+ facções.',
+        'Use `/missao spawn` (ou aguarde o bot sortear) depois de ter 2+ panelinhas.',
         'Objetivos típicos: daily do squad, aposta entre membros, ship do squad.',
       ].join('\n')
     );
@@ -131,7 +131,7 @@ export async function handleEventCommand({
     await reply(
       [
         'Nenhum evento ativo agora.',
-        'O bot sorteia sozinho: *trégua falsa* (cross-facção) ou *happy hour* (cassino).',
+        'O bot sorteia sozinho: *trégua falsa* (cross-panelinha) ou *happy hour* (cassino).',
         cdMin > 0 ? `Próxima janela de sorteio em ~*${cdMin}* min (cooldown).` : 'Fica de olho no chat — pode cair a qualquer momento.',
       ].join('\n')
     );
@@ -153,9 +153,9 @@ export async function handleEventCommand({
   await reply(
     [
       '⚡ *Evento ativo: TRÉGUA FALSA*',
-      `Multiplicador: *${status.multiplier}x* em interações cross-facção`,
+      `Multiplicador: *${status.multiplier}x* em interações cross-panelinha`,
       `Tempo restante: ~*${Math.ceil(status.remainingMs / 60000)}* min`,
-      'Vale para: `/pay` · `/aposta` · `/ship` entre facções diferentes',
+      'Vale para: `/pay` · `/aposta` · `/ship` entre panelinhas diferentes',
     ].join('\n')
   );
   return { handled: true, status };

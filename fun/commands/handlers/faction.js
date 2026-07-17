@@ -14,10 +14,75 @@ async function flavorItalic(flavorService, scenario, vars) {
   }
 }
 
+/**
+ * Relatório da “CIA” (Ponte Social / isolamento).
+ * Antes: /panelinha sem args.
+ */
+async function replyPanelinhaReport({
+  scopeKey,
+  bridgeService,
+  funConfig,
+  reply,
+}) {
+  if (!bridgeService) {
+    await reply('Ponte Social indisponível.');
+    return { handled: true };
+  }
+  const report = bridgeService.listPanelinhaReport(scopeKey, funConfig);
+  const minActions = funConfig.bridgeMinActions || 10;
+  const p = funConfig.prefix || '/';
+  const lines = [
+    '🔬 *Relatório da CIA do Grupo*',
+    `Semana: *${report.weekKey}*`,
+    '',
+    '*Quem mais joga só no próprio time* (pior Ponte Social primeiro):',
+    '_1º = panelinha que menos mistura com o resto do chat_',
+    '',
+  ];
+
+  if (!report.rows.length) {
+    lines.push(`Sem panelinhas ainda. Crie com \`${p}panelinha criar Nome\`.`);
+  } else {
+    report.rows.forEach((row, i) => {
+      const b = row.bridge;
+      if (!b.ready) {
+        lines.push(
+          `${i + 1}. *${row.faction.name}* — ainda sem placar (precisa de ~${minActions} ações na semana)`
+        );
+        return;
+      }
+      const score = pct(b.score);
+      const mark = b.debuff ? ' 😬 clube fechado' : '';
+      lines.push(
+        `${i + 1}. *${row.faction.name}* — ponte *${score}* (ext ${b.external} · int ${b.internal})${mark}`
+      );
+    });
+    const ready = report.rows.filter((r) => r.bridge.ready);
+    if (ready.length) {
+      const best = [...ready].sort((a, b) => b.bridge.score - a.bridge.score)[0];
+      const worst = [...ready].sort((a, b) => a.bridge.score - b.bridge.score)[0];
+      lines.push('', `🏅 Mais misturam: *${best.faction.name}*`);
+      lines.push(`💀 Mais fechados: *${worst.faction.name}*`);
+    }
+  }
+  lines.push(
+    '',
+    'Como subir a ponte: `/pay`, `/aposta`, `/ship` com *outra panelinha*.',
+    `Comandos: \`${p}panelinha ajuda\` · \`${p}comopanelinha\``
+  );
+  await reply(lines.join('\n'));
+  return { handled: true };
+}
+
+/**
+ * /panelinha — comando único de panelinhas (antes /faccao + /panelinha).
+ * Alias: /faccao (compat).
+ */
 export async function handleFactionCommand({
   userJid,
   scopeKey,
   factionService,
+  bridgeService,
   funConfig,
   getContactDisplayName,
   reply,
@@ -25,7 +90,7 @@ export async function handleFactionCommand({
   flavorService,
 }) {
   if (funConfig.factionsEnabled === false) {
-    await reply('Facções desligadas neste bot.');
+    await reply('Panelinhas desligadas neste bot.');
     return { handled: true };
   }
 
@@ -37,18 +102,35 @@ export async function handleFactionCommand({
   const rest = args.slice(1);
   const p = funConfig.prefix || '/';
 
-  if (!sub || sub === 'help' || sub === 'ajuda') {
+  // Relatório CIA (legado /panelinha sem args)
+  if (
+    !sub ||
+    sub === 'placar' ||
+    sub === 'cia' ||
+    sub === 'relatorio' ||
+    sub === 'relatório'
+  ) {
+    return replyPanelinhaReport({
+      scopeKey,
+      bridgeService,
+      funConfig,
+      reply,
+    });
+  }
+
+  if (sub === 'help' || sub === 'ajuda' || sub === 'comandos') {
     await reply(
       [
-        '🏴‍☠️ *Facções*',
-        `\`${p}faccao criar Nome\` — cria (custa coins)`,
-        `\`${p}faccao entrar Nome\``,
-        `\`${p}faccao sair\` — taxa de saída`,
-        `\`${p}faccao info [Nome]\``,
-        `\`${p}faccao rank\``,
-        `\`${p}faccao doar 50\` — pro cofre`,
+        '🏴‍☠️ *Panelinha*',
+        `\`${p}panelinha criar Nome\` — cria (custa coins)`,
+        `\`${p}panelinha entrar Nome\``,
+        `\`${p}panelinha sair\` — taxa de saída`,
+        `\`${p}panelinha info [Nome]\``,
+        `\`${p}panelinha rank\``,
+        `\`${p}panelinha doar 50\` — pro cofre`,
+        `\`${p}panelinha\` — relatório da CIA (quem se isola)`,
         '',
-        'Veja também: `/panelinha` · `/ponte` · `/missao` · `/evento`',
+        'Veja também: `/ponte` · `/missao` · `/evento` · `/comopanelinha`',
       ].join('\n')
     );
     return { handled: true };
@@ -57,7 +139,7 @@ export async function handleFactionCommand({
   if (sub === 'criar' || sub === 'create') {
     const name = rest.join(' ').trim();
     if (!name) {
-      await reply(`Uso: \`${p}faccao criar Nome da Panelinha\``);
+      await reply(`Uso: \`${p}panelinha criar Nome da Panelinha\``);
       return { handled: true };
     }
     const result = factionService.create({
@@ -68,18 +150,20 @@ export async function handleFactionCommand({
     });
     if (!result.ok) {
       if (result.reason === 'name-taken') {
-        await reply('Já existe facção com esse nome.');
+        await reply('Já existe panelinha com esse nome.');
         return { handled: true };
       }
       if (result.reason === 'already-in-faction') {
-        await reply('Você já está numa facção. Use `/faccao sair` primeiro.');
+        await reply('Você já está numa panelinha. Use `/panelinha sair` primeiro.');
         return { handled: true };
       }
       if (result.reason === 'insufficient-funds') {
-        await reply(`Criar facção custa *${result.cost}* coins. Você tem *${result.coins}*.`);
+        await reply(
+          `Criar panelinha custa *${result.cost}* coins. Você tem *${result.coins}*.`
+        );
         return { handled: true };
       }
-      await reply('Não deu pra criar a facção.');
+      await reply('Não deu pra criar a panelinha.');
       return { handled: true };
     }
     const fl = await flavorItalic(flavorService, 'faction_create', {
@@ -88,7 +172,7 @@ export async function handleFactionCommand({
     });
     await reply(
       [
-        '🏴‍☠️ *Nova facção registrada*',
+        '🏴‍☠️ *Nova panelinha registrada*',
         `Nome: *${result.faction.name}*`,
         `Líder: *${nameOf(getContactDisplayName, userJid)}*`,
         `Membros: 1/${result.maxMembers}`,
@@ -96,7 +180,7 @@ export async function handleFactionCommand({
         result.cost ? `Taxa de fundação: −${result.cost} coins` : null,
         '',
         fl || '_A panelinha agora é oficial._',
-        `Use \`${p}faccao entrar ${result.faction.name}\` pra entrar · \`${p}faccao doar 50\``,
+        `Use \`${p}panelinha entrar ${result.faction.name}\` pra entrar · \`${p}panelinha doar 50\``,
       ]
         .filter(Boolean)
         .join('\n')
@@ -107,7 +191,7 @@ export async function handleFactionCommand({
   if (sub === 'entrar' || sub === 'join') {
     const name = rest.join(' ').trim();
     if (!name) {
-      await reply(`Uso: \`${p}faccao entrar Nome\``);
+      await reply(`Uso: \`${p}panelinha entrar Nome\``);
       return { handled: true };
     }
     const result = factionService.join({
@@ -118,21 +202,20 @@ export async function handleFactionCommand({
     });
     if (!result.ok) {
       if (result.reason === 'not-found') {
-        await reply('Facção não encontrada.');
+        await reply('Panelinha não encontrada.');
         return { handled: true };
       }
       if (result.reason === 'already-in-faction') {
-        await reply('Você já está numa facção.');
+        await reply('Você já está numa panelinha.');
         return { handled: true };
       }
       if (result.reason === 'full') {
-        await reply('Essa facção está cheia.');
+        await reply('Essa panelinha está cheia.');
         return { handled: true };
       }
       await reply('Não deu pra entrar.');
       return { handled: true };
     }
-    const count = factionService.getUserFaction(scopeKey, userJid);
     const fl = await flavorItalic(flavorService, 'faction_join', {
       name: result.faction.name,
       user: nameOf(getContactDisplayName, userJid),
@@ -140,20 +223,20 @@ export async function handleFactionCommand({
     await reply(
       [
         `✅ *${nameOf(getContactDisplayName, userJid)}* entrou no *${result.faction.name}*.`,
-        'Membros atualizados · use `/ponte` e `/faccao info`.',
+        'Membros atualizados · use `/ponte` e `/panelinha info`.',
         fl,
       ]
         .filter(Boolean)
         .join('\n')
     );
-    return { handled: true, result, count };
+    return { handled: true, result };
   }
 
   if (sub === 'sair' || sub === 'leave') {
     const result = factionService.leave({ scopeKey, userJid, funConfig });
     if (!result.ok) {
       if (result.reason === 'not-in-faction') {
-        await reply('Você não está em nenhuma facção.');
+        await reply('Você não está em nenhuma panelinha.');
         return { handled: true };
       }
       if (result.reason === 'insufficient-funds') {
@@ -171,7 +254,7 @@ export async function handleFactionCommand({
     await reply(
       [
         `👋 Você saiu de *${result.faction.name}*.`,
-        result.dissolved ? 'A facção foi *dissolvida* (ninguém restou).' : null,
+        result.dissolved ? 'A panelinha foi *dissolvida* (ninguém restou).' : null,
         result.cost ? `Taxa: −${result.cost} coins · saldo *${result.coins}*` : null,
         fl,
       ]
@@ -190,14 +273,14 @@ export async function handleFactionCommand({
     });
     if (!result.ok) {
       if (result.reason === 'not-in-faction') {
-        await reply('Entre numa facção primeiro.');
+        await reply('Entre numa panelinha primeiro.');
         return { handled: true };
       }
       if (result.reason === 'insufficient-funds') {
         await reply(`Saldo insuficiente (*${result.coins}*).`);
         return { handled: true };
       }
-      await reply(`Uso: \`${p}faccao doar 50\``);
+      await reply(`Uso: \`${p}panelinha doar 50\``);
       return { handled: true };
     }
     await reply(
@@ -219,7 +302,11 @@ export async function handleFactionCommand({
       funConfig,
     });
     if (!result.ok) {
-      await reply(name ? 'Facção não encontrada.' : 'Você não está em facção. Use `/faccao rank`.');
+      await reply(
+        name
+          ? 'Panelinha não encontrada.'
+          : 'Você não está em panelinha. Use `/panelinha rank`.'
+      );
       return { handled: true };
     }
     const f = result.faction;
@@ -251,10 +338,10 @@ export async function handleFactionCommand({
   if (sub === 'rank' || sub === 'ranking') {
     const result = factionService.rank({ scopeKey, funConfig });
     if (!result.rows.length) {
-      await reply('Nenhuma facção ainda. Crie com `/faccao criar Nome`.');
+      await reply(`Nenhuma panelinha ainda. Crie com \`${p}panelinha criar Nome\`.`);
       return { handled: true };
     }
-    const lines = ['🏆 *Rank de Facções* (este grupo)', ''];
+    const lines = ['🏆 *Rank de Panelinhas* (este grupo)', ''];
     result.rows.forEach((row, i) => {
       const ponte = row.bridge?.ready ? pct(row.bridge.score) : '—';
       lines.push(
@@ -266,63 +353,16 @@ export async function handleFactionCommand({
     return { handled: true, result };
   }
 
-  await reply(`Subcomando desconhecido. Use \`${p}faccao\` sem args pra ver a lista.`);
+  await reply(
+    `Subcomando desconhecido. Use \`${p}panelinha ajuda\` ou \`${p}panelinha\` (relatório).`
+  );
   return { handled: true };
 }
 
-export async function handlePanelinhaCommand({
-  scopeKey,
-  bridgeService,
-  funConfig,
-  reply,
-}) {
-  if (!bridgeService) {
-    await reply('Ponte Social indisponível.');
-    return { handled: true };
-  }
-  const report = bridgeService.listPanelinhaReport(scopeKey, funConfig);
-  const minActions = funConfig.bridgeMinActions || 10;
-  const lines = [
-    '🔬 *Relatório da CIA do Grupo*',
-    `Semana: *${report.weekKey}*`,
-    '',
-    '*Quem mais joga só no próprio time* (pior Ponte Social primeiro):',
-    '_1º = facção que menos mistura com o resto do chat_',
-    '',
-  ];
-
-  if (!report.rows.length) {
-    lines.push('Sem facções ainda. Crie com `/faccao criar Nome`.');
-  } else {
-    report.rows.forEach((row, i) => {
-      const b = row.bridge;
-      if (!b.ready) {
-        lines.push(
-          `${i + 1}. *${row.faction.name}* — ainda sem placar (precisa de ~${minActions} ações na semana)`
-        );
-        return;
-      }
-      const score = pct(b.score);
-      const mark = b.debuff ? ' 😬 clube fechado' : '';
-      lines.push(
-        `${i + 1}. *${row.faction.name}* — ponte *${score}* (ext ${b.external} · int ${b.internal})${mark}`
-      );
-    });
-    const ready = report.rows.filter(r => r.bridge.ready);
-    if (ready.length) {
-      const best = [...ready].sort((a, b) => b.bridge.score - a.bridge.score)[0];
-      const worst = [...ready].sort((a, b) => a.bridge.score - b.bridge.score)[0];
-      lines.push('', `🏅 Mais misturam: *${best.faction.name}*`);
-      lines.push(`💀 Mais panelinha: *${worst.faction.name}*`);
-    }
-  }
-  lines.push(
-    '',
-    'Como subir a ponte: `/pay`, `/aposta`, `/ship` com *outra facção*.',
-    'Guia completo (no privado): `/comopanelinha`'
-  );
-  await reply(lines.join('\n'));
-  return { handled: true };
+/** @deprecated use handleFactionCommand — mantido por compat de router */
+export async function handlePanelinhaCommand(ctx) {
+  // força relatório CIA (mesmo sem sub)
+  return handleFactionCommand({ ...ctx, args: [] });
 }
 
 /**
@@ -342,9 +382,12 @@ export async function handlePonteCommand({
   funConfig,
   reply,
 }) {
+  const p = funConfig.prefix || '/';
   const uf = factionService.getUserFaction(scopeKey, userJid);
   if (!uf) {
-    await reply('Você não está em facção. `/faccao criar` ou `/faccao entrar`.');
+    await reply(
+      `Você não está em panelinha. \`${p}panelinha criar\` ou \`${p}panelinha entrar\`.`
+    );
     return { handled: true };
   }
   const bridge = bridgeService.getFactionBridge(scopeKey, uf.faction.id, funConfig);

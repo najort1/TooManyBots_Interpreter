@@ -330,9 +330,9 @@ test('stress: 30 solo flips com saldo e sem coins negativos', () => {
   }
 });
 
-// ─── Facções ─────────────────────────────────────────────────────────────────
+// ─── Panelinhas (API interna faction*) ───────────────────────────────────────
 
-test('edge: facção — nome duplicado, já em facção, cheia, sair sem coins', () => {
+test('edge: panelinha — nome duplicado, já em panelinha, cheia, sair sem coins', () => {
   const { factions, repo, facRepo } = setupCore();
   const scope = uniqueGroup();
   const users = makeUsers(10);

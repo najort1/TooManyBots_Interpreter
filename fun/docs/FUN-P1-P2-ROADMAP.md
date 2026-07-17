@@ -1,7 +1,7 @@
 # Fun Bot — Roadmap P1 & P2 (pós-P0)
 
-> Base: P0 já implementado (facções, ponte social, missões mistas, evento relâmpago).  
-> Só avance se o P0 gerar engajamento real no grupo (facções criadas, `/panelinha` usado, missões completadas).
+> Base: P0 já implementado (panelinhas, ponte social, missões mistas, evento relâmpago).  
+> Só avance se o P0 gerar engajamento real no grupo (panelinhas criadas, `/panelinha` usado, missões completadas).
 
 ---
 
@@ -9,8 +9,8 @@
 
 | Feature | Comandos | Tabelas |
 |---------|----------|---------|
-| Facções + cofre | `/faccao criar\|entrar\|sair\|doar\|info\|rank` | `fun_factions`, `fun_faction_members` |
-| Ponte / panelinha | `/panelinha`, `/ponte` | `fun_social_edges` |
+| Panelinhas + cofre | `/panelinha criar\|entrar\|sair\|doar\|info\|rank` | `fun_factions`, `fun_faction_members` |
+| Ponte / relatório CIA | `/panelinha` (sem args), `/ponte` | `fun_social_edges` |
 | Missões mistas | `/missao`, `/missao spawn`, `/squad` | `fun_mixed_missions` |
 | Evento cross | `/evento`, `/evento start` | `fun_scope_events` |
 | Hooks | pay/aposta/ship/marry/daily | `socialHooks` |
@@ -24,7 +24,7 @@ Arquivos-chave: `fun/services/factionService.js`, `bridgeService.js`, `missionSe
 1. Punição **só in-game** (coins, título, rank) — nunca kick/ban por meta.
 2. Drama é **público e de zoeira**, não fofoca de DM.
 3. Caps de stake/cooldown (reusar `betMax`, `eventCooldownMs`, etc.).
-4. Opt-out de facção sempre possível (taxa, não prisão).
+4. Opt-out de panelinha sempre possível (taxa, não prisão).
 5. Tudo isolado por `scope_key` (grupo WhatsApp).
 6. Identidade canônica `@s.whatsapp.net` (LID resolvido).
 
@@ -34,7 +34,7 @@ Arquivos-chave: `fun/services/factionService.js`, `bridgeService.js`, `missionSe
 
 ### 1. Alianças públicas + traição
 
-**Meta:** laços entre facções visíveis + drama de traição.
+**Meta:** laços entre panelinhas visíveis + drama de traição.
 
 | Item | Detalhe |
 |------|---------|
@@ -59,7 +59,7 @@ Arquivos-chave: `fun/services/factionService.js`, `bridgeService.js`, `missionSe
 | Item | Detalhe |
 |------|---------|
 | Schema | `fun_war_seasons`, `fun_war_scores (season_id, faction_id, points)` |
-| Pontos | missão mista +10, aposta inter-facção +5, daily coletivo facção +1, ponte alta +bonus |
+| Pontos | missão mista +10, aposta inter-panelinha +5, daily coletivo panelinha +1, ponte alta +bonus |
 | Comandos | `/guerra`, `/guerra rank`, `/desafiar Nome` (opcional: duelo de cofre simbólico) |
 | Fim de semana | top1 taxa 5% do cofre do top2 (cap), título coletivo 7d |
 | Scheduler | job no `runtime` (timer) ou check lazy no `/guerra` |
@@ -88,7 +88,7 @@ Arquivos-chave: `fun/services/factionService.js`, `bridgeService.js`, `missionSe
 
 ### Checklist de aceite P1
 
-- [ ] Aliança aparece em `/mapa` e `/faccao info`  
+- [ ] Aliança aparece em `/mapa` e `/panelinha info`  
 - [ ] Traição anuncia no grupo e altera cofre  
 - [ ] Guerra tem placar semanal sem spam diário  
 - [ ] Espionagem custa coins e pode falhar publicamente  
@@ -103,7 +103,7 @@ Arquivos-chave: `fun/services/factionService.js`, `bridgeService.js`, `missionSe
 | Item | Detalhe |
 |------|---------|
 | Comandos | `/processar @user motivo`, `/votar culpa\|inocente` |
-| Júri | 5 usuários de facções mistas (ou aleatório se <3 facções) |
+| Júri | 5 usuários de panelinhas mistas (ou aleatório se <3 panelinhas) |
 | Pena | multa coins, título `Condenado` 24h, opcional −rank 24h |
 | Pending | multi-voto em `payload_json` com `votes: {jid: side}` |
 | Segurança | motivo max 80 chars; sem doxxing; mute/ban fora de escopo |
@@ -122,7 +122,7 @@ Arquivos-chave: `fun/services/factionService.js`, `bridgeService.js`, `missionSe
 
 | Item | Detalhe |
 |------|---------|
-| Extensão | em `acceptMarry`, se facções diferentes → buff 48h nas duas facções |
+| Extensão | em `acceptMarry`, se panelinhas diferentes → buff 48h nas duas panelinhas |
 | Divórcio cross | multa extra + anúncio “crise diplomática” |
 | Encaixe | `relationshipService` + `factionService.getUserFaction` |
 
@@ -140,7 +140,7 @@ Arquivos-chave: `fun/services/factionService.js`, `bridgeService.js`, `missionSe
 | Item | Detalhe |
 |------|---------|
 | Comandos | `/assaltar Nome`, `/entrar-assalto`, `/defender` |
-| Regra anti-panelinha | time precisa de 1 outsider (outra facção) |
+| Regra anti-panelinha | time precisa de 1 outsider (outra panelinha) |
 | Sucesso | 10–20% do cofre alvo (cap) |
 | Falha | multa + anúncio |
 | Complexidade | **última** do P2 — só se guerra e alianças estiverem maduras |
@@ -149,7 +149,7 @@ Arquivos-chave: `fun/services/factionService.js`, `bridgeService.js`, `missionSe
 
 - [ ] Tribunal com júri misto e pena só in-game  
 - [ ] Mercado com flag off por default  
-- [ ] Casamento cross-facção dá buff mensurável  
+- [ ] Casamento cross-panelinha dá buff mensurável  
 - [ ] Rei do Caos escolhido por métrica de ponte  
 - [ ] Heist impossível sem outsider  
 
@@ -159,8 +159,8 @@ Arquivos-chave: `fun/services/factionService.js`, `bridgeService.js`, `missionSe
 
 ```text
 Semana 0–2: só P0 em produção, medir:
-  - facções criadas / grupo
-  - % membros em facção
+  - panelinhas criadas / grupo
+  - % membros em panelinha
   - missões spawnadas vs completadas
   - usos de /panelinha e /evento
 

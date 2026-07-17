@@ -202,14 +202,14 @@ test('facade DM: /coins e /bj no privado com membership', async () => {
   });
   assert.ok(sent.some(m => /Blackjack|Hit|Stand|Estourou|blackjack/i.test(m.text)), JSON.stringify(sent));
 
-  // facção no DM bloqueada
+  // panelinha no DM bloqueada
   sent.length = 0;
   await funModule.onIncomingMessage({
     sock: {},
     chatJid: userA,
     actorJid: userA,
     isGroup: false,
-    text: '/faccao rank',
+    text: '/panelinha rank',
     messageType: 'text',
   });
   assert.ok(sent.some(m => /s[oó] no grupo|grupo/i.test(m.text)), JSON.stringify(sent));

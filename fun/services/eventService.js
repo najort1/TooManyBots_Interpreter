@@ -215,7 +215,7 @@ export function createEventService({
   }
 
   /**
-   * Multiplicador se interação for entre facções diferentes durante evento.
+   * Multiplicador se interação for entre panelinhas diferentes durante evento.
    */
   function getCrossMultiplier({
     scopeKey,
@@ -253,7 +253,7 @@ export function createEventService({
     return [
       '⚡ *TRÉGUA FALSA*',
       `Evento relâmpago por *${minutes} min* (o bot sorteou).`,
-      `Interagir com *outra facção* paga melhor em /pay, /aposta e /ship (*x${spawned.multiplier}*).`,
+      `Interagir com *outra panelinha* paga melhor em /pay, /aposta e /ship (*x${spawned.multiplier}*).`,
       '_Panelinha isolada perde o meta._',
     ].join('\n');
   }

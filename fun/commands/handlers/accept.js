@@ -83,7 +83,7 @@ export async function handleAcceptCommand({
       if (hook?.mission?.completed) {
         missionLine = '🏁 Squad completou a missão mista! Recompensas enviadas.';
       } else if (hook?.eventBonus) {
-        missionLine = `⚡ Evento: +${hook.eventBonus.bonusCoins} coins cross-facção`;
+        missionLine = `⚡ Evento: +${hook.eventBonus.bonusCoins} coins cross-panelinha`;
       }
     }
 

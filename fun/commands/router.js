@@ -260,7 +260,8 @@ export async function routeFunCommand(ctx) {
     case FUN_COMMANDS.FACTION:
       return handleFactionCommand(base);
     case FUN_COMMANDS.PANELINHA:
-      return handlePanelinhaCommand(base);
+      // legado: /panelinha sem sub ia pro relatório; agora é o mesmo comando
+      return handleFactionCommand(base);
     case FUN_COMMANDS.PANELINHA_GUIDE:
       return handlePanelinhaGuideCommand(base);
     case FUN_COMMANDS.PONTE:

@@ -1,5 +1,5 @@
 /**
- * Missões mistas — squads multi-facção.
+ * Missões mistas — squads multi-panelinha.
  */
 
 export function createMissionService({
@@ -17,7 +17,7 @@ export function createMissionService({
   }
 
   /**
-   * Sorteia 1 membro de facções diferentes.
+   * Sorteia 1 membro de panelinhas diferentes.
    */
   function pickMixedSquad(scopeKey, size = 3) {
     const factions = factionRepository.listByScope(scopeKey)
@@ -31,7 +31,7 @@ export function createMissionService({
       return { ok: false, reason: 'need-factions', factions: factions.length };
     }
 
-    // embaralha facções
+    // embaralha panelinhas
     const shuffled = [...factions].sort(() => Math.random() - 0.5);
     const pickCount = Math.min(size, shuffled.length, 4);
     const members = [];

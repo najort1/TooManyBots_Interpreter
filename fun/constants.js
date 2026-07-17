@@ -77,7 +77,7 @@ export const FUN_COMMANDS = Object.freeze({
 
 /**
  * Com `replyCommandsInPrivate=true`, estes comandos continuam no grupo
- * (duelo/aposta, facções e interações sociais que precisam de visibilidade).
+ * (duelo/aposta, panelinhas e interações sociais que precisam de visibilidade).
  */
 export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
   new Set([
@@ -306,11 +306,14 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   portifolio: FUN_COMMANDS.CARTEIRA,
   titulo: FUN_COMMANDS.TITLE,
   title: FUN_COMMANDS.TITLE,
+  // Panelinha (ex-facção): comando principal
+  panelinha: FUN_COMMANDS.FACTION,
+  // aliases legados
   faccao: FUN_COMMANDS.FACTION,
   facção: FUN_COMMANDS.FACTION,
   faction: FUN_COMMANDS.FACTION,
-  panelinha: FUN_COMMANDS.PANELINHA,
-  // guia completo (DM) — nomes diferentes do relatório /panelinha
+  // relatório CIA (mesmo handler; sem args = placar)
+  // guia completo
   panelinhas: FUN_COMMANDS.PANELINHA_GUIDE,
   comopanelinha: FUN_COMMANDS.PANELINHA_GUIDE,
   guiapanelinha: FUN_COMMANDS.PANELINHA_GUIDE,
@@ -386,7 +389,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   betMax: 150,
   divorceCost: 40,
   titleMaxLen: 16,
-  // P0 — facções / ponte / missões / evento
+  // P0 — panelinhas / ponte / missões / evento
   factionsEnabled: true,
   factionMaxMembers: 8,
   factionLeaveCost: 25,
@@ -448,8 +451,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   ollamaKeepAliveRefreshMs: 10 * 60_000,
   /**
    * Se true, respostas de comando vão no privado de quem pediu (menos spam no grupo).
-   * Exceções: FUN_PUBLIC_GROUP_COMMANDS (aposta, facção, missões, marry, ship, pay…).
-   * Default true — o grupo fica só com duelo/aposta/facção/social.
+   * Exceções: FUN_PUBLIC_GROUP_COMMANDS (aposta, panelinha, missões, marry, ship, pay…).
+   * Default true — o grupo fica só com duelo/aposta/panelinha/social.
    */
   /**
    * false = tudo no grupo/chat atual.

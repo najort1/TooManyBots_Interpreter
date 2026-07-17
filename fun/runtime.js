@@ -144,7 +144,7 @@ export async function startFunBot(options = {}) {
   console.log(
     `[fun] Respostas de comando: ${
       config.replyCommandsInPrivate !== false
-        ? 'PRIVADO (exceções: aposta/facção/social)'
+        ? 'PRIVADO (exceções: aposta/panelinha/social)'
         : 'GRUPO'
     }`
   );

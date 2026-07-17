@@ -466,7 +466,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
         ) {
           await reply(
             [
-              'Esse comando é *só no grupo* (duelo, facção, social…).',
+              'Esse comando é *só no grupo* (duelo, panelinha, social…).',
               'No privado: jogos solo (`/bj`, `/crash`, `/roleta`, `/slot`), saldo, daily, rank…',
               'Escolher grupo: `/grupo`',
             ].join('\n')

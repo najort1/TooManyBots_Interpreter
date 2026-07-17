@@ -749,7 +749,7 @@ test('ollama config defaults + flavorService fallback', async () => {
   assert.equal(cascade.lastProvider(), 'ollama');
 });
 
-test('facade: flavorService injetado em /cf e /faccao criar', async () => {
+test('facade: flavorService injetado em /cf e /panelinha criar', async () => {
   const groupJid = uniqueGroup();
   const userA = `5511777${String(Date.now()).slice(-6)}03@s.whatsapp.net`;
   const sent = [];
@@ -803,12 +803,12 @@ test('facade: flavorService injetado em /cf e /faccao criar', async () => {
     chatJid: groupJid,
     actorJid: userA,
     isGroup: true,
-    text: '/faccao criar Os Testadores',
+    text: '/panelinha criar Os Testadores',
     messageType: 'text',
   });
   assert.ok(
-    sent.some(m => /Nova fac/i.test(m.text) && /Panelinha no ar/i.test(m.text)),
-    `faccao flavor missing: ${JSON.stringify(sent)}`
+    sent.some(m => /Nova panelinha|panelinha registrada/i.test(m.text) && /Panelinha no ar/i.test(m.text)),
+    `panelinha flavor missing: ${JSON.stringify(sent)}`
   );
 
   sent.length = 0;
@@ -924,12 +924,12 @@ test('respostas no grupo: saldo e aposta ficam no chat do grupo (sem DM)', async
     chatJid: groupJid,
     actorJid: userA,
     isGroup: true,
-    text: '/faccao criar DMTest',
+    text: '/panelinha criar DMTest',
     messageType: 'text',
   });
-  assert.ok(sent.some((m) => /fac|Nova fac/i.test(m.text)));
+  assert.ok(sent.some((m) => /panelinha|Nova panelinha|registrada/i.test(m.text)));
   assert.ok(
     sent.every((m) => m.jid === groupJid),
-    `faccao deve ficar no grupo: ${JSON.stringify(sent)}`
+    `panelinha deve ficar no grupo: ${JSON.stringify(sent)}`
   );
 });
