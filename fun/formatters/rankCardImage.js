@@ -1,284 +1,323 @@
 /**
- * PNGs do Fun — placares, perfil, bolsa e carteira (sem deps nativas).
- * Fonte bitmap 5x7 + zlib do Node.
+ * Cards PNG do Fun — skia-canvas + visual vivo por comando + datas festivas BR.
+ *
+ * Comandos: xp · coins · messages · casino · profile · bolsa · carteira
+ * Festas: carnaval · são joão · natal · ano novo
  */
 
-import zlib from 'zlib';
+import { Canvas } from 'skia-canvas';
 import { progressInLevel } from '../services/levelCurve.js';
+import {
+  resolveCardTheme,
+  LEADERBOARD_THEMES,
+  resolveFestiveSeason,
+  FESTIVE_PALETTES,
+  COMMAND_BASE,
+} from './festivePalette.js';
 
-// Glyphs 5x7. Caracteres sem glifo são omitidos (não viram '?').
-const FONT = {
-  ' ': [0, 0, 0, 0, 0, 0, 0],
-  '.': [0, 0, 0, 0, 0, 4, 4],
-  ',': [0, 0, 0, 0, 4, 4, 8],
-  '-': [0, 0, 0, 31, 0, 0, 0],
-  '+': [0, 4, 4, 31, 4, 4, 0],
-  ':': [0, 4, 4, 0, 4, 4, 0],
-  '%': [25, 26, 2, 4, 8, 11, 19],
-  '#': [10, 31, 10, 31, 10, 0, 0],
-  '/': [1, 1, 2, 4, 8, 16, 16],
-  '(': [4, 8, 16, 16, 16, 8, 4],
-  ')': [4, 2, 1, 1, 1, 2, 4],
-  '[': [14, 8, 8, 8, 8, 8, 14],
-  ']': [14, 2, 2, 2, 2, 2, 14],
-  "'": [4, 4, 8, 0, 0, 0, 0],
-  '"': [10, 10, 0, 0, 0, 0, 0],
-  '!': [4, 4, 4, 4, 4, 0, 4],
-  '_': [0, 0, 0, 0, 0, 0, 31],
-  '=': [0, 0, 31, 0, 31, 0, 0],
-  '<': [2, 4, 8, 16, 8, 4, 2],
-  '>': [8, 4, 2, 1, 2, 4, 8],
-  '@': [14, 17, 23, 21, 23, 16, 14],
-  '0': [14, 17, 19, 21, 25, 17, 14],
-  '1': [4, 12, 4, 4, 4, 4, 14],
-  '2': [14, 17, 1, 2, 4, 8, 31],
-  '3': [30, 1, 1, 14, 1, 1, 30],
-  '4': [2, 6, 10, 18, 31, 2, 2],
-  '5': [31, 16, 30, 1, 1, 17, 14],
-  '6': [14, 16, 16, 30, 17, 17, 14],
-  '7': [31, 1, 2, 4, 8, 8, 8],
-  '8': [14, 17, 17, 14, 17, 17, 14],
-  '9': [14, 17, 17, 15, 1, 1, 14],
-  A: [14, 17, 17, 31, 17, 17, 17],
-  B: [30, 17, 17, 30, 17, 17, 30],
-  C: [14, 17, 16, 16, 16, 17, 14],
-  D: [30, 17, 17, 17, 17, 17, 30],
-  E: [31, 16, 16, 30, 16, 16, 31],
-  F: [31, 16, 16, 30, 16, 16, 16],
-  G: [14, 17, 16, 23, 17, 17, 14],
-  H: [17, 17, 17, 31, 17, 17, 17],
-  I: [14, 4, 4, 4, 4, 4, 14],
-  J: [1, 1, 1, 1, 17, 17, 14],
-  K: [17, 18, 20, 24, 20, 18, 17],
-  L: [16, 16, 16, 16, 16, 16, 31],
-  M: [17, 27, 21, 21, 17, 17, 17],
-  N: [17, 25, 21, 19, 17, 17, 17],
-  O: [14, 17, 17, 17, 17, 17, 14],
-  P: [30, 17, 17, 30, 16, 16, 16],
-  Q: [14, 17, 17, 17, 21, 18, 13],
-  R: [30, 17, 17, 30, 20, 18, 17],
-  S: [14, 17, 16, 14, 1, 17, 14],
-  T: [31, 4, 4, 4, 4, 4, 4],
-  U: [17, 17, 17, 17, 17, 17, 14],
-  V: [17, 17, 17, 17, 17, 10, 4],
-  W: [17, 17, 17, 21, 21, 21, 10],
-  X: [17, 17, 10, 4, 10, 17, 17],
-  Y: [17, 17, 10, 4, 4, 4, 4],
-  Z: [31, 1, 2, 4, 8, 16, 31],
-  '?': [14, 17, 1, 2, 4, 0, 4],
-};
+export { LEADERBOARD_THEMES, resolveFestiveSeason, FESTIVE_PALETTES, COMMAND_BASE, resolveCardTheme };
 
-/** Temas de placar — cada rank com personalidade visual */
-export const LEADERBOARD_THEMES = Object.freeze({
-  xp: {
-    id: 'xp',
-    title: 'RANK XP',
-    canvas: [9, 9, 11],
-    header: [24, 24, 27],
-    accent: [113, 113, 122],
-    rowAlt: [24, 24, 27],
-    text: [228, 228, 231],
-    muted: [161, 161, 170],
-    gold: [250, 204, 21],
-    silver: [212, 212, 216],
-    bronze: [251, 146, 60],
-  },
-  coins: {
-    id: 'coins',
-    title: 'RANK COINS',
-    canvas: [12, 10, 6],
-    header: [39, 32, 12],
-    accent: [234, 179, 8],
-    rowAlt: [28, 24, 12],
-    text: [254, 243, 199],
-    muted: [202, 138, 4],
-    gold: [250, 204, 21],
-    silver: [253, 224, 71],
-    bronze: [245, 158, 11],
-  },
-  messages: {
-    id: 'messages',
-    title: 'TOP MSG',
-    canvas: [8, 12, 18],
-    header: [15, 23, 42],
-    accent: [56, 189, 248],
-    rowAlt: [15, 23, 42],
-    text: [224, 242, 254],
-    muted: [125, 211, 252],
-    gold: [56, 189, 248],
-    silver: [147, 197, 253],
-    bronze: [96, 165, 250],
-  },
-  casino: {
-    id: 'casino',
-    title: 'RANK CASSINO',
-    canvas: [12, 6, 14],
-    header: [36, 12, 40],
-    accent: [232, 121, 249],
-    rowAlt: [30, 10, 34],
-    text: [250, 232, 255],
-    muted: [192, 132, 252],
-    gold: [250, 204, 21],
-    silver: [244, 114, 182],
-    bronze: [192, 132, 252],
-    up: [52, 211, 153],
-    down: [248, 113, 113],
-  },
-});
-
-function stripAccents(s) {
-  return String(s || '')
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toUpperCase();
-}
-
-/**
- * Texto seguro para a fonte bitmap:
- * - remove emoji / símbolos
- * - troca · • — por espaços ou traço
- * - omite o que não tem glifo (evita chuva de '?')
- */
-export function sanitizeCardText(s) {
-  let t = String(s || '');
-  // emojis e pictogramas
-  t = t.replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}]/gu, '');
-  // separadores fancy → ASCII
-  t = t.replace(/[·•∙⋅]/g, ' ');
-  t = t.replace(/[—–−]/g, '-');
-  t = t.replace(/[“”„«»]/g, '"');
-  t = t.replace(/[‘’]/g, "'");
-  t = stripAccents(t);
-  // só chars que existem na fonte
-  let out = '';
-  for (const ch of t) {
-    if (FONT[ch] !== undefined) out += ch;
-    // senão: ignora (não desenha '?')
-  }
-  // colapsa espaços
-  return out.replace(/\s+/g, ' ').trim();
-}
-
-function crc32(buf) {
-  let c = ~0;
-  for (let i = 0; i < buf.length; i += 1) {
-    c ^= buf[i];
-    for (let k = 0; k < 8; k += 1) {
-      c = c & 1 ? (0xedb88320 ^ (c >>> 1)) : c >>> 1;
-    }
-  }
-  return ~c >>> 0;
-}
-
-function pngChunk(type, data) {
-  const typeBuf = Buffer.from(type, 'ascii');
-  const len = Buffer.alloc(4);
-  len.writeUInt32BE(data.length, 0);
-  const crcBuf = Buffer.alloc(4);
-  const crc = crc32(Buffer.concat([typeBuf, data]));
-  crcBuf.writeUInt32BE(crc, 0);
-  return Buffer.concat([len, typeBuf, data, crcBuf]);
-}
-
-/**
- * @param {number} width
- * @param {number} height
- * @param {Uint8Array|Buffer} rgb - length width*height*3
- */
-export function encodePngRgb(width, height, rgb) {
-  const rowSize = 1 + width * 3;
-  const raw = Buffer.alloc(rowSize * height);
-  for (let y = 0; y < height; y += 1) {
-    const rowStart = y * rowSize;
-    raw[rowStart] = 0;
-    const src = y * width * 3;
-    rgb.copy(raw, rowStart + 1, src, src + width * 3);
-  }
-
-  const compressed = zlib.deflateSync(raw, { level: 9 });
-  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8;
-  ihdr[9] = 2;
-  ihdr[10] = 0;
-  ihdr[11] = 0;
-  ihdr[12] = 0;
-
-  return Buffer.concat([
-    signature,
-    pngChunk('IHDR', ihdr),
-    pngChunk('IDAT', compressed),
-    pngChunk('IEND', Buffer.alloc(0)),
-  ]);
-}
-
-function fillRect(rgb, w, x0, y0, rw, rh, r, g, b) {
-  const h = rgb.length / (w * 3);
-  for (let y = y0; y < y0 + rh; y += 1) {
-    if (y < 0 || y >= h) continue;
-    for (let x = x0; x < x0 + rw; x += 1) {
-      if (x < 0 || x >= w) continue;
-      const i = (y * w + x) * 3;
-      rgb[i] = r;
-      rgb[i + 1] = g;
-      rgb[i + 2] = b;
-    }
-  }
-}
-
-function drawChar(rgb, w, x, y, ch, r, g, b, scale = 2) {
-  const glyph = FONT[ch];
-  if (!glyph) return;
-  for (let row = 0; row < 7; row += 1) {
-    const bits = glyph[row] || 0;
-    for (let col = 0; col < 5; col += 1) {
-      if (bits & (1 << (4 - col))) {
-        fillRect(rgb, w, x + col * scale, y + row * scale, scale, scale, r, g, b);
-      }
-    }
-  }
-}
-
-function drawText(rgb, w, x, y, text, r, g, b, scale = 2) {
-  const normalized = sanitizeCardText(text);
-  let cx = x;
-  for (const ch of normalized) {
-    if (FONT[ch] === undefined) continue;
-    drawChar(rgb, w, cx, y, ch, r, g, b, scale);
-    cx += 6 * scale;
-  }
-  return cx;
-}
-
-function shortName(name, userJid, maxLen = 16) {
-  let n = sanitizeCardText(name);
-  if (n.startsWith('@')) n = n.slice(1);
-  if (!n) {
-    const local = sanitizeCardText(String(userJid || '').split('@')[0] || '');
-    n = local.length > 8 ? `${local.slice(0, 4)}..${local.slice(-3)}` : local || 'USER';
-  }
-  if (n.length > maxLen) n = `${n.slice(0, maxLen - 2)}..`;
-  return n;
-}
+const FONT =
+  '"Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif';
+const FONT_MONO =
+  '"Cascadia Code", "Segoe UI Mono", ui-monospace, Consolas, monospace';
 
 function fmtNum(n) {
   const v = Math.floor(Number(n) || 0);
   if (Math.abs(v) >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M`;
-  if (Math.abs(v) >= 10_000) return `${Math.round(v / 1000)}K`;
+  if (Math.abs(v) >= 10_000) return `${Math.round(v / 1000)}k`;
   return String(v);
 }
 
-function resolveTheme(themeOrId) {
-  if (themeOrId && typeof themeOrId === 'object') return themeOrId;
-  const id = String(themeOrId || 'xp').toLowerCase();
-  return LEADERBOARD_THEMES[id] || LEADERBOARD_THEMES.xp;
+function shortName(name, userJid, maxLen = 22) {
+  let n = String(name || '').trim();
+  if (n.startsWith('@')) n = n.slice(1);
+  n = n.replace(/^[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\s]+/u, '').trim();
+  if (!n) {
+    const local = String(userJid || '').split('@')[0] || 'user';
+    n = local.length > 10 ? `${local.slice(0, 4)}…${local.slice(-3)}` : local;
+  }
+  if (n.length > maxLen) n = `${n.slice(0, maxLen - 1)}…`;
+  return n;
+}
+
+function toPngBuffer(canvas) {
+  if (typeof canvas.toBufferSync === 'function') {
+    return canvas.toBufferSync('png');
+  }
+  throw new Error('skia-canvas toBufferSync unavailable');
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+function fillRoundRect(ctx, x, y, w, h, r, fill) {
+  roundRect(ctx, x, y, w, h, r);
+  ctx.fillStyle = fill;
+  ctx.fill();
+}
+
+function strokeRoundRect(ctx, x, y, w, h, r, stroke, lineWidth = 1) {
+  roundRect(ctx, x, y, w, h, r);
+  ctx.strokeStyle = stroke;
+  ctx.lineWidth = lineWidth;
+  ctx.stroke();
+}
+
+function createSurface(width, height, bg) {
+  const canvas = new Canvas(width, height);
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0, 0, width, height);
+  ctx.textBaseline = 'alphabetic';
+  return { canvas, ctx, width, height };
+}
+
+/* ── Decorações geométricas (vivas, sem depender de emoji) ─── */
+
+function drawStar(ctx, cx, cy, r, color) {
+  ctx.save();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  for (let i = 0; i < 5; i += 1) {
+    const a = (i * 4 * Math.PI) / 5 - Math.PI / 2;
+    const x = cx + Math.cos(a) * r;
+    const y = cy + Math.sin(a) * r;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawCoin(ctx, cx, cy, r, color, inner) {
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.62, 0, Math.PI * 2);
+  ctx.strokeStyle = inner || '#00000033';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+function drawChatBubble(ctx, x, y, w, h, color) {
+  fillRoundRect(ctx, x, y, w, h, 8, color);
+  ctx.beginPath();
+  ctx.moveTo(x + 14, y + h);
+  ctx.lineTo(x + 10, y + h + 10);
+  ctx.lineTo(x + 28, y + h);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function drawChip(ctx, cx, cy, r, color, edge) {
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = edge || '#fff';
+  ctx.setLineDash([4, 4]);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * 0.72, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawChartIcon(ctx, x, y, colorUp, colorDown) {
+  // mini candles
+  ctx.fillStyle = colorUp;
+  ctx.fillRect(x, y + 8, 5, 18);
+  ctx.fillRect(x + 2, y + 2, 1, 28);
+  ctx.fillStyle = colorDown;
+  ctx.fillRect(x + 12, y + 4, 5, 14);
+  ctx.fillRect(x + 14, y, 1, 24);
+  ctx.fillStyle = colorUp;
+  ctx.fillRect(x + 24, y + 10, 5, 16);
+  ctx.fillRect(x + 26, y + 6, 1, 24);
+}
+
+function drawWallet(ctx, x, y, color, accent) {
+  fillRoundRect(ctx, x, y, 36, 26, 5, color);
+  ctx.fillStyle = accent;
+  ctx.fillRect(x + 22, y + 8, 14, 10);
+  ctx.beginPath();
+  ctx.arc(x + 28, y + 13, 3, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function drawBadge(ctx, cx, cy, color, ring) {
+  ctx.beginPath();
+  ctx.arc(cx, cy, 18, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx, cy, 12, 0, Math.PI * 2);
+  ctx.strokeStyle = ring || '#ffffff88';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+}
+
+/** Confete / neve / bandeirinhas / sparkles */
+function drawFestiveDecor(ctx, width, height, festive) {
+  if (!festive?.decor) return;
+  const colors = [festive.accent, festive.accent2, festive.accent3, festive.border].filter(Boolean);
+  const seed = (width * 13 + height * 7) % 97;
+
+  if (festive.decor === 'confetti') {
+    for (let i = 0; i < 48; i += 1) {
+      const x = ((seed * (i + 3) * 17) % (width - 40)) + 20;
+      const y = ((seed * (i + 5) * 23) % (height - 40)) + 20;
+      const c = colors[i % colors.length];
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.rotate(((i * 37) % 180) * (Math.PI / 180));
+      ctx.fillStyle = c;
+      ctx.globalAlpha = 0.35 + (i % 5) * 0.08;
+      ctx.fillRect(-4, -2, 8, 4);
+      ctx.restore();
+    }
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  if (festive.decor === 'snow') {
+    ctx.fillStyle = '#ffffff';
+    for (let i = 0; i < 40; i += 1) {
+      const x = ((seed * (i + 2) * 19) % (width - 20)) + 10;
+      const y = ((seed * (i + 7) * 29) % (height - 20)) + 10;
+      const r = 1.2 + (i % 4) * 0.7;
+      ctx.globalAlpha = 0.25 + (i % 4) * 0.1;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    return;
+  }
+
+  if (festive.decor === 'flags') {
+    // bandeirinhas no topo
+    const y0 = 28;
+    for (let i = 0; i < 14; i += 1) {
+      const x = 40 + i * 58;
+      const c = colors[i % colors.length];
+      ctx.fillStyle = c;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.moveTo(x, y0);
+      ctx.lineTo(x + 22, y0);
+      ctx.lineTo(x + 11, y0 + 18);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = festive.accent2 || festive.accent;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(30, y0);
+    ctx.lineTo(width - 30, y0);
+    ctx.stroke();
+    return;
+  }
+
+  if (festive.decor === 'sparkle') {
+    for (let i = 0; i < 20; i += 1) {
+      const x = ((seed * (i + 1) * 41) % (width - 50)) + 25;
+      const y = ((seed * (i + 4) * 53) % (height - 50)) + 25;
+      ctx.globalAlpha = 0.35 + (i % 3) * 0.15;
+      drawStar(ctx, x, y, 4 + (i % 3), colors[i % colors.length]);
+    }
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawCommandGlyph(ctx, symbol, x, y, theme) {
+  const a = theme.accent;
+  const a2 = theme.accent2 || theme.accent;
+  if (symbol === 'star') {
+    drawStar(ctx, x, y, 14, a);
+    return;
+  }
+  if (symbol === 'coins') {
+    drawCoin(ctx, x - 6, y, 11, a, a2);
+    drawCoin(ctx, x + 8, y + 2, 11, a2, a);
+    return;
+  }
+  if (symbol === 'chat') {
+    drawChatBubble(ctx, x - 16, y - 12, 32, 20, a);
+    return;
+  }
+  if (symbol === 'chip') {
+    drawChip(ctx, x, y, 14, a, a2);
+    return;
+  }
+  if (symbol === 'chart') {
+    drawChartIcon(ctx, x - 14, y - 14, theme.success || a, theme.danger || a2);
+    return;
+  }
+  if (symbol === 'wallet') {
+    drawWallet(ctx, x - 18, y - 12, a, a2);
+    return;
+  }
+  if (symbol === 'badge') {
+    drawBadge(ctx, x, y, a, a2);
+  }
+}
+
+function drawShell(ctx, width, height, theme) {
+  const m = 16;
+  // glow sutil da borda
+  fillRoundRect(ctx, m + 4, m + 6, width - m * 2, height - m * 2, 16, '#00000044');
+  fillRoundRect(ctx, m, m, width - m * 2, height - m * 2, 14, theme.raise);
+  strokeRoundRect(ctx, m, m, width - m * 2, height - m * 2, 14, theme.border, 2.5);
+  // faixa colorida no topo do card
+  ctx.save();
+  roundRect(ctx, m, m, width - m * 2, 10, 14);
+  ctx.clip();
+  const grad = ctx.createLinearGradient(m, m, width - m, m);
+  grad.addColorStop(0, theme.accent);
+  grad.addColorStop(0.5, theme.accent2 || theme.accent);
+  grad.addColorStop(1, theme.border);
+  ctx.fillStyle = grad;
+  ctx.fillRect(m, m, width - m * 2, 12);
+  ctx.restore();
+
+  return { padX: m + 28, padTop: m + 36, contentW: width - m * 2 - 56, m };
+}
+
+function medalColor(theme, rank) {
+  if (rank === 1) return theme.medal1 || theme.accent;
+  if (rank === 2) return theme.medal2 || theme.muted;
+  if (rank === 3) return theme.medal3 || theme.accent2;
+  return theme.muted;
+}
+
+function festiveBadge(ctx, theme, padX, y) {
+  if (!theme.festive) return;
+  const label = theme.festive.label || '';
+  ctx.font = `700 11px ${FONT}`;
+  const tw = ctx.measureText(label.toUpperCase()).width;
+  fillRoundRect(ctx, padX, y - 14, tw + 20, 22, 11, theme.accent);
+  ctx.fillStyle = theme.canvas;
+  ctx.fillText(label.toUpperCase(), padX + 10, y + 2);
 }
 
 /**
- * Placar genérico (XP / coins / msgs / cassino).
- * @returns {Buffer} PNG
+ * Placar colorido por comando + festa.
  */
 export function renderLeaderboardPng({
   title,
@@ -288,108 +327,150 @@ export function renderLeaderboardPng({
   yourTotal = null,
   yourExtra = '',
   footer = '',
-  lineBuilder = null,
+  nowMs = Date.now(),
 } = {}) {
-  const t = resolveTheme(theme);
-  const width = 720;
-  const rowH = 44;
-  const headerH = 78;
-  const colH = 28;
-  const footerH = 48;
-  const pad = 24;
+  const commandId =
+    typeof theme === 'string'
+      ? theme
+      : theme?.id || 'xp';
+  const t = resolveCardTheme(commandId, nowMs);
+  const width = 900;
+  const rowH = 50;
   const rows = Math.min(10, Math.max(entries.length, 1));
-  const height = headerH + colH + rows * rowH + footerH + pad;
+  const headerBlock = 110;
+  const colHead = 34;
+  const footerBlock = 56;
+  const height = 32 + headerBlock + colHead + rows * rowH + footerBlock + 24;
 
-  const rgb = Buffer.alloc(width * height * 3);
-  fillRect(rgb, width, 0, 0, width, height, ...t.canvas);
-  fillRect(rgb, width, 0, 0, width, headerH, ...t.header);
-  fillRect(rgb, width, 0, headerH - 2, width, 2, ...t.accent);
+  const { canvas, ctx } = createSurface(width, height, t.canvas);
+  drawFestiveDecor(ctx, width, height, t.festive);
+  const { padX, padTop, contentW } = drawShell(ctx, width, height, t);
 
-  drawText(rgb, width, pad, 28, title || t.title, 250, 250, 250, 3);
+  // glyph + título
+  drawCommandGlyph(ctx, t.symbol || 'star', width - padX - 8, padTop + 18, t);
 
-  // Cabeçalho de colunas (o que cada número significa)
-  let colLabel = 'POS  NOME                NIVEL   XP';
-  if (t.id === 'coins') colLabel = 'POS  NOME                COINS';
-  else if (t.id === 'messages') colLabel = 'POS  NOME                MENSAGENS';
-  else if (t.id === 'casino') colLabel = 'POS  NOME                LUCRO     JOGOS';
-  drawText(rgb, width, pad, headerH + 6, colLabel, ...t.muted, 2);
+  festiveBadge(ctx, t, padX, padTop + 4);
 
-  const bodyY0 = headerH + colH;
+  ctx.fillStyle = t.text;
+  ctx.font = `700 28px ${FONT}`;
+  ctx.fillText(title || t.title, padX, padTop + 44);
+
+  ctx.fillStyle = t.muted;
+  ctx.font = `500 13px ${FONT}`;
+  ctx.fillText('Top do grupo · diverte sem piedade', padX, padTop + 68);
+
+  // colunas
+  const yCol = padTop + headerBlock - 8;
+  ctx.fillStyle = t.muted;
+  ctx.font = `600 11px ${FONT}`;
+  ctx.fillText('POS', padX, yCol);
+  ctx.fillText('NOME', padX + 64, yCol);
+  ctx.textAlign = 'right';
+  if (commandId === 'coins') ctx.fillText('COINS', padX + contentW, yCol);
+  else if (commandId === 'messages') ctx.fillText('MENSAGENS', padX + contentW, yCol);
+  else if (commandId === 'casino') {
+    ctx.fillText('JOGOS', padX + contentW, yCol);
+    ctx.fillText('LUCRO', padX + contentW - 110, yCol);
+  } else {
+    ctx.fillText('XP', padX + contentW, yCol);
+    ctx.fillText('NÍVEL', padX + contentW - 110, yCol);
+  }
+  ctx.textAlign = 'left';
+
+  const bodyY0 = yCol + 18;
+
   if (!entries.length) {
-    drawText(rgb, width, pad, bodyY0 + 16, 'SEM DADOS AINDA', ...t.muted, 2);
+    ctx.fillStyle = t.muted;
+    ctx.font = `400 15px ${FONT}`;
+    ctx.fillText('Ainda não há ninguém aqui. Manda um alô!', padX, bodyY0 + 28);
   } else {
     entries.slice(0, 10).forEach((entry, idx) => {
-      const y = bodyY0 + idx * rowH + 10;
+      const y = bodyY0 + idx * rowH;
       if (idx % 2 === 0) {
-        fillRect(rgb, width, pad - 4, y - 6, width - pad * 2 + 8, rowH - 6, ...t.rowAlt);
+        ctx.globalAlpha = 0.55;
+        fillRoundRect(ctx, padX - 10, y, contentW + 20, rowH - 6, 10, t.raise2);
+        ctx.globalAlpha = 1;
       }
+
       const rank = entry.rank || idx + 1;
-      let color = t.text;
-      if (rank === 1) color = t.gold;
-      else if (rank === 2) color = t.silver;
-      else if (rank === 3) color = t.bronze;
+      const midY = y + 32;
+      const name = shortName(entry.displayName, entry.userJid, 26);
+      let color = medalColor(t, rank);
 
-      if (t.id === 'casino' && entry.profit != null) {
-        if (entry.profit > 0) color = t.up || t.gold;
-        else if (entry.profit < 0) color = t.down || t.bronze;
+      if (commandId === 'casino' && entry.profit != null) {
+        if (entry.profit > 0) color = t.success;
+        else if (entry.profit < 0) color = t.danger;
       }
 
-      let line;
-      if (typeof lineBuilder === 'function') {
-        line = lineBuilder(entry, rank);
-      } else if (t.id === 'coins') {
-        line = `#${rank}   ${shortName(entry.displayName, entry.userJid, 18)}   ${fmtNum(entry.coins)} COINS`;
-      } else if (t.id === 'messages') {
-        line = `#${rank}   ${shortName(entry.displayName, entry.userJid, 18)}   ${fmtNum(entry.messageCount)} MSGS`;
-      } else if (t.id === 'casino') {
-        const sign = entry.profit >= 0 ? '+' : '';
-        line = `#${rank}   ${shortName(entry.displayName, entry.userJid, 16)}   ${sign}${fmtNum(entry.profit)}   ${fmtNum(entry.games)} JOGOS`;
+      ctx.fillStyle = color;
+      ctx.font = `800 15px ${FONT_MONO}`;
+      ctx.fillText(`#${rank}`, padX, midY);
+
+      // medalha viva no top 3
+      if (rank <= 3) {
+        drawStar(ctx, padX + 48, midY - 6, 6, color);
+      }
+
+      ctx.fillStyle = t.text;
+      ctx.font = `600 16px ${FONT}`;
+      ctx.fillText(name, padX + 64, midY);
+
+      ctx.textAlign = 'right';
+      ctx.font = `600 15px ${FONT_MONO}`;
+      if (commandId === 'coins') {
+        ctx.fillStyle = t.accent;
+        ctx.fillText(`${fmtNum(entry.coins)} coins`, padX + contentW, midY);
+      } else if (commandId === 'messages') {
+        ctx.fillStyle = t.accent;
+        ctx.fillText(`${fmtNum(entry.messageCount)} msgs`, padX + contentW, midY);
+      } else if (commandId === 'casino') {
+        const profit = Number(entry.profit) || 0;
+        const sign = profit >= 0 ? '+' : '';
+        ctx.fillStyle = color;
+        ctx.fillText(`${sign}${fmtNum(profit)}`, padX + contentW - 110, midY);
+        ctx.fillStyle = t.muted;
+        ctx.fillText(`${fmtNum(entry.games)} jogos`, padX + contentW, midY);
       } else {
-        line = `#${rank}   ${shortName(entry.displayName, entry.userJid, 16)}   LV${entry.level}   ${fmtNum(entry.xp)} XP`;
+        ctx.fillStyle = t.muted;
+        ctx.fillText(`Nv ${entry.level ?? '—'}`, padX + contentW - 110, midY);
+        ctx.fillStyle = t.accent;
+        ctx.fillText(fmtNum(entry.xp), padX + contentW, midY);
       }
-      drawText(rgb, width, pad, y, line, ...color, 2);
+      ctx.textAlign = 'left';
     });
   }
 
   const footerLine =
     String(footer || '').trim() ||
     (yourRank != null
-      ? `VOCE: #${yourRank}${yourTotal ? `/${yourTotal}` : ''}${yourExtra ? `  ${yourExtra}` : ''}`
+      ? `Você · #${yourRank}${yourTotal ? `/${yourTotal}` : ''}${yourExtra ? ` · ${yourExtra}` : ''}`
       : yourExtra
-        ? `VOCE: ${yourExtra}`
+        ? `Você · ${yourExtra}`
         : '');
+
   if (footerLine) {
-    drawText(rgb, width, pad, height - 32, footerLine, ...t.muted, 2);
+    ctx.fillStyle = t.border;
+    ctx.fillRect(padX, height - 56, contentW, 2);
+    ctx.fillStyle = t.muted;
+    ctx.font = `500 13px ${FONT}`;
+    ctx.fillText(footerLine, padX, height - 32);
   }
 
-  return encodePngRgb(width, height, rgb);
+  return toPngBuffer(canvas);
 }
 
-/** Compat: rank XP (tema zinc). */
-export function renderRankCardPng({
-  title = 'RANKING',
-  entries = [],
-  yourRank = null,
-  yourTotal = null,
-} = {}) {
-  return renderLeaderboardPng({
-    title,
-    theme: 'xp',
-    entries,
-    yourRank,
-    yourTotal,
-  });
+export function renderRankCardPng(opts = {}) {
+  return renderLeaderboardPng({ ...opts, theme: 'xp', title: opts.title || 'Rank XP' });
 }
 
 /**
- * Cartão de identidade — perfil.
+ * Perfil — badge + nível protagonista + cores vivas.
  */
 export function renderProfileCardPng({
   displayName = '',
   userJid = '',
   stats = {},
   rank = null,
-  total = 0,
   coinsRank = null,
   messagesRank = null,
   partnerName = '',
@@ -397,18 +478,16 @@ export function renderProfileCardPng({
   casino = null,
   employment = null,
   isSelf = true,
+  nowMs = Date.now(),
 } = {}) {
-  const width = 720;
-  const height = 480;
-  const pad = 28;
-  const rgb = Buffer.alloc(width * height * 3);
+  const t = resolveCardTheme('profile', nowMs);
+  const width = 900;
+  const height = 640;
+  const { canvas, ctx } = createSurface(width, height, t.canvas);
+  drawFestiveDecor(ctx, width, height, t.festive);
+  const { padX, padTop, contentW } = drawShell(ctx, width, height, t);
 
-  fillRect(rgb, width, 0, 0, width, height, 15, 15, 18);
-  fillRect(rgb, width, 0, 0, 10, height, 63, 63, 70);
-  fillRect(rgb, width, 0, 0, width, 88, 24, 24, 27);
-  fillRect(rgb, width, 0, 86, width, 2, 161, 161, 170);
-
-  const name = shortName(displayName, userJid, 22);
+  const name = shortName(displayName, userJid, 28);
   const title = String(stats.title || '').trim();
   const xp = Number(stats.xp) || 0;
   const progress = progressInLevel(xp);
@@ -417,281 +496,322 @@ export function renderProfileCardPng({
   const streak = Number(stats.dailyStreak) || 0;
   const messages = Number(stats.messageCount) || 0;
 
-  drawText(rgb, width, pad, 22, isSelf ? 'SEU PERFIL' : 'PERFIL', 161, 161, 170, 2);
-  drawText(rgb, width, pad, 48, name, 250, 250, 250, 3);
+  festiveBadge(ctx, t, padX, padTop + 2);
+  drawCommandGlyph(ctx, 'badge', width - padX - 12, padTop + 28, t);
+
+  ctx.fillStyle = t.muted;
+  ctx.font = `700 12px ${FONT}`;
+  ctx.fillText(isSelf ? 'SEU PERFIL' : 'PERFIL', padX, padTop + 28);
+
+  ctx.fillStyle = t.text;
+  ctx.font = `800 34px ${FONT}`;
+  ctx.fillText(name, padX, padTop + 68);
+
   if (title) {
-    drawText(rgb, width, pad + 280, 52, shortName(title, '', 14), 212, 212, 216, 2);
+    fillRoundRect(ctx, padX, padTop + 80, Math.min(280, title.length * 10 + 24), 26, 13, t.accent);
+    ctx.fillStyle = t.canvas;
+    ctx.font = `700 13px ${FONT}`;
+    ctx.fillText(title.slice(0, 28), padX + 12, padTop + 98);
   }
 
-  drawText(rgb, width, pad, 112, `NIVEL ${level}`, 250, 250, 250, 4);
-  drawText(rgb, width, pad + 220, 128, `${fmtNum(xp)} XP TOTAL`, 161, 161, 170, 2);
+  // nível herói
+  const levelY = padTop + 160;
+  fillRoundRect(ctx, padX, levelY - 48, 120, 100, 16, t.raise2);
+  strokeRoundRect(ctx, padX, levelY - 48, 120, 100, 16, t.border, 2);
+  ctx.fillStyle = t.accent;
+  ctx.font = `800 48px ${FONT}`;
+  ctx.fillText(String(level), padX + 28, levelY + 12);
+  ctx.fillStyle = t.muted;
+  ctx.font = `600 12px ${FONT}`;
+  ctx.fillText('NÍVEL', padX + 36, levelY + 36);
 
-  const barX = pad;
-  const barY = 168;
-  const barW = width - pad * 2;
-  const barH = 18;
-  fillRect(rgb, width, barX, barY, barW, barH, 39, 39, 42);
+  ctx.fillStyle = t.text;
+  ctx.font = `600 18px ${FONT}`;
+  ctx.fillText(`${fmtNum(xp)} XP total`, padX + 144, levelY - 8);
+  ctx.fillStyle = t.muted;
+  ctx.font = `500 14px ${FONT}`;
+  ctx.fillText(`Rank XP #${rank || '—'}`, padX + 144, levelY + 18);
+
+  const barY = levelY + 48;
+  const barW = contentW;
+  fillRoundRect(ctx, padX, barY, barW, 12, 6, t.canvas);
   const ratio =
     progress.xpForNext > 0
       ? Math.min(1, Math.max(0, progress.xpIntoLevel / progress.xpForNext))
       : 0;
-  fillRect(rgb, width, barX, barY, Math.max(2, Math.floor(barW * ratio)), barH, 228, 228, 231);
-  drawText(
-    rgb,
-    width,
-    pad,
-    198,
-    `PROGRESSO ${progress.xpIntoLevel}/${progress.xpForNext} XP  -  RANK XP #${rank || '-'}`,
-    161,
-    161,
-    170,
-    2
+  const g = ctx.createLinearGradient(padX, 0, padX + barW, 0);
+  g.addColorStop(0, t.accent);
+  g.addColorStop(1, t.accent2 || t.border);
+  fillRoundRect(ctx, padX, barY, Math.max(10, Math.floor(barW * ratio)), 12, 6, g);
+  // fillRoundRect with gradient object - need to set fillStyle manually
+  roundRect(ctx, padX, barY, Math.max(10, Math.floor(barW * ratio)), 12, 6);
+  ctx.fillStyle = g;
+  ctx.fill();
+
+  ctx.fillStyle = t.muted;
+  ctx.font = `400 12px ${FONT}`;
+  ctx.fillText(
+    `Progresso ${progress.xpIntoLevel}/${progress.xpForNext} neste nível`,
+    padX,
+    barY + 32
   );
 
-  // Bloco de recursos
-  const y0 = 240;
-  drawText(rgb, width, pad, y0, 'RECURSOS', 113, 113, 122, 2);
-  drawText(rgb, width, pad, y0 + 28, `COINS: ${fmtNum(coins)}`, 250, 204, 21, 2);
-  drawText(rgb, width, pad + 280, y0 + 28, `MENSAGENS: ${fmtNum(messages)}`, 56, 189, 248, 2);
-  drawText(rgb, width, pad, y0 + 56, `STREAK DAILY: ${streak}`, 52, 211, 153, 2);
+  // KPI boxes
+  const kpiY = barY + 56;
+  ctx.fillStyle = t.muted;
+  ctx.font = `700 11px ${FONT}`;
+  ctx.fillText('RECURSOS', padX, kpiY);
 
-  // Ranks com nome por extenso
-  drawText(rgb, width, pad, y0 + 96, 'RANKINGS NO GRUPO', 113, 113, 122, 2);
-  drawText(
-    rgb,
-    width,
-    pad,
-    y0 + 124,
-    `RANK XP: #${rank || '-'}   RANK COINS: #${coinsRank || '-'}   RANK MSGS: #${messagesRank || '-'}`,
-    212,
-    212,
-    216,
-    2
+  const kpis = [
+    { label: 'Coins', value: fmtNum(coins), color: t.accent },
+    { label: 'Mensagens', value: fmtNum(messages), color: t.accent2 || t.border },
+    { label: 'Streak', value: String(streak), color: t.success || t.accent },
+  ];
+  const gap = 14;
+  const boxW = (contentW - gap * 2) / 3;
+  kpis.forEach((k, i) => {
+    const x = padX + i * (boxW + gap);
+    const y = kpiY + 14;
+    fillRoundRect(ctx, x, y, boxW, 78, 12, t.canvas);
+    strokeRoundRect(ctx, x, y, boxW, 78, 12, k.color, 2);
+    ctx.fillStyle = t.muted;
+    ctx.font = `600 12px ${FONT}`;
+    ctx.fillText(k.label, x + 16, y + 28);
+    ctx.fillStyle = k.color;
+    ctx.font = `800 26px ${FONT}`;
+    ctx.fillText(k.value, x + 16, y + 58);
+  });
+
+  let y = kpiY + 120;
+  ctx.fillStyle = t.muted;
+  ctx.font = `700 11px ${FONT}`;
+  ctx.fillText('RANKINGS NO GRUPO', padX, y);
+  y += 26;
+  ctx.fillStyle = t.text;
+  ctx.font = `600 15px ${FONT}`;
+  ctx.fillText(
+    `XP #${rank || '—'}    Coins #${coinsRank || '—'}    Mensagens #${messagesRank || '—'}`,
+    padX,
+    y
   );
+  y += 36;
 
-  let y = y0 + 164;
+  ctx.font = `500 14px ${FONT}`;
   if (employment?.job) {
-    drawText(
-      rgb,
-      width,
-      pad,
-      y,
-      `EMPREGO: ${shortName(employment.job.name || employment.job.id, '', 16)}  ~${fmtNum(employment.salary)} COINS/DIA`,
-      212,
-      212,
-      216,
-      2
+    ctx.fillStyle = t.muted;
+    ctx.fillText(
+      `Emprego · ${employment.job.name || employment.job.id} · ~${fmtNum(employment.salary)} coins/dia`,
+      padX,
+      y
     );
-    y += 28;
+    y += 26;
   }
   if (factionLabel) {
-    drawText(
-      rgb,
-      width,
-      pad,
-      y,
-      `FACCAO: ${shortName(factionLabel, '', 24)}`,
-      212,
-      212,
-      216,
-      2
-    );
-    y += 28;
+    ctx.fillStyle = t.accent2 || t.accent;
+    ctx.fillText(`Facção · ${shortName(factionLabel, '', 36)}`, padX, y);
+    y += 26;
   }
   if (partnerName) {
-    drawText(
-      rgb,
-      width,
-      pad,
-      y,
-      `CASADO COM: ${shortName(partnerName, '', 20)}`,
-      244,
-      114,
-      182,
-      2
-    );
-    y += 28;
+    ctx.fillStyle = '#f9a8d4';
+    ctx.fillText(`Casado(a) com · ${shortName(partnerName, '', 28)}`, padX, y);
+    y += 26;
   }
   if (casino && (casino.games > 0 || casino.wagered > 0)) {
     const profit = Number(casino.profit) || 0;
     const sign = profit >= 0 ? '+' : '';
-    const col = profit >= 0 ? [52, 211, 153] : [248, 113, 113];
-    drawText(rgb, width, pad, y, 'CASSINO - LUCRO / PREJUIZO', 113, 113, 122, 2);
-    y += 26;
-    drawText(
-      rgb,
-      width,
-      pad,
-      y,
-      `LUCRO: ${sign}${fmtNum(profit)}   JOGOS: ${fmtNum(casino.games)}   APOSTADO: ${fmtNum(casino.wagered)}`,
-      ...col,
-      2
+    ctx.fillStyle = t.muted;
+    ctx.font = `700 11px ${FONT}`;
+    ctx.fillText('CASSINO · LUCRO / PREJUÍZO', padX, y);
+    y += 24;
+    ctx.fillStyle = profit >= 0 ? t.success : t.danger;
+    ctx.font = `700 16px ${FONT}`;
+    ctx.fillText(
+      `Lucro ${sign}${fmtNum(profit)}  ·  ${fmtNum(casino.games)} jogos  ·  ${fmtNum(casino.wagered)} apostados`,
+      padX,
+      y
     );
   }
 
-  return encodePngRgb(width, height, rgb);
+  return toPngBuffer(canvas);
 }
 
-/**
- * Terminal de corretora — cotações.
- * Colunas: EMPRESA | PRECO | VARIACAO | DIVIDENDO
- */
-export function renderBolsaBoardPng({ quotes = [] } = {}) {
-  const width = 720;
-  const rowH = 42;
-  const headerH = 72;
-  const colH = 30;
-  const pad = 20;
+export function renderBolsaBoardPng({ quotes = [], nowMs = Date.now() } = {}) {
+  const t = resolveCardTheme('bolsa', nowMs);
+  const width = 920;
+  const rowH = 48;
   const n = Math.max(quotes.length, 1);
-  const height = headerH + colH + n * rowH + 40;
+  const height = 32 + 120 + 32 + n * rowH + 56;
 
-  const rgb = Buffer.alloc(width * height * 3);
-  fillRect(rgb, width, 0, 0, width, height, 6, 12, 10);
-  fillRect(rgb, width, 0, 0, width, headerH, 10, 22, 18);
-  fillRect(rgb, width, 0, headerH - 2, width, 2, 16, 185, 129);
+  const { canvas, ctx } = createSurface(width, height, t.canvas);
+  drawFestiveDecor(ctx, width, height, t.festive);
+  const { padX, padTop, contentW } = drawShell(ctx, width, height, t);
 
-  drawText(rgb, width, pad, 22, 'CORRETORA DO BECO', 167, 243, 208, 3);
-  drawText(rgb, width, pad, 48, 'COTACOES AO VIVO', 52, 211, 153, 2);
+  festiveBadge(ctx, t, padX, padTop + 2);
+  drawCommandGlyph(ctx, 'chart', width - padX - 8, padTop + 28, t);
 
-  // Colunas fixas (em px) para leitura clara
-  const xEmp = pad;
-  const xPreco = 280;
-  const xVar = 400;
-  const xDiv = 520;
+  ctx.fillStyle = t.text;
+  ctx.font = `800 26px ${FONT}`;
+  ctx.fillText('Corretora do Beco', padX, padTop + 44);
+  ctx.fillStyle = t.muted;
+  ctx.font = `500 13px ${FONT}`;
+  ctx.fillText('Cotações ao vivo · preços em coins', padX, padTop + 68);
 
-  drawText(rgb, width, xEmp, headerH + 8, 'EMPRESA', 110, 231, 183, 2);
-  drawText(rgb, width, xPreco, headerH + 8, 'PRECO', 110, 231, 183, 2);
-  drawText(rgb, width, xVar, headerH + 8, 'VARIACAO', 110, 231, 183, 2);
-  drawText(rgb, width, xDiv, headerH + 8, 'DIVIDENDO', 110, 231, 183, 2);
+  const colY = padTop + 100;
+  const xEmp = padX;
+  const xPreco = padX + 300;
+  const xVar = padX + 470;
+  const xDiv = padX + 660;
 
-  const bodyY0 = headerH + colH;
+  ctx.fillStyle = t.muted;
+  ctx.font = `700 11px ${FONT}`;
+  ctx.fillText('EMPRESA', xEmp, colY);
+  ctx.fillText('PREÇO', xPreco, colY);
+  ctx.fillText('VARIAÇÃO', xVar, colY);
+  ctx.fillText('DIVIDENDO', xDiv, colY);
+
+  const bodyY0 = colY + 18;
   if (!quotes.length) {
-    drawText(rgb, width, pad, bodyY0 + 12, 'SEM TICKERS', 110, 231, 183, 2);
+    ctx.fillStyle = t.muted;
+    ctx.font = `400 15px ${FONT}`;
+    ctx.fillText('Sem cotações.', padX, bodyY0 + 28);
   } else {
     quotes.forEach((q, idx) => {
-      const y = bodyY0 + idx * rowH + 10;
+      const y = bodyY0 + idx * rowH;
       if (idx % 2 === 0) {
-        fillRect(rgb, width, pad - 4, y - 6, width - pad * 2 + 8, rowH - 8, 10, 22, 18);
+        fillRoundRect(ctx, padX - 10, y, contentW + 20, rowH - 6, 10, t.raise2);
       }
-      const name = shortName(q.name || q.id, '', 14);
-      const price = `${fmtNum(q.price)}C`;
+      const midY = y + 30;
+      const name = shortName(q.name || q.id, '', 18);
       const delta = Number(q.deltaPct) || 0;
       const sign = delta > 0 ? '+' : '';
       const trend =
-        q.trend === 'up' ? 'SOBE' : q.trend === 'down' ? 'CAI' : 'ESTAVEL';
-      const varStr = `${trend} ${sign}${delta}%`;
-      let divStr = '-';
+        q.trend === 'up' ? '▲ sobe' : q.trend === 'down' ? '▼ cai' : '● estável';
+      const col = delta > 0 ? t.success : delta < 0 ? t.danger : t.muted;
+      let divStr = '—';
       if (Number(q.dividendYield) > 0) {
         divStr = `${(Number(q.dividendYield) * 100).toFixed(1)}%`;
       } else if (q.dividendRare) {
-        divStr = 'RARO';
+        divStr = 'raro ✨';
       }
-      const col =
-        delta > 0 ? [52, 211, 153] : delta < 0 ? [248, 113, 113] : [167, 243, 208];
 
-      drawText(rgb, width, xEmp, y, name, 226, 252, 239, 2);
-      drawText(rgb, width, xPreco, y, price, ...col, 2);
-      drawText(rgb, width, xVar, y, varStr, ...col, 2);
-      drawText(rgb, width, xDiv, y, divStr, 167, 243, 208, 2);
+      ctx.fillStyle = t.text;
+      ctx.font = `700 15px ${FONT}`;
+      ctx.fillText(name, xEmp, midY);
+      ctx.fillStyle = col;
+      ctx.font = `700 14px ${FONT_MONO}`;
+      ctx.fillText(`${fmtNum(q.price)} coins`, xPreco, midY);
+      ctx.fillText(`${trend} ${sign}${delta}%`, xVar, midY);
+      ctx.fillStyle = t.muted;
+      ctx.fillText(divStr, xDiv, midY);
     });
   }
 
-  drawText(
-    rgb,
-    width,
-    pad,
-    height - 24,
-    'PRECO EM COINS  ·  VARIACAO DESDE ULTIMO TICK  ·  /BOLSA COMPRAR',
-    110,
-    231,
-    183,
-    2
+  ctx.fillStyle = t.muted;
+  ctx.font = `500 12px ${FONT}`;
+  ctx.fillText(
+    'Variação desde o último tick  ·  /bolsa comprar  ·  /carteira',
+    padX,
+    height - 36
   );
-  return encodePngRgb(width, height, rgb);
+
+  return toPngBuffer(canvas);
 }
 
-/**
- * Extrato de carteira — holdings + PnL.
- * Colunas: EMPRESA | QTD | PRECO | LUCRO/PREJUIZO
- */
 export function renderCarteiraCardPng({
   positions = [],
   totalValue = 0,
   unrealized = 0,
   dividendTotal = 0,
+  nowMs = Date.now(),
 } = {}) {
-  const width = 720;
-  const rowH = 40;
-  const headerH = 88;
-  const colH = 28;
-  const pad = 20;
+  const t = resolveCardTheme('carteira', nowMs);
+  const width = 920;
+  const rowH = 48;
   const n = Math.max(positions.length, 1);
-  const height = headerH + colH + n * rowH + 52;
+  const height = 32 + 120 + 32 + n * rowH + 56;
 
-  const rgb = Buffer.alloc(width * height * 3);
-  fillRect(rgb, width, 0, 0, width, height, 12, 12, 14);
-  fillRect(rgb, width, 0, 0, width, headerH, 24, 24, 27);
-  fillRect(rgb, width, 0, headerH - 2, width, 2, 234, 179, 8);
+  const { canvas, ctx } = createSurface(width, height, t.canvas);
+  drawFestiveDecor(ctx, width, height, t.festive);
+  const { padX, padTop, contentW } = drawShell(ctx, width, height, t);
 
-  drawText(rgb, width, pad, 20, 'CARTEIRA DO BECO', 250, 250, 250, 3);
+  festiveBadge(ctx, t, padX, padTop + 2);
+  drawCommandGlyph(ctx, 'wallet', width - padX - 8, padTop + 28, t);
+
+  ctx.fillStyle = t.text;
+  ctx.font = `800 26px ${FONT}`;
+  ctx.fillText('Sua carteira', padX, padTop + 44);
+
   const uSign = unrealized >= 0 ? '+' : '';
-  const uCol = unrealized >= 0 ? [52, 211, 153] : [248, 113, 113];
-  drawText(rgb, width, pad, 52, `VALOR TOTAL: ${fmtNum(totalValue)} COINS`, 250, 204, 21, 2);
-  drawText(
-    rgb,
-    width,
-    pad + 340,
-    52,
-    `LUCRO NO PAPEL: ${uSign}${fmtNum(unrealized)}`,
-    ...uCol,
-    2
-  );
+  const uCol = unrealized > 0 ? t.success : unrealized < 0 ? t.danger : t.muted;
+  ctx.fillStyle = t.accent;
+  ctx.font = `700 16px ${FONT}`;
+  ctx.fillText(`Valor total  ${fmtNum(totalValue)} coins`, padX, padTop + 72);
+  ctx.fillStyle = uCol;
+  ctx.fillText(`Lucro no papel  ${uSign}${fmtNum(unrealized)}`, padX + 320, padTop + 72);
 
-  const xEmp = pad;
-  const xQty = 280;
-  const xPreco = 380;
-  const xPnl = 500;
-  drawText(rgb, width, xEmp, headerH + 6, 'EMPRESA', 161, 161, 170, 2);
-  drawText(rgb, width, xQty, headerH + 6, 'QTD', 161, 161, 170, 2);
-  drawText(rgb, width, xPreco, headerH + 6, 'PRECO', 161, 161, 170, 2);
-  drawText(rgb, width, xPnl, headerH + 6, 'LUCRO/PREJUIZO', 161, 161, 170, 2);
+  const colY = padTop + 104;
+  const xEmp = padX;
+  const xQty = padX + 320;
+  const xPreco = padX + 430;
+  const xPnl = padX + 620;
 
-  const bodyY0 = headerH + colH;
+  ctx.fillStyle = t.muted;
+  ctx.font = `700 11px ${FONT}`;
+  ctx.fillText('EMPRESA', xEmp, colY);
+  ctx.fillText('QTD', xQty, colY);
+  ctx.fillText('PREÇO', xPreco, colY);
+  ctx.fillText('LUCRO / PREJUÍZO', xPnl, colY);
+
+  const bodyY0 = colY + 18;
   if (!positions.length) {
-    drawText(rgb, width, pad, bodyY0 + 12, 'VAZIO - USE /BOLSA COMPRAR', 161, 161, 170, 2);
+    ctx.fillStyle = t.muted;
+    ctx.font = `400 15px ${FONT}`;
+    ctx.fillText('Vazio. Compre em /bolsa — o beco te espera!', padX, bodyY0 + 28);
   } else {
     positions.slice(0, 12).forEach((p, idx) => {
-      const y = bodyY0 + idx * rowH + 8;
+      const y = bodyY0 + idx * rowH;
       if (idx % 2 === 0) {
-        fillRect(rgb, width, pad - 4, y - 4, width - pad * 2 + 8, rowH - 6, 24, 24, 27);
+        fillRoundRect(ctx, padX - 10, y, contentW + 20, rowH - 6, 10, t.raise2);
       }
+      const midY = y + 30;
       const c = p.company || {};
-      const name = shortName(c.name || c.id || p.companyId, '', 14);
+      const name = shortName(c.name || c.id || p.companyId, '', 18);
       const un = Number(p.unrealized) || 0;
       const sign = un >= 0 ? '+' : '';
-      const col = un >= 0 ? [52, 211, 153] : [248, 113, 113];
-      drawText(rgb, width, xEmp, y, name, 250, 250, 250, 2);
-      drawText(rgb, width, xQty, y, String(p.qty), 212, 212, 216, 2);
-      drawText(rgb, width, xPreco, y, `${fmtNum(p.price)}C`, 212, 212, 216, 2);
-      drawText(rgb, width, xPnl, y, `${sign}${fmtNum(un)}`, ...col, 2);
+      const col = un > 0 ? t.success : un < 0 ? t.danger : t.muted;
+
+      ctx.fillStyle = t.text;
+      ctx.font = `700 15px ${FONT}`;
+      ctx.fillText(name, xEmp, midY);
+      ctx.fillStyle = t.muted;
+      ctx.font = `600 14px ${FONT_MONO}`;
+      ctx.fillText(String(p.qty), xQty, midY);
+      ctx.fillText(`${fmtNum(p.price)} coins`, xPreco, midY);
+      ctx.fillStyle = col;
+      ctx.fillText(`${sign}${fmtNum(un)}`, xPnl, midY);
     });
   }
 
+  ctx.font = `600 12px ${FONT}`;
   if (dividendTotal > 0) {
-    drawText(
-      rgb,
-      width,
-      pad,
-      height - 30,
-      `DIVIDENDOS RECEBIDOS AGORA: +${fmtNum(dividendTotal)} COINS`,
-      52,
-      211,
-      153,
-      2
-    );
+    ctx.fillStyle = t.success;
+    ctx.fillText(`Dividendos agora · +${fmtNum(dividendTotal)} coins`, padX, height - 36);
   } else {
-    drawText(rgb, width, pad, height - 30, '/BOLSA VENDER TICKER QTD', 113, 113, 122, 2);
+    ctx.fillStyle = t.muted;
+    ctx.fillText('/bolsa vender ticker qtd', padX, height - 36);
   }
 
-  return encodePngRgb(width, height, rgb);
+  return toPngBuffer(canvas);
+}
+
+/** @deprecated */
+export function encodePngRgb() {
+  throw new Error('encodePngRgb removido — use skia-canvas renderers');
+}
+
+export function sanitizeCardText(s) {
+  return String(s || '')
+    .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

@@ -27,7 +27,7 @@ import { createGameService } from '../fun/services/gameService.js';
 import { createShopService } from '../fun/services/shopService.js';
 import { createFunEffectsRepository } from '../fun/db/funEffectsRepository.js';
 import { resolveFunScope } from '../fun/pipeline/onIncomingMessage.js';
-import { renderRankCardPng, encodePngRgb } from '../fun/formatters/rankCardImage.js';
+import { renderRankCardPng } from '../fun/formatters/rankCardImage.js';
 import { DAY_MS, ACTION_TYPE } from '../fun/constants.js';
 import { createFunFactionRepository } from '../fun/db/funFactionRepository.js';
 import { createFunSocialRepository } from '../fun/db/funSocialRepository.js';
@@ -494,12 +494,8 @@ test('fun_group_settings: desliga eventos do mundo por grupo', () => {
 // â”€â”€â”€ Rank card PNG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 test('rank card PNG valido', () => {
-  const tiny = encodePngRgb(2, 2, Buffer.from([255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255]));
-  assert.equal(tiny[0], 137);
-  assert.ok(tiny.length > 50);
-
   const png = renderRankCardPng({
-    title: 'RANK',
+    title: 'Rank XP',
     entries: [
       { rank: 1, displayName: 'Alice', userJid: uniqueJid(), level: 3, xp: 250 },
       { rank: 2, displayName: 'Bob', userJid: uniqueJid(), level: 2, xp: 120 },
