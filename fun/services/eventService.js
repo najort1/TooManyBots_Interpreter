@@ -164,7 +164,9 @@ export function createEventService({
   }
 
   /**
-   * Sorteio automático (só bot). Chamado no fluxo de mensagens do grupo.
+   * Sorteio automático (só bot).
+   * - Mensagem de usuário: chance baixa (eventAutoSpawnChance).
+   * - Relógio do mundo (tick=true): chance maior (eventTickChance) — autonomia.
    * @returns {{ ok: true, eventType, ... } | { ok: false, reason }}
    */
   function tryAutoSpawn({
@@ -172,6 +174,7 @@ export function createEventService({
     funConfig = {},
     now = Date.now(),
     forceRoll = false,
+    tick = false,
   } = {}) {
     if (funConfig.eventAutoSpawn === false) {
       return { ok: false, reason: 'disabled' };
@@ -186,7 +189,9 @@ export function createEventService({
       return { ok: false, reason: 'cooldown', retryInMs: cd };
     }
 
-    const chance = Math.min(1, Math.max(0, Number(funConfig.eventAutoSpawnChance) ?? 0.028));
+    const chance = tick
+      ? Math.min(1, Math.max(0, Number(funConfig.eventTickChance) ?? 0.12))
+      : Math.min(1, Math.max(0, Number(funConfig.eventAutoSpawnChance) ?? 0.028));
     if (!forceRoll && random() > chance) {
       return { ok: false, reason: 'no-roll' };
     }
