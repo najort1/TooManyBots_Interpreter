@@ -1,5 +1,6 @@
 /**
- * Mercado utilitário Fun — preços dinâmicos, estoque, armas, assalto.
+ * Mercado utilitário Fun — economia 4 camadas, estoque, armas, assalto.
+ * C1 motor · C2 jornalista · C3 arquétipos · C4 regulador.
  */
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
@@ -12,186 +13,39 @@ import {
   listUtilityShop,
   listWeaponShop,
 } from '../shop/collectibles.js';
-
-/** História de mercado: 5–8 linhas (fofoca de bairro), não 1 frase nem livro. */
-const EVENT_DESC_MAX = 900;
-const EVENT_DESC_LINES_MAX = 8;
-
-const EVENT_SYSTEM = `Você gera NOTÍCIAS de mercado de rua (combustível, munição, armas, veículos, defesa) para bot WhatsApp BR.
-
-JSON único sem markdown:
-{"title":"...","description":"...","category":"combustivel|municao|arma|veiculo|defesa","impactPct":number}
-
-REGRAS:
-- title ≤80 chars, estilo manchete de bairro
-- description: HISTÓRIA curta com 5 a 8 linhas (use \\n entre linhas). Entre 350 e 850 caracteres.
-  Tom: fofoca de mercado paralelo, besteirol leve, pt-BR de rua. Cena + rumor + consequência no preço.
-  NÃO seja 1 frase. NÃO vire livro (máx 8 linhas). Sem inventar preços em coins.
-- category DEVE ser uma das listadas
-- impactPct entre -28 e +35 (inteiro ≠ 0)
-- coerente (gasolina cara → combustivel sobe; operação policial → arma/municao sobe; excesso → preço desce)`;
-
-const TEMPLATE_EVENTS = [
-  {
-    title: 'Posto da região seca',
-    description: [
-      'Acordou cedo quem queria encher o galão.',
-      'O posto da avenida abriu com a bomba “sem produto” e a fila já dava a volta no quarteirão.',
-      'Gente brigando por funil, moto sem gasolina no meio da rua, zé da esquina cobrando taxa de “ajuda”.',
-      'No mercado paralelo o litro sumiu do mapa — ou virou artigo de luxo.',
-      'Quem tem tanque cheio vira celebridade; quem não tem, paga o preço da sede.',
-      'Combustível de rua sobe. O resto do bairro fica a pé, zoando no grupo.',
-    ].join('\n'),
-    category: 'combustivel',
-    impactPct: 18,
-  },
-  {
-    title: 'Caminhão-tanque vaza na BR',
-    description: [
-      'Caminhão-tanque tombou na curva da BR. Cheiro de gasolina a quilômetros.',
-      'Trânsito parado, bombeiro, youtuber filmando, e o pessoal do desmanche já calculando o lucro.',
-      'Enquanto a pista não limpa, o posto da cidade seca de verdade.',
-      'Quem tinha estoque escondeu; quem não tinha, inventou “escassez técnica”.',
-      'Por uma semana o combustível vira caça ao tesouro.',
-      'Preço sobe, paciência desce, e o mercado de rua faz a festa.',
-    ].join('\n'),
-    category: 'combustivel',
-    impactPct: 14,
-  },
-  {
-    title: 'Alta tensão aumenta preço da munição',
-    description: [
-      'Rumores de instabilidade regional rodam no zap antes do jornal.',
-      'Alguém jura que viu viatura demais; outro jura que viu caixa demais saindo de fundo de loja.',
-      'Nos pontos de venda as balas somem da prateleira “sem explicação”.',
-      'Vendedor fala baixo, sobe o preço e ainda finje que tá fazendo favor.',
-      'Quem não comprou ontem paga o nervoso de hoje.',
-      'Caixa de munição vira artigo quente — e o bairro inteiro finge que não sabe por quê.',
-    ].join('\n'),
-    category: 'municao',
-    impactPct: 16,
-  },
-  {
-    title: 'Operação apreende munição',
-    description: [
-      'Chegou a operação. Caixa lacrada, flash no celular, boato no grupo em três minutos.',
-      'O fornecedor “sumiu pra resolver umas coisas” e o estoque de cartucho foi junto.',
-      'No paralelo sobrou mais conversa do que munição.',
-      'Quem tinha caixa escondeu debaixo da cama; quem precisava, engoliu o preço novo.',
-      'Mercado aperta o cinto — no sentido literal de cartucho.',
-      'Munição sobe. A moral do assalto, por enquanto, desce.',
-    ].join('\n'),
-    category: 'municao',
-    impactPct: 16,
-  },
-  {
-    title: 'Desmanche lotado de peças',
-    description: [
-      'O desmanche da beira da pista encheu de peça “com nota duvidosa”.',
-      'Capô, roda, banco, farol — tudo com desconto de quem não pergunta a procedência.',
-      'Dono de oficina sorri; dono de carro “zero de rua” chora o preço antigo.',
-      'Oferta demais puxa o valor de veículo pra baixo, mesmo o que ainda anda.',
-      'No bazar o papo é “pega agora que amanhã normaliza”.',
-      'Hoje o metal tá barato. O orgulho de quem pagou caro ontem, não.',
-    ].join('\n'),
-    category: 'veiculo',
-    impactPct: -12,
-  },
-  {
-    title: 'Corrida de moto no fim de semana',
-    description: [
-      'Sábado à noite a avenida virou autódromo improvisado.',
-      'Grito de escapamento, aposta no zap, e gente comprando gasolina como se fosse água.',
-      'Quem tem moto vira astro; quem não tem, fica na calçada filmando.',
-      'Demanda por duas rodas e combustível sobe junto com o volume do som.',
-      'Oficina e “mercado de rua” já anotaram o preço novo na testa.',
-      'Fim de semana de corrida: bolso leve, adrenalina cara.',
-    ].join('\n'),
-    category: 'veiculo',
-    impactPct: 11,
-  },
-  {
-    title: 'Blitze pesada no centro',
-    description: [
-      'Centro fechado em blitze. Luz no rosto, cinto no chão, nervoso no ar.',
-      'Quem andava “preparado” preferiu deixar o kit em casa — e o preço subiu por solidariedade.',
-      'No underground o colete e a arma viraram artigo de luxo de madrugada.',
-      'Vendedor some, volta, e cobra como se tivesse inventado a lei da oferta.',
-      'Rumor corre: “tá quente”. Mercado responde: “então tá caro”.',
-      'Armas e defesa sobem. O centro respira aliviado… o bazar, não.',
-    ].join('\n'),
-    category: 'arma',
-    impactPct: 15,
-  },
-  {
-    title: 'Fornecedor de colete some',
-    description: [
-      'O cara do colete “não atende mais”. Nem zap, nem recado na padaria.',
-      'Teorias: viagem, apreensão, ou só cansaço de vender medo em forma de tecido.',
-      'Sobra um estoque minguado e um monte de gente querendo se sentir invencível.',
-      'Defesa individual vira artigo de luxo — e de fofoca.',
-      'Quem tem colete anda de peito estufado; quem não tem, paga o susto no preço.',
-      'Mercado de defesa aperta. O ego de quem comprou cedo, infla.',
-    ].join('\n'),
-    category: 'defesa',
-    impactPct: 13,
-  },
-  {
-    title: 'Sobram facas de peixeira no bazar',
-    description: [
-      'Chegou um lote. Ninguém sabe de onde. Todo mundo sabe o preço: barato.',
-      'Peixeira, canivete, “presente de cozinha” com cara de outra coisa.',
-      'O bazar encheu de cutelaria e de gente fingindo que vai filetar peixe.',
-      'Excesso puxa o valor pra baixo — até a arma curta sente o clima.',
-      'Vendedor pede pra levar duas; comprador negocia a terceira “de brinde”.',
-      'Hoje o aço tá em promoção. A vergonha alheia, inclusa.',
-    ].join('\n'),
-    category: 'arma',
-    impactPct: -9,
-  },
-  {
-    title: 'Inflação come o bolso',
-    description: [
-      'Pão subiu, passagem subiu, e o povo ainda quer carro de filme.',
-      'No mercado de rua a grana sumiu primeiro — o desejo ficou pra depois.',
-      'Veículo e rifle param de girar: ninguém quer pagar o preço de ontem com o salário de hoje.',
-      'Vendedor baixa a postura (e o preço) pra não ficar com o pátio lotado.',
-      'Quem esperou “pra ver” talvez tenha acertado o timing pela primeira vez.',
-      'Itens caros freiam. O bolso agradece; o ego, nem tanto.',
-    ].join('\n'),
-    category: 'veiculo',
-    impactPct: -8,
-  },
-  {
-    title: 'Contrabando de cartucho',
-    description: [
-      'Dizem que entrou carga. Dizem baixo, mas todo mundo ouviu.',
-      'Caixa de cartucho aparece em quantidade suspeita — e com sorriso de quem não pergunta origem.',
-      'De repente sobra munição onde ontem só tinha desculpa.',
-      'Preço despenca, estoque incha, e o “especialista” do grupo jura que é golpe.',
-      'Mercado informal enche o bolso de quem vende volume; esvazia o drama de quem tava sem bala.',
-      'Munição barata por enquanto. Aproveita antes do rumor mudar de lado.',
-    ].join('\n'),
-    category: 'municao',
-    impactPct: -14,
-  },
-];
-
-function clampEventDescription(raw) {
-  let text = String(raw || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .trim();
-  if (!text) return '';
-  // JSON às vezes manda "\\n" literal
-  text = text.replace(/\\n/g, '\n');
-  const lines = text
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-    .slice(0, EVENT_DESC_LINES_MAX);
-  return lines.join('\n').slice(0, EVENT_DESC_MAX);
-}
+import {
+  companyForItem,
+  getCompany,
+  listCompanies,
+  tickAsset,
+  applyTradeFlow,
+  decayAssetState,
+  trendFrom,
+  defaultRegulatorKnobs,
+  clampKnobs,
+  regulate,
+  computeGini,
+  computeAvgAbsDelta,
+  scaleEventWaitMs,
+  pushRecentArchetype,
+  pushFingerprint,
+  pushTruthLog,
+  popNarrativeSeed,
+  scheduleShock,
+  takeDueShocks,
+  pickDeceptionMode,
+  applyDeceptionPlan,
+  clampEventDescription,
+  EVENT_INVENT_SYSTEM,
+  JOURNALIST_SYSTEM,
+  buildInventUserPrompt,
+  parseInventJson,
+  parseJournalistJson,
+  pickTemplateSeed,
+  resolveEventProposal,
+  fingerprintText,
+  clampShockPct,
+} from '../economy/index.js';
 
 function numOr(v, fb) {
   const n = Number(v);
@@ -201,21 +55,6 @@ function numOr(v, fb) {
 function pick(arr, random) {
   if (!arr?.length) return null;
   return arr[Math.floor(random() * arr.length)];
-}
-
-function clampImpact(pct) {
-  return Math.max(-30, Math.min(40, Math.round(Number(pct) || 0)));
-}
-
-function applyPct(price, pct) {
-  const base = Math.max(1, Math.floor(Number(price) || 1));
-  return Math.max(1, Math.round(base * (1 + pct / 100)));
-}
-
-function trendFrom(prev, next) {
-  if (next > prev) return 'up';
-  if (next < prev) return 'down';
-  return 'flat';
 }
 
 function arrow(trend) {
@@ -307,22 +146,218 @@ export function createMarketService({
     return rh ? `${d}d ${rh}h` : `${d}d`;
   }
 
+  function loadRegulator(scopeKey) {
+    const meta = marketRepository.getMeta(scopeKey);
+    return clampKnobs({ ...defaultRegulatorKnobs(), ...(meta.economy || {}) });
+  }
+
+  function saveRegulator(scopeKey, reg, extra = {}, now = Date.now()) {
+    const meta = marketRepository.getMeta(scopeKey);
+    return marketRepository.setMeta(scopeKey, {
+      lastEventAt: extra.lastEventAt !== undefined ? extra.lastEventAt : meta.lastEventAt,
+      nextEventAt: extra.nextEventAt !== undefined ? extra.nextEventAt : meta.nextEventAt,
+      lastRestockAt: extra.lastRestockAt !== undefined ? extra.lastRestockAt : meta.lastRestockAt,
+      lastEconomyTickAt:
+        extra.lastEconomyTickAt !== undefined ? extra.lastEconomyTickAt : meta.lastEconomyTickAt,
+      economy: clampKnobs(reg),
+      now,
+    });
+  }
+
   function ensureMarket(scopeKey, funConfig = {}, now = Date.now()) {
     marketRepository.ensurePrices(scopeKey, now);
+    if (typeof marketRepository.ensureAssetStates === 'function') {
+      marketRepository.ensureAssetStates(scopeKey, now);
+    }
     maybeWeeklyRestock(scopeKey, funConfig, now);
     const meta = marketRepository.getMeta(scopeKey);
+    if (!meta.economy || !Object.keys(meta.economy).length) {
+      saveRegulator(scopeKey, defaultRegulatorKnobs(), {}, now);
+    }
     if (!meta.nextEventAt) {
       const o = opts(funConfig);
       const lo = Math.min(o.minMs, o.maxMs);
       const hi = Math.max(o.minMs, o.maxMs);
       const wait = lo + Math.floor(random() * Math.max(1, hi - lo));
+      const reg = loadRegulator(scopeKey);
       marketRepository.setMeta(scopeKey, {
         lastEventAt: meta.lastEventAt,
-        nextEventAt: now + wait,
+        nextEventAt: now + scaleEventWaitMs(wait, reg),
         lastRestockAt: meta.lastRestockAt,
+        economy: reg,
         now,
       });
     }
+  }
+
+  function recordTrade(scopeKey, itemId, side, price, now = Date.now()) {
+    if (!marketRepository.getAssetState) return;
+    const col = getCollectible(itemId);
+    const persona = companyForItem(col);
+    const cur = marketRepository.getAssetState(scopeKey, itemId);
+    const next = applyTradeFlow(cur, { side, qty: 1, price, personality: persona });
+    marketRepository.setAssetState({
+      scopeKey,
+      itemId,
+      supply: next.supply,
+      demand: next.demand,
+      eventShock: cur.eventShock,
+      volumeBuy: next.volumeBuy,
+      volumeSell: next.volumeSell,
+      now,
+    });
+  }
+
+  function collectHealthMetrics(scopeKey) {
+    let balances = [];
+    try {
+      if (typeof repository.listScopeCoinBalances === 'function') {
+        balances = repository.listScopeCoinBalances(scopeKey);
+      } else if (typeof repository.getCoinsLeaderboard === 'function') {
+        balances = repository
+          .getCoinsLeaderboard(scopeKey, 200)
+          .map((r) => Number(r.coins) || 0);
+      }
+    } catch {
+      balances = [];
+    }
+    const circulating = balances.reduce((a, b) => a + b, 0);
+    const prices = marketRepository.listPrices(scopeKey);
+    let invested = 0;
+    try {
+      const inv = marketRepository.listAllInventoryInScope?.(scopeKey) || [];
+      for (const row of inv) {
+        const p = marketRepository.getPrice(scopeKey, row.itemId)?.price || 0;
+        invested += p;
+      }
+    } catch {
+      invested = 0;
+    }
+    const reg = loadRegulator(scopeKey);
+    const baseline = Number(reg.baselineCoins) || Math.max(circulating, 1);
+    const recent = marketRepository.listRecentEvents?.(scopeKey, 20) || [];
+    const dayAgo = Date.now() - 24 * 60 * 60_000;
+    const eventsLast24h = recent.filter((e) => (e.createdAt || 0) >= dayAgo).length;
+    return {
+      circulatingCoins: circulating,
+      baselineCoins: baseline,
+      gini: computeGini(balances),
+      mintSink: Number(reg.mintSinkEstimate) || 0,
+      activePlayers: balances.length,
+      investedValue: invested,
+      avgAbsDeltaPct: computeAvgAbsDelta(prices),
+      eventsLast24h,
+    };
+  }
+
+  function maybeRegulate(scopeKey, funConfig = {}, now = Date.now()) {
+    if (funConfig.economyEnabled === false) return loadRegulator(scopeKey);
+    let reg = loadRegulator(scopeKey);
+    const every = Math.max(60_000, numOr(funConfig.economyRegulateMs, 30 * 60_000));
+    if (reg.lastRegulateAt && now - reg.lastRegulateAt < every) return reg;
+    if (!reg.baselineCoins) {
+      const m0 = collectHealthMetrics(scopeKey);
+      reg.baselineCoins = Math.max(1, m0.circulatingCoins || 1);
+    }
+    const metrics = collectHealthMetrics(scopeKey);
+    reg = regulate(metrics, reg, now);
+    saveRegulator(scopeKey, reg, {}, now);
+    return reg;
+  }
+
+  /**
+   * Tick de economia sem evento: mean-reversion, decay S/D, shocks agendados (decepção).
+   */
+  function tickEconomy(scopeKey, funConfig = {}, now = Date.now()) {
+    if (funConfig.economyEnabled === false) return { ok: false, reason: 'disabled' };
+    ensureMarket(scopeKey, funConfig, now);
+    const meta = marketRepository.getMeta(scopeKey);
+    const every = Math.max(60_000, numOr(funConfig.economyTickMs, 15 * 60_000));
+    if (meta.lastEconomyTickAt && now - meta.lastEconomyTickAt < every) {
+      return { ok: false, reason: 'too-soon', nextInMs: every - (now - meta.lastEconomyTickAt) };
+    }
+
+    let reg = maybeRegulate(scopeKey, funConfig, now);
+    const duePack = takeDueShocks(reg, now);
+    reg = duePack.reg;
+    const changed = [];
+
+    // aplica follow-ups de decepção silenciosamente (preço) sem anúncio obrigatório
+    for (const sh of duePack.due) {
+      const resolved = resolveEventProposal(
+        {
+          archetype: sh.archetype,
+          category: sh.category,
+          companyId: sh.companyId,
+          maxShockPct: sh.maxShockPct,
+          title: 'Ajuste de mercado',
+          body: 'O bairro digere o boato anterior.',
+          source: 'deception-followup',
+        },
+        { reg, random }
+      );
+      const aff = applyResolvedImpact(scopeKey, resolved, reg, now, null);
+      changed.push(...aff);
+      reg = pushTruthLog(reg, {
+        kind: 'scheduled_shock',
+        archetype: resolved.archetype,
+        category: resolved.category,
+        reason: sh.reason,
+        at: now,
+      });
+    }
+
+    for (const item of COLLECTIBLES) {
+      const persona = companyForItem(item);
+      let state = marketRepository.getAssetState(scopeKey, item.id);
+      state = decayAssetState(state, persona, reg);
+      const cur = marketRepository.getPrice(scopeKey, item.id);
+      const price = cur?.price ?? item.basePrice;
+      const tick = tickAsset({
+        price,
+        basePrice: item.basePrice,
+        personality: persona,
+        supply: state.supply,
+        demand: state.demand,
+        volumeBuy: state.volumeBuy,
+        volumeSell: state.volumeSell,
+        eventShock: state.eventShock,
+        reg,
+        random,
+      });
+      if (tick.price !== price) {
+        marketRepository.setPrice({
+          scopeKey,
+          itemId: item.id,
+          price: tick.price,
+          previousPrice: price,
+          trend: trendFrom(price, tick.price),
+          eventId: '',
+          now,
+        });
+        changed.push({
+          itemId: item.id,
+          name: item.name,
+          previousPrice: price,
+          price: tick.price,
+          trend: trendFrom(price, tick.price),
+          deltaPct: tick.deltaPct,
+        });
+      }
+      marketRepository.setAssetState({
+        scopeKey,
+        itemId: item.id,
+        supply: tick.supply,
+        demand: tick.demand,
+        eventShock: tick.eventShock,
+        volumeBuy: state.volumeBuy * (reg.volumeDecay || 0.72),
+        volumeSell: state.volumeSell * (reg.volumeDecay || 0.72),
+        now,
+      });
+    }
+
+    saveRegulator(scopeKey, reg, { lastEconomyTickAt: now }, now);
+    return { ok: true, changed, scheduledApplied: duePack.due.length };
   }
 
   /**
@@ -369,24 +404,41 @@ export function createMarketService({
     return { items: hydrateItems(scopeKey, base), latestEvent: latest, shop };
   }
 
-  async function inventEvent(funConfig = {}) {
-    const cats = ['combustivel', 'municao', 'arma', 'veiculo', 'defesa'];
-    const prompt = `Categorias: ${cats.join(', ')}. Gere evento de mercado de rua coerente (JSON).`;
+  async function inventEvent(funConfig = {}, reg = null) {
+    const regulator = reg || clampKnobs(defaultRegulatorKnobs());
+    const { reg: regAfterSeed, seed } = popNarrativeSeed({ ...regulator });
+    const prompt = buildInventUserPrompt({
+      recentFingerprints: regulator.recentFingerprints || [],
+      recentArchetypes: regulator.recentArchetypes || [],
+      narrativeSeed: seed,
+      companyMoods: listCompanies().map((co) => ({
+        id: co.id,
+        mood: co.risk > 0.7 ? 'hot' : co.risk < 0.3 ? 'stable' : 'warm',
+      })),
+    });
 
     if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.zenEnabled !== false) {
       try {
         const raw = await generateZen({
           baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
           model: funConfig.zenModel || 'mimo-v2.5-free',
-          system: EVENT_SYSTEM,
+          system: EVENT_INVENT_SYSTEM,
           prompt,
           timeoutMs: Math.max(5000, numOr(funConfig.zenTimeoutMs, 20000)),
           maxTokens: 520,
           temperature: 0.9,
           apiKey: funConfig.zenApiKey || '',
         });
-        const parsed = parseEventJson(raw, cats);
-        if (parsed) return { ...parsed, source: 'zen' };
+        const parsed = parseInventJson(raw);
+        if (parsed) {
+          return {
+            ...parsed,
+            description: parsed.body,
+            source: 'zen',
+            _regAfterSeed: regAfterSeed,
+            _seed: seed,
+          };
+        }
       } catch (err) {
         console.warn(`[fun/market] zen event fail: ${err?.message || err}`);
       }
@@ -397,7 +449,7 @@ export function createMarketService({
         const raw = await generateOllama({
           baseUrl: funConfig.ollamaBaseUrl || 'http://127.0.0.1:11434',
           model: funConfig.ollamaModel || 'gemma4:latest',
-          system: EVENT_SYSTEM,
+          system: EVENT_INVENT_SYSTEM,
           prompt,
           timeoutMs: Math.max(8000, numOr(funConfig.ollamaTimeoutMs, 25000)),
           keepAlive: funConfig.ollamaKeepAlive ?? -1,
@@ -405,73 +457,181 @@ export function createMarketService({
           numPredict: 480,
           temperature: 0.9,
         });
-        const parsed = parseEventJson(raw, cats);
-        if (parsed) return { ...parsed, source: 'ollama' };
+        const parsed = parseInventJson(raw);
+        if (parsed) {
+          return {
+            ...parsed,
+            description: parsed.body,
+            source: 'ollama',
+            _regAfterSeed: regAfterSeed,
+            _seed: seed,
+          };
+        }
       } catch (err) {
         console.warn(`[fun/market] ollama event fail: ${err?.message || err}`);
       }
     }
 
-    const t = pick(TEMPLATE_EVENTS, random);
+    const t = pickTemplateSeed(regulator.recentFingerprints || [], random);
     return {
-      ...t,
-      description: clampEventDescription(t.description),
+      archetype: t.archetype,
+      category: t.category,
+      companyId: t.companyId,
+      title: t.title,
+      body: t.body,
+      description: t.body,
       source: 'template',
+      _regAfterSeed: regAfterSeed,
+      _seed: seed,
     };
   }
 
-  function parseEventJson(raw, cats) {
-    const text = String(raw || '').trim();
-    const m = text.match(/\{[\s\S]*\}/);
-    if (!m) return null;
-    try {
-      const j = JSON.parse(m[0]);
-      const category = String(j.category || '').trim().toLowerCase();
-      if (!cats.includes(category)) return null;
-      const impactPct = clampImpact(j.impactPct);
-      if (impactPct === 0) return null;
-      const description = clampEventDescription(j.description);
-      if (!description) return null;
-      return {
-        title: String(j.title || 'Movimento de mercado').slice(0, 100),
-        description,
-        category,
-        impactPct,
-      };
-    } catch {
-      return null;
+  /**
+   * Aplica impacto resolvido (catálogo) + tick do motor — sem % da IA.
+   */
+  /** Quanto o mercado está acima do base (média dos itens). */
+  function marketOverheat(scopeKey) {
+    let sum = 0;
+    let n = 0;
+    for (const item of COLLECTIBLES) {
+      if (!item.utilityShop && !item.weaponShop) continue;
+      const p = marketRepository.getPrice(scopeKey, item.id)?.price ?? item.basePrice;
+      const base = Math.max(1, item.basePrice);
+      sum += p / base;
+      n += 1;
     }
+    if (!n) return 0;
+    return Math.max(0, sum / n - 1);
   }
 
-  function applyEventToPrices(scopeKey, event, now = Date.now()) {
+  function applyResolvedImpact(scopeKey, resolved, reg, now = Date.now(), eventId = null) {
     const affected = [];
+    const impact = resolved.impact;
+    const heat = marketOverheat(scopeKey);
     for (const item of COLLECTIBLES) {
-      if (item.category !== event.category) continue;
+      if (item.category !== resolved.category) continue;
+      const persona = companyForItem(item);
       const cur = marketRepository.getPrice(scopeKey, item.id);
       const prev = cur?.price ?? item.basePrice;
-      const next = applyPct(prev, event.impactPct);
-      const trend = trendFrom(prev, next);
+      const overItem = prev / Math.max(1, item.basePrice);
+      let state = marketRepository.getAssetState
+        ? marketRepository.getAssetState(scopeKey, item.id)
+        : { supply: 1, demand: 1, eventShock: 0, volumeBuy: 0, volumeSell: 0 };
+
+      if (impact && !impact.rumorOnly) {
+        let scale = Number(reg.eventImpactMult) || 1;
+        const sens = Number(persona.eventSensitivity) || 1;
+        let shock = (impact.shockPct || 0) * scale * sens;
+        let dSupply = (impact.supplyDelta || 0) * scale;
+        let dDemand = (impact.demandDelta || 0) * scale;
+
+        // item já caro: alta quase não pega; queda passa limpa
+        if (shock > 0 && overItem > 1.2) {
+          shock *= Math.max(0.15, 1.2 - overItem * 0.45);
+          dDemand *= 0.5;
+        }
+        // teto duro de choque por evento
+        shock = Math.max(-12, Math.min(10, shock));
+
+        state = {
+          ...state,
+          supply: Math.min(3, Math.max(0.2, state.supply + dSupply)),
+          demand: Math.min(3, Math.max(0.2, state.demand + dDemand)),
+          eventShock: (state.eventShock || 0) + shock,
+        };
+      }
+
+      // evento: aplica tick uma vez (sem empilhar foguete)
+      const tick = tickAsset({
+        price: prev,
+        basePrice: item.basePrice,
+        personality: persona,
+        supply: state.supply,
+        demand: state.demand,
+        volumeBuy: state.volumeBuy * 0.5,
+        volumeSell: state.volumeSell * 0.5,
+        eventShock: state.eventShock,
+        reg: { ...reg, baseNoisePct: Math.min(Number(reg.baseNoisePct) || 0.012, 0.01) },
+        random,
+      });
+
+      // cap de movimento por evento: ±12% do preço anterior
+      const maxUp = Math.round(prev * 1.12);
+      const maxDown = Math.max(1, Math.round(prev * 0.88));
+      let nextPrice = tick.price;
+      if (nextPrice > maxUp) nextPrice = maxUp;
+      if (nextPrice < maxDown) nextPrice = maxDown;
+      // ainda respeita floor/ceil da persona
+      const floor = Math.max(1, Math.floor(item.basePrice * (persona.floorMult || 0.4)));
+      const ceil = Math.max(floor + 1, Math.floor(item.basePrice * (persona.ceilMult || 2.2)));
+      nextPrice = Math.min(ceil, Math.max(floor, nextPrice));
+
+      const trend = trendFrom(prev, nextPrice);
       marketRepository.setPrice({
         scopeKey,
         itemId: item.id,
-        price: next,
+        price: nextPrice,
         previousPrice: prev,
         trend,
-        eventId: event.id,
+        eventId: eventId || '',
         now,
       });
+      if (marketRepository.setAssetState) {
+        marketRepository.setAssetState({
+          scopeKey,
+          itemId: item.id,
+          supply: tick.supply,
+          demand: tick.demand,
+          eventShock: Math.max(-20, Math.min(20, tick.eventShock)),
+          volumeBuy: state.volumeBuy * 0.5,
+          volumeSell: state.volumeSell * 0.5,
+          now,
+        });
+      }
       affected.push({
         itemId: item.id,
         name: item.name,
         previousPrice: prev,
-        price: next,
+        price: nextPrice,
         trend,
+        deltaPct: prev > 0 ? ((nextPrice - prev) / prev) * 100 : 0,
+        primaryReason: tick.primaryReason,
+        companyId: persona.id,
       });
     }
+    void heat;
     return affected;
   }
 
-  function tryBreakItem(scopeKey, funConfig, now = Date.now()) {
+  /** Compat: evento legado com impactPct numérico (só testes/old rows). */
+  function applyEventToPrices(scopeKey, event, now = Date.now()) {
+    const reg = loadRegulator(scopeKey);
+    const resolved = resolveEventProposal(
+      {
+        archetype: event.archetype || undefined,
+        category: event.category,
+        companyId: event.companyId,
+        title: event.title,
+        body: event.description,
+        // se só tem impactPct legado, força soft via display — mas usa catálogo se tiver archetype
+        source: event.source || 'legacy',
+      },
+      { reg, random }
+    );
+    // Se evento já tem impactPct e sem archetype, sintetiza shock
+    if (!event.archetype && event.impactPct) {
+      resolved.impact = {
+        archetype: 'legacy',
+        supplyDelta: event.impactPct > 0 ? -0.1 : 0.1,
+        demandDelta: event.impactPct > 0 ? 0.15 : -0.15,
+        shockPct: Number(event.impactPct) || 0,
+        rumorOnly: false,
+      };
+    }
+    return applyResolvedImpact(scopeKey, resolved, reg, now, event.id);
+  }
+
+    function tryBreakItem(scopeKey, funConfig, now = Date.now()) {
     const o = opts(funConfig);
     if (random() > o.breakChance) return null;
     const pool = marketRepository
@@ -518,37 +678,201 @@ export function createMarketService({
       };
     }
 
-    const draft = await inventEvent(funConfig);
+    let reg = maybeRegulate(scopeKey, funConfig, now);
+    const heat = marketOverheat(scopeKey);
+    reg = clampKnobs({ ...reg, marketOverheat: heat });
+    // mercado já inflado: força seed de correção
+    if (heat > 0.4 && random() < 0.7) {
+      reg = {
+        ...reg,
+        narrativeSeeds: ['profit_take', 'demand_slump', 'liquidity_flood', ...(reg.narrativeSeeds || [])].slice(
+          0,
+          6
+        ),
+      };
+    }
+
+    const draft = await inventEvent(funConfig, reg);
+    if (draft._regAfterSeed) reg = clampKnobs({ ...draft._regAfterSeed, marketOverheat: heat });
+    // seed do regulador volta como bias de arquétipo (foi popado no invent)
+    if (draft._seed) {
+      reg = {
+        ...reg,
+        narrativeSeeds: [draft._seed, ...(reg.narrativeSeeds || [])].slice(0, 6),
+      };
+    }
+
+    let proposal = {
+      archetype: draft.archetype || draft._seed || undefined,
+      category: draft.category,
+      companyId: draft.companyId,
+      title: draft.title,
+      body: draft.body || draft.description,
+      source: draft.source,
+    };
+
+    // resolve primeiro para saber direção real (pré-deception)
+    let resolvedPreview = resolveEventProposal(proposal, { reg, random, overheat: heat });
+    const company = resolvedPreview.company || getCompany(resolvedPreview.companyId);
+    const deceptionMode = pickDeceptionMode({
+      reg,
+      companyRisk: company?.risk ?? 0.3,
+      random,
+    });
+
+    const plan = applyDeceptionPlan({
+      mode: deceptionMode,
+      archetypeId: resolvedPreview.archetype,
+      trueDirection: (resolvedPreview.impact?.shockPct || 0) >= 0 ? 'up' : 'down',
+      primaryReason: 'event_residual',
+      category: resolvedPreview.category,
+      companyId: resolvedPreview.companyId,
+      now,
+      random,
+    });
+
+    if (plan.forceRumor || plan.effectiveArchetype === 'rumor_only') {
+      proposal = { ...proposal, forceArchetype: 'rumor_only', archetype: 'rumor_only' };
+    } else if (plan.effectiveArchetype) {
+      proposal = { ...proposal, archetype: plan.effectiveArchetype };
+    }
+
+    const resolved = resolveEventProposal(proposal, { reg, random, overheat: heat });
+    const affected = applyResolvedImpact(scopeKey, resolved, reg, now, null);
+
+    const avgDelta =
+      affected.length > 0
+        ? affected.reduce((s, a) => s + (a.deltaPct || 0), 0) / affected.length
+        : resolved.impact?.rumorOnly
+          ? 0
+          : resolved.displayShockHint || 0;
+    const impactPct = clampShockPct(avgDelta);
+    const direction =
+      avgDelta > 0.5 ? 'up' : avgDelta < -0.5 ? 'down' : 'flat';
+    const primaryReason = affected[0]?.primaryReason || 'event_residual';
+
+    let title = resolved.title;
+    let description = clampEventDescription(resolved.body);
+
+    // C2: opcionalmente reescreve se só temos template seco e LLM on — skip se já tem body bom
+    // (draft já veio com história da inventora)
+
+    const truth = {
+      archetype: resolved.archetype,
+      impact: resolved.impact,
+      deceptionMode,
+      primaryReason,
+      plan: {
+        mode: plan.mode,
+        smokeReason: plan.smokeReason,
+        journalDirection: plan.journalDirection,
+      },
+      ignoredAiImpactPct: draft.ignoredAiImpactPct,
+      affected: affected.map((a) => ({
+        itemId: a.itemId,
+        previousPrice: a.previousPrice,
+        price: a.price,
+        deltaPct: a.deltaPct,
+      })),
+    };
+
     const event = marketRepository.insertEvent({
       scopeKey,
-      title: draft.title,
-      description: clampEventDescription(draft.description),
-      category: draft.category,
-      impactPct: clampImpact(draft.impactPct),
-      source: draft.source,
+      title,
+      description,
+      category: resolved.category,
+      impactPct,
+      source: draft.source || 'template',
       now,
+      archetype: resolved.archetype,
+      deceptionMode,
+      companyId: resolved.companyId,
+      truth,
     });
-    const affected = applyEventToPrices(scopeKey, event, now);
+
+    // re-bind event id on prices
+    for (const a of affected) {
+      marketRepository.setPrice({
+        scopeKey,
+        itemId: a.itemId,
+        price: a.price,
+        previousPrice: a.previousPrice,
+        trend: a.trend,
+        eventId: event.id,
+        now,
+      });
+    }
+
+    if (plan.followUp) {
+      reg = scheduleShock(reg, plan.followUp);
+    }
+    reg = pushRecentArchetype(reg, resolved.archetype);
+    reg = pushFingerprint(reg, fingerprintText(title, description));
+    reg = pushTruthLog(reg, {
+      eventId: event.id,
+      deceptionMode,
+      archetype: resolved.archetype,
+      impactPct,
+      at: now,
+    });
+    // limpa seed usado
+    if (draft._seed && Array.isArray(reg.narrativeSeeds)) {
+      reg.narrativeSeeds = reg.narrativeSeeds.filter((s) => s !== draft._seed);
+    }
+
     const broken = tryBreakItem(scopeKey, funConfig, now);
     const lo = Math.min(o.minMs, o.maxMs);
     const hi = Math.max(o.minMs, o.maxMs);
-    marketRepository.setMeta(scopeKey, {
-      lastEventAt: now,
-      nextEventAt: now + lo + Math.floor(random() * Math.max(1, hi - lo)),
-      now,
-    });
-    return { ok: true, event, affected, broken, announce: o.announce };
+    const baseWait = lo + Math.floor(random() * Math.max(1, hi - lo));
+    const wait = scaleEventWaitMs(baseWait, reg);
+
+    saveRegulator(
+      scopeKey,
+      reg,
+      {
+        lastEventAt: now,
+        nextEventAt: now + wait,
+      },
+      now
+    );
+
+    return {
+      ok: true,
+      event,
+      affected,
+      broken,
+      announce: o.announce,
+      deceptionMode,
+      archetype: resolved.archetype,
+      companyId: resolved.companyId,
+      truth,
+    };
   }
 
-  async function tryAutoMarketEvent({ scopeKey, funConfig = {}, now = Date.now() }) {
+    /**
+   * @param {{ scopeKey: string, funConfig?: object, now?: number, autonomous?: boolean }} input
+   * autonomous=true (relógio do mundo): quando o horário chega, dispara de verdade
+   * sem “soft-skip” aleatório — não depende de alguém mandar msg.
+   */
+  async function tryAutoMarketEvent({
+    scopeKey,
+    funConfig = {},
+    now = Date.now(),
+    autonomous = false,
+  } = {}) {
     const o = opts(funConfig);
     if (!o.enabled) return { ok: false, reason: 'disabled' };
     ensureMarket(scopeKey, funConfig, now);
+    // tick de preços / decepção agendada mesmo entre eventos
+    if (autonomous && funConfig.economyEnabled !== false) {
+      tickEconomy(scopeKey, funConfig, now);
+    }
     const meta = marketRepository.getMeta(scopeKey);
     if (meta.nextEventAt > now) {
       return { ok: false, reason: 'scheduled', nextEventAt: meta.nextEventAt };
     }
-    if (random() > 0.22 && meta.nextEventAt > 0) {
+    // No fluxo de mensagem ainda pode pular de leve; no tick autônomo, honra o relógio.
+    if (!autonomous && random() > 0.22 && meta.nextEventAt > 0) {
       return { ok: false, reason: 'soft-skip' };
     }
     return runMarketEvent({ scopeKey, funConfig, now, force: true });
@@ -615,6 +939,8 @@ export function createMarketService({
       usesLeft: Number.isFinite(col.uses) ? col.uses : -1,
       now,
     });
+
+    recordTrade(scopeKey, col.id, 'buy', price, now);
 
     return {
       ok: true,
@@ -1307,6 +1633,63 @@ export function createMarketService({
     };
   }
 
+  function buyFromBazaar({ userJid, scopeKey, listingId, now = Date.now() }) {
+    const listing = marketRepository.getListing(listingId);
+    if (!listing || listing.scopeKey !== scopeKey || listing.status !== 'open') {
+      return { ok: false, reason: 'not-found' };
+    }
+    if (listing.sellerJid === userJid) return { ok: false, reason: 'self-buy' };
+    const inv = marketRepository.getInventoryById(listing.inventoryId);
+    if (!inv || inv.condition === 'broken') {
+      marketRepository.closeListing(listingId, 'cancelled');
+      return { ok: false, reason: 'item-gone' };
+    }
+    const price = listing.price;
+    const bal =
+      repository.getUserStats(userJid, scopeKey)?.coins ??
+      repository.ensureUserRow(userJid, scopeKey, now).coins;
+    if (bal < price) {
+      return { ok: false, reason: 'insufficient-funds', coins: bal, price };
+    }
+    const spend = repository.addCoins({
+      userJid,
+      scopeKey,
+      amount: -price,
+      now,
+      reason: `bazaar-buy:${listing.id}`,
+    });
+    if (!spend.ok) return { ok: false, reason: 'spend-failed' };
+    repository.addCoins({
+      userJid: listing.sellerJid,
+      scopeKey,
+      amount: price,
+      now,
+      reason: `bazaar-sell:${listing.id}`,
+    });
+    const uses = inv.usesLeft;
+    marketRepository.deleteInventory(inv.id);
+    const newInv = marketRepository.addInventory({
+      userJid,
+      scopeKey,
+      itemId: inv.itemId,
+      acquiredPrice: price,
+      condition: 'ok',
+      usesLeft: uses,
+      now,
+    });
+    marketRepository.closeListing(listingId, 'sold');
+    recordTrade(scopeKey, listing.itemId, 'buy', price, now);
+    return {
+      ok: true,
+      listing,
+      inventory: newInv,
+      collectible: getCollectible(inv.itemId),
+      price,
+      coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+      sellerJid: listing.sellerJid,
+    };
+  }
+
   function repairItem({
     userJid,
     scopeKey,
@@ -1411,13 +1794,16 @@ export function createMarketService({
     const e = result.event;
     const sign = e.impactPct > 0 ? '+' : '';
     const story = clampEventDescription(e.description);
+    const company = e.companyId ? getCompany(e.companyId) : null;
     const lines = [
       '📰 *Mercado de rua*',
       `*${e.title}*`,
       '',
       story || null,
       '',
-      `Categoria *${e.category}* · *${sign}${e.impactPct}%*`,
+      company
+        ? `${company.emoji} *${company.name}* · *${e.category}* · *${sign}${e.impactPct}%*`
+        : `Categoria *${e.category}* · *${sign}${e.impactPct}%*`,
     ];
     if (result.affected?.length) {
       lines.push(
@@ -1449,6 +1835,9 @@ export function createMarketService({
     hasWeaponsLicense,
     runMarketEvent,
     tryAutoMarketEvent,
+    tickEconomy,
+    maybeRegulate,
+    loadRegulator,
     maybeWeeklyRestock,
     buyFromShop,
     buyFromGallery,
