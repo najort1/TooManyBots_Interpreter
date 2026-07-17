@@ -26,40 +26,128 @@ function normalizeContent(content) {
 }
 
 /**
- * Extrai texto final. Alguns modelos free (ex. deepseek) enchem max_tokens em
- * reasoning_content e deixam content vazio — aí usamos a última linha do raciocínio.
+ * Detecta rascunho / raciocínio incompleto (comum em DeepSeek free).
+ * Ex.: "Mas \"cair duro\" pode ser" · "Assim, em português"
  */
-function extractChatText(data) {
+export function looksLikeIncompleteOrMeta(text) {
+  const s = String(text || '').trim();
+  if (!s) return true;
+  if (s.length < 12) return true;
+
+  // meta / planning
+  if (
+    /\b(I need|we are|the user|therefore|let me|shouldn'?t|in Portuguese|as an AI|the answer|funny line|write a|thinking)\b/i.test(
+      s
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(em português|em portugues|assim,?$|outra ideia|posso (escrever|dizer|brincar)|vou (escrever|criar|focar)|preciso (escrever|criar|gerar)|a frase (poderia|seria|tem)|algo como|tipo assim|respond[ae] somente|só o texto|so o texto)\b/i.test(
+      s
+    )
+  ) {
+    return true;
+  }
+  // fragmento de brainstorm
+  if (/\b(pode ser|seria|talvez)\s*$/i.test(s)) return true;
+  if (/^(mas|assim|então|entao|tipo|algo|talvez|porque|pois)\b/i.test(s) && s.length < 55) {
+    return true;
+  }
+  // aspas abertas / frase cortada
+  const quotes = (s.match(/["“”']/g) || []).length;
+  if (quotes % 2 === 1) return true;
+  if (/[,:;]\s*$/.test(s) && !/[.!?…)]$/.test(s) && s.length < 80) return true;
+  // só instrução curta
+  if (/^(ok|certo|claro|sim|não|nao)[.!]?\s*$/i.test(s)) return true;
+  // eco de system prompt (lista de features)
+  if (/\bcen[aá]rios?\s*:/i.test(s)) return true;
+  if (/cancelamento absurdo/i.test(s) && /fofoca|or[aá]culo|roleta/i.test(s)) return true;
+  if (/fofoca falsa.*or[aá]culo|or[aá]culo insano.*conspir/i.test(s)) return true;
+  // eco de instrução de formato
+  if (/\b\d\s*[–-]\s*\d\s*frases?\b/i.test(s) && s.length < 80) return true;
+  if (/\b(frases?\s+completas?|s[oó]\s+o\s+texto\s+final|m[aá]x\.?\s*\d+\s*chars?)\b/i.test(s) && s.length < 100) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Escolhe a melhor linha “final” de um bloco de reasoning.
+ */
+function pickBestFromReasoning(reasoning) {
+  const block = String(reasoning || '').trim();
+  if (!block) return '';
+
+  // 1) marcadores explícitos de resposta final
+  const marked = block.match(
+    /(?:^|\n)\s*(?:resposta|final|frase|output|answer)\s*[:：]\s*(.+)$/im
+  );
+  if (marked?.[1]) {
+    const c = marked[1].replace(/^["'“”]+|["'“”]+$/g, '').trim();
+    if (c && !looksLikeIncompleteOrMeta(c)) return c.slice(0, 400);
+  }
+
+  // 2) última linha entre aspas que pareça frase completa
+  const quoted = [...block.matchAll(/["“]([^"”\n]{16,200})["”]/g)].map((m) => m[1].trim());
+  for (let i = quoted.length - 1; i >= 0; i -= 1) {
+    if (!looksLikeIncompleteOrMeta(quoted[i])) return quoted[i];
+  }
+
+  // 3) linhas de trás pra frente: completa, pt-BR, sem meta
+  const lines = block
+    .split(/\n+/)
+    .map((l) =>
+      l
+        .replace(/^["'“”«»]+|["'“”«»]+$/g, '')
+        .replace(/^(final|answer|resposta|frase|output)\s*[:：]\s*/i, '')
+        .trim()
+    )
+    .filter(Boolean);
+
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    let l = lines[i];
+    if (l.length < 16 || l.length > 320) continue;
+    if (looksLikeIncompleteOrMeta(l)) continue;
+    // prefere frase que “fecha” e não é inglês de raciocínio
+    if (/\b(I |we |the user|need |should |would )\b/i.test(l) && !/[áàâãéêíóôõúç]/i.test(l)) {
+      continue;
+    }
+    if (/[.!?…)]$|kkk|rs\b|haha/i.test(l) || l.length >= 28) {
+      return l;
+    }
+  }
+
+  // 4) nenhuma linha boa → vazio (cascade usa Ollama/template)
+  return '';
+}
+
+/**
+ * Extrai texto final. Modelos free (DeepSeek) costumam encher reasoning_content
+ * e deixar content vazio ou com fragmento — NÃO devolver rascunho.
+ */
+export function extractChatText(data) {
   if (!data || typeof data !== 'object') return '';
   const choice = Array.isArray(data.choices) ? data.choices[0] : null;
   if (!choice) return '';
 
   const msg = choice.message || {};
-  let text = normalizeContent(msg.content ?? choice.text ?? '');
-  if (text) return text;
-
-  // reasoning / thinking fields
-  const reasoning = normalizeContent(
-    msg.reasoning_content || msg.reasoning || msg.thinking || ''
-  );
-  if (!reasoning) return '';
-
-  const lines = reasoning
-    .split(/\n+/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    let l = lines[i]
-      .replace(/^["'“”]+|["'“”]+$/g, '')
-      .replace(/^(final|answer|resposta|frase)\s*:\s*/i, '')
-      .trim();
-    // pula meta de raciocínio
-    if (l.length < 8) continue;
-    if (/^(we are|the user|so the|therefore|passo|thinking)/i.test(l)) continue;
-    // tira trechos muito longos de raciocínio
-    if (l.length > 200) l = `${l.slice(0, 160).trim()}…`;
-    return l;
+  const content = normalizeContent(msg.content ?? choice.text ?? '');
+  if (content && !looksLikeIncompleteOrMeta(content)) {
+    return content;
   }
+
+  // content lixo/vazio → tenta reasoning com filtro rígido
+  const reasoning = normalizeContent(
+    msg.reasoning_content || msg.reasoning || msg.thinking || choice.reasoning || ''
+  );
+  if (reasoning) {
+    const fromReason = pickBestFromReasoning(reasoning);
+    if (fromReason) return fromReason;
+  }
+
+  // content incompleto mas era o único: ainda rejeita (melhor template)
   return '';
 }
 
@@ -78,7 +166,7 @@ function extractChatText(data) {
  */
 export async function openaiChatComplete({
   baseUrl = 'http://127.0.0.1:3000',
-  model = 'deepseek-v4-flash-free',
+  model = 'mimo-v2.5-free',
   prompt,
   system = '',
   timeoutMs = 20_000,
@@ -118,10 +206,10 @@ export async function openaiChatComplete({
       method: 'POST',
       headers,
       body: JSON.stringify({
-        model: String(model || 'deepseek-v4-flash-free'),
+        model: String(model || 'mimo-v2.5-free'),
         messages,
         temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.85,
-        max_tokens: Math.max(16, Math.min(2000, Math.floor(Number(maxTokens) || 400))),
+        max_tokens: Math.max(32, Math.min(2000, Math.floor(Number(maxTokens) || 400))),
         stream: false,
       }),
       signal: controller.signal,

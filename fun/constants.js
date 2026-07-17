@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '10';
+export const FUN_SCHEMA_VERSION = '11';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -47,6 +47,15 @@ export const FUN_COMMANDS = Object.freeze({
   RANK_CASINO: 'rankcasino',
   BINGO: 'bingo',
   TAROT: 'tarot',
+  // Chaos / zoeira social
+  RUSSIAN: 'russian',
+  PULL: 'pull',
+  CANCEL: 'cancel',
+  GOSSIP: 'gossip',
+  ORACLE: 'oracle',
+  ILLUMINATI: 'illuminati',
+  LORE: 'lore',
+  FORGET_LORE: 'forget_lore',
   // Colecionáveis / mercado
   GALLERY: 'gallery',
   INVENTORY: 'inventory',
@@ -90,6 +99,15 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     FUN_COMMANDS.BINGO,
     // tarô de grupo: a leitura é o entretenimento público
     FUN_COMMANDS.TAROT,
+    // zoeira social (público no grupo)
+    FUN_COMMANDS.RUSSIAN,
+    FUN_COMMANDS.PULL,
+    FUN_COMMANDS.CANCEL,
+    FUN_COMMANDS.GOSSIP,
+    FUN_COMMANDS.ORACLE,
+    FUN_COMMANDS.ILLUMINATI,
+    FUN_COMMANDS.LORE,
+    FUN_COMMANDS.FORGET_LORE,
     // assalto/armas: precisa de visibilidade no grupo
     FUN_COMMANDS.ASSAULT,
     FUN_COMMANDS.WEAPONS,
@@ -193,10 +211,41 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   tarot: FUN_COMMANDS.TAROT,
   taro: FUN_COMMANDS.TAROT,
   tarô: FUN_COMMANDS.TAROT,
-  oraculo: FUN_COMMANDS.TAROT,
-  oráculo: FUN_COMMANDS.TAROT,
   cartas: FUN_COMMANDS.TAROT,
   vidente: FUN_COMMANDS.TAROT,
+  // oráculo maluco (não é tarô)
+  oraculo: FUN_COMMANDS.ORACLE,
+  oráculo: FUN_COMMANDS.ORACLE,
+  oraculomaldito: FUN_COMMANDS.ORACLE,
+  oraculomaluco: FUN_COMMANDS.ORACLE,
+  perguntamaluca: FUN_COMMANDS.ORACLE,
+  roletarussa: FUN_COMMANDS.RUSSIAN,
+  roleta_russa: FUN_COMMANDS.RUSSIAN,
+  russianroulette: FUN_COMMANDS.RUSSIAN,
+  rr: FUN_COMMANDS.RUSSIAN,
+  puxar: FUN_COMMANDS.PULL,
+  gatilho: FUN_COMMANDS.PULL,
+  pull: FUN_COMMANDS.PULL,
+  cancelar: FUN_COMMANDS.CANCEL,
+  cancelamento: FUN_COMMANDS.CANCEL,
+  cancel: FUN_COMMANDS.CANCEL,
+  fofoca: FUN_COMMANDS.GOSSIP,
+  rumor: FUN_COMMANDS.GOSSIP,
+  gossip: FUN_COMMANDS.GOSSIP,
+  illuminati: FUN_COMMANDS.ILLUMINATI,
+  iluminati: FUN_COMMANDS.ILLUMINATI,
+  conspiracao: FUN_COMMANDS.ILLUMINATI,
+  conspiração: FUN_COMMANDS.ILLUMINATI,
+  teoria: FUN_COMMANDS.ILLUMINATI,
+  lore: FUN_COMMANDS.LORE,
+  memorias: FUN_COMMANDS.LORE,
+  memórias: FUN_COMMANDS.LORE,
+  memoria: FUN_COMMANDS.LORE,
+  memória: FUN_COMMANDS.LORE,
+  esquecelore: FUN_COMMANDS.FORGET_LORE,
+  esquecerlore: FUN_COMMANDS.FORGET_LORE,
+  limparlore: FUN_COMMANDS.FORGET_LORE,
+  forgetlore: FUN_COMMANDS.FORGET_LORE,
   rankcassino: FUN_COMMANDS.RANK_CASINO,
   rankcasino: FUN_COMMANDS.RANK_CASINO,
   topcassino: FUN_COMMANDS.RANK_CASINO,
@@ -340,9 +389,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // OpenCode Zen Proxy (OpenAI-compatible)
   zenEnabled: true,
   zenBaseUrl: 'http://127.0.0.1:3000',
-  // mimo-v2.5-free responde content direto; deepseek-free gasta tokens em reasoning
+  // mimo responde content direto (deepseek free costuma ecoar prompt / reasoning)
   zenModel: 'mimo-v2.5-free',
-  // Free APIs e Ollama frio passam fácil de 5s — default realista
   zenTimeoutMs: 20_000,
   zenMaxTokens: 400,
   /** Orçamento total Zen→Ollama→template por resposta de flavor (ms). */
@@ -452,4 +500,25 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   happyHourDurationMs: 45 * 60_000,
   happyHourPayoutMult: 1.12,
   happyHourCooldownMs: 4 * 60 * 60_000,
+  // chaos social
+  russianChambers: 6,
+  russianDeathMs: 15 * 60_000,
+  russianIdleMs: 10 * 60_000,
+  chaosCooldownMs: 25_000,
+  /** Budget Zen→Ollama pro texto de caos (oráculo/fofoca/etc.). */
+  chaosTimeoutMs: 28_000,
+  chaosMaxChars: 700,
+  chaosMaxTokens: 360,
+  // Memória persistente por grupo (lore seletiva)
+  memoryEnabled: true,
+  memoryMaxFacts: 50,
+  memorySummaryMaxChars: 160,
+  memoryPersonaMaxChars: 500,
+  memoryBufferSize: 24,
+  memoryFlushMinMessages: 8,
+  memoryFlushIntervalMs: 12 * 60_000,
+  memoryMinMsgChars: 12,
+  memoryExtractTimeoutMs: 28_000,
+  memoryTtlDays: 45,
+  memoryMinScore: 35,
 });

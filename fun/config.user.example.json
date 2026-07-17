@@ -25,6 +25,7 @@
   "zenModel": "mimo-v2.5-free",
   "zenTimeoutMs": 20000,
   "zenMaxTokens": 400,
+  "memoryEnabled": true,
   "zenTemperature": 0.85,
   "zenApiKey": "",
   "flavorTimeoutMs": 28000,
