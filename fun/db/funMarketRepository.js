@@ -28,13 +28,22 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
       lastEventAt: Number(row?.last_event_at) || 0,
       nextEventAt: Number(row?.next_event_at) || 0,
       lastRestockAt: Number(row?.last_restock_at) || 0,
+      lastEconomyTickAt: Number(row?.last_economy_tick_at) || 0,
+      economy: parseJson(row?.economy_json, {}),
       updatedAt: Number(row?.updated_at) || 0,
     };
   }
 
   function setMeta(
     scopeKey,
-    { lastEventAt, nextEventAt, lastRestockAt, now = Date.now() } = {}
+    {
+      lastEventAt,
+      nextEventAt,
+      lastRestockAt,
+      lastEconomyTickAt,
+      economy,
+      now = Date.now(),
+    } = {}
   ) {
     ensureSchema();
     const s = String(scopeKey || '');
@@ -48,18 +57,27 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
       lastRestockAt === undefined
         ? cur.lastRestockAt
         : Math.max(0, Math.floor(Number(lastRestockAt) || 0));
+    const nextTick =
+      lastEconomyTickAt === undefined
+        ? cur.lastEconomyTickAt
+        : Math.max(0, Math.floor(Number(lastEconomyTickAt) || 0));
+    const nextEconomy =
+      economy === undefined ? cur.economy || {} : economy && typeof economy === 'object' ? economy : {};
+    const economyJson = JSON.stringify(nextEconomy || {});
     getDatabase()
       .prepare(
         `INSERT INTO ${ANALYTICS_SCHEMA}.fun_market_meta
-         (scope_key, last_event_at, next_event_at, last_restock_at, updated_at)
-         VALUES (?, ?, ?, ?, ?)
+         (scope_key, last_event_at, next_event_at, last_restock_at, updated_at, economy_json, last_economy_tick_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(scope_key) DO UPDATE SET
            last_event_at = excluded.last_event_at,
            next_event_at = excluded.next_event_at,
            last_restock_at = excluded.last_restock_at,
-           updated_at = excluded.updated_at`
+           updated_at = excluded.updated_at,
+           economy_json = excluded.economy_json,
+           last_economy_tick_at = excluded.last_economy_tick_at`
       )
-      .run(s, nextLastEvent, nextNextEvent, nextRestock, ts);
+      .run(s, nextLastEvent, nextNextEvent, nextRestock, ts, economyJson, nextTick);
     return getMeta(s);
   }
 
@@ -271,15 +289,21 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
     source = 'template',
     now = Date.now(),
     id = null,
+    archetype = '',
+    deceptionMode = 'none',
+    companyId = '',
+    truth = null,
   }) {
     ensureSchema();
     const eventId = id || randomUUID();
     const ts = Number(now) || Date.now();
+    const truthJson = JSON.stringify(truth && typeof truth === 'object' ? truth : {});
     getDatabase()
       .prepare(
         `INSERT INTO ${ANALYTICS_SCHEMA}.fun_market_events
-         (id, scope_key, title, description, category, impact_pct, source, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         (id, scope_key, title, description, category, impact_pct, source, created_at,
+          archetype, deception_mode, company_id, truth_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         eventId,
@@ -289,7 +313,11 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
         String(category || ''),
         Number(impactPct) || 0,
         String(source || 'template'),
-        ts
+        ts,
+        String(archetype || ''),
+        String(deceptionMode || 'none'),
+        String(companyId || ''),
+        truthJson
       );
     return getEvent(eventId);
   }
@@ -309,6 +337,10 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
       impactPct: Number(row.impact_pct) || 0,
       source: String(row.source || ''),
       createdAt: Number(row.created_at) || 0,
+      archetype: String(row.archetype || ''),
+      deceptionMode: String(row.deception_mode || 'none'),
+      companyId: String(row.company_id || ''),
+      truth: parseJson(row.truth_json, {}),
     };
   }
 
@@ -537,6 +569,130 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
     return row ? getListing(row.id) : null;
   }
 
+  function ensureAssetStates(scopeKey, now = Date.now()) {
+    ensureSchema();
+    ensurePrices(scopeKey, now);
+    const s = String(scopeKey || '');
+    const ts = Number(now) || Date.now();
+    const db = getDatabase();
+    const insert = db.prepare(
+      `INSERT OR IGNORE INTO ${ANALYTICS_SCHEMA}.fun_market_asset_state
+       (scope_key, item_id, supply, demand, event_shock, volume_buy, volume_sell, updated_at)
+       VALUES (?, ?, 1, 1, 0, 0, 0, ?)`
+    );
+    for (const item of COLLECTIBLES) {
+      insert.run(s, item.id, ts);
+    }
+  }
+
+  function getAssetState(scopeKey, itemId) {
+    ensureSchema();
+    ensureAssetStates(scopeKey);
+    const row = getDatabase()
+      .prepare(
+        `SELECT * FROM ${ANALYTICS_SCHEMA}.fun_market_asset_state
+         WHERE scope_key = ? AND item_id = ?`
+      )
+      .get(String(scopeKey || ''), String(itemId || ''));
+    if (!row) {
+      return {
+        scopeKey: String(scopeKey || ''),
+        itemId: String(itemId || ''),
+        supply: 1,
+        demand: 1,
+        eventShock: 0,
+        volumeBuy: 0,
+        volumeSell: 0,
+        updatedAt: 0,
+      };
+    }
+    return {
+      scopeKey: String(row.scope_key),
+      itemId: String(row.item_id),
+      supply: Number(row.supply) || 1,
+      demand: Number(row.demand) || 1,
+      eventShock: Number(row.event_shock) || 0,
+      volumeBuy: Number(row.volume_buy) || 0,
+      volumeSell: Number(row.volume_sell) || 0,
+      updatedAt: Number(row.updated_at) || 0,
+    };
+  }
+
+  function setAssetState({
+    scopeKey,
+    itemId,
+    supply,
+    demand,
+    eventShock,
+    volumeBuy,
+    volumeSell,
+    now = Date.now(),
+  }) {
+    ensureSchema();
+    const s = String(scopeKey || '');
+    const id = String(itemId || '');
+    const ts = Number(now) || Date.now();
+    getDatabase()
+      .prepare(
+        `INSERT INTO ${ANALYTICS_SCHEMA}.fun_market_asset_state
+         (scope_key, item_id, supply, demand, event_shock, volume_buy, volume_sell, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(scope_key, item_id) DO UPDATE SET
+           supply = excluded.supply,
+           demand = excluded.demand,
+           event_shock = excluded.event_shock,
+           volume_buy = excluded.volume_buy,
+           volume_sell = excluded.volume_sell,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        s,
+        id,
+        Number.isFinite(Number(supply)) ? Number(supply) : 1,
+        Number.isFinite(Number(demand)) ? Number(demand) : 1,
+        Number.isFinite(Number(eventShock)) ? Number(eventShock) : 0,
+        Math.max(0, Number(volumeBuy) || 0),
+        Math.max(0, Number(volumeSell) || 0),
+        ts
+      );
+    return getAssetState(s, id);
+  }
+
+  function listAssetStates(scopeKey) {
+    ensureSchema();
+    ensureAssetStates(scopeKey);
+    return getDatabase()
+      .prepare(
+        `SELECT * FROM ${ANALYTICS_SCHEMA}.fun_market_asset_state WHERE scope_key = ?`
+      )
+      .all(String(scopeKey || ''))
+      .map((row) => ({
+        scopeKey: String(row.scope_key),
+        itemId: String(row.item_id),
+        supply: Number(row.supply) || 1,
+        demand: Number(row.demand) || 1,
+        eventShock: Number(row.event_shock) || 0,
+        volumeBuy: Number(row.volume_buy) || 0,
+        volumeSell: Number(row.volume_sell) || 0,
+        updatedAt: Number(row.updated_at) || 0,
+      }));
+  }
+
+  function listRecentEvents(scopeKey, limit = 12) {
+    ensureSchema();
+    const rows = getDatabase()
+      .prepare(
+        `SELECT id FROM ${ANALYTICS_SCHEMA}.fun_market_events
+         WHERE scope_key = ?
+         ORDER BY created_at DESC LIMIT ?`
+      )
+      .all(
+        String(scopeKey || ''),
+        Math.max(1, Math.min(40, Math.floor(Number(limit) || 12)))
+      );
+    return rows.map((r) => getEvent(r.id)).filter(Boolean);
+  }
+
   return {
     getMeta,
     setMeta,
@@ -552,6 +708,7 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
     insertEvent,
     getEvent,
     latestEvent,
+    listRecentEvents,
     listHistory,
     addInventory,
     getInventoryById,
@@ -565,5 +722,9 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
     listOpenListings,
     closeListing,
     findOpenListingByInventory,
+    ensureAssetStates,
+    getAssetState,
+    setAssetState,
+    listAssetStates,
   };
 }

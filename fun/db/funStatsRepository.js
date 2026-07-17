@@ -352,6 +352,23 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     }));
   }
 
+  /** Saldos do scope (regulador econômico / Gini). */
+  function listScopeCoinBalances(scopeKey, limit = 500) {
+    ensureFunSchema();
+    const db = getDatabase();
+    const s = String(scopeKey || '');
+    const lim = Math.max(1, Math.min(2000, Math.floor(Number(limit) || 500)));
+    const rows = db
+      .prepare(
+        `SELECT coins FROM ${ANALYTICS_SCHEMA}.fun_user_stats
+         WHERE scope_key = ?
+         ORDER BY coins DESC
+         LIMIT ?`
+      )
+      .all(s, lim);
+    return rows.map((r) => Math.max(0, Number(r.coins) || 0));
+  }
+
   function getUserCoinsRankPosition(userJid, scopeKey) {
     ensureFunSchema();
     const db = getDatabase();
@@ -850,6 +867,7 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     claimDaily,
     getLeaderboard,
     getCoinsLeaderboard,
+    listScopeCoinBalances,
     getMessagesLeaderboard,
     getUserRankPosition,
     getUserCoinsRankPosition,

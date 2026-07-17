@@ -262,7 +262,23 @@ export function buildFunSchemaSql() {
       category        TEXT    NOT NULL DEFAULT '',
       impact_pct      REAL    NOT NULL DEFAULT 0,
       source          TEXT    NOT NULL DEFAULT 'template',
-      created_at      INTEGER NOT NULL
+      created_at      INTEGER NOT NULL,
+      archetype       TEXT    NOT NULL DEFAULT '',
+      deception_mode  TEXT    NOT NULL DEFAULT 'none',
+      company_id      TEXT    NOT NULL DEFAULT '',
+      truth_json      TEXT    NOT NULL DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_market_asset_state (
+      scope_key       TEXT    NOT NULL,
+      item_id         TEXT    NOT NULL,
+      supply          REAL    NOT NULL DEFAULT 1,
+      demand          REAL    NOT NULL DEFAULT 1,
+      event_shock     REAL    NOT NULL DEFAULT 0,
+      volume_buy      REAL    NOT NULL DEFAULT 0,
+      volume_sell     REAL    NOT NULL DEFAULT 0,
+      updated_at      INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, item_id)
     );
 
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_market_events_scope
@@ -286,7 +302,9 @@ export function buildFunSchemaSql() {
       last_event_at   INTEGER NOT NULL DEFAULT 0,
       next_event_at   INTEGER NOT NULL DEFAULT 0,
       last_restock_at INTEGER NOT NULL DEFAULT 0,
-      updated_at      INTEGER NOT NULL
+      updated_at      INTEGER NOT NULL,
+      economy_json    TEXT    NOT NULL DEFAULT '{}',
+      last_economy_tick_at INTEGER NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_inventory (
@@ -464,6 +482,61 @@ export function ensureFunSchema(db) {
         `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_market_meta ADD COLUMN last_restock_at INTEGER NOT NULL DEFAULT 0`
       );
     }
+    if (metaNames.size && !metaNames.has('economy_json')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_market_meta ADD COLUMN economy_json TEXT NOT NULL DEFAULT '{}'`
+      );
+    }
+    if (metaNames.size && !metaNames.has('last_economy_tick_at')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_market_meta ADD COLUMN last_economy_tick_at INTEGER NOT NULL DEFAULT 0`
+      );
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const evCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_market_events)`).all();
+    const evNames = new Set(evCols.map((c) => String(c.name || '')));
+    if (evNames.size && !evNames.has('archetype')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_market_events ADD COLUMN archetype TEXT NOT NULL DEFAULT ''`
+      );
+    }
+    if (evNames.size && !evNames.has('deception_mode')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_market_events ADD COLUMN deception_mode TEXT NOT NULL DEFAULT 'none'`
+      );
+    }
+    if (evNames.size && !evNames.has('company_id')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_market_events ADD COLUMN company_id TEXT NOT NULL DEFAULT ''`
+      );
+    }
+    if (evNames.size && !evNames.has('truth_json')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_market_events ADD COLUMN truth_json TEXT NOT NULL DEFAULT '{}'`
+      );
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_market_asset_state (
+        scope_key       TEXT    NOT NULL,
+        item_id         TEXT    NOT NULL,
+        supply          REAL    NOT NULL DEFAULT 1,
+        demand          REAL    NOT NULL DEFAULT 1,
+        event_shock     REAL    NOT NULL DEFAULT 0,
+        volume_buy      REAL    NOT NULL DEFAULT 0,
+        volume_sell     REAL    NOT NULL DEFAULT 0,
+        updated_at      INTEGER NOT NULL,
+        PRIMARY KEY (scope_key, item_id)
+      );
+    `);
   } catch {
     // ignore
   }
