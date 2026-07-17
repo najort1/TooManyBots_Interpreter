@@ -155,15 +155,26 @@ export function formatXpProfile({
   }
 
   if (activeBuffs?.length) {
+    const labelEffect = (key) => {
+      if (key === 'xp_morto') return '☠️ morto (sem XP)';
+      if (key === 'xp_boost') return '⚡ boost XP';
+      if (key === 'weapons_license') return '🔑 chave armas';
+      if (key === 'daily_double') return '🎁 daily 2x';
+      if (key === 'flip_lucky') return '🔮 amuleto flip';
+      if (key === 'bet_shield') return '🛡️ escudo aposta';
+      if (key === 'title') return '🏷️ título';
+      return key;
+    };
     const bits = activeBuffs.map((e) => {
+      const lab = labelEffect(e.effectKey);
       if (e.expiresAt > 0) {
         const left = formatMsRemaining(e.expiresAt - Date.now());
-        return `${e.effectKey} (${left})`;
+        return `${lab} (${left})`;
       }
-      if (e.charges > 0) return `${e.effectKey}×${e.charges}`;
-      return e.effectKey;
+      if (e.charges > 0) return `${lab}×${e.charges}`;
+      return lab;
     });
-    lines.push('', '*Buffs*', `• ${bits.join(', ')}`);
+    lines.push('', '*Buffs / status*', `• ${bits.join(', ')}`);
   }
 
   if (isSelf) {
@@ -269,6 +280,7 @@ export function formatHelp(prefix = '/') {
     `• \`${p}cf 20 cara\` — cara ou coroa`,
     `• \`${p}sorte\``,
     `• \`${p}aposta @user 20 cara\` — duelo de moeda`,
+    `• \`${p}roletarussa\` → \`${p}puxar\` — 1 bala; morto = sem XP 15 min`,
     '',
     '*Cassino*',
     `• \`${p}roleta 20 vermelho\` · \`${p}slot 15\` · \`${p}jackpot\``,
@@ -277,7 +289,15 @@ export function formatHelp(prefix = '/') {
     `• \`${p}desafio @user 30\` — duelo de dados (d20)`,
     `• \`${p}torneio 20\` · \`${p}rankcassino\``,
     `• \`${p}bingo 15\` · \`${p}bingo start\` · \`${p}bingo solo 15\``,
-    `• \`${p}tarot minha pergunta\` — tiragem + leitura (IA)`,
+    `• \`${p}tarot minha pergunta\` — tiragem + leitura`,
+    '',
+    '*Zoeira*',
+    `• \`${p}cancelar @user\` — motivo absurdo`,
+    `• \`${p}fofoca @user\` — fofoca sempre falsa`,
+    `• \`${p}oraculo Vou namorar?\` — IA maluca (não é tarô)`,
+    `• \`${p}illuminati\` — conspiração com membro aleatório`,
+    `• \`${p}lore\` — o que o bot lembra do grupo`,
+    `• \`${p}esquecelore @user\` · \`${p}esquecelore tudo sim\``,
     '',
     '*Facções*',
     `• \`${p}faccao criar|entrar|sair|doar|rank|info\``,

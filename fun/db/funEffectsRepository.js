@@ -193,6 +193,20 @@ export function createFunEffectsRepository({ getDatabase = getDb } = {}) {
     };
   }
 
+  /** Roleta russa / morto virtual — bloqueia ganho de XP passivo. */
+  function isXpBlocked(userJid, scopeKey, now = Date.now()) {
+    const e = getEffect(userJid, scopeKey, 'xp_morto', now);
+    if (!e || !(e.expiresAt > (Number(now) || Date.now()))) {
+      return { blocked: false };
+    }
+    return {
+      blocked: true,
+      expiresAt: e.expiresAt,
+      effectKey: 'xp_morto',
+      source: e.payload?.source || 'russian',
+    };
+  }
+
   return {
     getEffect,
     listActiveEffects,
@@ -200,5 +214,6 @@ export function createFunEffectsRepository({ getDatabase = getDb } = {}) {
     addCharges,
     consumeCharge,
     isXpBoostActive,
+    isXpBlocked,
   };
 }

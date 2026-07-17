@@ -36,6 +36,15 @@ export async function handleDailyCommand({
     }
   }
 
+  let xpMorto = false;
+  if (effectsRepository?.isXpBlocked) {
+    const dead = effectsRepository.isXpBlocked(userJid, scopeKey, now);
+    if (dead.blocked) {
+      rewardXp = 0;
+      xpMorto = true;
+    }
+  }
+
   const result = dailyService.claimDaily({
     userJid,
     scopeKey,
@@ -50,6 +59,9 @@ export async function handleDailyCommand({
   }
   if (result.claimed && panelinha) {
     text += '\n💀 Debuff *Panelinha oficial*: menos XP de daily. Melhore a `/ponte`.';
+  }
+  if (result.claimed && xpMorto) {
+    text += '\n☠️ *Morto na roleta russa:* coins ok, *sem XP* até reviver.';
   }
 
   // salário de profissão + reset de inatividade

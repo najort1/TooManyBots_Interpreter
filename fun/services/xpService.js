@@ -2,7 +2,11 @@
  * Regras de award de XP (cooldown, range aleatório, level-up).
  */
 
-export function createXpService({ repository, random = Math.random } = {}) {
+export function createXpService({
+  repository,
+  effectsRepository = null,
+  random = Math.random,
+} = {}) {
   if (!repository) throw new Error('[fun/xpService] repository required');
 
   function rollXpAmount(xpMin, xpMax) {
@@ -25,6 +29,25 @@ export function createXpService({ repository, random = Math.random } = {}) {
       xpMax = 25,
       amount,
     } = input;
+
+    if (effectsRepository?.isXpBlocked) {
+      const dead = effectsRepository.isXpBlocked(userJid, scopeKey, now);
+      if (dead.blocked) {
+        const stats = repository.getUserStats?.(userJid, scopeKey);
+        return {
+          applied: false,
+          gained: 0,
+          xp: Number(stats?.xp) || 0,
+          level: Number(stats?.level) || 1,
+          leveledUp: false,
+          previousLevel: Number(stats?.level) || 1,
+          reason: 'xp-morto',
+          messageCount: Number(stats?.messageCount) || 0,
+          coins: Number(stats?.coins) || 0,
+          xpBlockedUntil: dead.expiresAt,
+        };
+      }
+    }
 
     const gained =
       amount != null && Number.isFinite(Number(amount))

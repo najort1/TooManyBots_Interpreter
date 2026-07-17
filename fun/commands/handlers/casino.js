@@ -74,7 +74,11 @@ export async function handleRouletteCommand({
     result.choice.type === 'color'
       ? colorLabel(result.choice.value)
       : String(result.choice.value);
-  const flavor = await fl(flavorService, result.win ? 'flip_win' : 'flip_lose', {});
+  const flavor = await fl(flavorService, result.win ? 'roulette_win' : 'roulette_lose', {
+    pick,
+    ball: result.ball,
+    color: colorLabel(result.color),
+  });
   await reply(
     [
       '🎡 *Roleta*',
@@ -141,7 +145,9 @@ export async function handleSlotCommand({
     return { handled: true };
   }
 
-  const flavor = await fl(flavorService, result.win ? 'lucky_hit' : 'lucky_miss', {});
+  const flavor = await fl(flavorService, result.win ? 'slot_win' : 'slot_lose', {
+    reels: Array.isArray(result.reels) ? result.reels.join(' ') : '',
+  });
   await reply(
     [
       '🎰 *Slot*',
@@ -324,7 +330,9 @@ export async function handleCashoutCommand({
     return { handled: true };
   }
 
-  const flavor = await fl(flavorService, result.crashed ? 'flip_lose' : 'flip_win', {});
+  const flavor = await fl(flavorService, result.crashed ? 'crash_lose' : 'crash_win', {
+    mult: result.crashed ? result.crashAt : result.currentMult,
+  });
   if (result.crashed) {
     await reply(
       [
@@ -478,8 +486,15 @@ export async function handleStandCommand({
   }
   const flavor = await fl(
     flavorService,
-    result.result === 'win' ? 'flip_win' : result.result === 'push' ? 'ship' : 'flip_lose',
-    {}
+    result.result === 'win'
+      ? 'bj_win'
+      : result.result === 'push'
+        ? 'bj_push'
+        : 'bj_lose',
+    {
+      pTotal: result.pTotal,
+      dTotal: result.dTotal,
+    }
   );
   const msg =
     result.result === 'win'
