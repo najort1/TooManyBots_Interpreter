@@ -3,6 +3,7 @@ import { formatLevelUp } from '../formatters/rankCard.js';
 import { isUserJid } from '../../runtime/contactUtils.js';
 import { getFunGroupWhitelistSet } from '../config.js';
 import { FUN_PUBLIC_GROUP_COMMANDS } from '../constants.js';
+import { isWorldQuietHours } from '../utils/worldQuietHours.js';
 
 /**
  * Respostas no privado desabilitadas por padrão (ban/spam do WhatsApp).
@@ -320,6 +321,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
   /** Sorteio de evento pelo bot — anúncio sempre no grupo. */
   async function maybeAutoEvent(now = Date.now()) {
     if (!isGroup || !eventService?.tryAutoSpawn) return null;
+    if (isWorldQuietHours(funConfig, now)) return null;
     try {
       const spawned = eventService.tryAutoSpawn({
         scopeKey: scope.scopeKey,
@@ -345,6 +347,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
   /** Evento de mercado de arte (preços da galeria). */
   async function maybeAutoMarket(now = Date.now()) {
     if (!isGroup || !marketService?.tryAutoMarketEvent) return null;
+    if (isWorldQuietHours(funConfig, now)) return null;
     try {
       const hit = await marketService.tryAutoMarketEvent({
         scopeKey: scope.scopeKey,

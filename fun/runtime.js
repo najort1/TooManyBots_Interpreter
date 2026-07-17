@@ -166,8 +166,80 @@ export async function startFunBot(options = {}) {
   let saveCreds = null;
   let dashboardStarted = false;
   let messagesEnabled = false;
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let worldTickTimer = null;
+  let worldTickRunning = false;
   /** @type {ReturnType<typeof createConnectionOpenGate> | null} */
   let openGate = null;
+
+  /**
+   * Relógio do mundo: mercado / happy hour / trégua / restock sem precisar de msg.
+   */
+  function startWorldClock() {
+    stopWorldClock();
+    if (config.worldAutonomous === false) {
+      console.log('[fun] Relógio do mundo desligado (worldAutonomous=false)');
+      return;
+    }
+    const ms = Math.max(15_000, Math.floor(Number(config.worldTickMs) || 45_000));
+    console.log(`[fun] Relógio do mundo a cada ${Math.round(ms / 1000)}s (eventos sem depender de msg)`);
+
+    const runTick = async () => {
+      if (worldTickRunning) return;
+      if (!messagesEnabled) return;
+      const sock = currentSocket;
+      if (!sock || !isSocketReady(sock)) return;
+
+      worldTickRunning = true;
+      try {
+        // atualiza config em memória (whitelist etc.)
+        try {
+          config = loadFunUserConfig();
+        } catch {
+          // mantém config anterior
+        }
+        const result = await funModule.tickWorldEvents({
+          sock,
+          sendText: sendTextMessage,
+          getContactDisplayName,
+        });
+        if (result?.fired > 0) {
+          console.log(
+            `[fun] Mundo: ${result.fired} anúncio(s) autônomo(s) · ${result.results
+              ?.filter((r) => r.ok)
+              .map((r) => r.kind)
+              .join(', ')}`
+          );
+        }
+      } catch (err) {
+        console.warn('[fun] World tick falhou:', String(err?.message || err));
+      } finally {
+        worldTickRunning = false;
+      }
+    };
+
+    worldTickTimer = setInterval(() => {
+      void runTick();
+    }, ms);
+    if (typeof worldTickTimer.unref === 'function') {
+      worldTickTimer.unref();
+    }
+    // primeiro tick após 20s (dá tempo da sessão assentar)
+    setTimeout(() => {
+      void runTick();
+    }, 20_000).unref?.();
+  }
+
+  function stopWorldClock() {
+    if (worldTickTimer) {
+      clearInterval(worldTickTimer);
+      worldTickTimer = null;
+    }
+  }
+
+  process.once('exit', () => {
+    stopWorldClock();
+  });
 
   /**
    * Dashboard API independente do WhatsApp (QR/ban/logout).
@@ -468,11 +540,14 @@ export async function startFunBot(options = {}) {
     // para o poll se o processo ficar dias no ar sem sessão
     setTimeout(() => clearInterval(poll), 7 * 24 * 60 * 60 * 1000);
   }
+  // Eventos do mundo sem “gatilho” de mensagem humana
+  startWorldClock();
+
   console.log(
     messagesEnabled
-      ? '[fun] Pronto. /help · /cf · /bingo · /tarot · /loja\n'
+      ? '[fun] Pronto. /help · /cf · /bingo · /tarot · /loja · relógio do mundo ON\n'
       : '[fun] API dashboard ativa. Escaneie o QR quando o ban acabar.\n'
   );
 
-  return { config, getSocket: () => currentSocket, funModule };
+  return { config, getSocket: () => currentSocket, funModule, stopWorldClock };
 }

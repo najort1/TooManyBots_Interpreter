@@ -134,6 +134,33 @@ export function normalizeFunConfig(input) {
     eventAutoSpawnChance: Number.isFinite(Number(raw.eventAutoSpawnChance))
       ? Math.min(1, Math.max(0, Number(raw.eventAutoSpawnChance)))
       : DEFAULT_FUN_CONFIG.eventAutoSpawnChance,
+    eventTickChance: Number.isFinite(Number(raw.eventTickChance))
+      ? Math.min(1, Math.max(0, Number(raw.eventTickChance)))
+      : DEFAULT_FUN_CONFIG.eventTickChance,
+    worldAutonomous: normalizeBoolean(raw.worldAutonomous, DEFAULT_FUN_CONFIG.worldAutonomous),
+    worldTickMs: normalizeInt(raw.worldTickMs, DEFAULT_FUN_CONFIG.worldTickMs, {
+      min: 15_000,
+      max: 30 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    worldQuietHoursEnabled: normalizeBoolean(
+      raw.worldQuietHoursEnabled,
+      DEFAULT_FUN_CONFIG.worldQuietHoursEnabled
+    ),
+    worldQuietHourStart: normalizeInt(
+      raw.worldQuietHourStart,
+      DEFAULT_FUN_CONFIG.worldQuietHourStart,
+      { min: 0, max: 23, rounding: 'floor', clamp: true }
+    ),
+    worldQuietHourEnd: normalizeInt(
+      raw.worldQuietHourEnd,
+      DEFAULT_FUN_CONFIG.worldQuietHourEnd,
+      { min: 0, max: 24, rounding: 'floor', clamp: true }
+    ),
+    worldTimezone:
+      toText(raw.worldTimezone, DEFAULT_FUN_CONFIG.worldTimezone) ||
+      DEFAULT_FUN_CONFIG.worldTimezone,
     eventHappyWeight: Number.isFinite(Number(raw.eventHappyWeight))
       ? Math.max(0, Number(raw.eventHappyWeight))
       : DEFAULT_FUN_CONFIG.eventHappyWeight,
@@ -265,13 +292,13 @@ export function normalizeFunConfig(input) {
     bingoDefaultMode: 'fast',
     marketEnabled: normalizeBoolean(raw.marketEnabled, DEFAULT_FUN_CONFIG.marketEnabled),
     marketEventMinMs: normalizeInt(raw.marketEventMinMs, DEFAULT_FUN_CONFIG.marketEventMinMs, {
-      min: 5 * 60_000,
+      min: 30 * 60_000,
       max: 24 * 60 * 60_000,
       rounding: 'floor',
       clamp: true,
     }),
     marketEventMaxMs: normalizeInt(raw.marketEventMaxMs, DEFAULT_FUN_CONFIG.marketEventMaxMs, {
-      min: 10 * 60_000,
+      min: 45 * 60_000,
       max: 48 * 60 * 60_000,
       rounding: 'floor',
       clamp: true,
@@ -289,6 +316,23 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    economyEnabled: normalizeBoolean(raw.economyEnabled, DEFAULT_FUN_CONFIG.economyEnabled),
+    economyTickMs: normalizeInt(raw.economyTickMs, DEFAULT_FUN_CONFIG.economyTickMs, {
+      min: 60_000,
+      max: 6 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    economyRegulateMs: normalizeInt(
+      raw.economyRegulateMs,
+      DEFAULT_FUN_CONFIG.economyRegulateMs,
+      {
+        min: 60_000,
+        max: 12 * 60 * 60_000,
+        rounding: 'floor',
+        clamp: true,
+      }
+    ),
     assaultCooldownMs: normalizeInt(raw.assaultCooldownMs, DEFAULT_FUN_CONFIG.assaultCooldownMs, {
       min: 0,
       max: 24 * 60 * 60_000,

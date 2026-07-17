@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '11';
+export const FUN_SCHEMA_VERSION = '12';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -382,9 +382,23 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   eventCooldownMs: 6 * 60 * 60_000,
   // Eventos só o bot sorteia (surpresa)
   eventAutoSpawn: true,
+  /** Chance por mensagem de usuário (legado / complementar). */
   eventAutoSpawnChance: 0.028,
+  /**
+   * Chance por tick do relógio do mundo (~45s). Autonomia: bot anuncia sem
+   * precisar de alguém falar no grupo.
+   */
+  eventTickChance: 0.12,
   eventHappyWeight: 0.5,
   eventCrossWeight: 0.5,
+  /** Loop que dispara mercado/eventos/restock sozinho. */
+  worldAutonomous: true,
+  worldTickMs: 45_000,
+  /** Madrugada real: sem eventos aleatórios do mundo (1h–6h). */
+  worldQuietHoursEnabled: true,
+  worldQuietHourStart: 1,
+  worldQuietHourEnd: 6,
+  worldTimezone: 'America/Sao_Paulo',
   // Flavor LLM — OpenCode Zen (principal) → Ollama (fallback) → template
   // OpenCode Zen Proxy (OpenAI-compatible)
   zenEnabled: true,
@@ -459,13 +473,18 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   bingoDefaultMode: 'fast',
   // Mercado de colecionáveis (galeria dinâmica)
   marketEnabled: true,
-  marketEventMinMs: 45 * 60_000,
-  marketEventMaxMs: 3 * 60 * 60_000,
+  /** Eventos de mercado mais raros: ~2h–5h (era 45min–3h e inflava preço). */
+  marketEventMinMs: 2 * 60 * 60_000,
+  marketEventMaxMs: 5 * 60 * 60_000,
   marketBreakChance: 0.06,
   marketRepairRate: 0.22,
   marketAnnounce: true,
   /** Reposição de estoque (armas + rua) em tempo real — 7 dias */
   marketRestockMs: 7 * 24 * 60 * 60_000,
+  /** Economia 4 camadas: regulador + ticks de preço sem evento */
+  economyEnabled: true,
+  economyTickMs: 15 * 60_000,
+  economyRegulateMs: 30 * 60_000,
   assaultCooldownMs: 10 * 60_000,
   assaultMinSteal: 8,
   /** PvP: ganho real mas menor que banco/lojinha */

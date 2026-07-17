@@ -38,6 +38,7 @@ import { getDb } from '../db/context.js';
 import { sendTextMessage, sendImageMessage, sendStickerMessage } from '../engine/sender.js';
 import { getContactDisplayName, listContactDisplayNames } from '../db/index.js';
 import { createIdentityMap } from './utils/identity.js';
+import { isWorldQuietHours } from './utils/worldQuietHours.js';
 
 /**
  * Facade pública do módulo Fun (lógica de jogo).
@@ -285,9 +286,156 @@ export function createFunModule(deps = {}) {
     flavorService.stopKeepAliveLoop?.();
   }
 
+  /**
+   * Relógio do mundo — timer no runtime (não depende de msg de usuário).
+   * Dispara mercado, eventos surpresa e restock nos grupos whitelist.
+   */
+  async function tickWorldEvents({
+    sock = null,
+    sendText: sendFn = null,
+    now = Date.now(),
+    getContactDisplayName: nameFn = null,
+  } = {}) {
+    ensureInit();
+    const funConfig = resolveFunConfig(getConfig() || {});
+    if (funConfig.enabled === false) {
+      return { ok: false, reason: 'disabled' };
+    }
+    if (funConfig.worldAutonomous === false) {
+      return { ok: false, reason: 'world-autonomous-off' };
+    }
+    // 01:00–05:59 (default): sem eventos aleatórios na vida real
+    if (isWorldQuietHours(funConfig, now)) {
+      return { ok: false, reason: 'quiet-hours', results: [] };
+    }
+
+    const groups = [...getFunGroupWhitelistSet(funConfig)];
+    if (!groups.length) {
+      return { ok: false, reason: 'no-whitelist', results: [] };
+    }
+
+    const post = sendFn || sendText;
+    const nameResolver = nameFn || resolveContactName;
+    const results = [];
+
+    for (const scopeKey of groups) {
+      if (!scopeKey || !String(scopeKey).endsWith('@g.us')) continue;
+
+      // tick de preços / regulador (sem anúncio) antes do evento de mercado
+      if (marketService?.tickEconomy && funConfig.economyEnabled !== false) {
+        try {
+          marketService.tickEconomy(scopeKey, funConfig, now);
+        } catch {
+          /* ignore tick errors */
+        }
+      }
+
+      if (marketService?.tryAutoMarketEvent) {
+        try {
+          const hit = await marketService.tryAutoMarketEvent({
+            scopeKey,
+            funConfig,
+            now,
+            autonomous: true,
+          });
+          if (hit?.ok && hit.announce !== false) {
+            const msg =
+              typeof marketService.formatEventAnnouncement === 'function'
+                ? marketService.formatEventAnnouncement(hit, nameResolver)
+                : '';
+            if (msg && post && sock) {
+              await post(sock, scopeKey, msg);
+            }
+            results.push({ scopeKey, kind: 'market', ok: true });
+          } else if (hit && !hit.ok) {
+            results.push({ scopeKey, kind: 'market', ok: false, reason: hit.reason });
+          }
+        } catch (err) {
+          results.push({
+            scopeKey,
+            kind: 'market',
+            ok: false,
+            reason: err?.message || 'market-error',
+          });
+        }
+      }
+
+      if (eventService?.tryAutoSpawn) {
+        try {
+          const spawned = eventService.tryAutoSpawn({
+            scopeKey,
+            funConfig,
+            now,
+            tick: true,
+          });
+          if (spawned?.ok) {
+            const msg =
+              typeof eventService.formatAnnouncement === 'function'
+                ? eventService.formatAnnouncement(spawned)
+                : '';
+            if (msg && post && sock) {
+              await post(sock, scopeKey, msg);
+            }
+            results.push({
+              scopeKey,
+              kind: 'event',
+              ok: true,
+              eventType: spawned.eventType,
+            });
+          } else if (spawned && !spawned.ok) {
+            results.push({
+              scopeKey,
+              kind: 'event',
+              ok: false,
+              reason: spawned.reason,
+            });
+          }
+        } catch (err) {
+          results.push({
+            scopeKey,
+            kind: 'event',
+            ok: false,
+            reason: err?.message || 'event-error',
+          });
+        }
+      }
+
+      if (marketService?.maybeWeeklyRestock) {
+        try {
+          const restock = marketService.maybeWeeklyRestock(scopeKey, funConfig, now);
+          if (restock?.restocked) {
+            const msg = [
+              '📦 *Reposição no mercado de rua*',
+              'Estoque da loja voltou ao máximo.',
+              '_/mercado · /armas · /bazar_',
+            ].join('\n');
+            if (post && sock) {
+              await post(sock, scopeKey, msg);
+            }
+            results.push({ scopeKey, kind: 'restock', ok: true });
+          }
+        } catch (err) {
+          results.push({
+            scopeKey,
+            kind: 'restock',
+            ok: false,
+            reason: err?.message || 'restock-error',
+          });
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      results,
+      fired: results.filter((r) => r.ok).length,
+    };
+  }
+
   return {
     init,
     onIncomingMessage,
+    tickWorldEvents,
     warmupLlm,
     stopLlmKeepAlive,
     identityMap,
