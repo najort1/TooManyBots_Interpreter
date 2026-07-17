@@ -63,6 +63,10 @@ export type FunConfig = {
   rankLimit: number;
   allowDm: boolean;
   replyCommandsInPrivate: boolean;
+  /** Bot @marca usuários no chat (default true). */
+  mentionUsers?: boolean;
+  /** Respostas citam (reply) a mensagem do usuário (default true). */
+  replyQuoted?: boolean;
   zenEnabled: boolean;
   zenBaseUrl: string;
   zenModel: string;
@@ -85,6 +89,8 @@ export type GroupSettings = {
   dailyXp?: number;
   dailyCoins?: number;
   levelUpAnnounce?: boolean;
+  /** Eventos aleatórios do mundo (mercado auto + trégua). Happy hour segue anunciando. Default true. */
+  worldEventsEnabled?: boolean;
 };
 
 export type CasinoPayload = {

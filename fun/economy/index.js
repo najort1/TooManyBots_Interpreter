@@ -7,6 +7,7 @@ export * from './math.js';
 export * from './companies.js';
 export * from './archetypes.js';
 export * from './engine.js';
+export * from './dividends.js';
 export * from './regulator.js';
 export * from './deception.js';
 export * from './eventPipeline.js';

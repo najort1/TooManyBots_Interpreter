@@ -25,6 +25,8 @@ import { createMarketService } from './services/marketService.js';
 import { createJobService } from './services/jobService.js';
 import { createFunCasinoRepository } from './db/funCasinoRepository.js';
 import { createFunMarketRepository } from './db/funMarketRepository.js';
+import { createFunStockRepository } from './db/funStockRepository.js';
+import { createStockService } from './services/stockService.js';
 import { createFunJobRepository } from './db/funJobRepository.js';
 import { createFunUserPrefsRepository } from './db/funUserPrefsRepository.js';
 import { createGroupMembershipService } from './utils/groupMembership.js';
@@ -39,6 +41,7 @@ import { sendTextMessage, sendImageMessage, sendStickerMessage } from '../engine
 import { getContactDisplayName, listContactDisplayNames } from '../db/index.js';
 import { createIdentityMap } from './utils/identity.js';
 import { isWorldQuietHours } from './utils/worldQuietHours.js';
+import { createUserFormatter, runWithUserLabels } from './utils/userLabel.js';
 
 /**
  * Facade pública do módulo Fun (lógica de jogo).
@@ -70,6 +73,8 @@ export function createFunModule(deps = {}) {
   const casinoRepository = createFunCasinoRepository({ getDatabase });
   const marketRepository =
     deps.marketRepository || createFunMarketRepository({ getDatabase });
+  const stockRepository =
+    deps.stockRepository || createFunStockRepository({ getDatabase });
   const jobRepository =
     deps.jobRepository || createFunJobRepository({ getDatabase });
   const prefsRepository = deps.prefsRepository || createFunUserPrefsRepository({ getDatabase });
@@ -83,6 +88,12 @@ export function createFunModule(deps = {}) {
   const rankService = createRankService({ repository });
   const dailyService = createDailyService({ repository });
   const coinsService = createCoinsService({ repository });
+  const stockService =
+    deps.stockService ||
+    createStockService({
+      repository,
+      stockRepository,
+    });
   const relationshipService = createRelationshipService({
     relationshipRepository,
     actionRepository,
@@ -129,6 +140,7 @@ export function createFunModule(deps = {}) {
       effectsRepository,
       factionService,
       casinoRepository,
+      stockService,
       getLogger,
       generateZen: deps.openaiChatComplete,
       generateOllama: deps.ollamaGenerate,
@@ -229,6 +241,7 @@ export function createFunModule(deps = {}) {
         casinoService,
         tarotService,
         marketService,
+        stockService,
         jobService,
         chaosService,
         groupMemoryService,
@@ -318,111 +331,129 @@ export function createFunModule(deps = {}) {
     const nameResolver = nameFn || resolveContactName;
     const results = [];
 
+    const postWithMentions = async (toJid, msg, userFmt) => {
+      if (!msg || !post || !sock) return;
+      const mentions = userFmt?.takeMentions?.() || [];
+      await post(sock, toJid, msg, mentions.length ? { mentions } : undefined);
+    };
+
     for (const scopeKey of groups) {
       if (!scopeKey || !String(scopeKey).endsWith('@g.us')) continue;
 
-      // tick de preços / regulador (sem anúncio) antes do evento de mercado
-      if (marketService?.tickEconomy && funConfig.economyEnabled !== false) {
-        try {
-          marketService.tickEconomy(scopeKey, funConfig, now);
-        } catch {
-          /* ignore tick errors */
-        }
-      }
+      const userFmt = createUserFormatter({
+        getContactDisplayName: nameResolver,
+        mentionUsers: funConfig.mentionUsers !== false,
+      });
 
-      if (marketService?.tryAutoMarketEvent) {
-        try {
-          const hit = await marketService.tryAutoMarketEvent({
-            scopeKey,
-            funConfig,
-            now,
-            autonomous: true,
-          });
-          if (hit?.ok && hit.announce !== false) {
-            const msg =
-              typeof marketService.formatEventAnnouncement === 'function'
-                ? marketService.formatEventAnnouncement(hit, nameResolver)
-                : '';
-            if (msg && post && sock) {
-              await post(sock, scopeKey, msg);
-            }
-            results.push({ scopeKey, kind: 'market', ok: true });
-          } else if (hit && !hit.ok) {
-            results.push({ scopeKey, kind: 'market', ok: false, reason: hit.reason });
+      await runWithUserLabels(userFmt, async () => {
+        const worldEventsOn =
+          typeof groupRepository?.isWorldEventsEnabled === 'function'
+            ? groupRepository.isWorldEventsEnabled(scopeKey, funConfig)
+            : groupRepository?.resolveEffectiveRates?.(scopeKey, funConfig)
+                ?.worldEventsEnabled !== false;
+
+        // tick de preços / regulador (silencioso) — independente de anúncios
+        if (marketService?.tickEconomy && funConfig.economyEnabled !== false) {
+          try {
+            marketService.tickEconomy(scopeKey, funConfig, now);
+          } catch {
+            /* ignore tick errors */
           }
-        } catch (err) {
-          results.push({
-            scopeKey,
-            kind: 'market',
-            ok: false,
-            reason: err?.message || 'market-error',
-          });
         }
-      }
 
-      if (eventService?.tryAutoSpawn) {
-        try {
-          const spawned = eventService.tryAutoSpawn({
-            scopeKey,
-            funConfig,
-            now,
-            tick: true,
-          });
-          if (spawned?.ok) {
-            const msg =
-              typeof eventService.formatAnnouncement === 'function'
-                ? eventService.formatAnnouncement(spawned)
-                : '';
-            if (msg && post && sock) {
-              await post(sock, scopeKey, msg);
+        // Mercado auto + trégua: só se world events ON
+        // Happy hour: sempre pode anunciar (mesmo com world events off)
+        if (worldEventsOn && marketService?.tryAutoMarketEvent) {
+          try {
+            const hit = await marketService.tryAutoMarketEvent({
+              scopeKey,
+              funConfig,
+              now,
+              autonomous: true,
+            });
+            if (hit?.ok && hit.announce !== false) {
+              const msg =
+                typeof marketService.formatEventAnnouncement === 'function'
+                  ? marketService.formatEventAnnouncement(hit, nameResolver)
+                  : '';
+              await postWithMentions(scopeKey, msg, userFmt);
+              results.push({ scopeKey, kind: 'market', ok: true });
+            } else if (hit && !hit.ok) {
+              results.push({ scopeKey, kind: 'market', ok: false, reason: hit.reason });
             }
+          } catch (err) {
             results.push({
               scopeKey,
-              kind: 'event',
-              ok: true,
-              eventType: spawned.eventType,
+              kind: 'market',
+              ok: false,
+              reason: err?.message || 'market-error',
             });
-          } else if (spawned && !spawned.ok) {
+          }
+        } else if (!worldEventsOn) {
+          results.push({ scopeKey, kind: 'market', ok: false, reason: 'world-events-off' });
+        }
+
+        if (eventService?.tryAutoSpawn) {
+          try {
+            const spawned = eventService.tryAutoSpawn({
+              scopeKey,
+              funConfig,
+              now,
+              tick: true,
+              happyOnly: !worldEventsOn,
+            });
+            if (spawned?.ok) {
+              const msg =
+                typeof eventService.formatAnnouncement === 'function'
+                  ? eventService.formatAnnouncement(spawned)
+                  : '';
+              await postWithMentions(scopeKey, msg, userFmt);
+              results.push({
+                scopeKey,
+                kind: 'event',
+                ok: true,
+                eventType: spawned.eventType,
+              });
+            } else if (spawned && !spawned.ok) {
+              results.push({
+                scopeKey,
+                kind: 'event',
+                ok: false,
+                reason: spawned.reason,
+              });
+            }
+          } catch (err) {
             results.push({
               scopeKey,
               kind: 'event',
               ok: false,
-              reason: spawned.reason,
+              reason: err?.message || 'event-error',
             });
           }
-        } catch (err) {
-          results.push({
-            scopeKey,
-            kind: 'event',
-            ok: false,
-            reason: err?.message || 'event-error',
-          });
         }
-      }
 
-      if (marketService?.maybeWeeklyRestock) {
-        try {
-          const restock = marketService.maybeWeeklyRestock(scopeKey, funConfig, now);
-          if (restock?.restocked) {
-            const msg = [
-              '📦 *Reposição no mercado de rua*',
-              'Estoque da loja voltou ao máximo.',
-              '_/mercado · /armas · /bazar_',
-            ].join('\n');
-            if (post && sock) {
-              await post(sock, scopeKey, msg);
+        if (marketService?.maybeWeeklyRestock) {
+          try {
+            const restock = marketService.maybeWeeklyRestock(scopeKey, funConfig, now);
+            if (restock?.restocked) {
+              const msg = [
+                '📦 *Reposição no mercado de rua*',
+                'Estoque da loja voltou ao máximo.',
+                '_/mercado · /armas · /bazar_',
+              ].join('\n');
+              await postWithMentions(scopeKey, msg, userFmt);
+              results.push({ scopeKey, kind: 'restock', ok: true });
             }
-            results.push({ scopeKey, kind: 'restock', ok: true });
+          } catch (err) {
+            results.push({
+              scopeKey,
+              kind: 'restock',
+              ok: false,
+              reason: err?.message || 'restock-error',
+            });
           }
-        } catch (err) {
-          results.push({
-            scopeKey,
-            kind: 'restock',
-            ok: false,
-            reason: err?.message || 'restock-error',
-          });
         }
-      }
+      });
     }
 
     return {
@@ -460,6 +491,8 @@ export function createFunModule(deps = {}) {
       tarotService,
       marketService,
       marketRepository,
+      stockService,
+      stockRepository,
       jobService,
       jobRepository,
       casinoRepository,

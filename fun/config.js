@@ -241,6 +241,8 @@ export function normalizeFunConfig(input) {
       raw.replyCommandsInPrivate,
       DEFAULT_FUN_CONFIG.replyCommandsInPrivate
     ),
+    mentionUsers: normalizeBoolean(raw.mentionUsers, DEFAULT_FUN_CONFIG.mentionUsers),
+    replyQuoted: normalizeBoolean(raw.replyQuoted, DEFAULT_FUN_CONFIG.replyQuoted),
     casinoMin: normalizeInt(raw.casinoMin, DEFAULT_FUN_CONFIG.casinoMin, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
     casinoMax: normalizeInt(raw.casinoMax, DEFAULT_FUN_CONFIG.casinoMax, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
     casinoCooldownMs: normalizeInt(raw.casinoCooldownMs, DEFAULT_FUN_CONFIG.casinoCooldownMs, { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
@@ -332,6 +334,38 @@ export function normalizeFunConfig(input) {
         rounding: 'floor',
         clamp: true,
       }
+    ),
+    bolsaEnabled: normalizeBoolean(raw.bolsaEnabled, DEFAULT_FUN_CONFIG.bolsaEnabled),
+    bolsaTradeCooldownMs: normalizeInt(
+      raw.bolsaTradeCooldownMs,
+      DEFAULT_FUN_CONFIG.bolsaTradeCooldownMs,
+      { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    bolsaMaxQtyPerTicker: normalizeInt(
+      raw.bolsaMaxQtyPerTicker,
+      DEFAULT_FUN_CONFIG.bolsaMaxQtyPerTicker,
+      { min: 1, max: 10_000, rounding: 'floor', clamp: true }
+    ),
+    bolsaMaxPositionCoins: normalizeInt(
+      raw.bolsaMaxPositionCoins,
+      DEFAULT_FUN_CONFIG.bolsaMaxPositionCoins,
+      { min: 50, max: 1_000_000, rounding: 'floor', clamp: true }
+    ),
+    bolsaMinQty: normalizeInt(raw.bolsaMinQty, DEFAULT_FUN_CONFIG.bolsaMinQty, {
+      min: 1,
+      max: 1000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    bolsaDividendPeriodMs: normalizeInt(
+      raw.bolsaDividendPeriodMs,
+      DEFAULT_FUN_CONFIG.bolsaDividendPeriodMs,
+      { min: 60_000, max: 30 * 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    bolsaDividendCapPerTick: normalizeInt(
+      raw.bolsaDividendCapPerTick,
+      DEFAULT_FUN_CONFIG.bolsaDividendCapPerTick,
+      { min: 0, max: 100_000, rounding: 'floor', clamp: true }
     ),
     assaultCooldownMs: normalizeInt(raw.assaultCooldownMs, DEFAULT_FUN_CONFIG.assaultCooldownMs, {
       min: 0,
@@ -644,6 +678,8 @@ export function saveFunUserConfig(input) {
     ollamaWarmupTimeoutMs: normalized.ollamaWarmupTimeoutMs,
     ollamaKeepAliveRefreshMs: normalized.ollamaKeepAliveRefreshMs,
     replyCommandsInPrivate: normalized.replyCommandsInPrivate,
+    mentionUsers: normalized.mentionUsers,
+    replyQuoted: normalized.replyQuoted,
   };
   fs.writeFileSync(FUN_USER_CONFIG_PATH, JSON.stringify(payload, null, 2), 'utf-8');
   return normalizeFunConfig(payload);

@@ -60,6 +60,7 @@ import {
   handleMarketEventCommand,
   handleAssaultCommand,
 } from './handlers/market.js';
+import { handleBolsaCommand, handleCarteiraCommand } from './handlers/stock.js';
 import {
   handleEmploymentCommand,
   handleResignCommand,
@@ -131,6 +132,7 @@ export async function routeFunCommand(ctx) {
     casinoService,
     tarotService,
     marketService,
+    stockService,
     jobService,
     chaosService,
     groupMemoryService,
@@ -184,6 +186,7 @@ export async function routeFunCommand(ctx) {
     casinoService,
     tarotService,
     marketService,
+    stockService,
     jobService,
     chaosService,
     groupMemoryService,
@@ -310,6 +313,10 @@ export async function routeFunCommand(ctx) {
       return handleMarketEventCommand(base);
     case FUN_COMMANDS.ASSAULT:
       return handleAssaultCommand(base);
+    case FUN_COMMANDS.BOLSA:
+      return handleBolsaCommand(base);
+    case FUN_COMMANDS.CARTEIRA:
+      return handleCarteiraCommand(base);
     case FUN_COMMANDS.EMPLOYMENT:
       return handleEmploymentCommand(base);
     case FUN_COMMANDS.RESIGN:

@@ -19,7 +19,7 @@
  * @property {number} flowScaleMult — <1 = ilíquido (Peixaria)
  * @property {number} maxTickDelta — teto de |delta| por tick (Satélite)
  * @property {boolean} memeSpikes — PatoCoin
- * @property {number} dividendYield — BurgerZap (0 = sem)
+ * @property {number} dividendYield — âncora de yield (0 = só dinâmico; ver economy/dividends.js)
  * @property {string} flavor
  * @property {string[]} categories — categorias de item que herdam esta persona
  */
@@ -62,8 +62,8 @@ export const COMPANIES = Object.freeze([
     flowScaleMult: 1.1,
     maxTickDelta: 0.06,
     memeSpikes: false,
-    dividendYield: 0,
-    flavor: 'muito estável, metal e roda',
+    dividendYield: 0.008,
+    flavor: 'estável, metal e roda — paga quando o caixa respira',
     categories: ['veiculo'],
   },
   {
@@ -83,7 +83,7 @@ export const COMPANIES = Object.freeze([
     maxTickDelta: 0.12,
     memeSpikes: false,
     dividendYield: 0,
-    flavor: 'extremamente arriscada, chip e pólvora',
+    flavor: 'arriscada — dividendo raro de guerra',
     categories: ['arma', 'municao'],
   },
   {
@@ -102,8 +102,8 @@ export const COMPANIES = Object.freeze([
     flowScaleMult: 0.35,
     maxTickDelta: 0.12,
     memeSpikes: false,
-    dividendYield: 0,
-    flavor: 'pequena, ilíquida, oscila com qualquer peixe',
+    dividendYield: 0.002,
+    flavor: 'pequena — às vezes sobra peixe pro sócio',
     categories: ['combustivel'],
   },
   {
@@ -122,8 +122,8 @@ export const COMPANIES = Object.freeze([
     flowScaleMult: 1.2,
     maxTickDelta: 0.04,
     memeSpikes: false,
-    dividendYield: 0,
-    flavor: 'gigante, quase nunca quebra',
+    dividendYield: 0.006,
+    flavor: 'gigante — repasse lento e pesado',
     categories: ['defesa'],
   },
   {
@@ -143,7 +143,7 @@ export const COMPANIES = Object.freeze([
     maxTickDelta: 0.18,
     memeSpikes: true,
     dividendYield: 0,
-    flavor: 'meme stock, explode do nada',
+    flavor: 'meme — dividendo raríssimo e gordo',
     categories: [], // não ancora categoria; entra em spikes aleatórios
   },
 ]);
@@ -182,6 +182,59 @@ export function categoriesForCompany(companyId) {
   const c = getCompany(companyId);
   if (!c) return [];
   return [...(c.categories || [])];
+}
+
+function normalizeToken(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9_]/g, '');
+}
+
+/**
+ * Resolve ticker/nome/prefixo → CompanyPersonality.
+ * Ex.: bombatech, bomba, "pato", "uno motors"
+ */
+export function resolveCompanyToken(query) {
+  const t = normalizeToken(query);
+  if (!t) return null;
+  const byId = getCompany(t);
+  if (byId) return byId;
+
+  const aliases = {
+    burger: 'burgerzap',
+    burgerzap: 'burgerzap',
+    zap: 'burgerzap',
+    hamburguer: 'burgerzap',
+    uno: 'uno_motors',
+    unomotors: 'uno_motors',
+    motors: 'uno_motors',
+    bomba: 'bombatech',
+    bombatech: 'bombatech',
+    tech: 'bombatech',
+    peixe: 'peixaria',
+    peixaria: 'peixaria',
+    joao: 'peixaria',
+    satelite: 'satelite_br',
+    satelitebr: 'satelite_br',
+    sat: 'satelite_br',
+    pato: 'patocoin',
+    patocoin: 'patocoin',
+    meme: 'patocoin',
+  };
+  if (aliases[t]) return getCompany(aliases[t]);
+
+  for (const c of COMPANIES) {
+    const id = normalizeToken(c.id);
+    const name = normalizeToken(c.name);
+    if (id === t || name === t) return c;
+    if (id.startsWith(t) || name.startsWith(t) || id.includes(t) || name.includes(t)) {
+      return c;
+    }
+  }
+  return null;
 }
 
 export { CATEGORY_TO_COMPANY };

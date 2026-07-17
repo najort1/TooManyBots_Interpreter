@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '12';
+export const FUN_SCHEMA_VERSION = '14';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -66,6 +66,9 @@ export const FUN_COMMANDS = Object.freeze({
   MARKET_EVENT: 'market_event',
   WEAPONS: 'weapons',
   ASSAULT: 'assault',
+  // Bolsa de valores (ações das empresas)
+  BOLSA: 'bolsa',
+  CARTEIRA: 'carteira',
   // DM / escopo
   GROUP_SCOPE: 'group_scope',
   // Mídia
@@ -293,6 +296,14 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   assalto: FUN_COMMANDS.ASSAULT,
   roubar: FUN_COMMANDS.ASSAULT,
   assault: FUN_COMMANDS.ASSAULT,
+  bolsa: FUN_COMMANDS.BOLSA,
+  acoes: FUN_COMMANDS.BOLSA,
+  acao: FUN_COMMANDS.BOLSA,
+  corretora: FUN_COMMANDS.BOLSA,
+  stocks: FUN_COMMANDS.BOLSA,
+  carteira: FUN_COMMANDS.CARTEIRA,
+  portfolio: FUN_COMMANDS.CARTEIRA,
+  portifolio: FUN_COMMANDS.CARTEIRA,
   titulo: FUN_COMMANDS.TITLE,
   title: FUN_COMMANDS.TITLE,
   faccao: FUN_COMMANDS.FACTION,
@@ -338,6 +349,16 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   dailyCoins: 50,
   rankLimit: 10,
   announceLevelUp: true,
+  /**
+   * Quando true, o bot @marca usuários no chat em vez de só escrever o nome.
+   * Desligue se o grupo achar barulhento.
+   */
+  mentionUsers: true,
+  /**
+   * Quando true, respostas do bot citam (reply) a mensagem do usuário no WhatsApp.
+   * Ajuda a ver a quem o bot está respondendo em grupo movimentado.
+   */
+  replyQuoted: true,
   requireGroupWhitelist: true,
   // DM: comandos no privado se for membro de grupo na whitelist
   allowDm: true,
@@ -485,6 +506,14 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   economyEnabled: true,
   economyTickMs: 15 * 60_000,
   economyRegulateMs: 30 * 60_000,
+  /** Bolsa: ações das 6 empresas (virtual, long-only) */
+  bolsaEnabled: true,
+  bolsaTradeCooldownMs: 30_000,
+  bolsaMaxQtyPerTicker: 40,
+  bolsaMaxPositionCoins: 2500,
+  bolsaMinQty: 1,
+  bolsaDividendPeriodMs: 24 * 60 * 60_000,
+  bolsaDividendCapPerTick: 80,
   assaultCooldownMs: 10 * 60_000,
   assaultMinSteal: 8,
   /** PvP: ganho real mas menor que banco/lojinha */

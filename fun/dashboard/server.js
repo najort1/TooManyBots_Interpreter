@@ -122,6 +122,8 @@ export function startFunDashboardServer(deps = {}) {
           dailyCoins: cfg.dailyCoins,
           rankLimit: cfg.rankLimit,
           allowDm: cfg.allowDm !== false,
+          mentionUsers: cfg.mentionUsers !== false,
+          replyQuoted: cfg.replyQuoted !== false,
           replyCommandsInPrivate: cfg.replyCommandsInPrivate !== false,
           zenEnabled: cfg.zenEnabled !== false,
           zenBaseUrl: cfg.zenBaseUrl || '',

@@ -15,6 +15,11 @@ function mapGroupRow(row) {
     dailyXp: Number(row.daily_xp) || 150,
     dailyCoins: Number(row.daily_coins) || 50,
     rankLimit: Number(row.rank_limit) || 10,
+    /** Eventos aleatórios do mundo (mercado auto + trégua). Happy hour continua. Default: ligado. */
+    worldEventsEnabled:
+      row.world_events_enabled === undefined || row.world_events_enabled === null
+        ? true
+        : Number(row.world_events_enabled) !== 0,
     updatedAt: Number(row.updated_at) || 0,
   };
 }
@@ -54,27 +59,71 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       throw new Error('groupJid invalido');
     }
 
-    let xpMin = Math.max(1, Math.floor(Number(input.xpMin) || 15));
-    let xpMax = Math.max(1, Math.floor(Number(input.xpMax) || 25));
+    const existing = getGroupSettings(groupJid);
+
+    let xpMin = Math.max(1, Math.floor(Number(input.xpMin) || existing?.xpMin || 15));
+    let xpMax = Math.max(1, Math.floor(Number(input.xpMax) || existing?.xpMax || 25));
     if (xpMax < xpMin) {
       const t = xpMin;
       xpMin = xpMax;
       xpMax = t;
     }
 
-    const enabled = input.enabled === false || input.enabled === 0 ? 0 : 1;
-    const cooldownMs = Math.max(0, Math.floor(Number(input.cooldownMs) || 60_000));
-    const levelUpAnnounce = input.levelUpAnnounce === false || input.levelUpAnnounce === 0 ? 0 : 1;
-    const dailyXp = Math.max(0, Math.floor(Number(input.dailyXp) || 150));
-    const dailyCoins = Math.max(0, Math.floor(Number(input.dailyCoins) || 50));
-    const rankLimit = Math.min(50, Math.max(1, Math.floor(Number(input.rankLimit) || 10)));
+    const enabled =
+      input.enabled === false || input.enabled === 0
+        ? 0
+        : input.enabled === true || input.enabled === 1
+          ? 1
+          : existing
+            ? existing.enabled
+              ? 1
+              : 0
+            : 1;
+
+    const cooldownMs = Math.max(
+      0,
+      Math.floor(Number(input.cooldownMs ?? existing?.cooldownMs ?? 60_000) || 0)
+    );
+    const levelUpAnnounce =
+      input.levelUpAnnounce === false || input.levelUpAnnounce === 0
+        ? 0
+        : input.levelUpAnnounce === true || input.levelUpAnnounce === 1
+          ? 1
+          : existing
+            ? existing.levelUpAnnounce
+              ? 1
+              : 0
+            : 1;
+    const dailyXp = Math.max(
+      0,
+      Math.floor(Number(input.dailyXp ?? existing?.dailyXp ?? 150) || 0)
+    );
+    const dailyCoins = Math.max(
+      0,
+      Math.floor(Number(input.dailyCoins ?? existing?.dailyCoins ?? 50) || 0)
+    );
+    const rankLimit = Math.min(
+      50,
+      Math.max(1, Math.floor(Number(input.rankLimit ?? existing?.rankLimit ?? 10) || 10))
+    );
+
+    // Default ligado; só desliga se explícito false/0
+    let worldEventsEnabled = 1;
+    if (input.worldEventsEnabled === false || input.worldEventsEnabled === 0) {
+      worldEventsEnabled = 0;
+    } else if (input.worldEventsEnabled === true || input.worldEventsEnabled === 1) {
+      worldEventsEnabled = 1;
+    } else if (existing) {
+      worldEventsEnabled = existing.worldEventsEnabled ? 1 : 0;
+    }
+
     const updatedAt = Date.now();
 
     db.prepare(
       `INSERT INTO ${ANALYTICS_SCHEMA}.fun_group_settings (
         group_jid, enabled, xp_min, xp_max, cooldown_ms, level_up_announce,
-        daily_xp, daily_coins, rank_limit, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        daily_xp, daily_coins, rank_limit, world_events_enabled, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(group_jid) DO UPDATE SET
         enabled = excluded.enabled,
         xp_min = excluded.xp_min,
@@ -84,6 +133,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
         daily_xp = excluded.daily_xp,
         daily_coins = excluded.daily_coins,
         rank_limit = excluded.rank_limit,
+        world_events_enabled = excluded.world_events_enabled,
         updated_at = excluded.updated_at`
     ).run(
       groupJid,
@@ -95,6 +145,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       dailyXp,
       dailyCoins,
       rankLimit,
+      worldEventsEnabled,
       updatedAt
     );
 
@@ -124,6 +175,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
         dailyXp: funConfig.dailyXp ?? 150,
         dailyCoins: funConfig.dailyCoins ?? 50,
         rankLimit: funConfig.rankLimit ?? 10,
+        worldEventsEnabled: true,
         source: 'global',
       };
     }
@@ -136,8 +188,15 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       dailyXp: saved.dailyXp,
       dailyCoins: saved.dailyCoins,
       rankLimit: saved.rankLimit,
+      worldEventsEnabled: saved.worldEventsEnabled !== false,
       source: 'group',
     };
+  }
+
+  /** true se o grupo pode receber eventos aleatórios do mundo. */
+  function isWorldEventsEnabled(groupJid, funConfig = {}) {
+    const rates = resolveEffectiveRates(groupJid, funConfig);
+    return rates.worldEventsEnabled !== false;
   }
 
   return {
@@ -146,5 +205,6 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
     upsertGroupSettings,
     deleteGroupSettings,
     resolveEffectiveRates,
+    isWorldEventsEnabled,
   };
 }

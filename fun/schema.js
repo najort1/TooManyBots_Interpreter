@@ -34,16 +34,17 @@ export function buildFunSchemaSql() {
       ON fun_user_stats(user_jid);
 
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_group_settings (
-      group_jid         TEXT PRIMARY KEY,
-      enabled           INTEGER NOT NULL DEFAULT 1,
-      xp_min            INTEGER NOT NULL DEFAULT 15,
-      xp_max            INTEGER NOT NULL DEFAULT 25,
-      cooldown_ms       INTEGER NOT NULL DEFAULT 60000,
-      level_up_announce INTEGER NOT NULL DEFAULT 1,
-      daily_xp          INTEGER NOT NULL DEFAULT 150,
-      daily_coins       INTEGER NOT NULL DEFAULT 50,
-      rank_limit        INTEGER NOT NULL DEFAULT 10,
-      updated_at        INTEGER NOT NULL
+      group_jid              TEXT PRIMARY KEY,
+      enabled                INTEGER NOT NULL DEFAULT 1,
+      xp_min                 INTEGER NOT NULL DEFAULT 15,
+      xp_max                 INTEGER NOT NULL DEFAULT 25,
+      cooldown_ms            INTEGER NOT NULL DEFAULT 60000,
+      level_up_announce      INTEGER NOT NULL DEFAULT 1,
+      daily_xp               INTEGER NOT NULL DEFAULT 150,
+      daily_coins            INTEGER NOT NULL DEFAULT 50,
+      rank_limit             INTEGER NOT NULL DEFAULT 10,
+      world_events_enabled   INTEGER NOT NULL DEFAULT 1,
+      updated_at             INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_coin_ledger (
@@ -297,6 +298,42 @@ export function buildFunSchemaSql() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_market_hist
       ON fun_market_price_history(scope_key, item_id, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_stock_quotes (
+      scope_key       TEXT    NOT NULL,
+      company_id      TEXT    NOT NULL,
+      price           INTEGER NOT NULL,
+      previous_price  INTEGER NOT NULL DEFAULT 0,
+      trend           TEXT    NOT NULL DEFAULT 'flat',
+      supply          REAL    NOT NULL DEFAULT 1,
+      demand          REAL    NOT NULL DEFAULT 1,
+      event_shock     REAL    NOT NULL DEFAULT 0,
+      volume_buy      REAL    NOT NULL DEFAULT 0,
+      volume_sell     REAL    NOT NULL DEFAULT 0,
+      updated_at      INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, company_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_stock_holdings (
+      user_jid          TEXT    NOT NULL,
+      scope_key         TEXT    NOT NULL,
+      company_id        TEXT    NOT NULL,
+      qty               INTEGER NOT NULL DEFAULT 0,
+      avg_cost          INTEGER NOT NULL DEFAULT 0,
+      last_dividend_at  INTEGER NOT NULL DEFAULT 0,
+      updated_at        INTEGER NOT NULL,
+      PRIMARY KEY (user_jid, scope_key, company_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_stock_holdings_scope
+      ON fun_stock_holdings(scope_key, user_jid);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_stock_trade_meta (
+      user_jid        TEXT    NOT NULL,
+      scope_key       TEXT    NOT NULL,
+      last_trade_at   INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_jid, scope_key)
+    );
+
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_market_meta (
       scope_key       TEXT PRIMARY KEY,
       last_event_at   INTEGER NOT NULL DEFAULT 0,
@@ -439,6 +476,11 @@ export function ensureFunSchema(db) {
     if (!names.has('rank_limit')) {
       db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_settings ADD COLUMN rank_limit INTEGER NOT NULL DEFAULT 10`);
     }
+    if (!names.has('world_events_enabled')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_settings ADD COLUMN world_events_enabled INTEGER NOT NULL DEFAULT 1`
+      );
+    }
   } catch {
     // ignore
   }
@@ -535,6 +577,48 @@ export function ensureFunSchema(db) {
         volume_sell     REAL    NOT NULL DEFAULT 0,
         updated_at      INTEGER NOT NULL,
         PRIMARY KEY (scope_key, item_id)
+      );
+    `);
+  } catch {
+    // ignore
+  }
+
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_stock_quotes (
+        scope_key       TEXT    NOT NULL,
+        company_id      TEXT    NOT NULL,
+        price           INTEGER NOT NULL,
+        previous_price  INTEGER NOT NULL DEFAULT 0,
+        trend           TEXT    NOT NULL DEFAULT 'flat',
+        supply          REAL    NOT NULL DEFAULT 1,
+        demand          REAL    NOT NULL DEFAULT 1,
+        event_shock     REAL    NOT NULL DEFAULT 0,
+        volume_buy      REAL    NOT NULL DEFAULT 0,
+        volume_sell     REAL    NOT NULL DEFAULT 0,
+        updated_at      INTEGER NOT NULL,
+        PRIMARY KEY (scope_key, company_id)
+      );
+
+      CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_stock_holdings (
+        user_jid          TEXT    NOT NULL,
+        scope_key         TEXT    NOT NULL,
+        company_id        TEXT    NOT NULL,
+        qty               INTEGER NOT NULL DEFAULT 0,
+        avg_cost          INTEGER NOT NULL DEFAULT 0,
+        last_dividend_at  INTEGER NOT NULL DEFAULT 0,
+        updated_at        INTEGER NOT NULL,
+        PRIMARY KEY (user_jid, scope_key, company_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_stock_holdings_scope
+        ON fun_stock_holdings(scope_key, user_jid);
+
+      CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_stock_trade_meta (
+        user_jid        TEXT    NOT NULL,
+        scope_key       TEXT    NOT NULL,
+        last_trade_at   INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (user_jid, scope_key)
       );
     `);
   } catch {
