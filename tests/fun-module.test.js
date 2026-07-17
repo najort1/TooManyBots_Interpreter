@@ -448,6 +448,7 @@ test('fun_group_settings override rates', () => {
   const defaults = groups.resolveEffectiveRates(groupJid, global);
   assert.equal(defaults.source, 'global');
   assert.equal(defaults.xpMin, 15);
+  assert.equal(defaults.worldEventsEnabled, true);
 
   groups.upsertGroupSettings({
     groupJid,
@@ -466,6 +467,28 @@ test('fun_group_settings override rates', () => {
   assert.equal(eff.xpMax, 8);
   assert.equal(eff.dailyXp, 99);
   assert.equal(eff.rankLimit, 5);
+  assert.equal(eff.worldEventsEnabled, true);
+});
+
+test('fun_group_settings: desliga eventos do mundo por grupo', () => {
+  const groups = createFunGroupRepository({ getDatabase: getDb });
+  const groupJid = uniqueGroup();
+  const global = resolveFunConfig({});
+
+  groups.upsertGroupSettings({
+    groupJid,
+    worldEventsEnabled: false,
+  });
+
+  const eff = groups.resolveEffectiveRates(groupJid, global);
+  assert.equal(eff.worldEventsEnabled, false);
+  assert.equal(groups.isWorldEventsEnabled(groupJid, global), false);
+
+  groups.upsertGroupSettings({
+    groupJid,
+    worldEventsEnabled: true,
+  });
+  assert.equal(groups.isWorldEventsEnabled(groupJid, global), true);
 });
 
 // â”€â”€â”€ Rank card PNG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

@@ -197,6 +197,77 @@ test('tickWorldEvents respeita worldAutonomous=false', async () => {
   assert.equal(r.reason, 'world-autonomous-off');
 });
 
+test('tickWorldEvents: worldEventsEnabled=false bloqueia mercado; happy hour ainda anuncia', async () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const scope = uniqueGroup();
+  const posts = [];
+
+  const mod = createFunModule({
+    getConfig: () =>
+      resolveFunConfig({
+        enabled: true,
+        worldAutonomous: true,
+        worldQuietHoursEnabled: false,
+        groupWhitelistJids: [scope],
+        requireGroupWhitelist: true,
+        marketEnabled: true,
+        eventAutoSpawn: true,
+        eventTickChance: 1,
+        eventAutoSpawnChance: 1,
+        eventCooldownMs: 0,
+      }),
+    sendText: async (sock, jid, text) => {
+      posts.push({ jid, text: String(text) });
+    },
+  });
+  mod.init();
+
+  mod._services.groupRepository.upsertGroupSettings({
+    groupJid: scope,
+    worldEventsEnabled: false,
+  });
+
+  const marketRepo = mod._services.marketRepository;
+  const now = Date.now();
+  marketRepo.ensurePrices(scope, now);
+  marketRepo.setMeta(scope, {
+    lastEventAt: now - 90_000,
+    nextEventAt: now - 500,
+    lastRestockAt: now,
+    now,
+  });
+
+  const result = await mod.tickWorldEvents({
+    sock: {},
+    sendText: async (sock, jid, text) => {
+      posts.push({ jid, text: String(text) });
+    },
+    now: now + 1000,
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(
+    result.results.some(
+      (r) => r.scopeKey === scope && r.kind === 'market' && r.reason === 'world-events-off'
+    ),
+    'mercado auto bloqueado'
+  );
+  assert.ok(
+    result.results.some(
+      (r) => r.scopeKey === scope && r.kind === 'event' && r.ok && r.eventType === 'casino_happy'
+    ),
+    'happy hour deve disparar com world events off'
+  );
+  assert.ok(
+    posts.some((p) => p.jid === scope && /HAPPY HOUR/i.test(p.text)),
+    'anúncio de happy hour no chat'
+  );
+  assert.ok(
+    !posts.some((p) => p.jid === scope && /Mercado de rua|TRÉGUA/i.test(p.text)),
+    'sem anúncio de mercado/trégua'
+  );
+});
+
 test('tickWorldEvents bloqueia na madrugada (1h–6h)', async () => {
   process.env.FUN_DISABLE_LIVE_LLM = '1';
   const scope = uniqueGroup();
