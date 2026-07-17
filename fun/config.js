@@ -412,6 +412,104 @@ export function normalizeFunConfig(input) {
       ? Math.min(2, Math.max(1, Number(raw.happyHourPayoutMult)))
       : DEFAULT_FUN_CONFIG.happyHourPayoutMult,
     happyHourCooldownMs: normalizeInt(raw.happyHourCooldownMs, DEFAULT_FUN_CONFIG.happyHourCooldownMs, { min: 0, max: 7 * 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
+    russianChambers: normalizeInt(raw.russianChambers, DEFAULT_FUN_CONFIG.russianChambers, {
+      min: 2,
+      max: 12,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    russianDeathMs: normalizeInt(raw.russianDeathMs, DEFAULT_FUN_CONFIG.russianDeathMs, {
+      min: 60_000,
+      max: 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    russianIdleMs: normalizeInt(raw.russianIdleMs, DEFAULT_FUN_CONFIG.russianIdleMs, {
+      min: 60_000,
+      max: 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    chaosCooldownMs: normalizeInt(raw.chaosCooldownMs, DEFAULT_FUN_CONFIG.chaosCooldownMs, {
+      min: 5_000,
+      max: 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    chaosTimeoutMs: normalizeInt(raw.chaosTimeoutMs, DEFAULT_FUN_CONFIG.chaosTimeoutMs, {
+      min: 5_000,
+      max: 90_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    chaosMaxChars: normalizeInt(raw.chaosMaxChars, DEFAULT_FUN_CONFIG.chaosMaxChars, {
+      min: 200,
+      max: 2000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    chaosMaxTokens: normalizeInt(raw.chaosMaxTokens, DEFAULT_FUN_CONFIG.chaosMaxTokens, {
+      min: 80,
+      max: 1200,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    memoryEnabled: normalizeBoolean(raw.memoryEnabled, DEFAULT_FUN_CONFIG.memoryEnabled),
+    memoryMaxFacts: normalizeInt(raw.memoryMaxFacts, DEFAULT_FUN_CONFIG.memoryMaxFacts, {
+      min: 10,
+      max: 120,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    memorySummaryMaxChars: normalizeInt(
+      raw.memorySummaryMaxChars,
+      DEFAULT_FUN_CONFIG.memorySummaryMaxChars,
+      { min: 80, max: 200, rounding: 'floor', clamp: true }
+    ),
+    memoryPersonaMaxChars: normalizeInt(
+      raw.memoryPersonaMaxChars,
+      DEFAULT_FUN_CONFIG.memoryPersonaMaxChars,
+      { min: 200, max: 800, rounding: 'floor', clamp: true }
+    ),
+    memoryBufferSize: normalizeInt(raw.memoryBufferSize, DEFAULT_FUN_CONFIG.memoryBufferSize, {
+      min: 8,
+      max: 60,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    memoryFlushMinMessages: normalizeInt(
+      raw.memoryFlushMinMessages,
+      DEFAULT_FUN_CONFIG.memoryFlushMinMessages,
+      { min: 3, max: 40, rounding: 'floor', clamp: true }
+    ),
+    memoryFlushIntervalMs: normalizeInt(
+      raw.memoryFlushIntervalMs,
+      DEFAULT_FUN_CONFIG.memoryFlushIntervalMs,
+      { min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    memoryMinMsgChars: normalizeInt(raw.memoryMinMsgChars, DEFAULT_FUN_CONFIG.memoryMinMsgChars, {
+      min: 6,
+      max: 80,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    memoryExtractTimeoutMs: normalizeInt(
+      raw.memoryExtractTimeoutMs,
+      DEFAULT_FUN_CONFIG.memoryExtractTimeoutMs,
+      { min: 5_000, max: 90_000, rounding: 'floor', clamp: true }
+    ),
+    memoryTtlDays: normalizeInt(raw.memoryTtlDays, DEFAULT_FUN_CONFIG.memoryTtlDays, {
+      min: 7,
+      max: 365,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    memoryMinScore: normalizeInt(raw.memoryMinScore, DEFAULT_FUN_CONFIG.memoryMinScore, {
+      min: 0,
+      max: 80,
+      rounding: 'floor',
+      clamp: true,
+    }),
   };
 }
 

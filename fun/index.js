@@ -30,6 +30,9 @@ import { createFunUserPrefsRepository } from './db/funUserPrefsRepository.js';
 import { createGroupMembershipService } from './utils/groupMembership.js';
 import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
+import { createChaosService } from './services/chaosService.js';
+import { createFunMemoryRepository } from './db/funMemoryRepository.js';
+import { createGroupMemoryService } from './services/groupMemoryService.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
 import { getDb } from '../db/context.js';
 import { sendTextMessage, sendImageMessage, sendStickerMessage } from '../engine/sender.js';
@@ -75,7 +78,7 @@ export function createFunModule(deps = {}) {
       ttlMs: 5 * 60_000,
     });
 
-  const xpService = createXpService({ repository });
+  const xpService = createXpService({ repository, effectsRepository });
   const rankService = createRankService({ repository });
   const dailyService = createDailyService({ repository });
   const coinsService = createCoinsService({ repository });
@@ -149,12 +152,31 @@ export function createFunModule(deps = {}) {
     factionService,
     repository,
   });
+  const chaosService =
+    deps.chaosService ||
+    createChaosService({
+      repository,
+      effectsRepository,
+    });
+  const memoryRepository =
+    deps.memoryRepository || createFunMemoryRepository({ getDatabase });
+  const groupMemoryService =
+    deps.groupMemoryService ||
+    createGroupMemoryService({
+      memoryRepository,
+      getContactDisplayName: resolveContactName,
+      getLogger,
+      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateOllama: deps.ollamaGenerate || deps.generate,
+    });
   const flavorService =
     deps.flavorService ||
     createFlavorService({
       getConfig: () => resolveFunConfig(getConfig() || {}),
       getLogger,
-      generate: deps.ollamaGenerate,
+      // Zen principal · Ollama fallback · template no fim
+      zenGenerate: deps.openaiChatComplete || deps.zenGenerate,
+      generate: deps.ollamaGenerate || deps.generate,
     });
 
   let initialized = false;
@@ -207,6 +229,8 @@ export function createFunModule(deps = {}) {
         tarotService,
         marketService,
         jobService,
+        chaosService,
+        groupMemoryService,
         socialHooks,
         flavorService,
         getContactDisplayName: resolveContactName,
@@ -291,6 +315,9 @@ export function createFunModule(deps = {}) {
       jobService,
       jobRepository,
       casinoRepository,
+      chaosService,
+      groupMemoryService,
+      memoryRepository,
       socialHooks,
       flavorService,
       identityMap,

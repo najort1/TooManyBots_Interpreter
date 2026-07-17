@@ -64,6 +64,18 @@ import {
   handleEmploymentCommand,
   handleResignCommand,
 } from './handlers/employment.js';
+import {
+  handleRussianCommand,
+  handlePullCommand,
+  handleCancelCommand,
+  handleGossipCommand,
+  handleOracleCommand,
+  handleIlluminatiCommand,
+} from './handlers/chaos.js';
+import {
+  handleLoreCommand,
+  handleForgetLoreCommand,
+} from './handlers/memory.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -120,6 +132,8 @@ export async function routeFunCommand(ctx) {
     tarotService,
     marketService,
     jobService,
+    chaosService,
+    groupMemoryService,
     socialHooks,
     flavorService,
     getContactDisplayName,
@@ -171,6 +185,8 @@ export async function routeFunCommand(ctx) {
     tarotService,
     marketService,
     jobService,
+    chaosService,
+    groupMemoryService,
     socialHooks,
     flavorService,
     getContactDisplayName,
@@ -304,6 +320,22 @@ export async function routeFunCommand(ctx) {
       return handleGroupScopeCommand(base);
     case FUN_COMMANDS.STICKER:
       return handleStickerCommand(base);
+    case FUN_COMMANDS.RUSSIAN:
+      return handleRussianCommand(base);
+    case FUN_COMMANDS.PULL:
+      return handlePullCommand(base);
+    case FUN_COMMANDS.CANCEL:
+      return handleCancelCommand(base);
+    case FUN_COMMANDS.GOSSIP:
+      return handleGossipCommand(base);
+    case FUN_COMMANDS.ORACLE:
+      return handleOracleCommand(base);
+    case FUN_COMMANDS.ILLUMINATI:
+      return handleIlluminatiCommand(base);
+    case FUN_COMMANDS.LORE:
+      return handleLoreCommand(base);
+    case FUN_COMMANDS.FORGET_LORE:
+      return handleForgetLoreCommand(base);
     default:
       return { handled: false };
   }
