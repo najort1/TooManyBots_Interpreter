@@ -370,6 +370,33 @@ export function buildFunSchemaSql() {
       updated_at        INTEGER NOT NULL,
       PRIMARY KEY (user_jid, scope_key, job_id)
     );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_group_memories (
+      id            TEXT PRIMARY KEY,
+      scope_key     TEXT    NOT NULL,
+      kind          TEXT    NOT NULL DEFAULT 'event',
+      summary       TEXT    NOT NULL,
+      subjects_json TEXT    NOT NULL DEFAULT '[]',
+      keywords_json TEXT    NOT NULL DEFAULT '[]',
+      score         INTEGER NOT NULL DEFAULT 50,
+      hits          INTEGER NOT NULL DEFAULT 1,
+      source        TEXT    NOT NULL DEFAULT 'chat',
+      created_at    INTEGER NOT NULL,
+      last_seen_at  INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_group_memories_scope_score
+      ON fun_group_memories(scope_key, score DESC, last_seen_at DESC);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_group_memories_scope_seen
+      ON fun_group_memories(scope_key, last_seen_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_group_persona (
+      scope_key     TEXT PRIMARY KEY,
+      persona_text  TEXT    NOT NULL DEFAULT '',
+      fact_count    INTEGER NOT NULL DEFAULT 0,
+      updated_at    INTEGER NOT NULL
+    );
   `;
 }
 

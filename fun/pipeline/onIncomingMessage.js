@@ -94,6 +94,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
     tarotService,
     marketService,
     jobService,
+    chaosService,
+    groupMemoryService,
     socialHooks,
     flavorService,
     getContactDisplayName,
@@ -378,6 +380,23 @@ export async function handleFunIncomingMessage(deps, ctx) {
     }
   }
 
+  // Lore seletiva: observa chat do grupo (async extract em batch; ignora comandos)
+  if (isGroup && groupMemoryService?.observeMessage && scope.scopeKey) {
+    try {
+      groupMemoryService.observeMessage({
+        scopeKey: scope.scopeKey,
+        userJid,
+        text,
+        messageType,
+        funConfig,
+        now: Date.now(),
+        isGroup: true,
+      });
+    } catch {
+      // memória nunca quebra o fluxo
+    }
+  }
+
   if (isCommand) {
     try {
       // Comandos de mesa/social só no grupo
@@ -420,6 +439,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
         tarotService,
         marketService,
         jobService,
+        chaosService,
+        groupMemoryService,
         socialHooks,
         flavorService,
         getContactDisplayName,
@@ -478,6 +499,19 @@ export async function handleFunIncomingMessage(deps, ctx) {
 
   try {
     const now = Date.now();
+    // Roleta russa: morto virtualmente não ganha XP passivo
+    if (effectsRepository?.isXpBlocked) {
+      const dead = effectsRepository.isXpBlocked(userJid, scope.scopeKey, now);
+      if (dead.blocked) {
+        return {
+          handled: false,
+          skipFlows: false,
+          reason: 'xp-morto',
+          xpBlockedUntil: dead.expiresAt,
+        };
+      }
+    }
+
     let xpMin = effectiveRates.xpMin;
     let xpMax = effectiveRates.xpMax;
     if (effectsRepository) {
@@ -512,9 +546,22 @@ export async function handleFunIncomingMessage(deps, ctx) {
       });
       if (flavorService?.italicLine) {
         try {
+          let groupLore = '';
+          if (groupMemoryService?.buildLoreContext) {
+            try {
+              groupLore = groupMemoryService.buildLoreContext(scope.scopeKey, {
+                userJids: [userJid],
+                limit: 4,
+                funConfig,
+              });
+            } catch {
+              groupLore = '';
+            }
+          }
           const fl = await flavorService.italicLine('level_up', {
             level: award.level,
             user: name || userJid?.split?.('@')?.[0] || '',
+            groupLore,
           });
           if (fl) text = `${text}\n${fl}`;
         } catch {

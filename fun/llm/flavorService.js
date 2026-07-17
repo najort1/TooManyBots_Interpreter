@@ -5,7 +5,7 @@ const SYSTEM_PROMPT = `Você é o narrador de um bot de diversão de WhatsApp BR
 
 Voz: grupo de amigos zoando. Natural, irônico, carinhoso na sacanagem. Pode ter piada leve e duplo sentido de vez em quando — sem forçar, sem cringe, sem soar IA genérica.
 
-Escreva 1 a 3 frases (até ~1000 caracteres).
+Escreva 1 a 3 frases COMPLETAS (até ~1000 caracteres). Cada frase fecha com ponto ou kkk.
 
 Pode: gíria BR leve (pô, mano, né, viu, kkk, meteu o louco, pagou mico, se lascou).
 Pode: humor seco, indireta, "olha o casal", "foi de base", "hoje não é o dia".
@@ -15,12 +15,13 @@ NÃO:
 - inglês, tom de anúncio, "seamless/unlock/vibes"
 - ofensa pesada, preconceito, puteiro explícito
 - markdown, lista, aspas no começo/fim
-- explicar o que vai fazer — só manda o comentário
+- explicar o que vai fazer, raciocinar em voz alta, dizer "em português", "pode ser", "outra ideia"
+- frases pela metade
 
-No máximo 3 emojis. Só o texto final.`;
+No máximo 3 emojis. Só o texto final, pronto pra colar no zap.`;
 
 /** System enxuto pro Zen (modelos free se perdem com prompt longo). */
-const ZEN_SYSTEM_PROMPT = `Narrador de zap BR. Só pt-BR de verdade (1–3 frases, até 1000 chars). Tom: zoação de grupo, ironia leve, às vezes um duplo sentido sutil — nunca forçado nem IA genérica. Sem markdown, sem aspas, sem inglês, sem ofensa pesada. Não invente números de jogo. Máx 3 emojis. Só o texto final.`;
+const ZEN_SYSTEM_PROMPT = `Narrador de zap BR. Resposta FINAL só: 1–3 frases COMPLETAS em pt-BR (até 400 chars), tom de zoação de grupo. Sem raciocínio, sem "em português", sem "pode ser", sem meta. Sem inventar coins/XP. Máx 3 emojis. Só o texto final.`;
 
 /**
  * Roteiro besteirol de assalto — história LONGA (não uma frase).
@@ -63,6 +64,57 @@ Várias frases por cena, humor de bairro, diálogos ok. pt-BR. NÃO invente coin
 
 function isAssaultScenario(key) {
   return String(key || '').startsWith('assault_');
+}
+
+const CHAOS_SCENARIOS = new Set([
+  'cancel_absurd',
+  'gossip_fake',
+  'oracle_insane',
+  'illuminati_theory',
+  'russian_click',
+  'russian_dead',
+  'russian_start',
+]);
+
+function isChaosScenario(key) {
+  return CHAOS_SCENARIOS.has(String(key || ''));
+}
+
+/**
+ * Caos social — um system por tarefa (evita o modelo ecoar lista de "cenários").
+ * Zen → Ollama → template.
+ */
+const CHAOS_TASK_SYSTEM = Object.freeze({
+  cancel_absurd: `Você inventa UM cancelamento ABSURDO e engraçado de WhatsApp BR.
+A pessoa (user=) é o cancelado. Motivo ridículo e único, 2–4 frases completas em pt-BR.
+Só o texto do cancelamento. NÃO liste opções, NÃO fale de fofoca/oráculo/roleta, NÃO explique o prompt.`,
+
+  gossip_fake: `Você inventa UMA fofoca 100% FALSA e engraçada de WhatsApp BR sobre user=.
+Tom de rádio-peão, 2–4 frases completas. Só a fofoca. NÃO liste modos, NÃO meta-comente.`,
+
+  oracle_insane: `Você é oráculo LOUCO de WhatsApp BR. Responda question= com profecia absurda
+(estilo: sim, porém depois de três pombos, um Uno azul e senhora de milho). 2–4 frases completas.
+Só a resposta. NÃO liste cenários, NÃO diga "em português".`,
+
+  illuminati_theory: `Você inventa UMA teoria da conspiração engraçada (Illuminati de zoeira) em pt-BR.
+A pessoa (user=) é o centro da teoria. Estilo: "Existem fortes indícios de que X controla o preço do pão francês desde 2009."
+2–3 frases COMPLETAS. Só a teoria. NÃO escreva "Cenários:", NÃO liste cancelamento/fofoca/oráculo/roleta.`,
+
+  russian_click: `Comentário de suspense de roleta russa virtual (câmara vazia / click) em pt-BR de zap. 1–3 frases completas. Só o comentário.`,
+
+  russian_dead: `Comentário de "morte" virtual na roleta russa (mico, sem XP) em pt-BR de zap. 1–3 frases completas. Sem gore. Só o comentário.`,
+
+  russian_start: `Abertura teatral da roleta russa virtual no grupo (1 bala). 1–3 frases completas em pt-BR. Só o texto.`,
+});
+
+const CHAOS_SYSTEM_DEFAULT = `Você gera texto cômico de bot WhatsApp BR. 2–4 frases COMPLETAS em pt-BR.
+Só o texto final pronto pro zap. Sem listas, sem "cenários", sem meta, sem inglês.`;
+
+function chaosSystemFor(key, { short = false } = {}) {
+  const base = CHAOS_TASK_SYSTEM[key] || CHAOS_SYSTEM_DEFAULT;
+  if (!short) return base;
+  // Zen free: prompt enxuto, tarefa única
+  return `${base} Máx 500 chars. Zero raciocínio em voz alta.`;
 }
 
 /** Fallbacks estáticos — sempre seguros se LLM falhar. */
@@ -137,6 +189,112 @@ const FALLBACKS = {
       'Errou o lado. O chat ri, o saldo chora.',
       'Hoje a coroa (ou a cara) não tava pra você.',
       'Foi de base na moeda. Respira e tenta depois do cooldown.',
+    ]),
+  roulette_win: (v) =>
+    pick([
+      `A bola parou em *${v.ball || '?'}* e te beijou na testa. Casa paga, ego infla.`,
+      'Roleta alinhou com a sua aposta. Por um segundo você parece profissional.',
+      v.pick
+        ? `*${v.pick}* deu certo. O cassino fingiu que não viu.`
+        : 'Número certo, bolso feliz. Não se acostuma — a roda tem memória seletiva.',
+      'Giro limpo. O grupo já tá pedindo replay… e a próxima aposta.',
+    ]),
+  roulette_lose: (v) =>
+    pick([
+      `Apostou em *${v.pick || 'algo'}*, a bola foi em *${v.ball || 'outro lugar'}*. Clássico.`,
+      'A roda girou, o saldo encolheu. A roleta não liga pro seu feeling.',
+      'Quase… no sentido de “não”. A bola te deu um chapéu vermelho-e-preto.',
+      'Mesa fria. Respira, conta até o cooldown e finge que foi estratégia.',
+    ]),
+  slot_win: () =>
+    pick([
+      'Os rolos alinharam. A máquina te pagou e ainda fingiu que foi generosa.',
+      'Linha premiada. Por um momento o cassino pareceu justo — perigoso.',
+      'Bateu o combo. Não diga “sistema” pro grupo, eles vão rir.',
+    ]),
+  slot_lose: () =>
+    pick([
+      'Rolos tortos, bolso reto pra baixo. A alavanca ri baixinho.',
+      'Quase formou… no seu delírio. No mundo real: zero.',
+      'A máquina comeu a ficha com elegância. Até a próxima ilusão.',
+    ]),
+  crash_win: (v) =>
+    pick([
+      v.mult
+        ? `Desceu em *${v.mult}x* antes do foguete virar fogos. Timing de cobrador de dívidas.`
+        : 'Cashout no tempo certo. O foguete explodiu sem você — luxo.',
+      'Saiu do voo com grana. Covardia lucrativa é skill.',
+      'Paraquedas abriu. O ego também.',
+    ]),
+  crash_lose: (v) =>
+    pick([
+      v.mult
+        ? `Explodiu em *${v.mult}x* com você ainda a bordo. Turismo espacial caro.`
+        : 'Ficou no foguete tempo demais. Agora é cinza e mico.',
+      'Crash te levou junto. Ambicioso demais pro multiplicador do dia.',
+      'Queria o 10x, levou o 0x. História clássica de /crash.',
+    ]),
+  bj_win: () =>
+    pick([
+      'Mão boa, dealer pior. Blackjack com cara de “eu sabia”.',
+      'Você fechou a mesa. O dealer contou de novo e ainda perdeu.',
+      '21 (ou perto) e o bolso agradece. Não inventa que é card counting.',
+    ]),
+  bj_lose: () =>
+    pick([
+      'Dealer mostrou a mão e o seu orgulho sumiu junto com a stake.',
+      'Estourou ou perdeu no detalhe — blackjack sem piedade.',
+      'A mesa te educou. Hit ou stand: os dois doeram de algum jeito.',
+    ]),
+  bj_push: () =>
+    pick([
+      'Empate. Ninguém ri alto, ninguém chora — só devolve e segue.',
+      'Push: a casa devolveu a stake e o drama morreu no meio.',
+      'Mesma pontuação. Coins de volta, ego em stand-by.',
+    ]),
+  russian_click: (v) =>
+    pick([
+      `*${v.user || 'Alguém'}* ouviu o click. O grupo soltou o ar que nem sabia que segurava.`,
+      'Câmara vazia. O suspense continua — e o dedo também.',
+      v.remaining != null
+        ? `Sobrou *${v.remaining}* no tambor. Ainda tem drama pra rolar.`
+        : 'Click seco. Quase funeral, quase meme.',
+    ]),
+  russian_dead: (v) =>
+    pick([
+      `*${v.user || 'Fulano'}* foi de base (virtual). XP em luto por 15 min.`,
+      'BANG. O rank chora, o chat ri, o morto espera o timer.',
+      'Morte simbólica confirmada. Sem XP, com mico eterno no histórico do grupo.',
+    ]),
+  russian_start: (v) =>
+    pick([
+      `O tambor gira. *${v.chambers || 6}* câmaras, *1* bala. Quem puxar, joga com a sorte (e com o XP).`,
+      'Roleta russa virtual na mesa. Suspense barato, mico caro. `/puxar` quando tiver coragem.',
+      'Uma bala, vários heróis. O grupo segura o ar — e o cooldown de XP também.',
+    ]),
+  cancel_absurd: (v) =>
+    pick([
+      `Tribunal convocou: *${v.user || 'Fulano'}* cancelado(a) por crimes contra o bom senso e o Wi-Fi alheio.`,
+      `*${v.user || 'Alguém'}* caiu. Motivo: excesso de “tô chegando” e déficit de vergonha na cara.`,
+      `Cancelamento express: *${v.user || 'Fulano'}* por crimes absurdos que só o grupo entende.`,
+    ]),
+  gossip_fake: (v) =>
+    pick([
+      `Fofoca mentirosa: *${v.user || 'Fulano'}* treina discurso pro /daily no chuveiro e perde o fio.`,
+      `Rumor 0% real: *${v.user || 'Alguém'}* tem um segundo celular só pra figurinha feia.`,
+      `Ouvi no vento (mentira): *${v.user || 'Fulano'}* namora o travesseiro e tem ciúmes do carregador.`,
+    ]),
+  oracle_insane: (v) =>
+    pick([
+      `Sobre “${v.question || 'isso'}”: sim, porém só depois de três pombos, um Uno azul e uma senhora de milho.`,
+      `Oráculo maluco em “${v.question || 'a pergunta'}”: talvez, se o elevador errar o andar e um gato aceitar PIX.`,
+      `Visão: “${v.question || 'isso'}” só rola quando o ônibus chegar no horário — ou seja, no multiverso.`,
+    ]),
+  illuminati_theory: (v) =>
+    pick([
+      `Existem fortes indícios de que *${v.user || 'Fulano'}* controla o preço do pão francês desde 2009.`,
+      `Dossiê: *${v.user || 'Alguém'}* é acionista secreto do atraso coletivo e do Wi-Fi seletivo.`,
+      `Conspiração: *${v.user || 'Fulano'}* e os pombos formam o conselho que decide sua produtividade.`,
     ]),
   bet_result: (v) =>
     pick([
@@ -350,7 +508,7 @@ function looksLikeMetaReasoning(s) {
   if (!t) return true;
   // raciocínio em inglês / meta sobre o prompt
   if (
-    /\b(I need to|we are|the user|therefore|so this is|since I can't|shouldn'?t|compatibility ship|I should|let me|characters|max\s*\d+)\b/i.test(
+    /\b(I need to|we are|the user|therefore|so this is|since I can't|shouldn'?t|compatibility ship|I should|let me|characters|max\s*\d+|in Portuguese)\b/i.test(
       t
     )
   ) {
@@ -358,13 +516,35 @@ function looksLikeMetaReasoning(s) {
   }
   // meta em pt-BR (modelo planejando a frase em vez de dizer a frase)
   if (
-    /\b(posso brincar|outra ideia|então posso|talvez algo sobre|preciso (criar|escrever|gerar)|vou (escrever|focar|criar)|a frase (poderia|tem que)|algo que brinque|responda somente|só a frase)\b/i.test(
+    /\b(posso brincar|outra ideia|então posso|talvez algo sobre|preciso (criar|escrever|gerar)|vou (escrever|focar|criar)|a frase (poderia|tem que|seria)|algo que brinque|responda somente|só a frase|em português|em portugues|pode ser$|seria algo|tipo assim)\b/i.test(
       t
     )
   ) {
     return true;
   }
-  if (/^(contexto|regras?|passo|thinking|racioc|a frase|vou |algo que|preciso |- )/i.test(t)) return true;
+  // eco do system prompt de caos (lista de modos)
+  if (/\bcen[aá]rios?\s*:/i.test(t)) return true;
+  if (
+    /cancelamento absurdo/i.test(t) &&
+    /fofoca|or[aá]culo|roleta|conspir/i.test(t)
+  ) {
+    return true;
+  }
+  if (/fofoca falsa.*or[aá]culo|or[aá]culo insano.*illuminati|roleta russa virtual/i.test(t)) {
+    return true;
+  }
+  if (/^caos c[oô]mico/i.test(t)) return true;
+  if (/\b\d\s*[–-]\s*\d\s*frases?\b/i.test(t) && t.length < 80) return true;
+  if (/\b(frases?\s+completas?|s[oó]\s+o\s+texto\s+final)\b/i.test(t) && t.length < 100) return true;
+  if (/^(contexto|regras?|passo|thinking|racioc|a frase|vou |algo que|preciso |- |mas |assim|então|entao)/i.test(t) && t.length < 60) {
+    return true;
+  }
+  // fragmento incompleto (DeepSeek)
+  if (t.length < 18) return true;
+  if (/\b(pode ser|seria|talvez)\s*$/i.test(t)) return true;
+  const quotes = (t.match(/["“”']/g) || []).length;
+  if (quotes % 2 === 1) return true;
+  if (/[,:;]\s*$/.test(t) && !/[.!?…)]$/.test(t) && t.length < 90) return true;
   return false;
 }
 
@@ -376,16 +556,16 @@ function sanitizeFlavor(raw, maxLen = 160) {
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
-    .filter((l) => !/^(thinking|raciocínio|step\s*\d)/i.test(l));
+    .filter((l) => !/^(thinking|raciocínio|step\s*\d|racioc)/i.test(l));
 
-  // junta até 3 linhas boas (mini-histórias de assalto etc.); se todas forem meta, falha
+  // junta até 3 linhas boas; se todas forem meta/rascunho, falha → template
   const good = [];
   for (const line of lines) {
     let cand = line
       .replace(/^["'“”«»]+|["'“”«»]+$/g, '')
       .replace(/^(narrador|bot|assistente|resposta|final)\s*:\s*/i, '')
       .trim();
-    if (cand.length < 6 || looksLikeMetaReasoning(cand)) continue;
+    if (cand.length < 12 || looksLikeMetaReasoning(cand)) continue;
     good.push(cand);
     if (good.length >= 3) break;
   }
@@ -404,8 +584,9 @@ function sanitizeFlavor(raw, maxLen = 160) {
 
 function buildUserPrompt(scenario, vars) {
   const v = vars && typeof vars === 'object' ? vars : {};
+  const groupLore = String(v.groupLore || '').trim();
   const facts = Object.entries(v)
-    .filter(([, val]) => val != null && String(val).trim() !== '')
+    .filter(([k, val]) => k !== 'groupLore' && val != null && String(val).trim() !== '')
     .map(([k, val]) => `${k}=${String(val).slice(0, 80)}`)
     .join('; ');
 
@@ -421,6 +602,29 @@ function buildUserPrompt(scenario, vars) {
     job_done: 'Alguém “trabalhou” no bot e ganhou coins (não invente o valor).',
     flip_win: 'Ganhou no cara ou coroa — sorte com cara de skill (sem inventar valor).',
     flip_lose: 'Perdeu no cara ou coroa — mico leve, sem humilhar de graça.',
+    roulette_win:
+      'Ganhou na ROLETA (bola/cor). Zoação de cassino de bairro — NÃO fale de moeda/cara/coroa. Sem inventar payout.',
+    roulette_lose:
+      'Perdeu na ROLETA (bola foi noutro lugar). Mico leve de mesa — NÃO fale de moeda/cara/coroa. Sem inventar valor.',
+    slot_win: 'Ganhou no SLOT (rolos). Tom de máquina caça-níquel — sem moeda, sem inventar mult.',
+    slot_lose: 'Perdeu no SLOT. Alavanca comeu a ficha — sem cara/coroa, sem inventar valor.',
+    crash_win: 'Cashout no CRASH (foguete) a tempo. Timing covarde e lucrativo — sem inventar mult se não vier no contexto.',
+    crash_lose: 'Crash explodiu com o jogador a bordo. Mico de ganância — sem inventar números.',
+    bj_win: 'Ganhou no BLACKJACK vs dealer. Mesa de cartas — sem moeda, sem inventar mão.',
+    bj_lose: 'Perdeu no BLACKJACK. Dealer ou estouro — mico leve, sem inventar total.',
+    bj_push: 'Empate (push) no BLACKJACK — stake de volta, drama morreu no meio.',
+    russian_click: 'Roleta russa: click (câmara vazia). Suspense de grupo, sem inventar morte.',
+    russian_dead: 'Roleta russa: BANG virtual. Mico + sem XP. Não invente tempo/coins.',
+    cancel_absurd:
+      'Gere o MOTIVO PRINCIPAL de cancelamento ABSURDO de user=. Seja criativo e único (não genérico). 2–4 frases. Sem ofensa real/preconceito.',
+    gossip_fake:
+      'Gere UMA fofoca 100% FALSA e engraçada sobre user=. Tom de rádio-peão. 2–4 frases. Sem ofensa pesada.',
+    oracle_insane:
+      'Oráculo INSANO: responda question= com profecia absurda (pombos, Uno azul, milho, elevador…). 2–4 frases. Sem conselho sério de autoajuda.',
+    illuminati_theory:
+      'Teoria Illuminati com user= no centro (pão, Wi-Fi, ônibus, café…). Tom dossiê falso. 2–3 frases.',
+    russian_start:
+      'Abertura teatral da roleta russa virtual no grupo (1 bala). Suspense de zoeira. 1–3 frases.',
     bet_result: 'Resultado de aposta PvP: use os nomes; não invente pot/números.',
     ship: 'Ship do grupo: use o clima do percent se tiver; pode ser safado de leve.',
     lucky_hit: 'Deu sorte no comando de sorte — raro e gostoso.',
@@ -452,7 +656,10 @@ CENA 3 — FUGA / CONSEQUÊNCIA
 EPÍLOGO
 Várias frases por cena. NÃO encurte. Sem inventar números de jogo:`
     : 'Texto (1 a 3 frases, pt-BR de zap):';
-  return `${hint}\nContexto fixo (não invente além disso): ${facts || 'nenhum'}\n${shape}`;
+  const loreBlock = groupLore
+    ? `\nLore do grupo (use só se encaixar na piada; NÃO invente lore nova):\n${groupLore.slice(0, 700)}\n`
+    : '';
+  return `${hint}\nContexto fixo (não invente além disso): ${facts || 'nenhum'}${loreBlock}\n${shape}`;
 }
 
 /** Sanitiza roteiro longo de assalto — mantém parágrafos/cenas. */
@@ -527,7 +734,7 @@ function resolveZenEndpoint(cfg) {
     baseUrl: String(cfg.zenBaseUrl || 'http://127.0.0.1:3000').trim(),
     model: String(cfg.zenModel || 'mimo-v2.5-free').trim() || 'mimo-v2.5-free',
     timeoutMs: Math.max(500, Math.floor(Number(cfg.zenTimeoutMs) || 20_000)),
-    maxTokens: Math.max(16, Math.floor(Number(cfg.zenMaxTokens) || 400)),
+    maxTokens: Math.max(64, Math.floor(Number(cfg.zenMaxTokens) || 400)),
     temperature: Number.isFinite(Number(cfg.zenTemperature)) ? Number(cfg.zenTemperature) : 0.85,
     apiKey: String(cfg.zenApiKey || '').trim(),
   };
@@ -601,10 +808,18 @@ export function createFlavorService(deps = {}) {
     }
   }
 
-  function buildPromptParts(cfg, key, vars, simple, { forZen = false, assault = false } = {}) {
+  function buildPromptParts(
+    cfg,
+    key,
+    vars,
+    simple,
+    { forZen = false, assault = false, chaos = false } = {}
+  ) {
     const maxChars = assault
       ? Math.max(1800, Math.floor(Number(cfg.assaultStoryMaxChars) || 2200))
-      : Math.floor(Number(cfg.ollamaMaxChars) || 1000);
+      : chaos
+        ? Math.max(400, Math.min(900, Math.floor(Number(cfg.chaosMaxChars) || 700)))
+        : Math.floor(Number(cfg.ollamaMaxChars) || 1000);
 
     if (assault) {
       const facts = Object.entries(vars || {})
@@ -625,7 +840,54 @@ export function createFlavorService(deps = {}) {
         system: forZen ? ASSAULT_STORY_ZEN_SYSTEM : ASSAULT_STORY_SYSTEM,
         maxChars,
         assault: true,
+        chaos: false,
         maxTokens: Math.max(700, Math.floor(Number(cfg.assaultStoryMaxTokens) || 1100)),
+      };
+    }
+
+    if (chaos) {
+      const groupLore = String(vars?.groupLore || '').trim();
+      const userName = String(vars?.user || '').trim();
+      const question = String(vars?.question || '').trim();
+      const facts = Object.entries(vars || {})
+        .filter(
+          ([k, v]) =>
+            k !== 'groupLore' && v != null && String(v).trim() !== ''
+        )
+        .map(([k, v]) => `${k}=${String(v).slice(0, 160)}`)
+        .join('; ');
+
+      // Prompt focado na TAREFA (nunca "lista de cenários")
+      const taskLine = {
+        cancel_absurd: `Escreva o cancelamento absurdo de *${userName || 'Fulano'}*.`,
+        gossip_fake: `Escreva a fofoca falsa sobre *${userName || 'Fulano'}*.`,
+        oracle_insane: `Responda como oráculo maluco: “${question || 'a vida'}”.`,
+        illuminati_theory: `Escreva a teoria Illuminati com *${userName || 'Fulano'}* no centro (pão, Wi-Fi, ônibus…).`,
+        russian_click: `Comente o click (câmara vazia) da roleta russa. Dados: ${facts || 'nenhum'}.`,
+        russian_dead: `Comente a “morte” virtual na roleta. Dados: ${facts || 'nenhum'}.`,
+        russian_start: `Abra a roleta russa no grupo. Dados: ${facts || 'nenhum'}.`,
+      }[key] || `Escreva o texto do comando. Dados: ${facts || 'nenhum'}.`;
+
+      const prompt = [
+        taskLine,
+        facts && key !== 'russian_click' && key !== 'russian_dead' && key !== 'russian_start'
+          ? `Contexto: ${facts}.`
+          : null,
+        groupLore
+          ? `Lore do grupo (só se encaixar; não invente):\n${groupLore.slice(0, 400)}`
+          : null,
+        'Responda só com o texto pronto pro zap (sem instruções, sem meta):',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      return {
+        prompt,
+        system: chaosSystemFor(key, { short: Boolean(forZen || simple) }),
+        maxChars,
+        assault: false,
+        chaos: true,
+        maxTokens: Math.max(220, Math.floor(Number(cfg.chaosMaxTokens) || 400)),
       };
     }
 
@@ -649,15 +911,16 @@ export function createFlavorService(deps = {}) {
       : forZen
         ? ZEN_SYSTEM_PROMPT
         : SYSTEM_PROMPT;
-    return { prompt, system, maxChars, assault: false, maxTokens: null };
+    return { prompt, system, maxChars, assault: false, chaos: false, maxTokens: null };
   }
 
-  async function tryZen(cfg, key, vars, { simple = false, assault = false } = {}) {
+  async function tryZen(cfg, key, vars, { simple = false, assault = false, chaos = false } = {}) {
     if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
     const ep = resolveZenEndpoint(cfg);
     const { prompt, system, maxChars, maxTokens } = buildPromptParts(cfg, key, vars, simple, {
       forZen: true,
       assault,
+      chaos,
     });
     try {
       const raw = await generateZen({
@@ -667,9 +930,17 @@ export function createFlavorService(deps = {}) {
         prompt,
         timeoutMs: assault
           ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.assaultStoryTimeoutMs) || 35_000))
-          : ep.timeoutMs,
-        maxTokens: assault ? maxTokens || 1100 : ep.maxTokens,
-        temperature: assault ? Math.min(1, (ep.temperature || 0.85) + 0.05) : ep.temperature,
+          : chaos
+            ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.chaosTimeoutMs) || 22_000))
+            : ep.timeoutMs,
+        maxTokens: assault
+          ? maxTokens || 1100
+          : chaos
+            ? Math.max(ep.maxTokens, maxTokens || 360)
+            : ep.maxTokens,
+        temperature: assault || chaos
+          ? Math.min(1.05, (ep.temperature || 0.85) + 0.1)
+          : ep.temperature,
         apiKey: ep.apiKey,
       });
       const clean = assault
@@ -687,12 +958,13 @@ export function createFlavorService(deps = {}) {
     }
   }
 
-  async function tryOllama(cfg, key, vars, { simple = false, assault = false } = {}) {
+  async function tryOllama(cfg, key, vars, { simple = false, assault = false, chaos = false } = {}) {
     if (!ollamaOn(cfg)) return { ok: false, reason: 'ollama-disabled' };
     const ep = resolveOllamaEndpoint(cfg);
     const { prompt, system, maxChars, maxTokens } = buildPromptParts(cfg, key, vars, simple, {
       forZen: false,
       assault,
+      chaos,
     });
     try {
       const raw = await generateOllama({
@@ -702,15 +974,21 @@ export function createFlavorService(deps = {}) {
         prompt,
         timeoutMs: assault
           ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.assaultStoryTimeoutMs) || 40_000))
-          : ep.timeoutMs,
+          : chaos
+            ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.chaosTimeoutMs) || 28_000))
+            : ep.timeoutMs,
         keepAlive: ep.keepAlive,
         think: false,
         numPredict: assault
           ? Math.max(600, Math.floor(Number(cfg.assaultStoryMaxTokens) || 1100))
-          : Math.max(32, Math.floor(Number(cfg.ollamaNumPredict) || 80)),
+          : chaos
+            ? Math.max(180, Math.floor(Number(cfg.chaosMaxTokens) || maxTokens || 360))
+            : Math.max(32, Math.floor(Number(cfg.ollamaNumPredict) || 80)),
         temperature: Number.isFinite(Number(cfg.ollamaTemperature))
-          ? Number(cfg.ollamaTemperature)
-          : 0.85,
+          ? Math.min(1.1, Number(cfg.ollamaTemperature) + (chaos ? 0.1 : 0))
+          : chaos
+            ? 0.95
+            : 0.85,
       });
       void maxTokens;
       const clean = assault
@@ -808,13 +1086,17 @@ export function createFlavorService(deps = {}) {
 
   /**
    * Cascata: Zen → Ollama → template estático.
-   * Budget curto (default 6s) pra não travar /sorte /trabalhar /ship no WhatsApp.
+   * Budget curto (default ~28s) pra não travar comandos no WhatsApp.
    * Cenários assault_* usam assaultStory (roteiro longo).
+   * Cenários de caos (cancel/fofoca/oráculo/illuminati/roleta) usam prompts de caos.
    */
   async function line(scenario, vars = {}) {
     const key = String(scenario || 'default');
     if (isAssaultScenario(key)) {
       return assaultStory(key, vars);
+    }
+    if (isChaosScenario(key)) {
+      return chaosLine(key, vars);
     }
 
     const cfg = getConfig() || {};
@@ -872,6 +1154,95 @@ export function createFlavorService(deps = {}) {
             ? { message: ollamaResult.err.message, name: ollamaResult.err.name }
             : undefined,
         });
+      }
+
+      lastProvider = 'template';
+      return safeFallback;
+    };
+
+    try {
+      return await Promise.race([
+        cascade(),
+        new Promise((resolve) => {
+          setTimeout(() => {
+            lastProvider = 'template-timeout';
+            resolve(safeFallback);
+          }, budgetMs);
+        }),
+      ]);
+    } catch {
+      lastProvider = 'template';
+      return safeFallback;
+    }
+  }
+
+  /**
+   * Caos social: IA principal (Zen → Ollama → template).
+   * Budget um pouco maior — o texto *é* o produto do comando.
+   */
+  async function chaosLine(scenario, vars = {}) {
+    const cfg = getConfig() || {};
+    const key = String(scenario || 'oracle_insane');
+    const safeFallback = fallback(key, vars);
+
+    if (!isEnabled(cfg)) {
+      lastProvider = 'template';
+      return safeFallback;
+    }
+
+    const budgetMs = Math.max(
+      8_000,
+      Math.min(
+        60_000,
+        Math.floor(Number(cfg.chaosTimeoutMs) || Number(cfg.flavorTimeoutMs) || 28_000)
+      )
+    );
+
+    const cascade = async () => {
+      // 1) Zen
+      let zenResult = await tryZen(cfg, key, vars, { simple: false, chaos: true });
+      if (!zenResult.ok && (zenResult.reason === 'zen-empty' || zenResult.reason === 'zen-fail')) {
+        zenResult = await tryZen(cfg, key, vars, { simple: true, chaos: true });
+      }
+      if (zenResult.ok) {
+        lastProvider = 'zen';
+        return zenResult.text;
+      }
+      if (zenOn(cfg)) {
+        logFlavor(getLogger, {
+          scenario: key,
+          provider: 'zen',
+          reason: zenResult.reason,
+          model: zenResult.model,
+          err: zenResult.err
+            ? { message: zenResult.err.message, name: zenResult.err.name }
+            : undefined,
+        }, 'Fun chaos');
+      }
+
+      // 2) Ollama
+      let ollamaResult = await tryOllama(cfg, key, vars, { simple: false, chaos: true });
+      if (
+        !ollamaResult.ok &&
+        (ollamaResult.reason === 'ollama-empty' || ollamaResult.reason === 'ollama-fail')
+      ) {
+        ollamaResult = await tryOllama(cfg, key, vars, { simple: true, chaos: true });
+      }
+      if (ollamaResult.ok) {
+        lastProvider = 'ollama';
+        return ollamaResult.text;
+      }
+      if (ollamaOn(cfg)) {
+        logFlavor(getLogger, {
+          scenario: key,
+          provider: 'ollama',
+          reason: ollamaResult.reason,
+          model: ollamaResult.model,
+          warm,
+          err: ollamaResult.err
+            ? { message: ollamaResult.err.message, name: ollamaResult.err.name }
+            : undefined,
+        }, 'Fun chaos');
       }
 
       lastProvider = 'template';
@@ -994,6 +1365,7 @@ export function createFlavorService(deps = {}) {
     line,
     italicLine,
     assaultStory,
+    chaosLine,
     fallback,
     sanitizeFlavor,
     sanitizeAssaultStory,
