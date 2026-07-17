@@ -21,6 +21,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
     dailyXp: 150,
     dailyCoins: 50,
     levelUpAnnounce: true,
+    worldEventsEnabled: true,
   });
   const [source, setSource] = useState<"override" | "defaults">("defaults");
   const [status, setStatus] = useState("");
@@ -45,6 +46,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
           dailyXp: Number(base.dailyXp ?? 150),
           dailyCoins: Number(base.dailyCoins ?? 50),
           levelUpAnnounce: base.levelUpAnnounce !== false,
+          worldEventsEnabled: base.worldEventsEnabled !== false,
         });
         setSource(data.settings ? "override" : "defaults");
         setStatus(data.settings ? "Override do grupo" : "Defaults (sem override)");
@@ -66,7 +68,8 @@ export function GroupSettingsForm({ groupJid }: Props) {
     try {
       await funApi.saveGroupSettings(groupJid, {
         ...form,
-        levelUpAnnounce: true,
+        levelUpAnnounce: form.levelUpAnnounce !== false,
+        worldEventsEnabled: form.worldEventsEnabled !== false,
       });
       setSource("override");
       setStatus("Salvo.");
@@ -85,7 +88,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
         <div>
           <h2 className="text-sm font-semibold text-zinc-900">Settings do grupo</h2>
           <p className="text-xs text-zinc-500">
-            Sobrescreve XP, cooldown e daily só neste grupo.
+            Sobrescreve XP, cooldown, daily e eventos do mundo neste grupo.
           </p>
         </div>
         <span className="text-[11px] text-zinc-400">
@@ -105,6 +108,21 @@ export function GroupSettingsForm({ groupJid }: Props) {
             <option value="1">Sim</option>
             <option value="0">Não</option>
           </Select>
+        </label>
+        <label className="block text-xs text-zinc-500">
+          Eventos do mundo
+          <Select
+            className="mt-1"
+            value={form.worldEventsEnabled === false ? "0" : "1"}
+            onChange={(e) => field("worldEventsEnabled", e.target.value === "1")}
+            disabled={loading}
+          >
+            <option value="1">Ligado</option>
+            <option value="0">Desligado</option>
+          </Select>
+          <span className="mt-1 block text-[11px] leading-snug text-zinc-400">
+            Desliga mercado automático e trégua. Happy hour do cassino continua no chat.
+          </span>
         </label>
         <label className="block text-xs text-zinc-500">
           Rank limit
