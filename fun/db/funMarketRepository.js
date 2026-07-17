@@ -285,7 +285,7 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
         eventId,
         String(scopeKey || ''),
         String(title || 'Evento de mercado').slice(0, 120),
-        String(description || '').slice(0, 400),
+        String(description || '').slice(0, 900),
         String(category || ''),
         Number(impactPct) || 0,
         String(source || 'template'),

@@ -13,26 +13,185 @@ import {
   listWeaponShop,
 } from '../shop/collectibles.js';
 
+/** História de mercado: 5–8 linhas (fofoca de bairro), não 1 frase nem livro. */
+const EVENT_DESC_MAX = 900;
+const EVENT_DESC_LINES_MAX = 8;
+
 const EVENT_SYSTEM = `Você gera NOTÍCIAS de mercado de rua (combustível, munição, armas, veículos, defesa) para bot WhatsApp BR.
+
 JSON único sem markdown:
 {"title":"...","description":"...","category":"combustivel|municao|arma|veiculo|defesa","impactPct":number}
-- title ≤80 chars, description 1 frase ≤160
+
+REGRAS:
+- title ≤80 chars, estilo manchete de bairro
+- description: HISTÓRIA curta com 5 a 8 linhas (use \\n entre linhas). Entre 350 e 850 caracteres.
+  Tom: fofoca de mercado paralelo, besteirol leve, pt-BR de rua. Cena + rumor + consequência no preço.
+  NÃO seja 1 frase. NÃO vire livro (máx 8 linhas). Sem inventar preços em coins.
 - category DEVE ser uma das listadas
-- impactPct entre -28 e +35
-- coerente (gasolina cara → combustivel sobe; operação policial → arma/municao sobe; crise → veiculo desce etc.)`;
+- impactPct entre -28 e +35 (inteiro ≠ 0)
+- coerente (gasolina cara → combustivel sobe; operação policial → arma/municao sobe; excesso → preço desce)`;
 
 const TEMPLATE_EVENTS = [
-  { title: 'Posto da região seca', description: 'Fila de galão na avenida — combustível some.', category: 'combustivel', impactPct: 18 },
-  { title: 'Caminhão-tanque vaza na BR', description: 'Oferta de gasolina some por uma semana.', category: 'combustivel', impactPct: 14 },
-  { title: 'Operação apreende munição', description: 'Mercado paralelo aperta o cinto de cartuchos.', category: 'municao', impactPct: 16 },
-  { title: 'Desmanche lotado de peças', description: 'Peças baratas empurram preço de carro pra baixo.', category: 'veiculo', impactPct: -12 },
-  { title: 'Corrida de moto no fim de semana', description: 'Demanda por motos e gasolina dispara.', category: 'veiculo', impactPct: 11 },
-  { title: 'Blitze pesada no centro', description: 'Armas e coletes ficam mais caros no underground.', category: 'arma', impactPct: 15 },
-  { title: 'Fornecedor de colete some', description: 'Defesa individual vira artigo de luxo.', category: 'defesa', impactPct: 13 },
-  { title: 'Sobram facas de peixeira no bazar', description: 'Excesso de cutelaria puxa o preço pra baixo.', category: 'arma', impactPct: -9 },
-  { title: 'Inflação come o bolso', description: 'Itens caros sofrem: veículos e rifles freiam.', category: 'veiculo', impactPct: -8 },
-  { title: 'Contrabando de cartucho', description: 'Munição inunda o mercado informal.', category: 'municao', impactPct: -14 },
+  {
+    title: 'Posto da região seca',
+    description: [
+      'Acordou cedo quem queria encher o galão.',
+      'O posto da avenida abriu com a bomba “sem produto” e a fila já dava a volta no quarteirão.',
+      'Gente brigando por funil, moto sem gasolina no meio da rua, zé da esquina cobrando taxa de “ajuda”.',
+      'No mercado paralelo o litro sumiu do mapa — ou virou artigo de luxo.',
+      'Quem tem tanque cheio vira celebridade; quem não tem, paga o preço da sede.',
+      'Combustível de rua sobe. O resto do bairro fica a pé, zoando no grupo.',
+    ].join('\n'),
+    category: 'combustivel',
+    impactPct: 18,
+  },
+  {
+    title: 'Caminhão-tanque vaza na BR',
+    description: [
+      'Caminhão-tanque tombou na curva da BR. Cheiro de gasolina a quilômetros.',
+      'Trânsito parado, bombeiro, youtuber filmando, e o pessoal do desmanche já calculando o lucro.',
+      'Enquanto a pista não limpa, o posto da cidade seca de verdade.',
+      'Quem tinha estoque escondeu; quem não tinha, inventou “escassez técnica”.',
+      'Por uma semana o combustível vira caça ao tesouro.',
+      'Preço sobe, paciência desce, e o mercado de rua faz a festa.',
+    ].join('\n'),
+    category: 'combustivel',
+    impactPct: 14,
+  },
+  {
+    title: 'Alta tensão aumenta preço da munição',
+    description: [
+      'Rumores de instabilidade regional rodam no zap antes do jornal.',
+      'Alguém jura que viu viatura demais; outro jura que viu caixa demais saindo de fundo de loja.',
+      'Nos pontos de venda as balas somem da prateleira “sem explicação”.',
+      'Vendedor fala baixo, sobe o preço e ainda finje que tá fazendo favor.',
+      'Quem não comprou ontem paga o nervoso de hoje.',
+      'Caixa de munição vira artigo quente — e o bairro inteiro finge que não sabe por quê.',
+    ].join('\n'),
+    category: 'municao',
+    impactPct: 16,
+  },
+  {
+    title: 'Operação apreende munição',
+    description: [
+      'Chegou a operação. Caixa lacrada, flash no celular, boato no grupo em três minutos.',
+      'O fornecedor “sumiu pra resolver umas coisas” e o estoque de cartucho foi junto.',
+      'No paralelo sobrou mais conversa do que munição.',
+      'Quem tinha caixa escondeu debaixo da cama; quem precisava, engoliu o preço novo.',
+      'Mercado aperta o cinto — no sentido literal de cartucho.',
+      'Munição sobe. A moral do assalto, por enquanto, desce.',
+    ].join('\n'),
+    category: 'municao',
+    impactPct: 16,
+  },
+  {
+    title: 'Desmanche lotado de peças',
+    description: [
+      'O desmanche da beira da pista encheu de peça “com nota duvidosa”.',
+      'Capô, roda, banco, farol — tudo com desconto de quem não pergunta a procedência.',
+      'Dono de oficina sorri; dono de carro “zero de rua” chora o preço antigo.',
+      'Oferta demais puxa o valor de veículo pra baixo, mesmo o que ainda anda.',
+      'No bazar o papo é “pega agora que amanhã normaliza”.',
+      'Hoje o metal tá barato. O orgulho de quem pagou caro ontem, não.',
+    ].join('\n'),
+    category: 'veiculo',
+    impactPct: -12,
+  },
+  {
+    title: 'Corrida de moto no fim de semana',
+    description: [
+      'Sábado à noite a avenida virou autódromo improvisado.',
+      'Grito de escapamento, aposta no zap, e gente comprando gasolina como se fosse água.',
+      'Quem tem moto vira astro; quem não tem, fica na calçada filmando.',
+      'Demanda por duas rodas e combustível sobe junto com o volume do som.',
+      'Oficina e “mercado de rua” já anotaram o preço novo na testa.',
+      'Fim de semana de corrida: bolso leve, adrenalina cara.',
+    ].join('\n'),
+    category: 'veiculo',
+    impactPct: 11,
+  },
+  {
+    title: 'Blitze pesada no centro',
+    description: [
+      'Centro fechado em blitze. Luz no rosto, cinto no chão, nervoso no ar.',
+      'Quem andava “preparado” preferiu deixar o kit em casa — e o preço subiu por solidariedade.',
+      'No underground o colete e a arma viraram artigo de luxo de madrugada.',
+      'Vendedor some, volta, e cobra como se tivesse inventado a lei da oferta.',
+      'Rumor corre: “tá quente”. Mercado responde: “então tá caro”.',
+      'Armas e defesa sobem. O centro respira aliviado… o bazar, não.',
+    ].join('\n'),
+    category: 'arma',
+    impactPct: 15,
+  },
+  {
+    title: 'Fornecedor de colete some',
+    description: [
+      'O cara do colete “não atende mais”. Nem zap, nem recado na padaria.',
+      'Teorias: viagem, apreensão, ou só cansaço de vender medo em forma de tecido.',
+      'Sobra um estoque minguado e um monte de gente querendo se sentir invencível.',
+      'Defesa individual vira artigo de luxo — e de fofoca.',
+      'Quem tem colete anda de peito estufado; quem não tem, paga o susto no preço.',
+      'Mercado de defesa aperta. O ego de quem comprou cedo, infla.',
+    ].join('\n'),
+    category: 'defesa',
+    impactPct: 13,
+  },
+  {
+    title: 'Sobram facas de peixeira no bazar',
+    description: [
+      'Chegou um lote. Ninguém sabe de onde. Todo mundo sabe o preço: barato.',
+      'Peixeira, canivete, “presente de cozinha” com cara de outra coisa.',
+      'O bazar encheu de cutelaria e de gente fingindo que vai filetar peixe.',
+      'Excesso puxa o valor pra baixo — até a arma curta sente o clima.',
+      'Vendedor pede pra levar duas; comprador negocia a terceira “de brinde”.',
+      'Hoje o aço tá em promoção. A vergonha alheia, inclusa.',
+    ].join('\n'),
+    category: 'arma',
+    impactPct: -9,
+  },
+  {
+    title: 'Inflação come o bolso',
+    description: [
+      'Pão subiu, passagem subiu, e o povo ainda quer carro de filme.',
+      'No mercado de rua a grana sumiu primeiro — o desejo ficou pra depois.',
+      'Veículo e rifle param de girar: ninguém quer pagar o preço de ontem com o salário de hoje.',
+      'Vendedor baixa a postura (e o preço) pra não ficar com o pátio lotado.',
+      'Quem esperou “pra ver” talvez tenha acertado o timing pela primeira vez.',
+      'Itens caros freiam. O bolso agradece; o ego, nem tanto.',
+    ].join('\n'),
+    category: 'veiculo',
+    impactPct: -8,
+  },
+  {
+    title: 'Contrabando de cartucho',
+    description: [
+      'Dizem que entrou carga. Dizem baixo, mas todo mundo ouviu.',
+      'Caixa de cartucho aparece em quantidade suspeita — e com sorriso de quem não pergunta origem.',
+      'De repente sobra munição onde ontem só tinha desculpa.',
+      'Preço despenca, estoque incha, e o “especialista” do grupo jura que é golpe.',
+      'Mercado informal enche o bolso de quem vende volume; esvazia o drama de quem tava sem bala.',
+      'Munição barata por enquanto. Aproveita antes do rumor mudar de lado.',
+    ].join('\n'),
+    category: 'municao',
+    impactPct: -14,
+  },
 ];
+
+function clampEventDescription(raw) {
+  let text = String(raw || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .trim();
+  if (!text) return '';
+  // JSON às vezes manda "\\n" literal
+  text = text.replace(/\\n/g, '\n');
+  const lines = text
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .slice(0, EVENT_DESC_LINES_MAX);
+  return lines.join('\n').slice(0, EVENT_DESC_MAX);
+}
 
 function numOr(v, fb) {
   const n = Number(v);
@@ -222,7 +381,7 @@ export function createMarketService({
           system: EVENT_SYSTEM,
           prompt,
           timeoutMs: Math.max(5000, numOr(funConfig.zenTimeoutMs, 20000)),
-          maxTokens: 220,
+          maxTokens: 520,
           temperature: 0.9,
           apiKey: funConfig.zenApiKey || '',
         });
@@ -243,7 +402,7 @@ export function createMarketService({
           timeoutMs: Math.max(8000, numOr(funConfig.ollamaTimeoutMs, 25000)),
           keepAlive: funConfig.ollamaKeepAlive ?? -1,
           think: false,
-          numPredict: 200,
+          numPredict: 480,
           temperature: 0.9,
         });
         const parsed = parseEventJson(raw, cats);
@@ -254,7 +413,11 @@ export function createMarketService({
     }
 
     const t = pick(TEMPLATE_EVENTS, random);
-    return { ...t, source: 'template' };
+    return {
+      ...t,
+      description: clampEventDescription(t.description),
+      source: 'template',
+    };
   }
 
   function parseEventJson(raw, cats) {
@@ -267,9 +430,11 @@ export function createMarketService({
       if (!cats.includes(category)) return null;
       const impactPct = clampImpact(j.impactPct);
       if (impactPct === 0) return null;
+      const description = clampEventDescription(j.description);
+      if (!description) return null;
       return {
         title: String(j.title || 'Movimento de mercado').slice(0, 100),
-        description: String(j.description || '').slice(0, 220),
+        description,
         category,
         impactPct,
       };
@@ -357,7 +522,7 @@ export function createMarketService({
     const event = marketRepository.insertEvent({
       scopeKey,
       title: draft.title,
-      description: draft.description,
+      description: clampEventDescription(draft.description),
       category: draft.category,
       impactPct: clampImpact(draft.impactPct),
       source: draft.source,
@@ -1245,10 +1410,13 @@ export function createMarketService({
     if (!result?.ok || !result.event) return '';
     const e = result.event;
     const sign = e.impactPct > 0 ? '+' : '';
+    const story = clampEventDescription(e.description);
     const lines = [
       '📰 *Mercado de rua*',
       `*${e.title}*`,
-      e.description || '',
+      '',
+      story || null,
+      '',
       `Categoria *${e.category}* · *${sign}${e.impactPct}%*`,
     ];
     if (result.affected?.length) {
@@ -1271,7 +1439,7 @@ export function createMarketService({
       );
     }
     lines.push('', '_/mercado · /armas · /bazar_');
-    return lines.filter(Boolean).join('\n');
+    return lines.filter((l) => l != null).join('\n');
   }
 
   return {
