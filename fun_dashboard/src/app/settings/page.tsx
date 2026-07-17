@@ -59,6 +59,14 @@ function SettingsBody() {
             k="Cmd privado"
             v={cfg?.replyCommandsInPrivate ? "sim (com exceções)" : "não"}
           />
+          <KV
+            k="Marcar usuários (@)"
+            v={cfg?.mentionUsers === false ? "desligado" : "ligado"}
+          />
+          <KV
+            k="Citar mensagem (reply)"
+            v={cfg?.replyQuoted === false ? "desligado" : "ligado"}
+          />
           <KV k="Whitelist" v={`${cfg?.groupWhitelistJids?.length ?? 0} grupo(s)`} />
           <div className="mt-2 flex flex-wrap gap-1">
             <Badge tone={cfg?.zenEnabled ? "success" : "neutral"}>Zen</Badge>

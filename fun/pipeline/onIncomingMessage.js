@@ -4,6 +4,12 @@ import { isUserJid } from '../../runtime/contactUtils.js';
 import { getFunGroupWhitelistSet } from '../config.js';
 import { FUN_PUBLIC_GROUP_COMMANDS } from '../constants.js';
 import { isWorldQuietHours } from '../utils/worldQuietHours.js';
+import {
+  createUserFormatter,
+  runWithUserLabels,
+  nameOf as labelUser,
+  ensureActorMention,
+} from '../utils/userLabel.js';
 
 /**
  * Respostas no privado desabilitadas por padrão (ban/spam do WhatsApp).
@@ -94,6 +100,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     casinoService,
     tarotService,
     marketService,
+    stockService,
     jobService,
     chaosService,
     groupMemoryService,
@@ -267,6 +274,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           dailyXp: funConfig.dailyXp,
           dailyCoins: funConfig.dailyCoins,
           rankLimit: funConfig.rankLimit,
+          worldEventsEnabled: true,
           source: 'global',
         };
 
@@ -281,11 +289,41 @@ export async function handleFunIncomingMessage(deps, ctx) {
     isGroup
   );
 
+  const userFmt = createUserFormatter({
+    getContactDisplayName,
+    mentionUsers: funConfig.mentionUsers !== false,
+  });
+  const formatUser = (jid) => userFmt.formatUser(jid);
+
+  // Mensagem original (WAMessage) para reply/citação no WhatsApp
+  const quoteSource =
+    rawMessage && typeof rawMessage === 'object' && rawMessage.key ? rawMessage : null;
+  const useQuoted = funConfig.replyQuoted !== false && Boolean(quoteSource);
+
+  /**
+   * Toda resposta em grupo marca o autor do comando (quem disparou),
+   * para não se perder com várias pessoas jogando ao mesmo tempo.
+   */
+  const withActorTag = (body) =>
+    ensureActorMention(body, userJid, {
+      mentionUsers: funConfig.mentionUsers !== false,
+      isGroup,
+      track: (j) => userFmt.trackMention(j),
+    });
+
+  const buildSendOpts = (mentions = []) => {
+    const opts = {};
+    if (mentions.length) opts.mentions = mentions;
+    if (useQuoted) opts.quoted = quoteSource;
+    return Object.keys(opts).length ? opts : undefined;
+  };
+
   const replyToChat = async (body) => {
     if (typeof sendText !== 'function') return;
-    const content = String(body || '').trim();
+    const content = withActorTag(String(body || '').trim());
     if (!content) return;
-    await sendText(sock, chatJid, content);
+    const mentions = userFmt.takeMentions();
+    await sendText(sock, chatJid, content, buildSendOpts(mentions));
   };
 
   /**
@@ -303,11 +341,21 @@ export async function handleFunIncomingMessage(deps, ctx) {
 
   const replyImage = async (imageBuffer, caption = '') => {
     if (typeof sendImage !== 'function') return;
-    await sendImage(sock, chatJid, {
-      imageBuffer,
-      caption: String(caption || ''),
-      mimeType: 'image/png',
-    });
+    // caption também identifica o autor no grupo
+    const cap = withActorTag(String(caption || '').trim());
+    const mentions = userFmt.takeMentions();
+    const sendOpts = buildSendOpts(mentions);
+    await sendImage(
+      sock,
+      chatJid,
+      {
+        imageBuffer,
+        caption: cap,
+        mimeType: 'image/png',
+        mentions,
+      },
+      sendOpts
+    );
   };
 
   /** Figurinha sempre no chat atual (grupo ou DM), não no “modo privado de rank”. */
@@ -315,10 +363,14 @@ export async function handleFunIncomingMessage(deps, ctx) {
     if (typeof sendSticker !== 'function') {
       throw new Error('sticker-sender-unavailable');
     }
-    await sendSticker(sock, chatJid, stickerBuffer);
+    await sendSticker(sock, chatJid, stickerBuffer, useQuoted ? { quoted: quoteSource } : undefined);
   };
 
-  /** Sorteio de evento pelo bot — anúncio sempre no grupo. */
+  const worldEventsOn = effectiveRates?.worldEventsEnabled !== false;
+
+  /** Sorteio de evento pelo bot — anúncio sempre no grupo.
+   *  world events off → só happy hour (trégua e mercado auto ficam off).
+   */
   async function maybeAutoEvent(now = Date.now()) {
     if (!isGroup || !eventService?.tryAutoSpawn) return null;
     if (isWorldQuietHours(funConfig, now)) return null;
@@ -327,6 +379,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
         scopeKey: scope.scopeKey,
         funConfig,
         now,
+        happyOnly: !worldEventsOn,
       });
       if (!spawned?.ok) return null;
       const msg =
@@ -347,6 +400,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
   /** Evento de mercado de arte (preços da galeria). */
   async function maybeAutoMarket(now = Date.now()) {
     if (!isGroup || !marketService?.tryAutoMarketEvent) return null;
+    if (!worldEventsOn) return null;
     if (isWorldQuietHours(funConfig, now)) return null;
     try {
       const hit = await marketService.tryAutoMarketEvent({
@@ -402,84 +456,88 @@ export async function handleFunIncomingMessage(deps, ctx) {
 
   if (isCommand) {
     try {
-      // Comandos de mesa/social só no grupo
-      if (
-        isDm &&
-        parsedCommand?.command &&
-        FUN_PUBLIC_GROUP_COMMANDS.has(parsedCommand.command) &&
-        parsedCommand.command !== 'group_scope'
-      ) {
-        await reply(
-          [
-            'Esse comando é *só no grupo* (duelo, facção, social…).',
-            'No privado: jogos solo (`/bj`, `/crash`, `/roleta`, `/slot`), saldo, daily, rank…',
-            'Escolher grupo: `/grupo`',
-          ].join('\n')
-        );
-        return { handled: true, skipFlows: true, reason: 'dm-group-only-command' };
-      }
+      return await runWithUserLabels(userFmt, async () => {
+        // Comandos de mesa/social só no grupo
+        if (
+          isDm &&
+          parsedCommand?.command &&
+          FUN_PUBLIC_GROUP_COMMANDS.has(parsedCommand.command) &&
+          parsedCommand.command !== 'group_scope'
+        ) {
+          await reply(
+            [
+              'Esse comando é *só no grupo* (duelo, facção, social…).',
+              'No privado: jogos solo (`/bj`, `/crash`, `/roleta`, `/slot`), saldo, daily, rank…',
+              'Escolher grupo: `/grupo`',
+            ].join('\n')
+          );
+          return { handled: true, skipFlows: true, reason: 'dm-group-only-command' };
+        }
 
-      const result = await routeFunCommand({
-        text,
-        funConfig,
-        userJid,
-        chatJid,
-        isGroup,
-        scopeKey: scope.scopeKey,
-        rankService,
-        dailyService,
-        coinsService,
-        relationshipService,
-        gameService,
-        shopService,
-        effectsRepository,
-        repository,
-        factionService,
-        bridgeService,
-        missionService,
-        eventService,
-        casinoService,
-        tarotService,
-        marketService,
-        jobService,
-        chaosService,
-        groupMemoryService,
-        socialHooks,
-        flavorService,
-        getContactDisplayName,
-        listContacts,
-        reply,
-        replyPrivate,
-        replyToChat,
-        replyImage,
-        replySticker,
-        mentionedJids,
-        quotedParticipant,
-        effectiveRates,
-        sock,
-        identityMap,
-        preferPrivate,
-        membershipService,
-        prefsRepository,
-        dmGroups: scope.dmGroups || null,
-        rawMessage,
-        messageType,
-        mediaMimeType: mediaMimeType || ctx.mediaMimeType || '',
-        getLogger,
+        const result = await routeFunCommand({
+          text,
+          funConfig,
+          userJid,
+          chatJid,
+          isGroup,
+          scopeKey: scope.scopeKey,
+          rankService,
+          dailyService,
+          coinsService,
+          relationshipService,
+          gameService,
+          shopService,
+          effectsRepository,
+          repository,
+          factionService,
+          bridgeService,
+          missionService,
+          eventService,
+          casinoService,
+          tarotService,
+          marketService,
+          stockService,
+          jobService,
+          chaosService,
+          groupMemoryService,
+          socialHooks,
+          flavorService,
+          getContactDisplayName,
+          formatUser,
+          listContacts,
+          reply,
+          replyPrivate,
+          replyToChat,
+          replyImage,
+          replySticker,
+          mentionedJids,
+          quotedParticipant,
+          effectiveRates,
+          sock,
+          identityMap,
+          preferPrivate,
+          membershipService,
+          prefsRepository,
+          dmGroups: scope.dmGroups || null,
+          rawMessage,
+          messageType,
+          mediaMimeType: mediaMimeType || ctx.mediaMimeType || '',
+          getLogger,
+        });
+
+        // evento surpresa + mercado de arte só em grupo
+        if (!isDm) {
+          await maybeAutoEvent(Date.now());
+          await maybeAutoMarket(Date.now());
+        }
+
+        const skipFlows = Boolean(funConfig.commandExclusive && result?.handled);
+        return {
+          handled: Boolean(result?.handled),
+          skipFlows,
+          isCommand: true,
+        };
       });
-
-      // evento surpresa + mercado de arte só em grupo
-      if (!isDm) {
-        await maybeAutoEvent(Date.now());
-        await maybeAutoMarket(Date.now());
-      }
-
-      const skipFlows = Boolean(funConfig.commandExclusive && result?.handled);
-      return {
-        handled: Boolean(result?.handled),
-        skipFlows,
-        isCommand: true,
-      };
     } catch (error) {
       getLogger?.()?.error?.(
         {
@@ -536,48 +594,55 @@ export async function handleFunIncomingMessage(deps, ctx) {
     });
 
     if (award.applied && award.leveledUp && effectiveRates.levelUpAnnounce) {
-      const name =
-        typeof getContactDisplayName === 'function'
-          ? getContactDisplayName(userJid)
-          : '';
-      let text = formatLevelUp({
-        displayName: name,
-        userJid,
-        previousLevel: award.previousLevel,
-        level: award.level,
-        xp: award.xp,
-      });
-      if (flavorService?.italicLine) {
-        try {
-          let groupLore = '';
-          if (groupMemoryService?.buildLoreContext) {
-            try {
-              groupLore = groupMemoryService.buildLoreContext(scope.scopeKey, {
-                userJids: [userJid],
-                limit: 4,
-                funConfig,
-              });
-            } catch {
-              groupLore = '';
+      await runWithUserLabels(userFmt, async () => {
+        const name = labelUser(getContactDisplayName, userJid);
+        let text = formatLevelUp({
+          displayName: name,
+          userJid,
+          previousLevel: award.previousLevel,
+          level: award.level,
+          xp: award.xp,
+          mentionUsers: funConfig.mentionUsers !== false,
+        });
+        if (flavorService?.italicLine) {
+          try {
+            let groupLore = '';
+            if (groupMemoryService?.buildLoreContext) {
+              try {
+                groupLore = groupMemoryService.buildLoreContext(scope.scopeKey, {
+                  userJids: [userJid],
+                  limit: 4,
+                  funConfig,
+                });
+              } catch {
+                groupLore = '';
+              }
             }
+            // LLM: nome legível, sem @ (evita ruído no prompt)
+            const plain =
+              typeof getContactDisplayName === 'function'
+                ? getContactDisplayName(userJid)
+                : '';
+            const fl = await flavorService.italicLine('level_up', {
+              level: award.level,
+              user: plain || userJid?.split?.('@')?.[0] || '',
+              groupLore,
+            });
+            if (fl) text = `${text}\n${fl}`;
+          } catch {
+            // flavor opcional
           }
-          const fl = await flavorService.italicLine('level_up', {
-            level: award.level,
-            user: name || userJid?.split?.('@')?.[0] || '',
-            groupLore,
-          });
-          if (fl) text = `${text}\n${fl}`;
-        } catch {
-          // flavor opcional
         }
-      }
-      await reply(text);
+        await reply(text);
+      });
     }
 
     // evento surpresa + mercado em mensagem normal do grupo
     if (award.applied) {
-      await maybeAutoEvent(now);
-      await maybeAutoMarket(now);
+      await runWithUserLabels(userFmt, async () => {
+        await maybeAutoEvent(now);
+        await maybeAutoMarket(now);
+      });
     }
 
     return {

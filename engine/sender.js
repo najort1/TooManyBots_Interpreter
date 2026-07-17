@@ -64,6 +64,9 @@ function afterSend(jid, { text = '', skipGuard = false, guard } = {}) {
 
 /**
  * Envia uma mensagem de texto simples.
+ * @param {object} [options]
+ * @param {string[]} [options.mentions] — JIDs a marcar (@) no WhatsApp
+ * @param {object} [options.quoted] — WAMessage original para reply/citação (Baileys)
  */
 export async function sendTextMessage(sock, jid, text, options = undefined) {
   const opts = options && typeof options === 'object' ? options : {};
@@ -76,7 +79,19 @@ export async function sendTextMessage(sock, jid, text, options = undefined) {
   });
   if (!slot.ok) return { skipped: true, reason: slot.reason };
 
-  await sock.sendMessage(jid, { text: body }, withSendSource(opts, 'service'));
+  const mentions = Array.isArray(opts.mentions)
+    ? opts.mentions.map((m) => String(m || '').trim()).filter(Boolean)
+    : [];
+  const payload =
+    mentions.length > 0 ? { text: body, mentions } : { text: body };
+
+  // Só repassa o que o Baileys entende (evita skipGuard/guard no 3º arg)
+  const sendOpts = { __sendSource: opts.__sendSource || 'service' };
+  if (opts.quoted && typeof opts.quoted === 'object') {
+    sendOpts.quoted = opts.quoted;
+  }
+
+  await sock.sendMessage(jid, payload, sendOpts);
   afterSend(jid, { text: body, skipGuard: Boolean(opts.skipGuard), guard: opts.guard });
   return { skipped: false };
 }
@@ -84,7 +99,7 @@ export async function sendTextMessage(sock, jid, text, options = undefined) {
 export async function sendImageMessage(
   sock,
   jid,
-  { imageBuffer, caption = '', mimeType = '' },
+  { imageBuffer, caption = '', mimeType = '', mentions = [] },
   options = undefined
 ) {
   const opts = options && typeof options === 'object' ? options : {};
@@ -97,6 +112,12 @@ export async function sendImageMessage(
   });
   if (!slot.ok) return { skipped: true, reason: slot.reason };
 
+  const mentionList = Array.isArray(mentions)
+    ? mentions.map((m) => String(m || '').trim()).filter(Boolean)
+    : Array.isArray(opts.mentions)
+      ? opts.mentions.map((m) => String(m || '').trim()).filter(Boolean)
+      : [];
+
   const payload = {
     image: imageBuffer,
     caption: cap || undefined,
@@ -104,7 +125,14 @@ export async function sendImageMessage(
   if (mimeType) {
     payload.mimetype = mimeType;
   }
-  await sock.sendMessage(jid, payload, withSendSource(opts, 'service'));
+  if (mentionList.length) {
+    payload.mentions = mentionList;
+  }
+  const sendOpts = { __sendSource: opts.__sendSource || 'service' };
+  if (opts.quoted && typeof opts.quoted === 'object') {
+    sendOpts.quoted = opts.quoted;
+  }
+  await sock.sendMessage(jid, payload, sendOpts);
   afterSend(jid, { text: cap || '[image]', skipGuard: Boolean(opts.skipGuard), guard: opts.guard });
   return { skipped: false };
 }
@@ -126,11 +154,11 @@ export async function sendStickerMessage(sock, jid, stickerBuffer, options = und
   });
   if (!slot.ok) return { skipped: true, reason: slot.reason };
 
-  await sock.sendMessage(
-    jid,
-    { sticker: stickerBuffer },
-    withSendSource(opts, 'service')
-  );
+  const sendOpts = { __sendSource: opts.__sendSource || 'service' };
+  if (opts.quoted && typeof opts.quoted === 'object') {
+    sendOpts.quoted = opts.quoted;
+  }
+  await sock.sendMessage(jid, { sticker: stickerBuffer }, sendOpts);
   afterSend(jid, { text: '[sticker]', skipGuard: Boolean(opts.skipGuard), guard: opts.guard });
   return { skipped: false };
 }

@@ -1,16 +1,22 @@
 import { progressInLevel } from '../services/levelCurve.js';
 import { DAY_MS } from '../constants.js';
+import { nameOf, displayNameOnly, jidLocalPart } from '../utils/userLabel.js';
 
 function shortJid(jid) {
-  const raw = String(jid || '');
-  const at = raw.indexOf('@');
-  const local = at > 0 ? raw.slice(0, at) : raw;
+  const local = jidLocalPart(jid);
+  if (!local) return '…';
   if (local.length <= 8) return local;
   return `${local.slice(0, 4)}…${local.slice(-4)}`;
 }
 
+/**
+ * Label no chat: @menção se mentionUsers (ALS / config).
+ * Se name já veio formatado (@num), reutiliza.
+ */
 function displayName(name, userJid) {
   const n = String(name || '').trim();
+  if (n.startsWith('@') && /^\@\d{8,20}$/.test(n)) return n;
+  if (userJid) return nameOf(() => n, userJid);
   if (n) return n;
   return shortJid(userJid);
 }
@@ -196,7 +202,8 @@ export function formatLeaderboard({ entries, yourRank, yourTotal, limit = 10 }) 
   for (const entry of entries) {
     const medal =
       entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : `${entry.rank}.`;
-    const label = displayName(entry.displayName, entry.userJid);
+    // chat: menção; displayName pré-preenchido só como fallback de nome
+    const label = nameOf((j) => entry.displayName || displayNameOnly(null, j), entry.userJid);
     const title = String(entry.title || '').trim();
     const labelWithTitle = title ? `${label} · ${title}` : label;
     lines.push(
@@ -241,77 +248,13 @@ export function formatDailyResult(result) {
 }
 
 export function formatLevelUp({ displayName: name, userJid, previousLevel, level, xp }) {
+  const who = nameOf((j) => name || displayNameOnly(null, j), userJid);
   return [
     `⬆ *Level up!*`,
-    `${displayName(name, userJid)}: *${previousLevel}* → *${level}*`,
+    `${who}: *${previousLevel}* → *${level}*`,
     `XP total: *${xp}*`,
   ].join('\n');
 }
 
-export function formatHelp(prefix = '/') {
-  const p = String(prefix || '/');
-  return [
-    '🎮 *Comandos Fun*',
-    '',
-    '*Perfil & rank*',
-    `• \`${p}xp\` / \`${p}perfil\` — seu perfil · \`${p}perfil @user\` — de outro`,
-    `• \`${p}rank\` — top XP · \`${p}rankcoins\` — top coins`,
-    `• \`${p}topmsg\` — quem mais manda mensagem no grupo`,
-    `• \`${p}daily\` · \`${p}coins\` / \`${p}saldo\``,
-    `• \`${p}pay 50 @user\` — transferir coins`,
-    '',
-    '*Loja & rua*',
-    `• \`${p}loja\` · \`${p}comprar chave_armas\` · \`${p}comprar boost_xp\``,
-    `• \`${p}mercado\` · \`${p}armas\` · \`${p}adquirir gasolina|pistola\``,
-    `• \`${p}inventario\` · \`${p}bazar\` · \`${p}vender <id> <preço>\``,
-    `• \`${p}assaltar banco\` · \`${p}assaltar lojinha\` · \`${p}assaltar @user\``,
-    `• \`${p}assaltar\` — tabela de EV · \`${p}consertar <id>\``,
-    '',
-    '*Social*',
-    `• \`${p}marry @user\` → \`${p}aceitar\` / \`${p}recusar\``,
-    `• \`${p}divorce\` · \`${p}ship @a @b\``,
-    '',
-    '*Emprego*',
-    `• \`${p}emprego\` — cargos · \`${p}emprego bombeiro\` — teste no celular`,
-    `• \`${p}demitir sim\` — sair do cargo · salário no \`${p}daily\``,
-    `• \`${p}trabalhar\` — freela (à parte do CLT)`,
-    '',
-    '*Jogos*',
-    `• \`${p}cf 20 cara\` — cara ou coroa`,
-    `• \`${p}sorte\``,
-    `• \`${p}aposta @user 20 cara\` — duelo de moeda`,
-    `• \`${p}roletarussa\` → \`${p}puxar\` — 1 bala; morto = sem XP 15 min`,
-    '',
-    '*Cassino*',
-    `• \`${p}roleta 20 vermelho\` · \`${p}slot 15\` · \`${p}jackpot\``,
-    `• \`${p}crash 20\` → \`${p}sair\` (cashout)`,
-    `• \`${p}bj 25\` → \`${p}hit\` / \`${p}stand\``,
-    `• \`${p}desafio @user 30\` — duelo de dados (d20)`,
-    `• \`${p}torneio 20\` · \`${p}rankcassino\``,
-    `• \`${p}bingo 15\` · \`${p}bingo start\` · \`${p}bingo solo 15\``,
-    `• \`${p}tarot minha pergunta\` — tiragem + leitura`,
-    '',
-    '*Zoeira*',
-    `• \`${p}cancelar @user\` — motivo absurdo`,
-    `• \`${p}fofoca @user\` — fofoca sempre falsa`,
-    `• \`${p}oraculo Vou namorar?\` — IA maluca (não é tarô)`,
-    `• \`${p}illuminati\` — conspiração com membro aleatório`,
-    `• \`${p}lore\` — o que o bot lembra do grupo`,
-    `• \`${p}esquecelore @user\` · \`${p}esquecelore tudo sim\``,
-    '',
-    '*Facções*',
-    `• \`${p}faccao criar|entrar|sair|doar|rank|info\``,
-    `• \`${p}panelinha\` — placar · \`${p}comopanelinha\` — guia`,
-    `• \`${p}ponte\` · \`${p}missao\` · \`${p}squad\``,
-    `• \`${p}evento\` — status (trégua/happy hour o *bot* sorteia)`,
-    '',
-    '*Mídia*',
-    `• \`${p}fig\` / \`${p}figurinha\` — imagem/GIF/vídeo → figurinha`,
-    '  (legenda na mídia *ou* responda a mídia com o comando)',
-    '',
-    '*Privado*',
-    `• Comandos solo no PV (se for membro de um grupo liberado)`,
-    `• \`${p}grupo\` — escolhe o grupo usado no privado`,
-    `• \`${p}ajuda\` / \`${p}help\``,
-  ].join('\n');
-}
+/** @deprecated use formatHelp de helpGuide.js — reexport p/ imports legados */
+export { formatHelp } from './helpGuide.js';
