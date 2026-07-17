@@ -1,12 +1,7 @@
 import { parseAmountFromArgs, resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
-
-function nameOf(getContactDisplayName, jid) {
-  return (
-    (typeof getContactDisplayName === 'function' && getContactDisplayName(jid)) ||
-    String(jid || '').split('@')[0]
-  );
-}
+import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
+import { renderLeaderboardPng } from '../../formatters/rankCardImage.js';
 
 function colorLabel(c) {
   if (c === 'red') return 'vermelho';
@@ -966,6 +961,7 @@ export async function handleRankCasinoCommand({
   casinoService,
   getContactDisplayName,
   reply,
+  replyImage,
   effectiveRates,
   funConfig,
 }) {
@@ -989,6 +985,29 @@ export async function handleRankCasinoCommand({
     '',
     `Você: *${mine.profit >= 0 ? '+' : ''}${mine.profit}* · apostado ${mine.wagered} · ${mine.games} jogos`
   );
+
+  if (funConfig.rankCardImage !== false && typeof replyImage === 'function') {
+    try {
+      const enriched = board.map((row) => ({
+        ...row,
+        displayName: displayNameOnly(getContactDisplayName, row.userJid),
+      }));
+      const png = renderLeaderboardPng({
+        title: 'RANK CASSINO',
+        theme: 'casino',
+        entries: enriched,
+        footer: `VOCE: LUCRO ${mine.profit >= 0 ? '+' : ''}${mine.profit}  ·  APOSTADO ${mine.wagered}  ·  ${mine.games} JOGOS`,
+      });
+      await replyImage(
+        png,
+        `🃏 Rank cassino · lucro ${mine.profit >= 0 ? '+' : ''}${mine.profit}`
+      );
+      return { handled: true, image: true, board };
+    } catch {
+      // fallback texto
+    }
+  }
+
   await reply(lines.join('\n'));
   return { handled: true, board };
 }

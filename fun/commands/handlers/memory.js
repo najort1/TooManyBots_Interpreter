@@ -4,6 +4,7 @@
 
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
+import { nameOf } from '../../utils/userLabel.js';
 
 export async function handleLoreCommand({
   scopeKey,
@@ -83,9 +84,7 @@ export async function handleForgetLoreCommand({
   });
 
   if (resolved?.jid && isCanonicalUserJid(resolved.jid)) {
-    const name =
-      (typeof getContactDisplayName === 'function' && getContactDisplayName(resolved.jid)) ||
-      resolved.jid.split('@')[0];
+    const name = nameOf(getContactDisplayName, resolved.jid);
     const n = groupMemoryService.forgetSubject(scopeKey, resolved.jid);
     await reply(
       n > 0

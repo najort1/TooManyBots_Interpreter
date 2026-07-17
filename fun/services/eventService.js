@@ -167,6 +167,7 @@ export function createEventService({
    * Sorteio automático (só bot).
    * - Mensagem de usuário: chance baixa (eventAutoSpawnChance).
    * - Relógio do mundo (tick=true): chance maior (eventTickChance) — autonomia.
+   * - happyOnly: só casino_happy (ex.: grupo com world events off ainda anuncia HH).
    * @returns {{ ok: true, eventType, ... } | { ok: false, reason }}
    */
   function tryAutoSpawn({
@@ -175,6 +176,7 @@ export function createEventService({
     now = Date.now(),
     forceRoll = false,
     tick = false,
+    happyOnly = false,
   } = {}) {
     if (funConfig.eventAutoSpawn === false) {
       return { ok: false, reason: 'disabled' };
@@ -194,6 +196,10 @@ export function createEventService({
       : Math.min(1, Math.max(0, Number(funConfig.eventAutoSpawnChance) ?? 0.028));
     if (!forceRoll && random() > chance) {
       return { ok: false, reason: 'no-roll' };
+    }
+
+    if (happyOnly) {
+      return startHappyHour({ scopeKey, funConfig, now, force: true });
     }
 
     // pesos configuráveis (default: 50/50)

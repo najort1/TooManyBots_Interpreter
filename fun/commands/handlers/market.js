@@ -4,13 +4,7 @@
 
 import { parseAmountFromArgs, resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
-
-function nameOf(getContactDisplayName, jid) {
-  return (
-    (typeof getContactDisplayName === 'function' && getContactDisplayName(jid)) ||
-    String(jid || '').split('@')[0]
-  );
-}
+import { nameOf } from '../../utils/userLabel.js';
 
 function arrow(trend) {
   if (trend === 'up') return '↑';

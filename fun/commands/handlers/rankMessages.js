@@ -1,3 +1,6 @@
+import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
+import { renderLeaderboardPng } from '../../formatters/rankCardImage.js';
+
 export async function handleRankMessagesCommand({
   userJid,
   scopeKey,
@@ -5,6 +8,7 @@ export async function handleRankMessagesCommand({
   funConfig,
   getContactDisplayName,
   reply,
+  replyImage,
   effectiveRates,
 }) {
   const limit = effectiveRates?.rankLimit || funConfig.rankLimit || 10;
@@ -19,9 +23,7 @@ export async function handleRankMessagesCommand({
     for (const entry of entries) {
       const medal =
         entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : `${entry.rank}.`;
-      const label =
-        (typeof getContactDisplayName === 'function' && getContactDisplayName(entry.userJid)) ||
-        entry.userJid.split('@')[0];
+      const label = nameOf(getContactDisplayName, entry.userJid);
       const title = String(entry.title || '').trim();
       const labelWithTitle = title ? `${label} · ${title}` : label;
       const n = Number(entry.messageCount) || 0;
@@ -37,6 +39,27 @@ export async function handleRankMessagesCommand({
   } else if (position.stats) {
     lines.push('');
     lines.push(`Você ainda não entrou no ranking · *${position.stats.messageCount || 0}* msgs`);
+  }
+
+  if (funConfig.rankCardImage !== false && typeof replyImage === 'function' && entries.length > 0) {
+    try {
+      const enriched = entries.map((e) => ({
+        ...e,
+        displayName: displayNameOnly(getContactDisplayName, e.userJid),
+      }));
+      const png = renderLeaderboardPng({
+        title: 'TOP MSG',
+        theme: 'messages',
+        entries: enriched,
+        yourRank: position.rank,
+        yourTotal: position.total,
+        yourExtra: position.stats ? `${position.stats.messageCount || 0} MSG` : '',
+      });
+      await replyImage(png, `💬 Top ${limit} mensagens`);
+      return { handled: true, image: true };
+    } catch {
+      // fallback texto
+    }
   }
 
   await reply(lines.join('\n'));

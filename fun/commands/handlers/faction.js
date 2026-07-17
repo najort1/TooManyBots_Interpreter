@@ -1,11 +1,5 @@
 import { formatPanelinhaGuide } from '../../formatters/panelinhaGuide.js';
-
-function nameOf(getContactDisplayName, jid) {
-  return (
-    (typeof getContactDisplayName === 'function' && getContactDisplayName(jid)) ||
-    String(jid || '').split('@')[0]
-  );
-}
+import { nameOf } from '../../utils/userLabel.js';
 
 function pct(score) {
   return `${Math.round((Number(score) || 0) * 100)}%`;

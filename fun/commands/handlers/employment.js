@@ -3,6 +3,8 @@
  * Tudo no grupo (sem DM — WhatsApp restringe bot por spam).
  */
 
+import { nameOf } from '../../utils/userLabel.js';
+
 function formatRetry(ms) {
   const sec = Math.ceil(Math.max(0, ms) / 1000);
   if (sec < 60) return `${sec}s`;
@@ -11,13 +13,6 @@ function formatRetry(ms) {
   const h = Math.floor(m / 60);
   const rm = m % 60;
   return rm ? `${h}h ${rm}m` : `${h}h`;
-}
-
-function nameOf(getContactDisplayName, jid) {
-  return (
-    (typeof getContactDisplayName === 'function' && getContactDisplayName(jid)) ||
-    String(jid || '').split('@')[0]
-  );
 }
 
 export async function handleEmploymentCommand({

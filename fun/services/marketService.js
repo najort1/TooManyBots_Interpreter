@@ -46,6 +46,7 @@ import {
   fingerprintText,
   clampShockPct,
 } from '../economy/index.js';
+import { nameOf } from '../utils/userLabel.js';
 
 function numOr(v, fb) {
   const n = Number(v);
@@ -69,6 +70,7 @@ export function createMarketService({
   effectsRepository = null,
   factionService = null,
   casinoRepository = null,
+  stockService = null,
   random = Math.random,
   getLogger = () => null,
   generateZen = openaiChatComplete,
@@ -356,8 +358,24 @@ export function createMarketService({
       });
     }
 
+    // Bolsa: cotações de empresa no mesmo tick (preço virtual, sem fluxo de player)
+    let stockChanged = [];
+    if (stockService?.tickQuotes && funConfig.bolsaEnabled !== false) {
+      try {
+        const stockTick = stockService.tickQuotes(scopeKey, reg, now);
+        stockChanged = stockTick?.changed || [];
+      } catch {
+        // ignore — mercado de itens já atualizou
+      }
+    }
+
     saveRegulator(scopeKey, reg, { lastEconomyTickAt: now }, now);
-    return { ok: true, changed, scheduledApplied: duePack.due.length };
+    return {
+      ok: true,
+      changed,
+      stockChanged,
+      scheduledApplied: duePack.due.length,
+    };
   }
 
   /**
@@ -599,6 +617,28 @@ export function createMarketService({
         companyId: persona.id,
       });
     }
+
+    // Mesmo choque na cotação da empresa (bolsa)
+    if (stockService?.applyEventImpact) {
+      try {
+        const stockHits = stockService.applyEventImpact(scopeKey, resolved, reg, now);
+        for (const s of stockHits || []) {
+          affected.push({
+            itemId: `stock:${s.companyId}`,
+            name: s.name,
+            previousPrice: s.previousPrice,
+            price: s.price,
+            trend: s.trend,
+            deltaPct: s.deltaPct,
+            companyId: s.companyId,
+            kind: 'stock',
+          });
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     void heat;
     return affected;
   }
@@ -1814,17 +1854,14 @@ export function createMarketService({
       );
     }
     if (result.broken) {
-      const who =
-        (typeof getContactDisplayName === 'function' &&
-          getContactDisplayName(result.broken.userJid)) ||
-        result.broken.userJid.split('@')[0];
+      const who = nameOf(getContactDisplayName, result.broken.userJid);
       lines.push(
         '',
         `💥 *Quebrou!* ${who} — *${result.broken.itemName}*`,
         `Conserto *${result.broken.repairCost}*c · \`/consertar ${result.broken.inventoryId.slice(0, 8)}\``
       );
     }
-    lines.push('', '_/mercado · /armas · /bazar_');
+    lines.push('', '_/mercado · /armas · /bazar · /bolsa_');
     return lines.filter((l) => l != null).join('\n');
   }
 
@@ -1856,6 +1893,7 @@ export function createMarketService({
     findBestWeapon,
     factionArsenal,
     formatEventAnnouncement,
+    applyEventToPrices,
     listOpenListings: (scopeKey) => marketRepository.listOpenListings(scopeKey),
     getListing: (id) => marketRepository.getListing(id),
     getCollectible,

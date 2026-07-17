@@ -1,9 +1,4 @@
-function nameOf(getContactDisplayName, jid) {
-  return (
-    (typeof getContactDisplayName === 'function' && getContactDisplayName(jid)) ||
-    String(jid || '').split('@')[0]
-  );
-}
+import { nameOf } from '../../utils/userLabel.js';
 
 function formatMission(mission, getContactDisplayName) {
   const progress = mission.progress || {};

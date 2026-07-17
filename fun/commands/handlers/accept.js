@@ -1,11 +1,5 @@
 import { ACTION_TYPE } from '../../constants.js';
-
-function nameOf(getContactDisplayName, jid) {
-  return (
-    (typeof getContactDisplayName === 'function' && getContactDisplayName(jid)) ||
-    String(jid || '').split('@')[0]
-  );
-}
+import { nameOf } from '../../utils/userLabel.js';
 
 async function flavorItalic(flavorService, scenario, vars) {
   if (!flavorService?.italicLine) return null;

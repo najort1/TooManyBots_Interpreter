@@ -1,6 +1,8 @@
 import { formatXpProfile } from '../../formatters/rankCard.js';
+import { renderProfileCardPng } from '../../formatters/rankCardImage.js';
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
+import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
 
 /**
  * /xp · /perfil [@pessoa | reply]
@@ -18,6 +20,8 @@ export async function handleXpCommand({
   getContactDisplayName,
   listContacts,
   reply,
+  replyImage,
+  funConfig = {},
   args = [],
   mentionedJids = [],
   quotedParticipant = '',
@@ -63,22 +67,17 @@ export async function handleXpCommand({
     : null;
 
   const profile = rankService.getProfile(targetJid, scopeKey);
-  const name =
-    (typeof getContactDisplayName === 'function' && getContactDisplayName(targetJid)) ||
-    '';
-  const viewerName = isSelf
-    ? ''
-    : (typeof getContactDisplayName === 'function' && getContactDisplayName(userJid)) ||
-      '';
+  const name = nameOf(getContactDisplayName, targetJid);
+  const viewerName = isSelf ? '' : nameOf(getContactDisplayName, userJid);
 
   let partnerName = '';
+  let partnerNamePlain = '';
   if (relationshipService) {
     const marriage = relationshipService.getMarriage(targetJid, scopeKey);
     if (marriage?.partnerJid) {
-      partnerName =
-        (typeof getContactDisplayName === 'function' &&
-          getContactDisplayName(marriage.partnerJid)) ||
-        String(marriage.partnerJid).split('@')[0];
+      // chat: @menção; imagem: nome de exibição (nunca o número cru se houver nome)
+      partnerName = nameOf(getContactDisplayName, marriage.partnerJid);
+      partnerNamePlain = displayNameOnly(getContactDisplayName, marriage.partnerJid);
     }
   }
 
@@ -137,7 +136,7 @@ export async function handleXpCommand({
     employment = null;
   }
 
-  const text = formatXpProfile({
+  const profileOpts = {
     displayName: name,
     userJid: targetJid,
     stats,
@@ -154,8 +153,36 @@ export async function handleXpCommand({
     casino,
     factionLabel,
     employment,
-  });
+  };
 
-  await reply(text);
+  if (funConfig.rankCardImage !== false && typeof replyImage === 'function') {
+    try {
+      const plainName = displayNameOnly(getContactDisplayName, targetJid);
+      const png = renderProfileCardPng({
+        displayName: plainName,
+        userJid: targetJid,
+        stats,
+        rank: profile.rank,
+        total: profile.total,
+        coinsRank: profile.coinsRank,
+        messagesRank: profile.messagesRank,
+        partnerName: partnerNamePlain || '',
+        factionLabel: factionLabel
+          ? String(factionLabel)
+              .replace(/^[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\s]+/u, '')
+              .trim() || factionLabel
+          : '',
+        casino,
+        employment,
+        isSelf,
+      });
+      await replyImage(png, isSelf ? '📊 Seu perfil' : `📊 Perfil`);
+      return { handled: true, targetJid, isSelf, image: true };
+    } catch {
+      // fallback texto
+    }
+  }
+
+  await reply(formatXpProfile(profileOpts));
   return { handled: true, targetJid, isSelf };
 }

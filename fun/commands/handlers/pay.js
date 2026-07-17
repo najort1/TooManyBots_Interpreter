@@ -1,5 +1,6 @@
 import { parseAmountFromArgs, resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
+import { nameOf } from '../../utils/userLabel.js';
 
 export async function handlePayCommand({
   userJid,
@@ -76,9 +77,7 @@ export async function handlePayCommand({
     return { handled: true };
   }
 
-  const toName =
-    (typeof getContactDisplayName === 'function' && getContactDisplayName(target)) ||
-    target.split('@')[0];
+  const toName = nameOf(getContactDisplayName, target);
 
   let eventLine = null;
   if (typeof socialHooks?.onSocialPair === 'function') {

@@ -1,5 +1,6 @@
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
+import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
 
 async function flavorItalic(flavorService, scenario, vars) {
   if (!flavorService?.italicLine) return null;
@@ -93,9 +94,9 @@ export async function handleShipCommand({
     return { handled: true };
   }
 
-  const name = (jid) =>
-    (typeof getContactDisplayName === 'function' && getContactDisplayName(jid)) ||
-    jid.split('@')[0];
+  const name = (jid) => nameOf(getContactDisplayName, jid);
+  // LLM prefere nome legível sem @
+  const plain = (jid) => displayNameOnly(getContactDisplayName, jid);
 
   const barLen = 10;
   const filled = Math.round((result.percent / 100) * barLen);
@@ -121,8 +122,8 @@ export async function handleShipCommand({
   }
 
   const fl = await flavorItalic(flavorService, 'ship', {
-    a: name(a),
-    b: name(b),
+    a: plain(a),
+    b: plain(b),
     percent: result.percent,
     label: result.label,
   });

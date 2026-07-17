@@ -5,14 +5,7 @@
 
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
-
-function nameOf(getContactDisplayName, jid) {
-  return (
-    (typeof getContactDisplayName === 'function' && getContactDisplayName(jid)) ||
-    String(jid || '').split('@')[0] ||
-    'Fulano'
-  );
-}
+import { nameOf } from '../../utils/userLabel.js';
 
 /**
  * Cascata IA (Zen→Ollama→template). Prefer chaosLine; senão line; senão template local.
