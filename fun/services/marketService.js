@@ -17,6 +17,7 @@ import {
   companyForItem,
   getCompany,
   listCompanies,
+  categoriesForCompany,
   tickAsset,
   applyTradeFlow,
   decayAssetState,
@@ -39,11 +40,13 @@ import {
   EVENT_INVENT_SYSTEM,
   JOURNALIST_SYSTEM,
   buildInventUserPrompt,
-  parseInventJson,
+  parseInventResponse,
   parseJournalistJson,
   pickTemplateSeed,
   resolveEventProposal,
   alignEventCopy,
+  isCopyCoherent,
+  buildDirectionFallbackCopy,
   fingerprintText,
   clampShockPct,
 } from '../economy/index.js';
@@ -438,7 +441,15 @@ export function createMarketService({
     return { items: hydrateItems(scopeKey, base), latestEvent: latest, shop };
   }
 
+  /**
+   * Inventa proposta de evento.
+   * Ordem fixa (sempre):
+   *   1) Zen (principal — mais inteligente / proxy OpenCode)
+   *   2) Ollama (só se Zen falhar ou estiver desligado)
+   *   3) Template local
+   */
   async function inventEvent(funConfig = {}, reg = null) {
+    const log = getLogger?.();
     const regulator = reg || clampKnobs(defaultRegulatorKnobs());
     const { reg: regAfterSeed, seed } = popNarrativeSeed({ ...regulator });
     const prompt = buildInventUserPrompt({
@@ -450,40 +461,61 @@ export function createMarketService({
         mood: co.risk > 0.7 ? 'hot' : co.risk < 0.3 ? 'stable' : 'warm',
       })),
     });
+    const inventSystem = `${EVENT_INVENT_SYSTEM}
 
+FORMATO: responda SOMENTE um objeto JSON válido (sem markdown, sem texto antes/depois).
+Campos: archetype, category, companyId, title, body.`;
+
+    // 1) Zen — principal
     if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.zenEnabled !== false) {
       try {
         const raw = await generateZen({
           baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
-          model: funConfig.zenModel || 'mimo-v2.5-free',
-          system: EVENT_INVENT_SYSTEM,
+          model: funConfig.zenModel || 'deepseek-v4-flash-free',
+          system: inventSystem,
           prompt,
-          timeoutMs: Math.max(5000, numOr(funConfig.zenTimeoutMs, 20000)),
-          maxTokens: 520,
-          temperature: 0.9,
+          timeoutMs: Math.max(8000, numOr(funConfig.zenTimeoutMs, 45000)),
+          // thinking models gastam tokens em reasoning — reserva folga pro JSON final
+          maxTokens: Math.max(900, numOr(funConfig.zenMaxTokens, 600) + 400),
+          temperature: 0.85,
           apiKey: funConfig.zenApiKey || '',
+          jsonMode: true,
         });
-        const parsed = parseInventJson(raw);
+        const parsed = parseInventResponse(raw);
         if (parsed) {
+          const source = parsed.salvaged ? 'zen-salvage' : 'zen';
+          log?.info?.(
+            { source, model: funConfig.zenModel, title: parsed.title },
+            'fun market invent via zen'
+          );
           return {
             ...parsed,
             description: parsed.body,
-            source: 'zen',
+            source,
             _regAfterSeed: regAfterSeed,
             _seed: seed,
           };
         }
+        console.warn(
+          `[fun/market] zen invent inválido (modelo=${funConfig.zenModel || 'deepseek-v4-flash-free'}) → tenta ollama`
+        );
+        log?.warn?.(
+          { model: funConfig.zenModel, preview: String(raw || '').slice(0, 120) },
+          'fun market zen invent invalid → ollama'
+        );
       } catch (err) {
-        console.warn(`[fun/market] zen event fail: ${err?.message || err}`);
+        console.warn(`[fun/market] zen event fail: ${err?.message || err} → ollama`);
+        log?.warn?.({ err: err?.message || String(err) }, 'fun market zen invent fail → ollama');
       }
     }
 
+    // 2) Ollama — fallback
     if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.ollamaEnabled !== false) {
       try {
         const raw = await generateOllama({
           baseUrl: funConfig.ollamaBaseUrl || 'http://127.0.0.1:11434',
           model: funConfig.ollamaModel || 'gemma4:latest',
-          system: EVENT_INVENT_SYSTEM,
+          system: inventSystem,
           prompt,
           timeoutMs: Math.max(8000, numOr(funConfig.ollamaTimeoutMs, 25000)),
           keepAlive: funConfig.ollamaKeepAlive ?? -1,
@@ -491,22 +523,32 @@ export function createMarketService({
           numPredict: 480,
           temperature: 0.9,
         });
-        const parsed = parseInventJson(raw);
+        const parsed = parseInventResponse(raw);
         if (parsed) {
+          const source = parsed.salvaged ? 'ollama-salvage' : 'ollama';
+          log?.info?.(
+            { source, model: funConfig.ollamaModel, title: parsed.title },
+            'fun market invent via ollama (fallback)'
+          );
           return {
             ...parsed,
             description: parsed.body,
-            source: 'ollama',
+            source,
             _regAfterSeed: regAfterSeed,
             _seed: seed,
           };
         }
+        console.warn(
+          `[fun/market] ollama invent inválido (modelo=${funConfig.ollamaModel || 'gemma4'}) → template`
+        );
       } catch (err) {
-        console.warn(`[fun/market] ollama event fail: ${err?.message || err}`);
+        console.warn(`[fun/market] ollama event fail: ${err?.message || err} → template`);
       }
     }
 
+    // 3) Template — último recurso
     const t = pickTemplateSeed(regulator.recentFingerprints || [], random);
+    log?.info?.({ source: 'template', title: t.title }, 'fun market invent template');
     return {
       archetype: t.archetype,
       category: t.category,
@@ -820,6 +862,28 @@ export function createMarketService({
     });
     let title = aligned.title;
     let description = clampEventDescription(aligned.body);
+    let copyHardFallback = false;
+
+    // Portão final: se ainda incoerente (LLM criativo / seed residual), copy sintética da categoria real.
+    // Isso é a garantia de que o anúncio nunca mente sobre o ticker.
+    if (
+      !isCopyCoherent({
+        title,
+        body: description,
+        direction,
+        category: resolved.category,
+        companyId: resolved.companyId,
+      })
+    ) {
+      const fb = buildDirectionFallbackCopy({
+        direction,
+        category: resolved.category,
+        companyId: resolved.companyId,
+      });
+      title = fb.title;
+      description = clampEventDescription(fb.body);
+      copyHardFallback = true;
+    }
 
     const truth = {
       archetype: resolved.archetype,
@@ -834,6 +898,7 @@ export function createMarketService({
         intendedJournalDirection: plan.journalDirection,
       },
       copyAligned: aligned.realigned,
+      copyHardFallback,
       narrativeDirection: aligned.narrativeDirection,
       ignoredAiImpactPct: draft.ignoredAiImpactPct,
       affected: affected.map((a) => ({
@@ -1915,6 +1980,10 @@ export function createMarketService({
     const sign = e.impactPct > 0 ? '+' : '';
     const story = clampEventDescription(e.description);
     const company = e.companyId ? getCompany(e.companyId) : null;
+    const pureStock =
+      e.companyId && categoriesForCompany(e.companyId).length === 0;
+    // PatoCoin etc.: não rotular como "arma/munição" no ticker da manchete
+    const sectorLabel = pureStock ? 'bolsa' : e.category;
     const lines = [
       '📰 *Mercado de rua*',
       `*${e.title}*`,
@@ -1922,12 +1991,19 @@ export function createMarketService({
       story || null,
       '',
       company
-        ? `${company.emoji} *${company.name}* · *${e.category}* · *${sign}${e.impactPct}%*`
+        ? `${company.emoji} *${company.name}* · *${sectorLabel}* · *${sign}${e.impactPct}%*`
         : `Categoria *${e.category}* · *${sign}${e.impactPct}%*`,
     ];
     if (result.affected?.length) {
+      // pure-stock: prioriza a ação; senão itens de rua
+      const ordered = pureStock
+        ? [
+            ...result.affected.filter((a) => a.kind === 'stock' || String(a.itemId || '').startsWith('stock:')),
+            ...result.affected.filter((a) => a.kind !== 'stock' && !String(a.itemId || '').startsWith('stock:')),
+          ]
+        : result.affected;
       lines.push(
-        result.affected
+        ordered
           .slice(0, 4)
           .map((a) => `${arrow(a.trend)}${a.name} ${a.previousPrice}→${a.price}`)
           .join(' · ')
