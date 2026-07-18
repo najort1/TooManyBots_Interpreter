@@ -542,7 +542,7 @@ export function createGroupMemoryService({
       try {
         const raw = await generateZen({
           baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
-          model: funConfig.zenModel || 'mimo-v2.5-free',
+          model: funConfig.zenModel || 'deepseek-v4-flash-free',
           system: EXTRACT_SYSTEM,
           prompt,
           timeoutMs: o.extractTimeout,
@@ -611,7 +611,7 @@ export function createGroupMemoryService({
       try {
         text = await generateZen({
           baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
-          model: funConfig.zenModel || 'mimo-v2.5-free',
+          model: funConfig.zenModel || 'deepseek-v4-flash-free',
           system: PERSONA_SYSTEM,
           prompt: `Fatos do grupo:\n${list}\n\nResuma o clima (≤${o.personaMax} chars):`,
           timeoutMs: o.extractTimeout,
