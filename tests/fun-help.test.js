@@ -12,11 +12,12 @@ test('help índice é curto e aponta temas', () => {
   const text = formatHelp('/');
   assert.ok(text.includes('Fun — ajuda'));
   assert.ok(text.includes('/ajuda economia'));
+  assert.ok(text.includes('/ajuda mundo'));
   assert.ok(text.includes('/ajuda cassino'));
   assert.ok(text.includes('/daily'));
   // não é mais a parede monstro
   const lines = text.split('\n').length;
-  assert.ok(lines <= 22, `índice com ${lines} linhas`);
+  assert.ok(lines <= 26, `índice com ${lines} linhas`);
 });
 
 test('help por tema resolve aliases', () => {
@@ -25,6 +26,9 @@ test('help por tema resolve aliases', () => {
   assert.equal(resolveHelpTopic('faccao'), 'faccoes');
   assert.equal(resolveHelpTopic('panelinha'), 'faccoes');
   assert.equal(resolveHelpTopic('fig'), 'midia');
+  assert.equal(resolveHelpTopic('mundo'), 'mundo');
+  assert.equal(resolveHelpTopic('jornal'), 'mundo');
+  assert.equal(resolveHelpTopic('automatico'), 'mundo');
   assert.equal(resolveHelpTopic('xyz'), null);
 });
 
@@ -38,6 +42,11 @@ test('help temas renderizam comandos-chave', () => {
 
   const fac = formatHelp('/', 'faccoes');
   assert.ok(fac.includes('panelinha'));
+
+  const mundo = formatHelp('/', 'mundo');
+  assert.ok(mundo.includes('Relógio') || mundo.includes('relógio') || mundo.includes('Mundo'));
+  assert.ok(mundo.includes('Group Times') || mundo.includes('jornal'));
+  assert.ok(mundo.includes('Negócios') || mundo.includes('caixa'));
 });
 
 test('help tema desconhecido volta pro índice', () => {

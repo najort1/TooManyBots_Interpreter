@@ -99,12 +99,13 @@ Testes setam `FUN_DISABLE_LIVE_LLM=1` para não bater rede.
 
 ## Comandos (resumo)
 
-Ajuda no zap: `/ajuda` · `/ajuda economia` · `/ajuda cassino` · …
+Ajuda no zap: `/ajuda` · `/ajuda economia` · `/ajuda mundo` · `/ajuda cassino` · …
 
 | Tema | Exemplos |
 |------|----------|
 | **Básico** | `/xp` `/perfil` `/rank` `/rankcoins` `/topmsg` `/daily` `/saldo` `/pay 50 @user` |
 | **Economia** | `/loja` `/mercado` `/armas` `/adquirir gasolina` `/inventario` `/bazar` `/assaltar` |
+| **Mundo & auto** | `/ajuda mundo` — relógio, quiet hours, notícias de mercado, negócios, jornal 23:59, conquistas |
 | **Negócios** | `/negocio` `/negocio comprar barraca` `/coletar` `/negocio consertar barraca` |
 | **Bolsa** | `/bolsa` `/carteira` `/bolsa comprar bombatech 3` `/bolsa vender pato 1` |
 | **Conquistas** | `/conquistas` |
