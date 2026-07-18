@@ -227,6 +227,7 @@ export async function handleCancelCommand({
   flavorService,
   groupMemoryService,
   profileService,
+  achievementService = null,
 }) {
   if (!chaosService) {
     await reply('Tribunal offline.');
@@ -268,7 +269,94 @@ export async function handleCancelCommand({
   await reply(
     ['🚫 *Cancelamento*', body, '', '_Motivo 100% absurdo. Não é sério._'].filter(Boolean).join('\n')
   );
+  try {
+    const unlocked = achievementService?.check?.(userJid, scopeKey, 'cancel', {}, funConfig) || [];
+    if (unlocked.length) {
+      await reply(
+        unlocked.map((u) => `🏆 *${u.icon} ${u.name}* — ${u.description}`).join('\n')
+      );
+    }
+  } catch {
+    /* ignore */
+  }
   return { handled: true, provider: flavorService?.lastProvider?.() };
+}
+
+export async function handleRoastCommand({
+  userJid,
+  scopeKey,
+  roastService,
+  casinoRepository = null,
+  funConfig,
+  getContactDisplayName,
+  listContacts,
+  reply,
+  args = [],
+  mentionedJids = [],
+  quotedParticipant = '',
+  sock,
+  identityMap,
+}) {
+  if (!roastService || funConfig.roastEnabled === false) {
+    await reply('Roast desligado.');
+    return { handled: true };
+  }
+
+  // cooldown via casino cooldowns if available
+  if (casinoRepository?.checkCooldown) {
+    const cd = casinoRepository.checkCooldown(
+      userJid,
+      scopeKey,
+      'roast',
+      funConfig.roastCooldownMs || 60 * 60_000
+    );
+    if (!cd.ok) {
+      const sec = Math.ceil((cd.retryInMs || 0) / 1000);
+      const min = Math.ceil(sec / 60);
+      await reply(`Roast em cooldown. Volta em ~*${min}* min.`);
+      return { handled: true };
+    }
+  }
+
+  const contacts = typeof listContacts === 'function' ? listContacts() : [];
+  const resolved = await resolveUserTarget({
+    args,
+    mentionedJids,
+    quotedParticipant,
+    excludeJid: '',
+    identityMap,
+    sock,
+    groupJid: scopeKey,
+    contacts,
+  });
+  const target = resolved?.jid;
+  if (!target || !isCanonicalUserJid(target)) {
+    await reply('Uso: `/roast @pessoa` (ou responda a msg).');
+    return { handled: true };
+  }
+
+  const result = await roastService.roast({
+    userJid: target,
+    scopeKey,
+    funConfig,
+    getContactDisplayName,
+  });
+  if (!result.ok) {
+    await reply('Não rolou o roast.');
+    return { handled: true };
+  }
+
+  if (casinoRepository?.touchCooldown) {
+    casinoRepository.touchCooldown(userJid, scopeKey, 'roast');
+  }
+
+  const name = nameOf(getContactDisplayName, target);
+  await reply(
+    ['🔥 *Roast*', `Alvo: *${name}*`, '', result.text, '', `_fonte: ${result.provider}_`]
+      .filter(Boolean)
+      .join('\n')
+  );
+  return { handled: true, result };
 }
 
 export async function handleGossipCommand({

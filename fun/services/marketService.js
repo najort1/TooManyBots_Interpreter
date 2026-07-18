@@ -72,6 +72,7 @@ export function createMarketService({
   factionService = null,
   casinoRepository = null,
   stockService = null,
+  propertyService = null,
   random = Math.random,
   getLogger = () => null,
   generateZen = openaiChatComplete,
@@ -276,8 +277,22 @@ export function createMarketService({
     ensureMarket(scopeKey, funConfig, now);
     const meta = marketRepository.getMeta(scopeKey);
     const every = Math.max(60_000, numOr(funConfig.economyTickMs, 15 * 60_000));
+    // buffer de negócios usa o mesmo relógio (mesmo se mercado “too-soon” no meio)
+    let propertyTick = { ticked: 0, totalAdded: 0 };
+    if (propertyService?.tickScope && funConfig.propertiesEnabled !== false) {
+      try {
+        propertyTick = propertyService.tickScope(scopeKey, funConfig, now) || propertyTick;
+      } catch {
+        /* ignore */
+      }
+    }
     if (meta.lastEconomyTickAt && now - meta.lastEconomyTickAt < every) {
-      return { ok: false, reason: 'too-soon', nextInMs: every - (now - meta.lastEconomyTickAt) };
+      return {
+        ok: false,
+        reason: 'too-soon',
+        nextInMs: every - (now - meta.lastEconomyTickAt),
+        propertyTick,
+      };
     }
 
     let reg = maybeRegulate(scopeKey, funConfig, now);
@@ -1425,8 +1440,12 @@ export function createMarketService({
     const tStats =
       repository.getUserStats(t, scopeKey) || repository.ensureUserRow(t, scopeKey, now);
     const tCoins = Number(tStats.coins) || 0;
-    if (tCoins < o.assaultMinSteal) {
-      return { ok: false, reason: 'target-poor', coins: tCoins };
+    const propBuffer =
+      typeof propertyService?.totalBuffer === 'function'
+        ? propertyService.totalBuffer(scopeKey, t)
+        : 0;
+    if (tCoins < o.assaultMinSteal && propBuffer < o.assaultMinSteal) {
+      return { ok: false, reason: 'target-poor', coins: tCoins, propBuffer };
     }
 
     let chance = o.assaultBaseChance;
@@ -1438,6 +1457,7 @@ export function createMarketService({
     chance -= (Number(defenderWeapon?.collectible?.assaultPower) || 0) / 250;
     if (tCoins > 200) chance += 0.04;
     if (tCoins > 500) chance += 0.03;
+    if (propBuffer > 40) chance += 0.03;
     chance = Math.min(0.82, Math.max(0.12, chance));
 
     consumeUse(weapon, now);
@@ -1475,34 +1495,76 @@ export function createMarketService({
       };
     }
 
-    const stealCap = Math.floor(tCoins * o.assaultMaxStealRatio);
-    const steal = Math.max(
+    // 1) prioriza caixa do negócio (buffer); 2) residual na carteira
+    let fromBuffer = 0;
+    let propertyHit = null;
+    let propertyDef = null;
+    let propertyDamage = 0;
+    const powerBoost = 1 + (Number(wCol.assaultPower) || 0) / 200;
+    const stealCapWallet = Math.floor(tCoins * o.assaultMaxStealRatio);
+    const wantTotal = Math.max(
       o.assaultMinSteal,
-      Math.min(
-        stealCap,
-        Math.floor(o.assaultMinSteal + random() * Math.max(1, stealCap - o.assaultMinSteal))
+      Math.floor(
+        (o.assaultMinSteal + random() * Math.max(1, stealCapWallet - o.assaultMinSteal + propBuffer * 0.3)) *
+          powerBoost
       )
     );
-    const powerBoost = 1 + (Number(wCol.assaultPower) || 0) / 200;
-    const finalSteal = Math.min(
-      tCoins,
-      Math.max(o.assaultMinSteal, Math.floor(steal * powerBoost))
-    );
 
-    repository.addCoins({
-      userJid: t,
-      scopeKey,
-      amount: -finalSteal,
-      now,
-      reason: 'assault-victim',
-    });
-    repository.addCoins({
-      userJid: a,
-      scopeKey,
-      amount: finalSteal,
-      now,
-      reason: 'assault-win',
-    });
+    if (propertyService?.robBuffer && propBuffer > 0) {
+      const rob = propertyService.robBuffer({
+        targetJid: t,
+        scopeKey,
+        maxWant: wantTotal,
+        now,
+      });
+      fromBuffer = Number(rob.stolen) || 0;
+      propertyHit = rob.property;
+      propertyDef = rob.def;
+      propertyDamage = rob.damage || 0;
+    }
+
+    let fromWallet = 0;
+    const remain = Math.max(0, wantTotal - fromBuffer);
+    if (remain >= o.assaultMinSteal && tCoins >= o.assaultMinSteal) {
+      const cap = Math.min(tCoins, Math.floor(tCoins * o.assaultMaxStealRatio), remain);
+      fromWallet = Math.max(
+        o.assaultMinSteal,
+        Math.min(cap, Math.floor(o.assaultMinSteal + random() * Math.max(1, cap - o.assaultMinSteal)))
+      );
+      if (fromWallet > 0) {
+        repository.addCoins({
+          userJid: t,
+          scopeKey,
+          amount: -fromWallet,
+          now,
+          reason: 'assault-victim',
+        });
+      }
+    }
+
+    const finalSteal = fromBuffer + fromWallet;
+    if (finalSteal <= 0) {
+      return { ok: false, reason: 'target-poor', coins: tCoins, propBuffer };
+    }
+
+    if (fromBuffer > 0) {
+      repository.addCoins({
+        userJid: a,
+        scopeKey,
+        amount: fromBuffer,
+        now,
+        reason: 'assault-win-property',
+      });
+    }
+    if (fromWallet > 0) {
+      repository.addCoins({
+        userJid: a,
+        scopeKey,
+        amount: fromWallet,
+        now,
+        reason: 'assault-win',
+      });
+    }
 
     return {
       ok: true,
@@ -1511,6 +1573,11 @@ export function createMarketService({
       chance,
       roll,
       stolen: finalSteal,
+      stolenBuffer: fromBuffer,
+      stolenWallet: fromWallet,
+      propertyName: propertyDef?.name || null,
+      propertyDamage,
+      propertyHealth: propertyHit?.health ?? null,
       weapon: wCol,
       usedGas,
       vehicleBonus,

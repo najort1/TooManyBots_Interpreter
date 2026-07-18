@@ -859,6 +859,67 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     return Number(row?.total) || 0;
   }
 
+  /**
+   * Soma abs(amount) no ledger para to_jid/from_jid no período.
+   * amount negativo no to_jid = perda do user; positivo = ganho.
+   */
+  function sumLedgerForUser({
+    userJid,
+    scopeKey,
+    since = 0,
+    reasonPrefix = null,
+    reasons = null,
+  } = {}) {
+    ensureFunSchema();
+    const u = String(userJid || '');
+    const s = String(scopeKey || '');
+    if (!u || !s) return { gained: 0, lost: 0, rows: [] };
+    const sinceTs = Number(since) || 0;
+    let sql = `
+      SELECT reason, amount, created_at FROM ${ANALYTICS_SCHEMA}.fun_coin_ledger
+      WHERE scope_key = ? AND created_at >= ?
+        AND (to_jid = ? OR from_jid = ?)
+    `;
+    const params = [s, sinceTs, u, u];
+    if (Array.isArray(reasons) && reasons.length) {
+      sql += ` AND reason IN (${reasons.map(() => '?').join(',')})`;
+      params.push(...reasons.map(String));
+    } else if (reasonPrefix) {
+      sql += ` AND reason LIKE ?`;
+      params.push(`${String(reasonPrefix)}%`);
+    }
+    sql += ` ORDER BY created_at DESC LIMIT 200`;
+    const rows = getDatabase()
+      .prepare(sql)
+      .all(...params)
+      .map((r) => ({
+        reason: String(r.reason || ''),
+        amount: Number(r.amount) || 0,
+        createdAt: Number(r.created_at) || 0,
+      }));
+    let gained = 0;
+    let lost = 0;
+    for (const r of rows) {
+      // mint/sink: to_jid = user, amount +gain / -loss
+      if (r.amount > 0) gained += r.amount;
+      else lost += Math.abs(r.amount);
+    }
+    return { gained, lost, rows };
+  }
+
+  function biggestLossSince({ userJid, scopeKey, since = 0 } = {}) {
+    const { rows } = sumLedgerForUser({ userJid, scopeKey, since });
+    let best = null;
+    for (const r of rows) {
+      if (r.amount >= 0) continue;
+      const abs = Math.abs(r.amount);
+      if (!best || abs > best.amount) {
+        best = { amount: abs, reason: r.reason, createdAt: r.createdAt };
+      }
+    }
+    return best;
+  }
+
   return {
     ensureFunSchema,
     getUserStats,
@@ -880,6 +941,8 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     refundEscrow,
     setTitle,
     countUsersInScope,
+    sumLedgerForUser,
+    biggestLossSince,
     _resetSchemaFlag,
   };
 }
