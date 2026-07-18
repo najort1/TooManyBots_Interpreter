@@ -7,35 +7,80 @@ import {
   renderCarteiraCardPng,
 } from '../../formatters/rankCardImage.js';
 
-async function tryReplyBoardImage(stockService, scopeKey, funConfig, replyImage) {
-  if (funConfig.rankCardImage === false || typeof replyImage !== 'function') return false;
-  try {
-    const quotes = stockService.listQuotes(scopeKey, funConfig);
-    if (!quotes.length) return false;
-    const png = renderBolsaBoardPng({ quotes });
-    await replyImage(png, '📈 Corretora do Beco');
-    return true;
-  } catch {
-    return false;
-  }
+/** Caption de imagem no WhatsApp (limite prático). */
+const WA_CAPTION_MAX = 1024;
+
+/**
+ * Caption da imagem: WA ~1024 chars.
+ * Board do zap já é enxuto (sem blurb de empresa); se ainda estourar, corta.
+ */
+function boardCaptionForImage(board) {
+  const text = String(board || '');
+  if (text.length <= WA_CAPTION_MAX) return text;
+  return text.slice(0, WA_CAPTION_MAX - 1) + '…';
 }
 
-async function tryReplyPortfolioImage(stockService, userJid, scopeKey, funConfig, replyImage) {
-  if (funConfig.rankCardImage === false || typeof replyImage !== 'function') return false;
-  try {
-    const div = stockService.payDividends({ userJid, scopeKey, funConfig });
-    const port = stockService.portfolio(userJid, scopeKey, funConfig);
-    const png = renderCarteiraCardPng({
-      positions: port.positions,
-      totalValue: port.totalValue,
-      unrealized: port.unrealized,
-      dividendTotal: div.total || 0,
-    });
-    await replyImage(png, '💼 Sua carteira');
-    return true;
-  } catch {
-    return false;
+/**
+ * Uma única mensagem: imagem + caption; senão só texto.
+ * Detalhes das empresas ficam no link da corretora web.
+ */
+async function replyBoardOnce(stockService, scopeKey, funConfig, reply, replyImage) {
+  const board = stockService.formatBoard(scopeKey, funConfig);
+  const canImage =
+    funConfig.rankCardImage !== false && typeof replyImage === 'function';
+
+  if (canImage) {
+    try {
+      const quotes = stockService.listQuotes(scopeKey, funConfig);
+      if (quotes.length) {
+        const png = renderBolsaBoardPng({ quotes });
+        await replyImage(png, boardCaptionForImage(board));
+        return { image: true };
+      }
+    } catch {
+      // cai no texto
+    }
   }
+
+  await reply(board);
+  return { image: false };
+}
+
+async function replyPortfolioOnce(
+  stockService,
+  userJid,
+  scopeKey,
+  funConfig,
+  reply,
+  replyImage
+) {
+  const text = stockService.formatPortfolio(userJid, scopeKey, funConfig);
+  const canImage =
+    funConfig.rankCardImage !== false &&
+    typeof replyImage === 'function' &&
+    text.length <= WA_CAPTION_MAX;
+
+  if (canImage) {
+    try {
+      const div = stockService.payDividends({ userJid, scopeKey, funConfig });
+      const port = stockService.portfolio(userJid, scopeKey, funConfig);
+      if (port.positions?.length) {
+        const png = renderCarteiraCardPng({
+          positions: port.positions,
+          totalValue: port.totalValue,
+          unrealized: port.unrealized,
+          dividendTotal: div.total || 0,
+        });
+        await replyImage(png, text);
+        return { image: true };
+      }
+    } catch {
+      // cai no texto
+    }
+  }
+
+  await reply(text);
+  return { image: false };
 }
 
 export async function handleBolsaCommand({
@@ -64,19 +109,26 @@ export async function handleBolsaCommand({
     .replace(/[\u0300-\u036f]/g, '');
 
   if (!sub || sub === 'lista' || sub === 'board' || sub === 'cotacao' || sub === 'cotações') {
-    if (await tryReplyBoardImage(stockService, scopeKey, funConfig, replyImage)) {
-      return { handled: true, image: true };
-    }
-    await reply(stockService.formatBoard(scopeKey, funConfig));
-    return { handled: true };
+    const out = await replyBoardOnce(
+      stockService,
+      scopeKey,
+      funConfig,
+      reply,
+      replyImage
+    );
+    return { handled: true, image: out.image };
   }
 
   if (sub === 'carteira' || sub === 'portfolio' || sub === 'portifolio') {
-    if (await tryReplyPortfolioImage(stockService, userJid, scopeKey, funConfig, replyImage)) {
-      return { handled: true, image: true };
-    }
-    await reply(stockService.formatPortfolio(userJid, scopeKey, funConfig));
-    return { handled: true };
+    const out = await replyPortfolioOnce(
+      stockService,
+      userJid,
+      scopeKey,
+      funConfig,
+      reply,
+      replyImage
+    );
+    return { handled: true, image: out.image };
   }
 
   if (sub === 'comprar' || sub === 'buy' || sub === 'compra') {
@@ -154,9 +206,13 @@ export async function handleCarteiraCommand({
     await reply('Bolsa fechada no beco agora.');
     return { handled: true };
   }
-  if (await tryReplyPortfolioImage(stockService, userJid, scopeKey, funConfig, replyImage)) {
-    return { handled: true, image: true };
-  }
-  await reply(stockService.formatPortfolio(userJid, scopeKey, funConfig));
-  return { handled: true };
+  const out = await replyPortfolioOnce(
+    stockService,
+    userJid,
+    scopeKey,
+    funConfig,
+    reply,
+    replyImage
+  );
+  return { handled: true, image: out.image };
 }

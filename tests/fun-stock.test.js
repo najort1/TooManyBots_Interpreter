@@ -419,9 +419,97 @@ test('formatBoard e formatTradeResult não vazios', () => {
   const board = stockService.formatBoard(scope, funConfig);
   assert.ok(board.includes('Corretora do Beco'));
   assert.ok(board.includes('BombaTech') || board.includes('bombatech'));
+  // blurb humano de cada empresa (texto do /bolsa)
+  assert.ok(board.includes('Armas e munição') || board.includes('BombaTech'));
+  assert.ok(board.includes('Meme do zap') || board.includes('PatoCoin'));
+  assert.ok(getCompany('burgerzap')?.blurb);
+  // ATH / máxima
+  assert.ok(/máx|ATH/i.test(board));
 
   const fail = stockService.formatTradeResult({ ok: false, reason: 'max-position', maxPosition: 2500 });
   assert.ok(fail.includes('2500'));
 
   assert.equal(getCompany('burgerzap').dividendYield > 0, true);
+});
+
+test('bolsa: highPrice (ATH) sobe com preço e não desce', () => {
+  const { stockService, stockRepository, funConfig } = makeStack();
+  const scope = uniqueGroup();
+  stockService.listQuotes(scope, funConfig);
+
+  stockRepository.setQuote({
+    scopeKey: scope,
+    companyId: 'burgerzap',
+    price: 150,
+    previousPrice: 100,
+    trend: 'up',
+  });
+  let q = stockRepository.getQuote(scope, 'burgerzap');
+  assert.equal(q.highPrice, 150);
+
+  stockRepository.setQuote({
+    scopeKey: scope,
+    companyId: 'burgerzap',
+    price: 120,
+    previousPrice: 150,
+    trend: 'down',
+  });
+  q = stockRepository.getQuote(scope, 'burgerzap');
+  assert.equal(q.price, 120);
+  assert.equal(q.highPrice, 150, 'ATH não deve cair');
+
+  const hydrated = stockService.listQuotes(scope, funConfig).find((x) => x.id === 'burgerzap');
+  assert.equal(hydrated.highPrice, 150);
+  assert.equal(hydrated.atHigh, false);
+});
+
+test('bolsa: historico de preco e publicBoard read-only', () => {
+  const { stockService, stockRepository, funConfig } = makeStack();
+  const scope = uniqueGroup();
+  stockService.listQuotes(scope, funConfig);
+
+  stockRepository.setQuote({
+    scopeKey: scope,
+    companyId: 'bombatech',
+    price: 95,
+    previousPrice: 90,
+    trend: 'up',
+  });
+  stockRepository.setQuote({
+    scopeKey: scope,
+    companyId: 'bombatech',
+    price: 110,
+    previousPrice: 95,
+    trend: 'up',
+  });
+  // preco igual nao deve empilhar candle
+  stockRepository.setQuote({
+    scopeKey: scope,
+    companyId: 'bombatech',
+    price: 110,
+    previousPrice: 95,
+    trend: 'flat',
+  });
+
+  const hist = stockRepository.listHistory(scope, 'bombatech', { limit: 50 });
+  assert.ok(hist.length >= 2, 'hist points: ' + hist.length);
+  assert.equal(hist[hist.length - 1].price, 110);
+
+  const board = stockService.publicBoard(scope, funConfig);
+  assert.equal(board.scope, scope);
+  assert.ok(board.quotes.length >= 6);
+  assert.ok(board.summary.count >= 6);
+  assert.equal(board.tradeHint.channel, 'whatsapp');
+  const bomba = board.quotes.find((q) => q.id === 'bombatech');
+  assert.ok(bomba);
+  assert.equal(bomba.price, 110);
+  assert.ok(bomba.highPrice >= 110);
+
+  const pub = stockService.publicHistory(scope, 'bomba', { range: 'all' }, funConfig);
+  assert.equal(pub.ok, true);
+  assert.ok(pub.points.length >= 1);
+  assert.ok(pub.stats.high >= 110);
+
+  const url = stockService.publicBoardUrl(scope, funConfig);
+  assert.ok(String(url).includes('/bolsa/'));
 });

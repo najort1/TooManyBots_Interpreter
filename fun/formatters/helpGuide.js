@@ -152,6 +152,7 @@ function topicEconomia(p) {
     `\`${p}bolsa\` — cotações · \`${p}carteira\` — suas ações`,
     `\`${p}bolsa comprar bombatech 3\``,
     `\`${p}bolsa vender pato 1\``,
+    '_Link no `/bolsa`: gráficos, ATH e o que cada empresa faz (só ver)_',
     '',
     '*Negócios*',
     `\`${p}negocio\` · \`${p}negocio comprar barraca\``,

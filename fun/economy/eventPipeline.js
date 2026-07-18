@@ -320,9 +320,9 @@ export function inferNarrativeDirection(text) {
   if (!t.trim()) return 'flat';
 
   const upRe =
-    /mais cara|mais caro|subiu|sobe|subida|alta inesper|encarec|escassez|sumiu|fila|fomo|apert(o|ou)|lotou|procura|escasso|seco|sem produto|preco sobe|preço sobe|gasolina cara|encareceu|disparou|esquent/;
+    /mais cara|mais caro|subiu|sobe|subida|alta inesper|encarec|escassez|sumiu|fila|fomo|apert(o|ou)|lotou|procura|escasso|seco|sem produto|preco sobe|preço sobe|gasolina cara|encareceu|disparou|esquent|prateleira magra|falta de|escasso/;
   const downRe =
-    /mais barata|mais barato|caiu|desce|queda|barato|sobra|desconto|freia|morreu a procura|promo|esfria|recu(a|ou)|desceu|alivi|mais em conta|baixa(r|ou)? o preco|baixa(r|ou)? o preço|preco cai|preço cai|estoque sobra|liquidez|lote barato|promocao|promoção|realizou|tomou lucro|ninguem quer|ninguém quer/;
+    /mais barata|mais barato|caiu|desce|queda|barato|sobra|desconto|freia|morreu a procura|promo|esfria|recu(a|ou)|desceu|alivi|mais em conta|baixa(r|ou)? o preco|baixa(r|ou)? o preço|preco cai|preço cai|estoque sobra|estoque encalhad|encalhad|liquidac|liquida[cç][aã]o|excesso|desovar|lote barato|promocao|promoção|realizou|tomou lucro|ninguem quer|ninguém quer|estoque gigante|caminh[aã]o inteiro|parado num deposito|parado no deposito/;
 
   let up = 0;
   let down = 0;
@@ -339,6 +339,49 @@ export function inferNarrativeDirection(text) {
   if (up > down) return 'up';
   if (down > up) return 'down';
   return 'flat';
+}
+
+/**
+ * Infere o setor da narrativa (gasolina vs colete vs arma…).
+ * @returns {string|null} category id ou null se ambíguo
+ */
+export function inferNarrativeCategory(text) {
+  const t = normalizeNarrativeText(text);
+  if (!t.trim()) return null;
+
+  const scores = {
+    combustivel: 0,
+    municao: 0,
+    arma: 0,
+    veiculo: 0,
+    defesa: 0,
+  };
+
+  const bump = (cat, n = 1) => {
+    scores[cat] = (scores[cat] || 0) + n;
+  };
+
+  if (/gasolina|combust|posto|bomba|gal[aã]o|litro|ze do gas|z[eé] do g[aá]s|caminh[aã]o.*(comb|gas)|tanque/.test(t)) {
+    bump('combustivel', 3);
+  }
+  if (/municao|muni[cç][aã]o|cartucho|carregador|tiro/.test(t)) bump('municao', 2);
+  if (/arma|pistola|rifle|faca|peixeira|canivete|a[cç]o de fogo/.test(t)) bump('arma', 2);
+  if (/moto|carro|veiculo|ve[ií]culo|escapamento|oficina|duas rodas|uno/.test(t)) {
+    bump('veiculo', 2);
+  }
+  if (/colete|defesa|blindad|satelite|sat[eé]lite|escudo|tatico|t[aá]tico/.test(t)) {
+    bump('defesa', 3);
+  }
+
+  let best = null;
+  let bestScore = 0;
+  for (const [cat, sc] of Object.entries(scores)) {
+    if (sc > bestScore) {
+      best = cat;
+      bestScore = sc;
+    }
+  }
+  return bestScore >= 2 ? best : null;
 }
 
 const CATEGORY_LABEL = Object.freeze({
@@ -453,14 +496,14 @@ export function pickAlignedTemplate({
 }
 
 /**
- * Garante que title/body não contradigam a direção real publicada no anúncio.
+ * Garante que title/body não contradigam a direção **nem o setor** do anúncio.
  * Decepção (hype/contrarian) NÃO pode mentir no mesmo post que mostra o %.
  *
- * Mantém a copy se:
- * - body existe e a narrativa é flat (tom neutro), ou
- * - narrativa bate com a direção real, ou
- * - direção real é flat e narrativa também é flat
- * Realinha (template) se body vazio, ou se up vs down se contradizem.
+ * Realinha se:
+ * - body vazio
+ * - narrativa up/down oposta ao ticker
+ * - texto fala de outro setor (gasolina vs colete/defesa, etc.)
+ * - direção real up/down e texto só "fofoca neutra" sem tom de preço (fraco demais)
  */
 export function alignEventCopy({
   title,
@@ -475,22 +518,32 @@ export function alignEventCopy({
     direction === 'up' || direction === 'down' || direction === 'flat' ? direction : 'flat';
   const combined = `${title || ''}\n${body || ''}`;
   const narr = inferNarrativeDirection(combined);
+  const textCat = inferNarrativeCategory(combined);
   const empty = !String(body || '').trim();
 
-  const contradicts =
+  const directionContradicts =
     (dir === 'up' && narr === 'down') ||
     (dir === 'down' && narr === 'up') ||
     (dir === 'flat' && (narr === 'up' || narr === 'down'));
 
-  if (!empty && !contradicts) {
+  // gasolina na fofoca + colete no ticker = incoerente
+  const categoryContradicts =
+    Boolean(category) && Boolean(textCat) && textCat !== category;
+
+  // preço subiu/caiu de verdade mas o texto não tem tom de preço → forçar copy alinhada
+  const weakTone = (dir === 'up' || dir === 'down') && narr === 'flat' && !empty;
+
+  if (!empty && !directionContradicts && !categoryContradicts && !weakTone) {
     return {
       title: String(title || 'Movimento de mercado').slice(0, 100),
       body: clampEventDescription(body),
       realigned: false,
       narrativeDirection: narr,
+      narrativeCategory: textCat,
     };
   }
 
+  // Preferir fallback sintético da categoria real (evita seed de munição em defesa)
   const seed = pickAlignedTemplate({
     direction: dir,
     archetype,
@@ -498,12 +551,29 @@ export function alignEventCopy({
     companyId,
     random,
   });
+  // Se o seed de template ainda é de outra categoria, força sintético
+  let titleOut = seed.title;
+  let bodyOut = seed.body;
+  if (category && seed.category && seed.category !== category && !seed.synthetic) {
+    const fb = buildDirectionFallbackCopy({ direction: dir, category, companyId });
+    titleOut = fb.title;
+    bodyOut = fb.body;
+  }
+
   return {
-    title: seed.title.slice(0, 100),
-    body: clampEventDescription(seed.body),
+    title: String(titleOut || 'Movimento de mercado').slice(0, 100),
+    body: clampEventDescription(bodyOut),
     realigned: true,
-    narrativeDirection: inferNarrativeDirection(`${seed.title}\n${seed.body}`),
+    narrativeDirection: inferNarrativeDirection(`${titleOut}\n${bodyOut}`),
+    narrativeCategory: category || inferNarrativeCategory(`${titleOut}\n${bodyOut}`),
     fromTemplate: seed.archetype,
+    reason: directionContradicts
+      ? 'direction'
+      : categoryContradicts
+        ? 'category'
+        : weakTone
+          ? 'weak-tone'
+          : 'empty',
   };
 }
 

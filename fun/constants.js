@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '16';
+export const FUN_SCHEMA_VERSION = '18';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',

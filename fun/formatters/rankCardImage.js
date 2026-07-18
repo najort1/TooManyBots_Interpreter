@@ -1010,7 +1010,7 @@ export function renderProfileCardPng({
 
 export function renderBolsaBoardPng({ quotes = [], nowMs = Date.now() } = {}) {
   const t = resolveCardTheme('bolsa', nowMs);
-  const width = 920;
+  const width = 960;
   const rowH = 48;
   const n = Math.max(quotes.length, 1);
   const height = 32 + 120 + 32 + n * rowH + 56;
@@ -1027,18 +1027,20 @@ export function renderBolsaBoardPng({ quotes = [], nowMs = Date.now() } = {}) {
   ctx.fillText('Corretora do Beco', padX, padTop + 44);
   ctx.fillStyle = t.muted;
   ctx.font = `500 13px ${FONT}`;
-  ctx.fillText('Cotações ao vivo · preços em coins', padX, padTop + 68);
+  ctx.fillText('Cotações ao vivo · preços em coins · ATH = máxima histórica', padX, padTop + 68);
 
   const colY = padTop + 100;
   const xEmp = padX;
-  const xPreco = padX + 300;
-  const xVar = padX + 470;
-  const xDiv = padX + 660;
+  const xPreco = padX + 250;
+  const xAth = padX + 400;
+  const xVar = padX + 540;
+  const xDiv = padX + 730;
 
   ctx.fillStyle = t.muted;
   ctx.font = `700 11px ${FONT}`;
   ctx.fillText('EMPRESA', xEmp, colY);
   ctx.fillText('PREÇO', xPreco, colY);
+  ctx.fillText('MÁX (ATH)', xAth, colY);
   ctx.fillText('VARIAÇÃO', xVar, colY);
   ctx.fillText('DIVIDENDO', xDiv, colY);
 
@@ -1054,7 +1056,10 @@ export function renderBolsaBoardPng({ quotes = [], nowMs = Date.now() } = {}) {
         fillGlossyRow(ctx, padX - 10, y, contentW + 20, rowH - 6, 10, t.raise2);
       }
       const midY = y + 30;
-      const name = shortName(q.name || q.id, '', 18);
+      const name = shortName(q.name || q.id, '', 16);
+      const price = Math.max(1, Math.floor(Number(q.price) || 1));
+      const ath = Math.max(price, Math.floor(Number(q.highPrice) || 0));
+      const atHigh = price >= ath;
       const delta = Number(q.deltaPct) || 0;
       const sign = delta > 0 ? '+' : '';
       const trend =
@@ -1072,7 +1077,13 @@ export function renderBolsaBoardPng({ quotes = [], nowMs = Date.now() } = {}) {
       ctx.fillText(name, xEmp, midY);
       ctx.fillStyle = col;
       ctx.font = `700 14px ${FONT_MONO}`;
-      ctx.fillText(`${fmtNum(q.price)} coins`, xPreco, midY);
+      ctx.fillText(`${fmtNum(price)}c`, xPreco, midY);
+      // ATH: destaque se cotação está no topo
+      ctx.fillStyle = atHigh ? t.success || '#22c55e' : t.muted;
+      ctx.font = `700 13px ${FONT_MONO}`;
+      ctx.fillText(atHigh ? `${fmtNum(ath)}c ★` : `${fmtNum(ath)}c`, xAth, midY);
+      ctx.fillStyle = col;
+      ctx.font = `700 13px ${FONT_MONO}`;
       ctx.fillText(`${trend} ${sign}${delta}%`, xVar, midY);
       ctx.fillStyle = t.muted;
       ctx.fillText(divStr, xDiv, midY);
@@ -1082,7 +1093,7 @@ export function renderBolsaBoardPng({ quotes = [], nowMs = Date.now() } = {}) {
   ctx.fillStyle = t.muted;
   ctx.font = `500 12px ${FONT}`;
   ctx.fillText(
-    'Variação desde o último tick  ·  /bolsa comprar  ·  /carteira',
+    'ATH = máxima do grupo  ·  /bolsa comprar  ·  perfil das empresas no link da corretora',
     padX,
     height - 36
   );

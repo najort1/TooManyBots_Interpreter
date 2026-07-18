@@ -303,6 +303,7 @@ export function buildFunSchemaSql() {
       company_id      TEXT    NOT NULL,
       price           INTEGER NOT NULL,
       previous_price  INTEGER NOT NULL DEFAULT 0,
+      high_price      INTEGER NOT NULL DEFAULT 0,
       trend           TEXT    NOT NULL DEFAULT 'flat',
       supply          REAL    NOT NULL DEFAULT 1,
       demand          REAL    NOT NULL DEFAULT 1,
@@ -333,6 +334,19 @@ export function buildFunSchemaSql() {
       last_trade_at   INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (user_jid, scope_key)
     );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_stock_price_history (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_key       TEXT    NOT NULL,
+      company_id      TEXT    NOT NULL,
+      price           INTEGER NOT NULL,
+      previous_price  INTEGER NOT NULL DEFAULT 0,
+      high_price      INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_stock_hist
+      ON fun_stock_price_history(scope_key, company_id, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_market_meta (
       scope_key       TEXT PRIMARY KEY,
@@ -672,6 +686,7 @@ export function ensureFunSchema(db) {
         company_id      TEXT    NOT NULL,
         price           INTEGER NOT NULL,
         previous_price  INTEGER NOT NULL DEFAULT 0,
+        high_price      INTEGER NOT NULL DEFAULT 0,
         trend           TEXT    NOT NULL DEFAULT 'flat',
         supply          REAL    NOT NULL DEFAULT 1,
         demand          REAL    NOT NULL DEFAULT 1,
@@ -702,6 +717,60 @@ export function ensureFunSchema(db) {
         last_trade_at   INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (user_jid, scope_key)
       );
+
+      CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_stock_price_history (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope_key       TEXT    NOT NULL,
+        company_id      TEXT    NOT NULL,
+        price           INTEGER NOT NULL,
+        previous_price  INTEGER NOT NULL DEFAULT 0,
+        high_price      INTEGER NOT NULL DEFAULT 0,
+        created_at      INTEGER NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_stock_hist
+        ON fun_stock_price_history(scope_key, company_id, created_at DESC);
+    `);
+  } catch {
+    // ignore
+  }
+
+  // Máxima histórica (ATH) das ações
+  try {
+    const sqCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_stock_quotes)`).all();
+    const sqNames = new Set(sqCols.map((c) => String(c.name || '')));
+    if (sqNames.size && !sqNames.has('high_price')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_stock_quotes ADD COLUMN high_price INTEGER NOT NULL DEFAULT 0`
+      );
+    }
+    // backfill: ATH = max(preço atual, ATH gravado)
+    db.exec(
+      `UPDATE ${ANALYTICS_SCHEMA}.fun_stock_quotes
+       SET high_price = CASE
+         WHEN high_price < price THEN price
+         WHEN high_price <= 0 THEN price
+         ELSE high_price
+       END`
+    );
+  } catch {
+    // ignore
+  }
+
+  // Histórico de cotações da bolsa (dashboard / gráficos)
+  try {
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_stock_price_history (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        scope_key       TEXT    NOT NULL,
+        company_id      TEXT    NOT NULL,
+        price           INTEGER NOT NULL,
+        previous_price  INTEGER NOT NULL DEFAULT 0,
+        high_price      INTEGER NOT NULL DEFAULT 0,
+        created_at      INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_stock_hist
+        ON fun_stock_price_history(scope_key, company_id, created_at DESC);
     `);
   } catch {
     // ignore

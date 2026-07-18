@@ -21,6 +21,7 @@ import {
   rollDividendPayout,
   formatYieldHint,
 } from '../economy/dividends.js';
+import { getPublicBaseUrl } from '../utils/publicUrl.js';
 
 function numOr(v, fb) {
   const n = Number(v);
@@ -86,6 +87,11 @@ export function createStockService({
     }
     const price = q?.price ?? company.basePrice;
     const prev = q?.previousPrice ?? company.basePrice;
+    const highPrice = Math.max(
+      price,
+      Math.floor(Number(q?.highPrice) || 0),
+      Math.floor(Number(company.basePrice) || 0)
+    );
     const delta = price - prev;
     const deltaPct = prev > 0 ? Math.round((delta / prev) * 100) : 0;
     const supply = q?.supply ?? 1;
@@ -102,6 +108,8 @@ export function createStockService({
       ...company,
       price,
       previousPrice: prev,
+      highPrice,
+      atHigh: price >= highPrice,
       trend: q?.trend || 'flat',
       delta,
       deltaPct,
@@ -113,6 +121,7 @@ export function createStockService({
       dividendYield: dynamicYield,
       dividendProfile: divProfile,
       dividendRare: Boolean(divProfile.rare),
+      updatedAt: Number(q?.updatedAt) || now,
     };
   }
 
@@ -604,29 +613,218 @@ export function createStockService({
     };
   }
 
+  /**
+   * Payload read-only para dashboard/corretora web (sem dados de compra).
+   */
+  function publicBoard(scopeKey, funConfig = {}, now = Date.now()) {
+    const quotes = listQuotes(scopeKey, funConfig, now);
+    for (const q of quotes) {
+      stockRepository.seedHistoryFromQuote?.(scopeKey, q.id, now);
+    }
+    const rows = quotes.map((q) => {
+      const ath = Math.max(1, Math.floor(Number(q.highPrice) || Number(q.price) || 1));
+      const fromAthPct =
+        ath > 0 ? Math.round(((Number(q.price) - ath) / ath) * 1000) / 10 : 0;
+      return {
+        id: q.id,
+        name: q.name,
+        emoji: q.emoji,
+        ticker: String(q.id || '').toUpperCase(),
+        blurb: String(q.blurb || q.flavor || '').trim(),
+        price: Math.floor(Number(q.price) || 0),
+        previousPrice: Math.floor(Number(q.previousPrice) || 0),
+        highPrice: ath,
+        atHigh: Boolean(q.atHigh) || Number(q.price) >= ath,
+        trend: q.trend || 'flat',
+        delta: Math.floor(Number(q.delta) || 0),
+        deltaPct: Number(q.deltaPct) || 0,
+        fromAthPct,
+        dividendYield: Number(q.dividendYield) || 0,
+        dividendRare: Boolean(q.dividendRare),
+        risk: Number(q.risk) || 0,
+        volatility: Number(q.volatility) || 0,
+        volumeBuy: Number(q.volumeBuy) || 0,
+        volumeSell: Number(q.volumeSell) || 0,
+        eventShock: Number(q.eventShock) || 0,
+        updatedAt: Number(q.updatedAt) || now,
+      };
+    });
+
+    const gainers = [...rows].sort((a, b) => b.deltaPct - a.deltaPct);
+    const losers = [...rows].sort((a, b) => a.deltaPct - b.deltaPct);
+    const nearAth = rows.filter((r) => r.fromAthPct >= -5).sort((a, b) => b.fromAthPct - a.fromAthPct);
+    const avgDelta =
+      rows.length > 0
+        ? Math.round((rows.reduce((s, r) => s + r.deltaPct, 0) / rows.length) * 10) / 10
+        : 0;
+    const advancing = rows.filter((r) => r.deltaPct > 0).length;
+    const declining = rows.filter((r) => r.deltaPct < 0).length;
+
+    return {
+      scope: String(scopeKey || ''),
+      enabled: opts(funConfig).enabled !== false,
+      ts: now,
+      quotes: rows,
+      summary: {
+        count: rows.length,
+        advancing,
+        declining,
+        unchanged: rows.length - advancing - declining,
+        avgDeltaPct: avgDelta,
+        atHighCount: rows.filter((r) => r.atHigh).length,
+      },
+      movers: {
+        topGainers: gainers.filter((r) => r.deltaPct > 0).slice(0, 3),
+        topLosers: losers.filter((r) => r.deltaPct < 0).slice(0, 3),
+        nearAth: nearAth.slice(0, 3),
+      },
+      // só lembrete de trade no WhatsApp — nunca endpoints de ordem
+      tradeHint: {
+        channel: 'whatsapp',
+        buy: '/bolsa comprar <ticker> <qtd>',
+        sell: '/bolsa vender <ticker> <qtd>',
+        portfolio: '/carteira',
+      },
+    };
+  }
+
+  /**
+   * Histórico de um ticker com filtro de janela.
+   * range: 1d | 7d | 30d | 90d | all  (ou from/to ms)
+   */
+  function publicHistory(scopeKey, companyToken, optsIn = {}, funConfig = {}, now = Date.now()) {
+    const company = resolveCompanyToken(companyToken) || getCompany(companyToken);
+    if (!company) {
+      return { ok: false, reason: 'unknown-ticker', points: [] };
+    }
+    ensureScope(scopeKey, now);
+    stockRepository.seedHistoryFromQuote?.(scopeKey, company.id, now);
+
+    const range = String(optsIn.range || '').toLowerCase();
+    let from = Math.max(0, Math.floor(Number(optsIn.from) || 0));
+    let to = Math.max(0, Math.floor(Number(optsIn.to) || 0));
+    if (!from && range) {
+      const day = 24 * 60 * 60_000;
+      const map = { '1d': day, '7d': 7 * day, '30d': 30 * day, '90d': 90 * day };
+      if (map[range]) from = now - map[range];
+    }
+    if (!to) to = now;
+
+    const limit = Math.max(1, Math.min(2000, Math.floor(Number(optsIn.limit) || 500)));
+    let points = stockRepository.listHistory(scopeKey, company.id, { from, to, limit }) || [];
+
+    // Se janela vazia mas há cotação, devolve ponto atual (gráfico não some)
+    if (!points.length) {
+      const q = getQuoteHydrated(scopeKey, company.id, now);
+      if (q) {
+        points = [
+          {
+            price: q.price,
+            previousPrice: q.previousPrice,
+            highPrice: q.highPrice,
+            createdAt: Number(q.updatedAt) || now,
+          },
+        ];
+      }
+    }
+
+    // Downsample simples se ainda passar de 400 pts (UI)
+    if (points.length > 400) {
+      const step = Math.ceil(points.length / 400);
+      const sampled = [];
+      for (let i = 0; i < points.length; i += step) sampled.push(points[i]);
+      if (sampled[sampled.length - 1] !== points[points.length - 1]) {
+        sampled.push(points[points.length - 1]);
+      }
+      points = sampled;
+    }
+
+    const prices = points.map((p) => p.price);
+    const highInWindow = prices.length ? Math.max(...prices) : 0;
+    const lowInWindow = prices.length ? Math.min(...prices) : 0;
+    const first = prices[0] || 0;
+    const last = prices[prices.length - 1] || 0;
+    const changePct =
+      first > 0 ? Math.round(((last - first) / first) * 1000) / 10 : 0;
+
+    return {
+      ok: true,
+      scope: String(scopeKey || ''),
+      companyId: company.id,
+      name: company.name,
+      emoji: company.emoji,
+      range: range || (from ? 'custom' : 'all'),
+      from: from || (points[0]?.createdAt || 0),
+      to: to || now,
+      points,
+      stats: {
+        high: highInWindow,
+        low: lowInWindow,
+        open: first,
+        close: last,
+        changePct,
+        samples: points.length,
+      },
+      quote: getQuoteHydrated(scopeKey, company.id, now),
+    };
+  }
+
+  /**
+   * Texto do WhatsApp: enxuto — só preço/var/ATH + cmds + link do site.
+   * Explicação de cada empresa fica no frontend da corretora.
+   */
   function formatBoard(scopeKey, funConfig = {}, now = Date.now()) {
     const quotes = listQuotes(scopeKey, funConfig, now);
+    const o = opts(funConfig);
     const lines = [
       '📈 *Corretora do Beco*',
-      '_Ações das empresas do bairro · sem short_',
+      '_Preços do grupo · sem short_',
       '',
     ];
     for (const q of quotes) {
       const sign = q.deltaPct > 0 ? '+' : '';
       const div = formatYieldHint(q, q.dividendYield, q.dividendProfile);
+      const ath = Math.max(1, Math.floor(Number(q.highPrice) || Number(q.price) || 1));
+      const athTag = q.atHigh || q.price >= ath ? ' · *ATH*' : ` · máx *${ath}*c`;
       lines.push(
-        `${q.emoji} *${q.name}* (\`${q.id}\`)`,
-        `   ${arrow(q.trend)} *${q.price}*c ${sign}${q.deltaPct}%${div}`,
-        `   _${q.flavor}_`
+        `${q.emoji} *${q.name}* \`${q.id}\` · ${arrow(q.trend)} *${q.price}*c ${sign}${q.deltaPct}%${athTag}${div}`
       );
     }
     lines.push(
       '',
-      '`/bolsa comprar bombatech 3` · `/bolsa vender pato 1`',
-      '`/carteira` — suas ações e lucro no papel',
-      `_Teto *${opts(funConfig).maxPosition}c* em ações · máx *${opts(funConfig).maxQty}* por ticker_`
+      '`/bolsa comprar bombatech 3` · `/bolsa vender pato 1` · `/carteira`',
+      `_Teto *${o.maxPosition}c* · máx *${o.maxQty}*/ticker_`
     );
-    return lines.join('\n');
+    const web = publicBoardUrl(scopeKey, funConfig);
+    if (web) {
+      lines.push(
+        '',
+        '🌐 *Corretora web* (só ver — sem compra no site):',
+        '_gráficos, ATH, notícias e o que cada empresa faz_',
+        web
+      );
+    }
+    return lines.filter((l) => l != null).join('\n');
+  }
+
+  /**
+   * Caption da imagem = mesmo texto enxuto (já cabe em ≤1024).
+   */
+  function formatBoardCaption(scopeKey, funConfig = {}, now = Date.now()) {
+    return formatBoard(scopeKey, funConfig, now);
+  }
+
+  /**
+   * Link público da corretora web por grupo.
+   * Ex.: https://host/bolsa/120363...
+   */
+  function publicBoardUrl(scopeKey, funConfig = {}) {
+    const s = String(scopeKey || '').trim();
+    if (!s) return '';
+    const base = getPublicBaseUrl(funConfig);
+    if (!base) return '';
+    const slug = s.endsWith('@g.us') ? s.slice(0, -'@g.us'.length) : s;
+    return `${base.replace(/\/+$/, '')}/bolsa/${encodeURIComponent(slug)}`;
   }
 
   function formatPortfolio(userJid, scopeKey, funConfig = {}, now = Date.now()) {
@@ -725,7 +923,11 @@ export function createStockService({
     sell,
     payDividends,
     portfolio,
+    publicBoard,
+    publicHistory,
+    publicBoardUrl,
     formatBoard,
+    formatBoardCaption,
     formatPortfolio,
     formatTradeResult,
     resolveCompanyToken,
