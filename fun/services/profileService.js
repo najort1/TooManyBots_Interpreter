@@ -9,13 +9,15 @@ import { ollamaGenerate } from '../llm/ollamaClient.js';
 const EXTRACT_SYSTEM = `Você extrai dados de perfil social de um texto livre em pt-BR (grupo WhatsApp).
 
 Responda SOMENTE JSON válido (sem markdown):
-{"nickname":string|null,"bio":string|null,"birthday":string|null,"title":string|null}
+{"nickname":string|null,"bio":string|null,"birthday":string|null,"title":string|null,"extras":string|null}
 
 Regras:
 - nickname: apelido curto (2–24 chars), como as pessoas chamam a pessoa no grupo. null se não houver.
 - bio: "conhecido por" / o que a pessoa é no grupo (1 frase ≤160). null se não houver.
 - birthday: data dia/mês (ex "15/03", "12 de agosto"). SEM ano. null se não houver.
 - title: flair/título cosmético (ex "Lenda"). null se não houver.
+- extras: resto inútil/fofoca que NÃO entrou em nick/bio/niver/title (ex. "proano que nunca pisou no Fábio", "sou negro", time, gosto aleatório). 1–2 frases curtas ≤280. null se não sobrar nada.
+- NÃO repita em extras o que já foi em nickname/bio/birthday/title.
 - NÃO invente. Se o texto não traz o campo, use null (não invente).
 - NÃO salve telefone, PIX, senha, endereço.
 Só o JSON.`;
@@ -176,8 +178,85 @@ export function sanitizeTitle(raw, { max = 16, blocklist = [] } = {}) {
   return { ok: true, value: t };
 }
 
+export function sanitizeExtras(raw, { max = 280, blocklist = [] } = {}) {
+  let t = String(raw || '')
+    .trim()
+    .replace(/[\n\r\t]+/g, ' ')
+    .replace(/\s+/g, ' ');
+  if (!t) return { ok: false, reason: 'empty' };
+  // evita "ok blz" / ruído sem fofoca real
+  if (t.length < 8) return { ok: false, reason: 'short' };
+  if (/^(ok|blz|beleza|sim|n[aã]o|valeu|tmj|flw|obrigado|obrigada)[\s.!?]*$/i.test(t)) {
+    return { ok: false, reason: 'filler' };
+  }
+  if (t.length > max) t = t.slice(0, max);
+  if (looksSensitive(t)) return { ok: false, reason: 'sensitive' };
+  if (containsBlocklist(t, blocklist)) return { ok: false, reason: 'blocklist' };
+  return { ok: true, value: t };
+}
+
+function escapeRegExp(s) {
+  return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
- * Parse manual: "apelido: X", "bio: ...", "niver: 15/03", "titulo: Lenda"
+ * Resto do texto livre depois de tirar nick/bio/niver/title.
+ * Ex.: "sou um proano… e sou negro"
+ */
+export function deriveExtras(raw, fields = {}, { max = 280 } = {}) {
+  let t = String(raw || '').trim();
+  if (!t) return '';
+
+  // rótulos + valores estruturados
+  t = t.replace(
+    /\b(apelido|nick|nickname|bio|niver|aniversario|aniversário|titulo|título|title|extras?|conhecido\s+por|conhecida\s+por)\s*[:\-]\s*/gi,
+    ' '
+  );
+  t = t.replace(
+    /(?:me\s+chamam\s+de|me\s+chamo|me\s+conhecem\s+como)\s+["']?[A-Za-zÀ-ÿ0-9][\wÀ-ÿ .'-]{0,30}/gi,
+    ' '
+  );
+  t = t.replace(
+    /(?:conhecido\s+por|conhecida\s+por|sou\s+conhecido\s+por|sou\s+conhecida\s+por)\s+.+?(?=\s*[,.]|\s+(?:niver|anivers|fa[cç]o|e\s+sou|titulo|título)\b|$)/gi,
+    ' '
+  );
+  t = t.replace(
+    /(?:fa[cç]o\s+)?(?:niver|anivers[aá]rio|birthday|nasci\s+em)\s*[:\-]?\s*(?:\d{1,2}\s*[\/\-.]\s*\d{1,2}(?:\s*[\/\-.]\s*\d{2,4})?|\d{1,2}\s*(?:de\s+)?[a-zà-úç]{3,12})/gi,
+    ' '
+  );
+  t = t.replace(/\b\d{1,2}\s*[\/\-.]\s*\d{1,2}(?:\s*[\/\-.]\s*\d{2,4})?\b/g, ' ');
+  t = t.replace(
+    /(?:t[ií]tulo|title|flair)\s*[:\-]?\s*["']?[A-Za-zÀ-ÿ0-9][\wÀ-ÿ .'-]{0,28}/gi,
+    ' '
+  );
+
+  for (const key of ['nickname', 'bio', 'title', 'birthday']) {
+    const v = String(fields[key] || '').trim();
+    if (v.length >= 2) {
+      t = t.replace(new RegExp(escapeRegExp(v), 'ig'), ' ');
+    }
+  }
+
+  t = t
+    .replace(/\s*[,;|/]+\s*/g, ', ')
+    .replace(/\s+/g, ' ')
+    .replace(/\b(e\s+){2,}/gi, 'e ')
+    .replace(/\s+e\s+e\s+/gi, ' e ')
+    .replace(/^[,.\s]+|[,.\s]+$/g, '')
+    .replace(/^(e\s+)/i, '')
+    .trim();
+
+  // limpa "sou o/a" órfão e partículas soltas
+  t = t.replace(/\b(sou o|sou a)\s*$/i, '').trim();
+  if (t.length < 8) return '';
+  // se sobrou só eco de campo estruturado / filler, ignora
+  if (/^(ok|blz|beleza|sim|n[aã]o|valeu|tmj|flw)[\s.!?]*$/i.test(t)) return '';
+  if (/^(dudu|nina|zé|ze)$/i.test(t)) return '';
+  return t.slice(0, max);
+}
+
+/**
+ * Parse manual: "apelido: X", "bio: ...", "niver: 15/03", "titulo: Lenda", "extras: ..."
  * ou linhas soltas com keywords.
  */
 export function parseProfileManual(text) {
@@ -187,9 +266,8 @@ export function parseProfileManual(text) {
 
   // Segmenta por rótulos conhecidos na mesma linha: "apelido: X niver: Y bio: Z"
   const labelRe =
-    /\b(apelido|nick|nickname|bio|niver|aniversario|aniversário|aniversario|titulo|título|title|conhecido\s+por|conhecida\s+por)\s*[:\-]\s*/gi;
+    /\b(apelido|nick|nickname|bio|niver|aniversario|aniversário|aniversario|titulo|título|title|extras?|obs|notas?|conhecido\s+por|conhecida\s+por)\s*[:\-]\s*/gi;
   const parts = [];
-  let m;
   const labels = [...raw.matchAll(labelRe)];
   if (labels.length) {
     for (let i = 0; i < labels.length; i += 1) {
@@ -209,25 +287,26 @@ export function parseProfileManual(text) {
       else if (key === 'bio' || key.startsWith('conhecido')) out.bio = val;
       else if (key.startsWith('niver') || key.startsWith('anivers')) out.birthday = val;
       else if (key.startsWith('titul') || key === 'title') out.title = val;
+      else if (key.startsWith('extra') || key === 'obs' || key.startsWith('nota')) out.extras = val;
     }
   }
 
   // Frases naturais se ainda faltar campo
   if (!out.nickname) {
     const nm = raw.match(
-      /(?:me\s+chamam\s+de|me\s+chamo|sou\s+o|sou\s+a)\s+["']?([A-Za-zÀ-ÿ0-9][\wÀ-ÿ .'-]{0,30}?)(?=\s*[,.]|\s+(?:e\s|niver|bio|conhecido|anivers)|$)/i
+      /(?:me\s+chamam\s+de|me\s+chamo|sou\s+o|sou\s+a)\s+["']?([A-Za-zÀ-ÿ0-9][\wÀ-ÿ .'-]{0,30}?)(?=\s*[,.]|\s+(?:e\s|niver|bio|conhecido|anivers|fa[cç]o)|$)/i
     );
     if (nm) out.nickname = nm[1].trim();
   }
   if (!out.bio) {
     const bm = raw.match(
-      /(?:conhecido\s+por|conhecida\s+por|sou\s+conhecido\s+por|sou\s+conhecida\s+por)\s+(.+?)(?=\s*[,.]|\s+niver|\s+anivers|$)/i
+      /(?:conhecido\s+por|conhecida\s+por|sou\s+conhecido\s+por|sou\s+conhecida\s+por)\s+(.+?)(?=\s*[,.]|\s+niver|\s+anivers|\s+fa[cç]o|$)/i
     );
     if (bm) out.bio = bm[1].trim().replace(/\s+/g, ' ').slice(0, 200);
   }
   if (!out.birthday) {
     const dm = raw.match(
-      /(?:niver|anivers[aá]rio|birthday|nasci\s+em)\s*[:\-]?\s*([^\n,]{3,40})/i
+      /(?:fa[cç]o\s+)?(?:niver|anivers[aá]rio|birthday|nasci\s+em)\s*[:\-]?\s*(\d{1,2}\s*[\/\-.]\s*\d{1,2}(?:\s*[\/\-.]\s*\d{2,4})?|\d{1,2}\s*(?:de\s+)?[a-zà-úç]{3,12})/i
     );
     if (dm) out.birthday = dm[1].trim();
   }
@@ -236,6 +315,11 @@ export function parseProfileManual(text) {
       /(?:t[ií]tulo|title|flair)\s*[:\-]?\s*["']?([A-Za-zÀ-ÿ0-9][\wÀ-ÿ .'-]{0,28})/i
     );
     if (tm) out.title = tm[1].trim();
+  }
+
+  if (!out.extras) {
+    const derived = deriveExtras(raw, out);
+    if (derived) out.extras = derived;
   }
 
   return out;
@@ -262,6 +346,14 @@ function parseExtractJson(raw) {
     bio: parsed.bio != null ? String(parsed.bio) : null,
     birthday: parsed.birthday != null ? String(parsed.birthday) : null,
     title: parsed.title != null ? String(parsed.title) : null,
+    extras:
+      parsed.extras != null
+        ? String(parsed.extras)
+        : parsed.extra != null
+          ? String(parsed.extra)
+          : parsed.notes != null
+            ? String(parsed.notes)
+            : null,
   };
 }
 
@@ -333,6 +425,7 @@ export function createProfileService({
       nickMax: Math.max(4, Math.min(32, Math.floor(numOr(funConfig.profileNicknameMax, 24)))),
       bioMax: Math.max(40, Math.min(240, Math.floor(numOr(funConfig.profileBioMax, 160)))),
       titleMax: Math.max(4, Math.min(32, Math.floor(numOr(funConfig.profileTitleMax ?? funConfig.titleMaxLen, 16)))),
+      extrasMax: Math.max(40, Math.min(500, Math.floor(numOr(funConfig.profileExtrasMax, 280)))),
       blocklist: Array.isArray(funConfig.profileBlocklist) ? funConfig.profileBlocklist : [],
       ai: funConfig.profileAiExtract !== false,
       timeout: Math.max(5_000, Math.floor(numOr(funConfig.profileExtractTimeoutMs, 22_000))),
@@ -462,7 +555,48 @@ export function createProfileService({
       }
     }
 
+    // extras / rawNote (mesma coluna raw_note)
+    const extrasRaw =
+      rawPatch.extras !== undefined && rawPatch.extras !== null
+        ? rawPatch.extras
+        : rawPatch.rawNote !== undefined && rawPatch.rawNote !== null
+          ? rawPatch.rawNote
+          : undefined;
+    if (extrasRaw !== undefined) {
+      const v = String(extrasRaw).trim();
+      if (!v) {
+        if (allowClear) {
+          patch.extras = '';
+          changed.push('extras');
+        }
+      } else {
+        const s = sanitizeExtras(v, { max: o.extrasMax, blocklist: o.blocklist });
+        if (s.ok) {
+          patch.extras = s.value;
+          changed.push('extras');
+        } else errors.push(`extras (${s.reason})`);
+      }
+    }
+
     return { patch, errors, changed: [...new Set(changed)] };
+  }
+
+  function finalizeFields(raw, fields, extrasMax = 280) {
+    const next = { ...fields };
+    if (!next.extras || !String(next.extras).trim()) {
+      const derived = deriveExtras(raw, next, { max: extrasMax });
+      if (derived) next.extras = derived;
+    } else {
+      // evita eco: se extras só repete bio/nick, re-deriva
+      const ex = String(next.extras).trim().toLowerCase();
+      const bio = String(next.bio || '').trim().toLowerCase();
+      const nick = String(next.nickname || '').trim().toLowerCase();
+      if ((bio && ex === bio) || (nick && ex === nick)) {
+        const derived = deriveExtras(raw, next, { max: extrasMax });
+        next.extras = derived || null;
+      }
+    }
+    return next;
   }
 
   async function extractFromText(text, funConfig = {}) {
@@ -475,7 +609,7 @@ export function createProfileService({
 
     // 2) AI if enabled
     if (o.ai && process.env.FUN_DISABLE_LIVE_LLM !== '1') {
-      const prompt = `Texto do usuário:\n"""${raw.slice(0, 800)}"""\n\nExtraia nickname, bio, birthday, title em JSON.`;
+      const prompt = `Texto do usuário:\n"""${raw.slice(0, 800)}"""\n\nExtraia nickname, bio, birthday, title e extras (resto) em JSON.`;
 
       if (funConfig.zenEnabled !== false) {
         try {
@@ -485,19 +619,24 @@ export function createProfileService({
             system: EXTRACT_SYSTEM,
             prompt,
             timeoutMs: o.timeout,
-            maxTokens: 280,
+            maxTokens: 360,
             temperature: 0.3,
             apiKey: funConfig.zenApiKey || '',
             jsonMode: true,
           });
           const parsed = parseExtractJson(out);
           if (parsed) {
-            fields = {
-              nickname: parsed.nickname ?? fields.nickname,
-              bio: parsed.bio ?? fields.bio,
-              birthday: parsed.birthday ?? fields.birthday,
-              title: parsed.title ?? fields.title,
-            };
+            fields = finalizeFields(
+              raw,
+              {
+                nickname: parsed.nickname ?? fields.nickname,
+                bio: parsed.bio ?? fields.bio,
+                birthday: parsed.birthday ?? fields.birthday,
+                title: parsed.title ?? fields.title,
+                extras: parsed.extras ?? fields.extras,
+              },
+              o.extrasMax
+            );
             return { ok: true, fields, source: 'zen' };
           }
         } catch (err) {
@@ -518,18 +657,23 @@ export function createProfileService({
             timeoutMs: o.timeout,
             keepAlive: funConfig.ollamaKeepAlive ?? -1,
             think: false,
-            numPredict: 220,
+            numPredict: 280,
             temperature: 0.3,
             format: 'json',
           });
           const parsed = parseExtractJson(out);
           if (parsed) {
-            fields = {
-              nickname: parsed.nickname ?? fields.nickname,
-              bio: parsed.bio ?? fields.bio,
-              birthday: parsed.birthday ?? fields.birthday,
-              title: parsed.title ?? fields.title,
-            };
+            fields = finalizeFields(
+              raw,
+              {
+                nickname: parsed.nickname ?? fields.nickname,
+                bio: parsed.bio ?? fields.bio,
+                birthday: parsed.birthday ?? fields.birthday,
+                title: parsed.title ?? fields.title,
+                extras: parsed.extras ?? fields.extras,
+              },
+              o.extrasMax
+            );
             return { ok: true, fields, source: 'ollama' };
           }
         } catch (err) {
@@ -541,8 +685,9 @@ export function createProfileService({
       }
     }
 
+    fields = finalizeFields(raw, fields, o.extrasMax);
     const has =
-      fields.nickname || fields.bio || fields.birthday || fields.title;
+      fields.nickname || fields.bio || fields.birthday || fields.title || fields.extras;
     return { ok: Boolean(has), fields, source: has ? 'manual' : 'none' };
   }
 
@@ -561,7 +706,7 @@ export function createProfileService({
       return {
         ok: false,
         reason: 'nothing-parsed',
-        hint: 'Ex.: me chamam de Nina, sou a das figurinhas, niver 12/08',
+        hint: 'Ex.: me chamam de Nina, sou a das figurinhas, niver 12/08, extras: torço pro time X',
       };
     }
 
@@ -579,6 +724,9 @@ export function createProfileService({
     if (extracted.fields.title != null && String(extracted.fields.title).trim() !== '') {
       rawPatch.title = extracted.fields.title;
     }
+    if (extracted.fields.extras != null && String(extracted.fields.extras).trim() !== '') {
+      rawPatch.extras = extracted.fields.extras;
+    }
 
     const { patch, errors, changed } = normalizePatch(rawPatch, funConfig, {
       allowClear: false,
@@ -595,8 +743,11 @@ export function createProfileService({
     const result = profileRepository.upsertProfile({
       userJid,
       scopeKey,
-      ...patch,
-      rawNote: String(text || '').slice(0, 500),
+      nickname: patch.nickname,
+      bio: patch.bio,
+      birthdayMd: patch.birthdayMd,
+      title: patch.title,
+      extras: patch.extras,
       now,
     });
     invalidateNick(scopeKey, userJid);
@@ -677,6 +828,7 @@ export function createProfileService({
       if (p.bio) bits.push(p.bio);
       if (p.birthdayMd) bits.push(`niver ${formatBirthdayDisplay(p.birthdayMd)}`);
       if (p.title) bits.push(`título: ${p.title}`);
+      if (p.extras) bits.push(`extras: ${String(p.extras).slice(0, 120)}`);
       if (!bits.length) continue;
       lines.push(`- ${label}: ${bits.join(' · ')}`);
     }

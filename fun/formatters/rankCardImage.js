@@ -808,6 +808,7 @@ export function renderProfileCardPng({
   const name = shortName(displayName, userJid, 26);
   const title = String(customProfile?.title || stats.title || '').trim();
   const bio = String(customProfile?.bio || '').trim();
+  const extras = String(customProfile?.extras || customProfile?.rawNote || '').trim();
   const bdayRaw = String(customProfile?.birthdayMd || '').trim();
   const bday = (() => {
     const m = bdayRaw.match(/^(\d{2})-(\d{2})$/);
@@ -840,6 +841,14 @@ export function renderProfileCardPng({
       sub: 'Aniversário',
       label: bday,
       color: t.success || t.accent,
+    });
+  }
+  if (extras) {
+    chips.push({
+      icon: 'spark',
+      sub: 'Extras',
+      label: shortName(extras, '', 34),
+      color: t.muted || t.accent2 || t.accent,
     });
   }
   if (employment?.job) {

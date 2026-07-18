@@ -59,6 +59,67 @@ function rankLabel(rank, total) {
   return `#${rank}${of}`;
 }
 
+function prettyBirthday(birthdayMd) {
+  const md = String(birthdayMd || '').trim();
+  const m = md.match(/^(\d{2})-(\d{2})$/);
+  return m ? `${m[2]}/${m[1]}` : md;
+}
+
+/**
+ * Linhas de identidade (sem truncar extras — a foto costuma cortar).
+ * @param {object|null} customProfile
+ * @param {{ emptyHint?: boolean }} [opts]
+ */
+export function buildIdentityLines(customProfile, { emptyHint = false } = {}) {
+  const lines = [];
+  const nick = String(customProfile?.nickname || '').trim();
+  const bio = String(customProfile?.bio || '').trim();
+  const title = String(customProfile?.title || '').trim();
+  const bday = prettyBirthday(customProfile?.birthdayMd);
+  const extras = String(customProfile?.extras || customProfile?.rawNote || '').trim();
+
+  if (nick) lines.push(`• Apelido: *${nick}*`);
+  if (bio) lines.push(`• Conhecido por: ${bio}`);
+  if (bday) lines.push(`• Aniversário: *${bday}*`);
+  if (title) lines.push(`• Título: _${title}_`);
+  if (extras) lines.push(`• Extras: ${extras}`);
+
+  if (!lines.length && emptyHint) {
+    lines.push('• Ainda vazio · `/perfil set me chamam de …, niver DD/MM`');
+  }
+  return lines;
+}
+
+/**
+ * Bloco de texto só com identidade — enviado junto da foto do /perfil.
+ */
+export function formatProfileIdentityMessage({
+  customProfile = null,
+  isSelf = true,
+  displayName: name = '',
+  userJid = '',
+  partnerName = '',
+  factionLabel = '',
+} = {}) {
+  const who = displayName(name, userJid);
+  const header = isSelf ? '👤 *Sua identidade*' : `👤 *Identidade de* ${who}`;
+  const identity = buildIdentityLines(customProfile, { emptyHint: isSelf });
+  const lines = [header, ...identity];
+
+  if (partnerName) lines.push(`• Casado(a) com: *${partnerName}*`);
+  if (factionLabel) lines.push(`• Panelinha: *${factionLabel}*`);
+
+  if (identity.length === 1 && identity[0].includes('Ainda vazio') && !partnerName && !factionLabel) {
+    return lines.join('\n');
+  }
+  if (!identity.length && !partnerName && !factionLabel) {
+    return isSelf
+      ? `${header}\n• Ainda vazio · \`/perfil set me chamam de …, niver DD/MM\``
+      : `${header}\n• Sem dados de identidade.`;
+  }
+  return lines.join('\n');
+}
+
 /**
  * Perfil rico (próprio ou de outro).
  * @param {object} opts
@@ -154,23 +215,9 @@ export function formatXpProfile({
     );
   }
 
-  const identity = [];
-  if (customProfile?.nickname) identity.push(`• Apelido: *${customProfile.nickname}*`);
-  if (customProfile?.bio) identity.push(`• Conhecido por: ${customProfile.bio}`);
-  if (customProfile?.birthdayMd) {
-    const md = String(customProfile.birthdayMd);
-    const m = md.match(/^(\d{2})-(\d{2})$/);
-    const pretty = m ? `${m[2]}/${m[1]}` : md;
-    identity.push(`• Aniversário: *${pretty}*`);
-  }
+  const identity = buildIdentityLines(customProfile, { emptyHint: isSelf });
   if (identity.length) {
     lines.push('', '*Identidade*', ...identity);
-  } else if (isSelf) {
-    lines.push(
-      '',
-      '*Identidade*',
-      '• Ainda vazio · `/perfil set me chamam de …, niver DD/MM`'
-    );
   }
 
   const social = [];

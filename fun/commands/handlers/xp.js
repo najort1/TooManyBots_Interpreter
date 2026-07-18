@@ -1,4 +1,7 @@
-import { formatXpProfile } from '../../formatters/rankCard.js';
+import {
+  formatXpProfile,
+  formatProfileIdentityMessage,
+} from '../../formatters/rankCard.js';
 import { renderProfileCardPng } from '../../formatters/rankCardImage.js';
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
@@ -29,6 +32,9 @@ function formatSetConfirm(profile, changed = []) {
   }
   if (changed.includes('title') || profile.title) {
     lines.push(`• Título: _${profile.title || '—'}_`);
+  }
+  if (changed.includes('extras') || profile.extras) {
+    lines.push(`• Extras: ${profile.extras || '—'}`);
   }
   if (changed.length) {
     lines.push('', `_Campos: ${changed.join(', ')}_`);
@@ -94,7 +100,7 @@ export async function handleXpCommand({
           '📝 *Montar perfil*',
           `Manda tudo de uma vez: \`${p}perfil set me chamam de Nina, sou a das figurinhas, niver 12/08\``,
           '',
-          'Campos: *apelido* · *conhecido por* · *aniversário* (dia/mês)',
+          'Campos: *apelido* · *conhecido por* · *aniversário* · *extras* (resto da fofoca)',
           `Ver: \`${p}perfil\` · limpar: \`${p}perfil limpar\``,
         ].join('\n')
       );
@@ -135,7 +141,7 @@ export async function handleXpCommand({
       return { handled: true };
     }
     profileService.clearOwn({ userJid, scopeKey });
-    await reply('🧹 Perfil customizado *zerado* neste grupo (apelido, bio, niver, título).');
+    await reply('🧹 Perfil customizado *zerado* neste grupo (apelido, bio, niver, título, extras).');
     return { handled: true, cleared: true };
   }
 
@@ -196,7 +202,7 @@ export async function handleXpCommand({
         '👤 *Perfil*',
         `\`${p}perfil\` — ver o seu`,
         `\`${p}perfil @user\` — ver o de alguém`,
-        `\`${p}perfil set <texto livre>\` — IA extrai apelido/bio/niver`,
+        `\`${p}perfil set <texto livre>\` — IA extrai apelido/bio/niver/extras`,
         `\`${p}perfil limpar\` — zera o seu`,
         `\`${p}perfil reset @user\` — admin limpa ofensivo`,
       ].join('\n')
@@ -369,7 +375,18 @@ export async function handleXpCommand({
         isSelf,
         customProfile,
       });
-      await replyImage(png, isSelf ? '📊 Seu perfil' : `📊 Perfil`);
+      await replyImage(png, isSelf ? '📊 Seu perfil' : '📊 Perfil');
+      // Foto trunca bio/extras — manda identidade completa em texto
+      await reply(
+        formatProfileIdentityMessage({
+          customProfile,
+          isSelf,
+          displayName: name,
+          userJid: targetJid,
+          partnerName,
+          factionLabel,
+        })
+      );
       return { handled: true, targetJid, isSelf, image: true };
     } catch {
       // fallback texto

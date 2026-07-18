@@ -659,6 +659,12 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.profileTitleMax,
       { min: 4, max: 32, rounding: 'floor', clamp: true }
     ),
+    profileExtrasMax: normalizeInt(raw.profileExtrasMax, DEFAULT_FUN_CONFIG.profileExtrasMax, {
+      min: 40,
+      max: 500,
+      rounding: 'floor',
+      clamp: true,
+    }),
     profileBirthdayAnnounce: normalizeBoolean(
       raw.profileBirthdayAnnounce,
       DEFAULT_FUN_CONFIG.profileBirthdayAnnounce

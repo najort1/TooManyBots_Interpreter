@@ -612,11 +612,13 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   memoryExtractTimeoutMs: 28_000,
   memoryTtlDays: 45,
   memoryMinScore: 35,
-  // Perfil customizado por grupo (nick / bio / niver / título)
+  // Perfil customizado por grupo (nick / bio / niver / título / extras)
   profileEnabled: true,
   profileNicknameMax: 24,
   profileBioMax: 160,
   profileTitleMax: 16,
+  /** Resto da fofoca que não cabe em nick/bio/niver */
+  profileExtrasMax: 280,
   profileBirthdayAnnounce: true,
   profileBirthdayTz: 'America/Sao_Paulo',
   profileBlocklist: [],

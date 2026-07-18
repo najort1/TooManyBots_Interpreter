@@ -16,6 +16,7 @@ function mapProfile(row) {
       bio: '',
       birthdayMd: '',
       title: '',
+      extras: '',
       rawNote: '',
       updatedAt: 0,
       empty: true,
@@ -25,6 +26,8 @@ function mapProfile(row) {
   const bio = String(row.bio || '').trim();
   const birthdayMd = String(row.birthday_md || '').trim();
   const title = String(row.title || '').trim();
+  // raw_note guarda "extras" (resto da fofoca do /perfil set)
+  const extras = String(row.raw_note || '').trim();
   return {
     userJid: String(row.user_jid || ''),
     scopeKey: String(row.scope_key || ''),
@@ -32,9 +35,10 @@ function mapProfile(row) {
     bio,
     birthdayMd,
     title,
-    rawNote: String(row.raw_note || ''),
+    extras,
+    rawNote: extras,
     updatedAt: Number(row.updated_at) || 0,
-    empty: !nickname && !bio && !birthdayMd && !title,
+    empty: !nickname && !bio && !birthdayMd && !title && !extras,
   };
 }
 
@@ -98,6 +102,7 @@ export function createFunProfileRepository({ getDatabase = getDb } = {}) {
     bio,
     birthdayMd,
     title,
+    extras,
     rawNote,
     now = Date.now(),
   } = {}) {
@@ -108,13 +113,18 @@ export function createFunProfileRepository({ getDatabase = getDb } = {}) {
     if (!u || !s) return { ok: false, reason: 'invalid-identity' };
 
     const current = getProfile(u, s);
+    const extrasIn =
+      extras !== undefined ? extras : rawNote !== undefined ? rawNote : undefined;
     const next = {
       nickname: nickname !== undefined ? String(nickname || '').trim() : current.nickname,
       bio: bio !== undefined ? String(bio || '').trim() : current.bio,
       birthdayMd:
         birthdayMd !== undefined ? String(birthdayMd || '').trim() : current.birthdayMd,
       title: title !== undefined ? String(title || '').trim() : current.title,
-      rawNote: rawNote !== undefined ? String(rawNote || '').slice(0, 500) : current.rawNote,
+      extras:
+        extrasIn !== undefined
+          ? String(extrasIn || '').trim().slice(0, 500)
+          : current.extras || current.rawNote || '',
     };
 
     getDatabase()
@@ -137,7 +147,7 @@ export function createFunProfileRepository({ getDatabase = getDb } = {}) {
         next.bio.slice(0, 200),
         next.birthdayMd.slice(0, 5),
         next.title.slice(0, 32),
-        next.rawNote,
+        next.extras,
         ts
       );
 
@@ -152,7 +162,7 @@ export function createFunProfileRepository({ getDatabase = getDb } = {}) {
       bio: '',
       birthdayMd: '',
       title: '',
-      rawNote: '',
+      extras: '',
       now,
     });
   }

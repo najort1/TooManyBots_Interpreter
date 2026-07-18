@@ -17,6 +17,7 @@ import {
   formatBirthdayDisplay,
   sanitizeNickname,
   parseProfileManual,
+  deriveExtras,
   todayBirthdayMd,
 } from '../fun/services/profileService.js';
 import { resolveFunConfig } from '../fun/index.js';
@@ -26,7 +27,11 @@ import {
   displayNameOnly,
   runWithUserLabels,
 } from '../fun/utils/userLabel.js';
-import { formatXpProfile } from '../fun/formatters/rankCard.js';
+import {
+  formatXpProfile,
+  formatProfileIdentityMessage,
+  buildIdentityLines,
+} from '../fun/formatters/rankCard.js';
 
 await initDb();
 _resetDefaultFunStatsRepository();
@@ -60,6 +65,24 @@ test('parseProfileManual extrai campos', () => {
   );
   assert.match(String(p.nickname || ''), /Nina/i);
   assert.ok(p.bio || p.birthday);
+});
+
+test('parseProfileManual + deriveExtras guarda o resto da fofoca', () => {
+  const raw =
+    'me chamam de dudu, sou um proano que nunca pisou no fabio e conhecido por adorar o cachorro chupetão faço aniversario 28/11 e sou negro';
+  const p = parseProfileManual(raw);
+  assert.match(String(p.nickname || ''), /dudu/i);
+  assert.match(String(p.bio || ''), /chupet/i);
+  assert.ok(p.birthday || p.birthdayMd);
+  assert.ok(p.extras, JSON.stringify(p));
+  assert.match(String(p.extras), /proano|fabio|negro/i);
+  assert.ok(!/28\/11|anivers/i.test(p.extras));
+  const only = deriveExtras(raw, {
+    nickname: 'dudu',
+    bio: 'adorar o cachorro chupetão',
+    birthday: '28/11',
+  });
+  assert.match(only, /proano|negro/i);
 });
 
 test('profileRepository upsert merge e clear', () => {
@@ -106,6 +129,7 @@ test('profileService applyFreeText com mock Zen', async () => {
           bio: 'chega atrasado no daily',
           birthday: '15/03',
           title: null,
+          extras: 'torce pro time B e odeia café',
         }),
       generateOllama: async () => {
         throw new Error('no-ollama');
@@ -125,6 +149,8 @@ test('profileService applyFreeText com mock Zen', async () => {
     assert.equal(r.profile.nickname, 'Zé');
     assert.equal(r.profile.birthdayMd, '03-15');
     assert.match(r.profile.bio, /atras/i);
+    assert.match(String(r.profile.extras || ''), /café|time/i);
+    assert.ok(r.changed.includes('extras'));
   } finally {
     if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
     else process.env.FUN_DISABLE_LIVE_LLM = '1';
@@ -189,9 +215,31 @@ test('formatXpProfile mostra identidade', () => {
       bio: 'figurinhas no comprovante',
       birthdayMd: '08-12',
       title: 'Lenda',
+      extras: 'proano que nunca pisou no fabio e sou negro',
     },
   });
   assert.match(text, /Identidade|Nina|figurinhas|12\/08|Lenda/i);
+  assert.match(text, /proano|negro/i);
+});
+
+test('formatProfileIdentityMessage não trunca extras', () => {
+  const long =
+    'sou um proano que nunca pisou no fabio, adoro o cachorro chupetão e sou negro, mais fofoca sem cortar no texto';
+  const text = formatProfileIdentityMessage({
+    isSelf: true,
+    customProfile: {
+      nickname: 'dudu',
+      bio: 'adorar o cachorro chupetão',
+      birthdayMd: '11-28',
+      extras: long,
+    },
+  });
+  assert.match(text, /Sua identidade/i);
+  assert.match(text, /dudu/);
+  assert.match(text, /28\/11/);
+  assert.ok(text.includes(long), 'extras completo na mensagem');
+  const lines = buildIdentityLines({ extras: long });
+  assert.ok(lines.some((l) => l.includes(long)));
 });
 
 test('handlers: /perfil set e limpar', async () => {
