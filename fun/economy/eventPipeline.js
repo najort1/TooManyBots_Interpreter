@@ -14,7 +14,7 @@ import {
 } from './archetypes.js';
 import { fingerprintText, clamp } from './math.js';
 import { REASON_GUIDE } from './deception.js';
-import { listCompanies } from './companies.js';
+import { getCompany, listCompanies } from './companies.js';
 
 export const EVENT_DESC_MAX = 900;
 export const EVENT_DESC_LINES_MAX = 8;
@@ -47,12 +47,18 @@ REGRAS:
 - category uma das: combustivel, municao, arma, veiculo, defesa — e coerente com a empresa
 - title ≤80 chars, manchete de bairro
 - body: 5 a 8 linhas (\\n), 350–850 chars, fofoca/besteirol leve pt-BR
+- COERÊNCIA OBRIGATÓRIA title+body com o archetype:
+  * alta (supply_shock, demand_boom, meme_spike, blitz_luxury): escassez, fila, preço sobe, aperto
+  * queda (liquidity_flood, demand_slump, profit_take, austerity_soft): sobra, desconto, preço cai, freio
+  * flat (soft_recovery, rumor_only): lateral, boato, sem drama de preço
+  NUNCA diga "mais cara/subiu" se o archetype é de queda; NUNCA diga "mais barata/caiu" se é de alta
 - NÃO invente preços em coins
 - NÃO envie impactPct, percentuais de preço, supplyDelta nem demandDelta
 - NÃO repita os ganchos proibidos do user prompt`;
 
 export const JOURNALIST_SYSTEM = `Você é repórter de rua do bairro. Você NÃO inventa números de mercado.
 Recebe FACTS oficiais (JSON). Use só esses números se citar %.
+direction=up → texto de alta/escassez; direction=down → texto de queda/sobra; direction=flat → lateral.
 Tom: fofoca BR, besteirol leve, 5–8 linhas, sem markdown.
 JSON: {"title":"≤80","body":"5-8 linhas com \\n","tone":"bull|bear|chaos|calm"}`;
 
@@ -190,22 +196,28 @@ export function resolveEventProposal(proposal, { reg, random = Math.random, over
   const recent = reg?.recentArchetypes || [];
   const heat = Number(overheat) || Number(reg?.marketOverheat) || 0;
 
-  let archetype =
-    proposal?.archetype && getArchetype(proposal.archetype)
-      ? proposal.archetype
-      : pickArchetypeWeighted(recent, random, reg?.narrativeSeeds?.[0] || null, heat);
+  const proposedArchetype =
+    proposal?.archetype && getArchetype(proposal.archetype) ? proposal.archetype : null;
 
+  let archetype =
+    proposedArchetype ||
+    pickArchetypeWeighted(recent, random, reg?.narrativeSeeds?.[0] || null, heat);
+
+  let archetypeSwapped = false;
   // mercado quente: se a IA pediu alta, 55% troca por correção
   if (
     heat > 0.35 &&
     getArchetype(archetype)?.bias === 'up' &&
     random() < Math.min(0.75, 0.35 + heat * 0.35)
   ) {
-    archetype = pickArchetypeWeighted(recent, random, 'profit_take', heat);
+    const next = pickArchetypeWeighted(recent, random, 'profit_take', heat);
+    if (next !== archetype) archetypeSwapped = true;
+    archetype = next;
   }
 
   // false_alarm já pode ter forçado rumor_only no deception plan
   if (proposal?.forceArchetype && getArchetype(proposal.forceArchetype)) {
+    if (proposal.forceArchetype !== archetype) archetypeSwapped = true;
     archetype = proposal.forceArchetype;
   }
 
@@ -222,6 +234,7 @@ export function resolveEventProposal(proposal, { reg, random = Math.random, over
   if (!impact) {
     impact = sampleImpactFromArchetype('soft_recovery', random);
     archetype = 'soft_recovery';
+    archetypeSwapped = true;
   }
 
   // Cap global de choque por evento (anti-foguete)
@@ -257,19 +270,240 @@ export function resolveEventProposal(proposal, { reg, random = Math.random, over
     (impact.shockPct || 0) * (Number(reg?.eventImpactMult) || 1)
   );
 
+  // Se o arquétipo mudou de bias, descarta copy da inventora (evita "subiu" com queda)
+  const proposedBias = proposedArchetype
+    ? getArchetype(proposedArchetype)?.bias || 'flat'
+    : null;
+  const finalBias = getArchetype(archetype)?.bias || 'flat';
+  const biasMismatch =
+    archetypeSwapped && proposedBias && proposedBias !== finalBias && proposedBias !== 'flat';
+
+  let title = String(proposal?.title || EVENT_ARCHETYPES[archetype]?.label || 'Mercado').slice(
+    0,
+    100
+  );
+  let body = clampEventDescription(proposal?.body || '');
+  if (biasMismatch) {
+    title = EVENT_ARCHETYPES[archetype]?.label || 'Mercado';
+    body = '';
+  }
+
   return {
     archetype,
     category: focus.category,
     companyId: focus.companyId,
     company: focus.company,
     impact,
-    title: String(proposal?.title || EVENT_ARCHETYPES[archetype]?.label || 'Mercado').slice(
-      0,
-      100
-    ),
-    body: clampEventDescription(proposal?.body || ''),
+    title,
+    body,
+    archetypeSwapped,
+    biasMismatch: Boolean(biasMismatch),
     displayShockHint: displayShock, // só para UI após aplicar; não veio da IA
     source: proposal?.source || 'resolved',
+  };
+}
+
+/** Normaliza pt-BR pra matching de tom da narrativa. */
+function normalizeNarrativeText(text) {
+  return String(text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+/**
+ * Infere se o texto fala de alta, queda ou neutro.
+ * @returns {'up'|'down'|'flat'}
+ */
+export function inferNarrativeDirection(text) {
+  const t = normalizeNarrativeText(text);
+  if (!t.trim()) return 'flat';
+
+  const upRe =
+    /mais cara|mais caro|subiu|sobe|subida|alta inesper|encarec|escassez|sumiu|fila|fomo|apert(o|ou)|lotou|procura|escasso|seco|sem produto|preco sobe|preço sobe|gasolina cara|encareceu|disparou|esquent/;
+  const downRe =
+    /mais barata|mais barato|caiu|desce|queda|barato|sobra|desconto|freia|morreu a procura|promo|esfria|recu(a|ou)|desceu|alivi|mais em conta|baixa(r|ou)? o preco|baixa(r|ou)? o preço|preco cai|preço cai|estoque sobra|liquidez|lote barato|promocao|promoção|realizou|tomou lucro|ninguem quer|ninguém quer/;
+
+  let up = 0;
+  let down = 0;
+  for (const m of t.matchAll(new RegExp(upRe.source, 'g'))) {
+    void m;
+    up += 1;
+  }
+  for (const m of t.matchAll(new RegExp(downRe.source, 'g'))) {
+    void m;
+    down += 1;
+  }
+
+  if (up === 0 && down === 0) return 'flat';
+  if (up > down) return 'up';
+  if (down > up) return 'down';
+  return 'flat';
+}
+
+const CATEGORY_LABEL = Object.freeze({
+  combustivel: 'combustível',
+  municao: 'munição',
+  arma: 'arma',
+  veiculo: 'veículo',
+  defesa: 'defesa',
+});
+
+/** Fallback mínimo coerente quando não há seed da categoria. */
+export function buildDirectionFallbackCopy({ direction, category, companyId } = {}) {
+  const cat = CATEGORY_LABEL[category] || 'mercado de rua';
+  const company = companyId ? getCompany(companyId) : null;
+  const who = company?.name || 'o bairro';
+
+  if (direction === 'up') {
+    return {
+      title: `${cat} aperta no bairro`,
+      body: [
+        `Rolou aquele clima de aperto com *${cat}* hoje.`,
+        `${who} tá com a prateleira mais magra que ontem.`,
+        'A galera comenta fila, demora e preço subindo de leve.',
+        'Ninguém quer admitir, mas o bolso já notou.',
+        'Quem precisa, compra o suficiente e segue o baile.',
+        'No grupo do zap: “subiu de novo?” — parece que sim.',
+      ].join('\n'),
+    };
+  }
+  if (direction === 'down') {
+    return {
+      title: `${cat} esfria um pouco`,
+      body: [
+        `Parece que *${cat}* deu uma aliviada no preço por aí.`,
+        `${who} não tá gritando promoção, mas o valor recuou.`,
+        'Tem gente aproveitando pra repor estoque sem drama.',
+        'Quem pagou o pico ontem fingiu que não viu o grupo.',
+        'O bairro respira. O ego de quem comprou cedo, nem tanto.',
+        'Por enquanto tá mais em conta — até a próxima onda.',
+      ].join('\n'),
+    };
+  }
+  return {
+    title: 'Semana morna no mercado',
+    body: [
+      `Nem fila, nem blitze, nem caos com *${cat}*.`,
+      `${who} segue no ritmo de sempre.`,
+      'Preço anda de lado. Fofoca fraca.',
+      'Quem vivia de susto reclama que “tá sem conteúdo”.',
+      'Às vezes o drama é não ter drama.',
+      'Normalização chata — e saudável pro bolso.',
+    ].join('\n'),
+  };
+}
+
+/**
+ * Escolhe seed de template alinhado à direção real do preço.
+ * Prefere mesma categoria/empresa; se não houver, fallback por direção.
+ */
+export function pickAlignedTemplate({
+  direction = 'flat',
+  archetype = null,
+  category = null,
+  companyId = null,
+  random = Math.random,
+} = {}) {
+  const dir = direction === 'up' || direction === 'down' ? direction : 'flat';
+  const seeds = [...TEMPLATE_EVENT_SEEDS];
+
+  const biasOf = (id) => getArchetype(id)?.bias || 'flat';
+  const matchesDir = (s) => {
+    const b = biasOf(s.archetype);
+    if (dir === 'flat') return b === 'flat' || s.archetype === 'soft_recovery';
+    return b === dir;
+  };
+
+  let pool = seeds.filter(matchesDir);
+  if (!pool.length) pool = seeds;
+
+  const byCategory = category ? pool.filter((s) => s.category === category) : [];
+  const byCompany = companyId ? pool.filter((s) => s.companyId === companyId) : [];
+  const byArch = archetype ? pool.filter((s) => s.archetype === archetype) : [];
+
+  // Se não há seed da categoria, gera copy genérica coerente (evita notícia de munição pra gasolina)
+  if (category && !byCategory.length && !byCompany.length) {
+    const fb = buildDirectionFallbackCopy({ direction: dir, category, companyId });
+    return {
+      title: fb.title,
+      body: fb.body,
+      archetype: archetype || (dir === 'up' ? 'supply_shock' : dir === 'down' ? 'liquidity_flood' : 'soft_recovery'),
+      category,
+      companyId: companyId || null,
+      synthetic: true,
+    };
+  }
+
+  const prefer = byArch.length
+    ? byArch
+    : byCategory.length
+      ? byCategory
+      : byCompany.length
+        ? byCompany
+        : pool;
+  const pick = prefer[Math.floor(random() * prefer.length)] || seeds[0];
+  return {
+    title: pick.title,
+    body: pick.body,
+    archetype: pick.archetype,
+    category: pick.category,
+    companyId: pick.companyId,
+  };
+}
+
+/**
+ * Garante que title/body não contradigam a direção real publicada no anúncio.
+ * Decepção (hype/contrarian) NÃO pode mentir no mesmo post que mostra o %.
+ *
+ * Mantém a copy se:
+ * - body existe e a narrativa é flat (tom neutro), ou
+ * - narrativa bate com a direção real, ou
+ * - direção real é flat e narrativa também é flat
+ * Realinha (template) se body vazio, ou se up vs down se contradizem.
+ */
+export function alignEventCopy({
+  title,
+  body,
+  direction,
+  archetype = null,
+  category = null,
+  companyId = null,
+  random = Math.random,
+} = {}) {
+  const dir =
+    direction === 'up' || direction === 'down' || direction === 'flat' ? direction : 'flat';
+  const combined = `${title || ''}\n${body || ''}`;
+  const narr = inferNarrativeDirection(combined);
+  const empty = !String(body || '').trim();
+
+  const contradicts =
+    (dir === 'up' && narr === 'down') ||
+    (dir === 'down' && narr === 'up') ||
+    (dir === 'flat' && (narr === 'up' || narr === 'down'));
+
+  if (!empty && !contradicts) {
+    return {
+      title: String(title || 'Movimento de mercado').slice(0, 100),
+      body: clampEventDescription(body),
+      realigned: false,
+      narrativeDirection: narr,
+    };
+  }
+
+  const seed = pickAlignedTemplate({
+    direction: dir,
+    archetype,
+    category,
+    companyId,
+    random,
+  });
+  return {
+    title: seed.title.slice(0, 100),
+    body: clampEventDescription(seed.body),
+    realigned: true,
+    narrativeDirection: inferNarrativeDirection(`${seed.title}\n${seed.body}`),
+    fromTemplate: seed.archetype,
   };
 }
 
@@ -314,12 +548,22 @@ export function buildJournalistFacts({
 /**
  * Sanitiza notícia: se IA inventou % diferente, não confiar — usamos title/body
  * mas strip de padrões de preço inventado opcional.
+ * Com hardDeltaPct, realinha tom se o texto contradisser o sinal do % publicado.
  */
 export function sanitizeNewsText(text, hardDeltaPct = null) {
   let t = clampEventDescription(text);
-  // remove menções a "coins" numéricas grandes inventadas se quiser — keep simple
-  if (hardDeltaPct != null && Number.isFinite(hardDeltaPct)) {
-    // ok leave AI text; numbers in announce use engine values
+  if (hardDeltaPct != null && Number.isFinite(Number(hardDeltaPct))) {
+    const dir =
+      Number(hardDeltaPct) > 0.5 ? 'up' : Number(hardDeltaPct) < -0.5 ? 'down' : 'flat';
+    const narr = inferNarrativeDirection(t);
+    const contradicts =
+      (dir === 'up' && narr === 'down') ||
+      (dir === 'down' && narr === 'up') ||
+      (dir === 'flat' && (narr === 'up' || narr === 'down'));
+    if (contradicts) {
+      const seed = pickAlignedTemplate({ direction: dir });
+      t = clampEventDescription(seed.body);
+    }
   }
   return t;
 }

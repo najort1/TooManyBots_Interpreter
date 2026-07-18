@@ -43,6 +43,7 @@ import {
   parseJournalistJson,
   pickTemplateSeed,
   resolveEventProposal,
+  alignEventCopy,
   fingerprintText,
   clampShockPct,
 } from '../economy/index.js';
@@ -791,11 +792,19 @@ export function createMarketService({
       avgDelta > 0.5 ? 'up' : avgDelta < -0.5 ? 'down' : 'flat';
     const primaryReason = affected[0]?.primaryReason || 'event_residual';
 
-    let title = resolved.title;
-    let description = clampEventDescription(resolved.body);
-
-    // C2: opcionalmente reescreve se só temos template seco e LLM on — skip se já tem body bom
-    // (draft já veio com história da inventora)
+    // Copy pública SEMPRE alinha com o % / setas do anúncio (não mentir no mesmo post).
+    // Deception hype/contrarian age no follow-up de preço, não na manchete vs ticker.
+    const aligned = alignEventCopy({
+      title: resolved.title,
+      body: resolved.body,
+      direction,
+      archetype: resolved.archetype,
+      category: resolved.category,
+      companyId: resolved.companyId,
+      random,
+    });
+    let title = aligned.title;
+    let description = clampEventDescription(aligned.body);
 
     const truth = {
       archetype: resolved.archetype,
@@ -805,8 +814,12 @@ export function createMarketService({
       plan: {
         mode: plan.mode,
         smokeReason: plan.smokeReason,
-        journalDirection: plan.journalDirection,
+        // journalDirection histórica: follow-up; anúncio usa direction real
+        journalDirection: direction,
+        intendedJournalDirection: plan.journalDirection,
       },
+      copyAligned: aligned.realigned,
+      narrativeDirection: aligned.narrativeDirection,
       ignoredAiImpactPct: draft.ignoredAiImpactPct,
       affected: affected.map((a) => ({
         itemId: a.itemId,
