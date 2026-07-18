@@ -220,12 +220,12 @@ export const TEMPLATE_EVENT_SEEDS = Object.freeze([
     companyId: 'uno_motors',
     title: 'Inflação come o bolso',
     body: [
-      'Pão subiu, passagem subiu, e o povo ainda quer carro de filme.',
-      'No mercado de rua a grana sumiu primeiro.',
-      'Veículo e rifle param de girar.',
+      'Pão e passagem comem a grana — sobra pouco pro mercado de rua.',
+      'No paralelo a grana sumiu primeiro.',
+      'Moto e carro param de girar no pátio.',
       'Vendedor baixa a postura pra não ficar com pátio lotado.',
       'Quem esperou “pra ver” talvez tenha acertado o timing.',
-      'Itens caros freiam. O bolso agradece.',
+      'Veículo freia. O bolso agradece a pausa.',
     ].join('\n'),
   },
   {
@@ -234,9 +234,9 @@ export const TEMPLATE_EVENT_SEEDS = Object.freeze([
     companyId: 'bombatech',
     title: 'Galeria esfria depois da alta',
     body: [
-      'Quem comprou cedo já realizou. O resto fica olhando o gráfico torto.',
-      'Vendedor para de falar “última unidade” e começa a falar “promocão”.',
-      'Arma e munição perdem o FOMO da manhã.',
+      'Quem comprou aço cedo já realizou. O resto fica olhando o gráfico torto.',
+      'Vendedor para de falar “última unidade” e começa a falar “promoção”.',
+      'Pistola e peixeira perdem o FOMO da manhã.',
       'O bairro respira. O ego de quem pagou o topo, não.',
       'Mercado corrige. Ninguém admite que comprou no pico.',
       'Hoje o aço desce um degrau.',
@@ -271,13 +271,14 @@ export const TEMPLATE_EVENT_SEEDS = Object.freeze([
     ].join('\n'),
   },
   {
+    // Empresa = bombatech; setor = arma. Nunca misturar PatoCoin com peixeira.
     archetype: 'meme_spike',
     category: 'arma',
-    companyId: 'patocoin',
-    title: 'PatoCoin viraliza no grupo',
+    companyId: 'bombatech',
+    title: 'Peixeira vira “ativo” no zap',
     body: [
       'Ninguém sabe por quê. Todo mundo jura que sabe.',
-      'Print de gráfico torto, sticker de pato, FOMO coletivo.',
+      'Print de gráfico torto, FOMO coletivo no grupo.',
       'Do nada o bairro trata peixeira como “ativo”.',
       'Quem comprou cedo grita no zap.',
       'Pode ser ouro. Pode ser armadilha.',
@@ -285,13 +286,28 @@ export const TEMPLATE_EVENT_SEEDS = Object.freeze([
     ].join('\n'),
   },
   {
+    // PatoCoin é só bolsa. Copy só da coin — sem peixeira/arma/munição.
+    archetype: 'meme_spike',
+    category: 'municao',
+    companyId: 'patocoin',
+    title: 'PatoCoin viraliza no grupo',
+    body: [
+      'Ninguém sabe por quê. Todo mundo jura que sabe.',
+      'Print de gráfico torto, sticker de pato, FOMO coletivo.',
+      'Do nada o bairro trata a PatoCoin como “investimento”.',
+      'Quem comprou cedo grita no zap.',
+      'Pode ser ouro. Pode ser golpe de grupo.',
+      'Onda meme curta — sobe um pouco, pergunta depois.',
+    ].join('\n'),
+  },
+  {
     archetype: 'soft_recovery',
     category: 'combustivel',
-    companyId: 'burgerzap',
+    companyId: 'peixaria',
     title: 'Semana morna no bazar',
     body: [
-      'Nem fila, nem blitze, nem caminhão tombado.',
-      'O mercado respira. Preço anda de lado.',
+      'Sem blitze, sem caminhão tombado, sem caos no posto.',
+      'O mercado de combustível respira. Preço anda de lado.',
       'Quem vivia de susto reclama que “tá sem conteúdo”.',
       'Vendedor varre a calçada e finge que o gráfico importa.',
       'Às vezes o drama é não ter drama.',
@@ -354,10 +370,16 @@ export function resolveEventFocus(archetypeId, proposal = {}, random = Math.rand
   let companyId = fromCat?.id || 'burgerzap';
 
   // se a IA pediu empresa que casa com a categoria, ok; senão ignora
+  // exceção: empresas só-bolsa (categories vazias, ex. patocoin) podem ser foco
+  // sem “herdar” o nome de outra empresa do setor de rua
   const proposed = String(proposal.companyId || proposal.focusCompany || '').toLowerCase();
   if (proposed && getCompany(proposed)) {
     const cats = categoriesForCompany(proposed);
-    if (cats.includes(category)) companyId = proposed;
+    if (cats.includes(category)) {
+      companyId = proposed;
+    } else if (!cats.length && (arch.goodForCompanies || []).includes(proposed)) {
+      companyId = proposed;
+    }
   }
 
   return {
