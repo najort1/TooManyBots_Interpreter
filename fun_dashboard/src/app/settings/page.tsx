@@ -85,7 +85,7 @@ function SettingsBody() {
         <Section title="Cassino / Bingo">
           <KV k="Cassino" v={`${cfg?.casinoMin ?? "—"}–${cfg?.casinoMax ?? "—"}`} />
           <KV k="Bingo" v={`${cfg?.bingoMin ?? "—"}–${cfg?.bingoMax ?? "—"}`} />
-          <p className="mt-2 text-xs text-zinc-500">
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
             Bingo clássico removido (flood). Só modo rápido.
           </p>
         </Section>
@@ -102,7 +102,7 @@ function SettingsBody() {
             />
             <KV k="Drops" v={formatNumber(outbound?.dropped ?? 0)} />
           </div>
-          <p className="mt-2 text-xs text-zinc-500">
+          <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
             Env: <code className="text-[11px]">TMB_OUTBOUND_*</code> no processo do bot.
           </p>
         </Section>
@@ -122,9 +122,9 @@ function Section({
 }) {
   return (
     <section
-      className={`rounded-lg border border-zinc-200 bg-white p-4 ${className}`}
+      className={`rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 p-4 ${className}`}
     >
-      <h2 className="mb-3 text-sm font-semibold text-zinc-900">{title}</h2>
+      <h2 className="mb-3 text-sm font-semibold text-zinc-900 dark:text-zinc-50">{title}</h2>
       <div className="space-y-1.5">{children}</div>
     </section>
   );
@@ -140,10 +140,10 @@ function KV({
   mono?: boolean;
 }) {
   return (
-    <div className="flex items-start justify-between gap-3 border-b border-zinc-50 py-1.5 last:border-0">
+    <div className="flex items-start justify-between gap-3 border-b border-zinc-50 dark:border-zinc-800 py-1.5 last:border-0">
       <span className="text-xs text-zinc-500">{k}</span>
       <span
-        className={`max-w-[60%] text-right text-sm text-zinc-900 ${
+        className={`max-w-[60%] text-right text-sm text-zinc-900 dark:text-zinc-50 ${
           mono ? "truncate font-mono text-xs" : "font-medium"
         }`}
       >

@@ -83,21 +83,21 @@ export function GroupSettingsForm({ groupJid }: Props) {
   }
 
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white p-4">
+    <div className="rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 p-4">
       <div className="mb-4 flex items-center justify-between gap-2">
         <div>
-          <h2 className="text-sm font-semibold text-zinc-900">Settings do grupo</h2>
-          <p className="text-xs text-zinc-500">
+          <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Settings do grupo</h2>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400">
             Sobrescreve XP, cooldown, daily e eventos do mundo neste grupo.
           </p>
         </div>
-        <span className="text-[11px] text-zinc-400">
+        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
           {source === "override" ? "override" : "defaults"}
         </span>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <label className="block text-xs text-zinc-500">
+        <label className="block text-xs text-zinc-500 dark:text-zinc-400">
           Ativo
           <Select
             className="mt-1"
@@ -109,7 +109,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
             <option value="0">Não</option>
           </Select>
         </label>
-        <label className="block text-xs text-zinc-500">
+        <label className="block text-xs text-zinc-500 dark:text-zinc-400">
           Eventos do mundo
           <Select
             className="mt-1"
@@ -120,11 +120,11 @@ export function GroupSettingsForm({ groupJid }: Props) {
             <option value="1">Ligado</option>
             <option value="0">Desligado</option>
           </Select>
-          <span className="mt-1 block text-[11px] leading-snug text-zinc-400">
+          <span className="mt-1 block text-[11px] leading-snug text-zinc-400 dark:text-zinc-500">
             Desliga mercado automático e trégua. Happy hour do cassino continua no chat.
           </span>
         </label>
-        <label className="block text-xs text-zinc-500">
+        <label className="block text-xs text-zinc-500 dark:text-zinc-400">
           Rank limit
           <Input
             className="mt-1"
@@ -134,7 +134,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
             disabled={loading}
           />
         </label>
-        <label className="block text-xs text-zinc-500">
+        <label className="block text-xs text-zinc-500 dark:text-zinc-400">
           XP min
           <Input
             className="mt-1"
@@ -144,7 +144,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
             disabled={loading}
           />
         </label>
-        <label className="block text-xs text-zinc-500">
+        <label className="block text-xs text-zinc-500 dark:text-zinc-400">
           XP max
           <Input
             className="mt-1"
@@ -154,7 +154,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
             disabled={loading}
           />
         </label>
-        <label className="block text-xs text-zinc-500">
+        <label className="block text-xs text-zinc-500 dark:text-zinc-400">
           Cooldown (ms)
           <Input
             className="mt-1"
@@ -164,7 +164,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
             disabled={loading}
           />
         </label>
-        <label className="block text-xs text-zinc-500">
+        <label className="block text-xs text-zinc-500 dark:text-zinc-400">
           Daily XP
           <Input
             className="mt-1"
@@ -174,7 +174,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
             disabled={loading}
           />
         </label>
-        <label className="block text-xs text-zinc-500">
+        <label className="block text-xs text-zinc-500 dark:text-zinc-400">
           Daily coins
           <Input
             className="mt-1"
@@ -190,7 +190,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
         <Button onClick={() => void save()} disabled={loading || !groupJid}>
           Salvar
         </Button>
-        <span className="text-xs text-zinc-500">{status}</span>
+        <span className="text-xs text-zinc-500 dark:text-zinc-400">{status}</span>
       </div>
     </div>
   );

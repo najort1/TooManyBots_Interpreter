@@ -6,10 +6,15 @@ import type { FunGroup } from "@/lib/types";
 
 const STORAGE_KEY = "fun-dashboard-scope";
 
-export function useScope() {
+type Options = {
+  /** false = não chama /api/fun/groups (páginas públicas). Default true. */
+  enabled?: boolean;
+};
+
+export function useScope({ enabled = true }: Options = {}) {
   const [groups, setGroups] = useState<FunGroup[]>([]);
   const [scope, setScopeState] = useState("");
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
   const [error, setError] = useState<string | null>(null);
 
   const setScope = useCallback((jid: string) => {
@@ -22,6 +27,13 @@ export function useScope() {
   }, []);
 
   const reload = useCallback(async () => {
+    if (!enabled) {
+      setGroups([]);
+      setScopeState("");
+      setLoading(false);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
@@ -44,7 +56,7 @@ export function useScope() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
     void reload();

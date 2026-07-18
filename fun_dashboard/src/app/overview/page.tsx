@@ -57,8 +57,8 @@ function OverviewBody() {
           />
 
           <div className="grid gap-4 lg:grid-cols-3">
-            <section className="rounded-lg border border-zinc-200 bg-white p-4 lg:col-span-1">
-              <h2 className="text-sm font-semibold text-zinc-900">Status</h2>
+            <section className="rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 p-4 lg:col-span-1">
+              <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Status</h2>
               <div className="mt-3 space-y-2 text-sm">
                 <Row
                   label="Evento"
@@ -106,12 +106,12 @@ function OverviewBody() {
             </section>
 
             <section className="lg:col-span-1">
-              <h2 className="mb-2 text-sm font-semibold text-zinc-900">Top XP</h2>
+              <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Top XP</h2>
               <RankingTable entries={data?.topXp || []} kind="xp" empty="Sem XP ainda." />
             </section>
 
             <section className="lg:col-span-1">
-              <h2 className="mb-2 text-sm font-semibold text-zinc-900">Top coins</h2>
+              <h2 className="mb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-50">Top coins</h2>
               <RankingTable
                 entries={data?.topCoins || []}
                 kind="coins"
@@ -127,18 +127,18 @@ function OverviewBody() {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-start justify-between gap-3 border-b border-zinc-100 py-1.5 last:border-0">
+    <div className="flex items-start justify-between gap-3 border-b border-zinc-100 dark:border-zinc-800 py-1.5 last:border-0">
       <span className="text-zinc-500">{label}</span>
-      <span className="text-right font-medium text-zinc-900">{value}</span>
+      <span className="text-right font-medium text-zinc-900 dark:text-zinc-50">{value}</span>
     </div>
   );
 }
 
 function EmptyApi() {
   return (
-    <div className="mx-auto max-w-lg rounded-lg border border-dashed border-zinc-200 bg-white px-6 py-12 text-center">
-      <h2 className="text-sm font-semibold text-zinc-900">Sem grupo</h2>
-      <p className="mt-1 text-sm text-zinc-500">
+    <div className="mx-auto max-w-lg rounded-lg border border-dashed border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900 px-6 py-12 text-center">
+      <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Sem grupo</h2>
+      <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
         Suba o bot Fun e garanta a whitelist. API em{" "}
         <code className="text-xs">127.0.0.1:8790</code>.
       </p>

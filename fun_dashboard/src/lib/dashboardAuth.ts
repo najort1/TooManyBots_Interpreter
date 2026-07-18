@@ -16,8 +16,26 @@ export const DASHBOARD_KEY_COOKIE = "fun_dash_key";
 export const DASHBOARD_KEY_HEADER = "x-api-key";
 export const DASHBOARD_KEY_QUERY = "apiKey";
 
-/** Rotas da UI e APIs protegidas (job play fica público). */
+/** Rotas da UI e APIs protegidas (job play + corretora pública ficam abertos). */
 export function isProtectedPath(pathname: string): boolean {
+  // Corretora: 100% pública e isolada do admin — sem API key, sem lista de grupos
+  if (pathname === "/bolsa" || pathname.startsWith("/bolsa/")) {
+    return false;
+  }
+  if (
+    pathname === "/api/fun/bolsa" ||
+    pathname.startsWith("/api/fun/bolsa/")
+  ) {
+    return false;
+  }
+  // job mini-games
+  if (pathname.startsWith("/api/fun/job/")) {
+    return false;
+  }
+  if (pathname.startsWith("/job/")) {
+    return false;
+  }
+
   if (pathname === "/overview" || pathname.startsWith("/overview/")) return true;
   if (pathname === "/api/fun/overview") return true;
   if (
@@ -29,7 +47,7 @@ export function isProtectedPath(pathname: string): boolean {
   ) {
     return true;
   }
-  if (pathname.startsWith("/api/fun/") && !pathname.startsWith("/api/fun/job/")) {
+  if (pathname.startsWith("/api/fun/")) {
     return true;
   }
   return false;

@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext } from "react";
+import { usePathname } from "next/navigation";
 import { useScope } from "@/hooks/useScope";
 import type { FunGroup } from "@/lib/types";
 
@@ -22,7 +23,17 @@ export function useDashboardScope() {
   return ctx;
 }
 
+/** Rotas públicas: sem lista de grupos / API admin. */
+function isPublicSurface(pathname: string | null): boolean {
+  if (!pathname) return false;
+  if (pathname === "/bolsa" || pathname.startsWith("/bolsa/")) return true;
+  if (pathname.startsWith("/job/")) return true;
+  return false;
+}
+
 export function ScopeProvider({ children }: { children: React.ReactNode }) {
-  const value = useScope();
+  const pathname = usePathname();
+  const publicSurface = isPublicSurface(pathname);
+  const value = useScope({ enabled: !publicSurface });
   return <ScopeContext.Provider value={value}>{children}</ScopeContext.Provider>;
 }

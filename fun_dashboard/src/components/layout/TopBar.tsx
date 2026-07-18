@@ -3,6 +3,7 @@
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
+import { ThemeToggle } from "@/components/theme/ThemeToggle";
 import type { FunGroup } from "@/lib/types";
 import { shortJid } from "@/lib/format";
 
@@ -28,18 +29,25 @@ export function TopBar({
   status,
 }: Props) {
   return (
-    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-white/90 px-5 py-3 backdrop-blur">
+    <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-white/90 px-5 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/90">
       <div className="min-w-0">
-        <h1 className="truncate text-base font-semibold text-zinc-900">{title}</h1>
+        <h1 className="truncate text-base font-semibold text-zinc-900 dark:text-zinc-50">
+          {title}
+        </h1>
         {subtitle ? (
-          <p className="truncate text-xs text-zinc-500">{subtitle}</p>
+          <p className="truncate text-xs text-zinc-500 dark:text-zinc-400">
+            {subtitle}
+          </p>
         ) : null}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
         {status ? (
-          <span className="hidden text-xs text-zinc-500 sm:inline">{status}</span>
+          <span className="hidden text-xs text-zinc-500 sm:inline dark:text-zinc-400">
+            {status}
+          </span>
         ) : null}
+        <ThemeToggle className="sm:hidden" />
         <div className="w-56">
           <Select
             aria-label="Grupo"
