@@ -191,7 +191,92 @@ export function normalizeFunConfig(input) {
     zenTemperature: Number.isFinite(Number(raw.zenTemperature))
       ? Math.min(1.5, Math.max(0, Number(raw.zenTemperature)))
       : DEFAULT_FUN_CONFIG.zenTemperature,
+    zenSendSamplingParams: normalizeBoolean(
+      raw.zenSendSamplingParams,
+      DEFAULT_FUN_CONFIG.zenSendSamplingParams
+    ),
     zenApiKey: toText(raw.zenApiKey, DEFAULT_FUN_CONFIG.zenApiKey) || '',
+    zenInventTemperature: Number.isFinite(Number(raw.zenInventTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.zenInventTemperature)))
+      : DEFAULT_FUN_CONFIG.zenInventTemperature,
+    zenInventMaxTokens: normalizeInt(
+      raw.zenInventMaxTokens,
+      DEFAULT_FUN_CONFIG.zenInventMaxTokens,
+      { min: 64, max: 4000, rounding: 'floor', clamp: true }
+    ),
+    zenExtractTemperature: Number.isFinite(Number(raw.zenExtractTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.zenExtractTemperature)))
+      : DEFAULT_FUN_CONFIG.zenExtractTemperature,
+    zenExtractMaxTokens: normalizeInt(
+      raw.zenExtractMaxTokens,
+      DEFAULT_FUN_CONFIG.zenExtractMaxTokens,
+      { min: 64, max: 2000, rounding: 'floor', clamp: true }
+    ),
+    zenFlavorTemperature: Number.isFinite(Number(raw.zenFlavorTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.zenFlavorTemperature)))
+      : DEFAULT_FUN_CONFIG.zenFlavorTemperature,
+    zenFlavorMaxTokens: normalizeInt(
+      raw.zenFlavorMaxTokens,
+      DEFAULT_FUN_CONFIG.zenFlavorMaxTokens,
+      { min: 32, max: 800, rounding: 'floor', clamp: true }
+    ),
+    zenChaosTemperature: Number.isFinite(Number(raw.zenChaosTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.zenChaosTemperature)))
+      : DEFAULT_FUN_CONFIG.zenChaosTemperature,
+    zenChaosMaxTokens: normalizeInt(
+      raw.zenChaosMaxTokens,
+      DEFAULT_FUN_CONFIG.zenChaosMaxTokens,
+      { min: 64, max: 1200, rounding: 'floor', clamp: true }
+    ),
+    zenAssaultTemperature: Number.isFinite(Number(raw.zenAssaultTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.zenAssaultTemperature)))
+      : DEFAULT_FUN_CONFIG.zenAssaultTemperature,
+    zenAssaultMaxTokens: normalizeInt(
+      raw.zenAssaultMaxTokens,
+      DEFAULT_FUN_CONFIG.zenAssaultMaxTokens,
+      { min: 200, max: 1200, rounding: 'floor', clamp: true }
+    ),
+    assaultStoryMaxChars: normalizeInt(
+      raw.assaultStoryMaxChars,
+      DEFAULT_FUN_CONFIG.assaultStoryMaxChars,
+      { min: 400, max: 1500, rounding: 'floor', clamp: true }
+    ),
+    assaultStoryMaxTokens: normalizeInt(
+      raw.assaultStoryMaxTokens,
+      DEFAULT_FUN_CONFIG.assaultStoryMaxTokens,
+      { min: 200, max: 1200, rounding: 'floor', clamp: true }
+    ),
+    zenPersonaTemperature: Number.isFinite(Number(raw.zenPersonaTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.zenPersonaTemperature)))
+      : DEFAULT_FUN_CONFIG.zenPersonaTemperature,
+    zenPersonaMaxTokens: normalizeInt(
+      raw.zenPersonaMaxTokens,
+      DEFAULT_FUN_CONFIG.zenPersonaMaxTokens,
+      { min: 64, max: 800, rounding: 'floor', clamp: true }
+    ),
+    zenJournalistTemperature: Number.isFinite(Number(raw.zenJournalistTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.zenJournalistTemperature)))
+      : DEFAULT_FUN_CONFIG.zenJournalistTemperature,
+    zenJournalistMaxTokens: normalizeInt(
+      raw.zenJournalistMaxTokens,
+      DEFAULT_FUN_CONFIG.zenJournalistMaxTokens,
+      { min: 128, max: 2000, rounding: 'floor', clamp: true }
+    ),
+    marketJournalistEnabled: normalizeBoolean(
+      raw.marketJournalistEnabled,
+      DEFAULT_FUN_CONFIG.marketJournalistEnabled
+    ),
+    flavorAlways: normalizeBoolean(raw.flavorAlways, DEFAULT_FUN_CONFIG.flavorAlways),
+    flavorRecentMax: normalizeInt(raw.flavorRecentMax, DEFAULT_FUN_CONFIG.flavorRecentMax, {
+      min: 0,
+      max: 40,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    zenTasks:
+      raw.zenTasks && typeof raw.zenTasks === 'object' && !Array.isArray(raw.zenTasks)
+        ? raw.zenTasks
+        : undefined,
     ollamaEnabled: normalizeBoolean(raw.ollamaEnabled, DEFAULT_FUN_CONFIG.ollamaEnabled),
     ollamaBaseUrl:
       toText(raw.ollamaBaseUrl, DEFAULT_FUN_CONFIG.ollamaBaseUrl) || DEFAULT_FUN_CONFIG.ollamaBaseUrl,
@@ -757,6 +842,7 @@ export function saveFunUserConfig(input) {
     zenTimeoutMs: normalized.zenTimeoutMs,
     zenMaxTokens: normalized.zenMaxTokens,
     zenTemperature: normalized.zenTemperature,
+    zenSendSamplingParams: normalized.zenSendSamplingParams,
     zenApiKey: normalized.zenApiKey,
     flavorTimeoutMs: normalized.flavorTimeoutMs,
     ollamaEnabled: normalized.ollamaEnabled,

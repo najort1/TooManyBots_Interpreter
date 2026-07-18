@@ -450,16 +450,49 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // Flavor LLM — OpenCode Zen (principal) → Ollama (fallback) → template
   // OpenCode Zen Proxy (OpenAI-compatible)
   zenEnabled: true,
-  zenBaseUrl: 'http://127.0.0.1:3000',
-  // deepseek-v4-flash-free: raciocina antes de responder (melhor invent/flavor)
-  zenModel: 'deepseek-v4-flash-free',
-  // thinking models precisam de mais tempo que mimo
+  /** Proxy OpenAI-compat com modelos pré-configurados (glm_5_2 em :3300). */
+  zenBaseUrl: 'http://127.0.0.1:3300',
+  // glm_5_2: melhor invent/flavor na bateria de comparação (Jul/2026)
+  zenModel: 'glm_5_2',
+  // timeout de rede (o modelo em si é fixo no proxy)
   zenTimeoutMs: 45_000,
   zenMaxTokens: 900,
   /** Orçamento total Zen→Ollama→template por resposta de flavor (ms). */
   flavorTimeoutMs: 55_000,
   zenTemperature: 0.85,
+  /**
+   * false = NÃO envia temperature/max_tokens (proxy com knobs fixos, ex. :3300).
+   * true = OpenAI-compat completo (OpenCode Zen etc.).
+   */
+  zenSendSamplingParams: false,
   zenApiKey: '',
+  /**
+   * Knobs por tarefa (override de zenTemperature/zenMaxTokens globais).
+   * Ver fun/llm/zenTaskParams.js — invent/extract/flavor/chaos/tarot/assault/persona/journalist
+   */
+  zenInventTemperature: 0.75,
+  zenInventMaxTokens: 1600,
+  zenExtractTemperature: 0.3,
+  zenExtractMaxTokens: 400,
+  zenFlavorTemperature: 0.95,
+  zenFlavorMaxTokens: 220,
+  zenChaosTemperature: 1.0,
+  zenChaosMaxTokens: 400,
+  zenAssaultTemperature: 0.95,
+  zenAssaultMaxTokens: 550,
+  /** Teto do roteiro de assalto no WhatsApp (chars). */
+  assaultStoryMaxChars: 900,
+  assaultStoryMaxTokens: 550,
+  zenPersonaTemperature: 0.7,
+  zenPersonaMaxTokens: 280,
+  zenJournalistTemperature: 0.7,
+  zenJournalistMaxTokens: 700,
+  /** Se true: após motor de %, reescreve title/body com FACTS (anti-alucinação de direção). */
+  marketJournalistEnabled: false,
+  /** Sempre anexa flavor (template) se LLM vazio; false = omite linha. */
+  flavorAlways: true,
+  /** Quantas frases recentes lembrar p/ anti-eco (flavor/chaos). */
+  flavorRecentMax: 10,
   // Ollama local (fallback)
   ollamaEnabled: true,
   ollamaBaseUrl: 'http://127.0.0.1:11434',

@@ -4,7 +4,7 @@
  */
 
 function joinUrl(baseUrl, path) {
-  const base = String(baseUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
+  const base = String(baseUrl || 'http://127.0.0.1:3300').replace(/\/+$/, '');
   const p = path.startsWith('/') ? path : `/${path}`;
   return `${base}${p}`;
 }
@@ -80,6 +80,15 @@ export function looksLikeIncompleteOrMeta(text) {
   if (/\b(frases?\s+completas?|s[oó]\s+o\s+texto\s+final|m[aá]x\.?\s*\d+\s*chars?)\b/i.test(s) && s.length < 100) {
     return true;
   }
+  // preâmbulo de assistente / eco do pedido
+  if (
+    /^(aqui vai|segue (o )?(roteiro|texto)|roteiro besteirol|no tom (que|pastel)|como (voc[eê] )?pediu|conforme o pedido)\b/i.test(
+      s
+    )
+  ) {
+    return true;
+  }
+  if (/\bno tom (pastel[aã]o )?que voc[eê] pediu\b/i.test(s)) return true;
 
   return false;
 }
@@ -257,9 +266,13 @@ export function extractChatText(data) {
  * @param {typeof fetch} [opts.fetchImpl]
  * @returns {Promise<string>}
  */
+/**
+ * Proxies com modelo pré-configurado (ex. glm_5_2 em :3300) ignoram sampling.
+ * sendSamplingParams=false → body só model+messages (+ response_format se jsonMode).
+ */
 export async function openaiChatComplete({
-  baseUrl = 'http://127.0.0.1:3000',
-  model = 'deepseek-v4-flash-free',
+  baseUrl = 'http://127.0.0.1:3300',
+  model = 'glm_5_2',
   prompt,
   system = '',
   timeoutMs = 20_000,
@@ -273,6 +286,12 @@ export async function openaiChatComplete({
    * Evita eco "category uma das…" virar invent.
    */
   jsonOnly = false,
+  /**
+   * false = não envia temperature/top_p (modelo fixo no proxy, ex. glm :3300).
+   * max_tokens ainda é enviado (orçamento de saída da completion, não “criatividade”).
+   * default true; Fun passa false via config.zenSendSamplingParams.
+   */
+  sendSamplingParams = true,
   fetchImpl,
 } = {}) {
   const userText = String(prompt ?? '').trim();
@@ -303,13 +322,15 @@ export async function openaiChatComplete({
 
   try {
     const body = {
-      model: String(model || 'deepseek-v4-flash-free'),
+      model: String(model || 'glm_5_2'),
       messages,
-      temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.85,
-      // invent com thinking precisa de folga no completion
-      max_tokens: Math.max(32, Math.min(4000, Math.floor(Number(maxTokens) || 400))),
       stream: false,
+      // limite de tokens de saída (útil mesmo com modelo pré-fixurado)
+      max_tokens: Math.max(32, Math.min(4000, Math.floor(Number(maxTokens) || 400))),
     };
+    if (sendSamplingParams !== false) {
+      body.temperature = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.85;
+    }
     if (jsonMode) {
       body.response_format = { type: 'json_object' };
     }
@@ -352,7 +373,7 @@ export async function openaiChatComplete({
  * Health check do proxy Zen.
  */
 export async function openaiPing({
-  baseUrl = 'http://127.0.0.1:3000',
+  baseUrl = 'http://127.0.0.1:3300',
   timeoutMs = 3_000,
   fetchImpl,
 } = {}) {
