@@ -693,6 +693,40 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
     return rows.map((r) => getEvent(r.id)).filter(Boolean);
   }
 
+  /**
+   * Paginação de notícias/eventos de mercado (DESC por data).
+   * @returns {{ events: object[], total: number, page: number, limit: number, totalPages: number }}
+   */
+  function listEventsPage(scopeKey, { page = 1, limit = 6 } = {}) {
+    ensureSchema();
+    const s = String(scopeKey || '');
+    const lim = Math.max(1, Math.min(40, Math.floor(Number(limit) || 6)));
+    let p = Math.max(1, Math.floor(Number(page) || 1));
+    if (!s) {
+      return { events: [], total: 0, page: 1, limit: lim, totalPages: 0 };
+    }
+    const totalRow = getDatabase()
+      .prepare(
+        `SELECT COUNT(*) AS c FROM ${ANALYTICS_SCHEMA}.fun_market_events
+         WHERE scope_key = ?`
+      )
+      .get(s);
+    const total = Math.max(0, Math.floor(Number(totalRow?.c) || 0));
+    const totalPages = total === 0 ? 0 : Math.ceil(total / lim);
+    if (totalPages > 0 && p > totalPages) p = totalPages;
+    const offset = (p - 1) * lim;
+    const rows = getDatabase()
+      .prepare(
+        `SELECT id FROM ${ANALYTICS_SCHEMA}.fun_market_events
+         WHERE scope_key = ?
+         ORDER BY created_at DESC
+         LIMIT ? OFFSET ?`
+      )
+      .all(s, lim, offset);
+    const events = rows.map((r) => getEvent(r.id)).filter(Boolean);
+    return { events, total, page: p, limit: lim, totalPages };
+  }
+
   return {
     getMeta,
     setMeta,
@@ -709,6 +743,7 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
     getEvent,
     latestEvent,
     listRecentEvents,
+    listEventsPage,
     listHistory,
     addInventory,
     getInventoryById,

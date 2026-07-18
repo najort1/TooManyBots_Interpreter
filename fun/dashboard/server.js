@@ -67,7 +67,32 @@ export function startFunDashboardServer(deps = {}) {
     eventRepository = null,
     factionRepository = null,
     jobService = null,
+    stockService = null,
+    marketRepository = null,
   } = funModule._services;
+
+  /** Normaliza scope do path/query: aceita JID completo ou só o número do grupo. */
+  function resolveScopeKey(raw) {
+    let s = String(raw || '').trim();
+    try {
+      s = decodeURIComponent(s);
+    } catch {
+      // keep raw
+    }
+    s = s.trim();
+    if (!s) return '';
+    if (s.includes('@')) return s;
+    if (/^\d{8,}$/.test(s)) return `${s}@g.us`;
+    return s;
+  }
+
+  function isScopeAllowed(scopeKey) {
+    const cfg = getConfig();
+    const jids = Array.isArray(cfg.groupWhitelistJids) ? cfg.groupWhitelistJids : [];
+    if (!scopeKey) return false;
+    if (!jids.length) return true; // dev local sem whitelist
+    return jids.includes(scopeKey);
+  }
 
   const config = getConfig();
   const host = String(config.dashboardHost || '127.0.0.1');
@@ -339,6 +364,152 @@ export function startFunDashboardServer(deps = {}) {
         }
         const event = eventRepository?.get?.(scope) || null;
         sendJson(res, 200, { scope, event });
+        return;
+      }
+
+      // --- Bolsa (read-only · público) — sem compra/venda ---
+      if (req.method === 'GET' && path === '/api/fun/bolsa') {
+        const scope = resolveScopeKey(url.searchParams.get('scope') || '');
+        if (!scope) {
+          sendJson(res, 400, { error: 'scope obrigatorio', hint: 'use ?scope=ID_DO_GRUPO' });
+          return;
+        }
+        if (!isScopeAllowed(scope)) {
+          sendJson(res, 404, { error: 'grupo-nao-encontrado' });
+          return;
+        }
+        if (!stockService?.publicBoard) {
+          sendJson(res, 503, { error: 'bolsa-indisponivel' });
+          return;
+        }
+        const cfg = getConfig();
+        if (cfg.bolsaEnabled === false) {
+          sendJson(res, 200, {
+            // sem JID no payload público
+            enabled: false,
+            quotes: [],
+            summary: { count: 0, advancing: 0, declining: 0, unchanged: 0, avgDeltaPct: 0, atHighCount: 0 },
+            movers: { topGainers: [], topLosers: [], nearAth: [] },
+            groupName: getContactDisplayName(scope) || '',
+            tradeHint: {
+              channel: 'whatsapp',
+              buy: '/bolsa comprar <ticker> <qtd>',
+              sell: '/bolsa vender <ticker> <qtd>',
+              portfolio: '/carteira',
+            },
+            readOnly: true,
+          });
+          return;
+        }
+        const board = stockService.publicBoard(scope, cfg);
+        // não ecoa scope/JID — o link já carrega o grupo
+        const { scope: _omitScope, ...publicBoard } = board;
+        sendJson(res, 200, {
+          ...publicBoard,
+          groupName: getContactDisplayName(scope) || '',
+          readOnly: true,
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/bolsa/history') {
+        const scope = resolveScopeKey(url.searchParams.get('scope') || '');
+        const company = String(
+          url.searchParams.get('company') || url.searchParams.get('ticker') || ''
+        ).trim();
+        if (!scope || !company) {
+          sendJson(res, 400, { error: 'scope-e-company-obrigatorios' });
+          return;
+        }
+        if (!isScopeAllowed(scope)) {
+          sendJson(res, 404, { error: 'grupo-nao-encontrado' });
+          return;
+        }
+        if (!stockService?.publicHistory) {
+          sendJson(res, 503, { error: 'bolsa-indisponivel' });
+          return;
+        }
+        const cfg = getConfig();
+        const hist = stockService.publicHistory(
+          scope,
+          company,
+          {
+            range: url.searchParams.get('range') || '',
+            from: url.searchParams.get('from') || 0,
+            to: url.searchParams.get('to') || 0,
+            limit: url.searchParams.get('limit') || 500,
+          },
+          cfg
+        );
+        if (!hist.ok) {
+          sendJson(res, 404, { error: hist.reason || 'ticker-nao-encontrado' });
+          return;
+        }
+        // strip quote excess (sem dados sensíveis de holding)
+        const quote = hist.quote
+          ? {
+              price: hist.quote.price,
+              previousPrice: hist.quote.previousPrice,
+              highPrice: hist.quote.highPrice,
+              atHigh: hist.quote.atHigh,
+              trend: hist.quote.trend,
+              deltaPct: hist.quote.deltaPct,
+              dividendYield: hist.quote.dividendYield,
+            }
+          : null;
+        const { scope: _omitScope, quote: _q, ...publicHist } = hist;
+        sendJson(res, 200, {
+          ...publicHist,
+          quote,
+          readOnly: true,
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/bolsa/events') {
+        const scope = resolveScopeKey(url.searchParams.get('scope') || '');
+        if (!scope) {
+          sendJson(res, 400, { error: 'scope obrigatorio' });
+          return;
+        }
+        if (!isScopeAllowed(scope)) {
+          sendJson(res, 404, { error: 'grupo-nao-encontrado' });
+          return;
+        }
+        const limit = Math.min(40, Math.max(1, Number(url.searchParams.get('limit') || 6)));
+        const page = Math.max(1, Math.floor(Number(url.searchParams.get('page') || 1)));
+        const mapPublic = (e) => ({
+          id: e.id,
+          title: e.title,
+          description: e.description,
+          category: e.category,
+          impactPct: e.impactPct,
+          companyId: e.companyId || '',
+          archetype: e.archetype || '',
+          createdAt: e.createdAt,
+        });
+        if (typeof marketRepository?.listEventsPage === 'function') {
+          const result = marketRepository.listEventsPage(scope, { page, limit });
+          sendJson(res, 200, {
+            events: (result.events || []).map(mapPublic),
+            page: result.page,
+            limit: result.limit,
+            total: result.total,
+            totalPages: result.totalPages,
+            readOnly: true,
+          });
+          return;
+        }
+        // fallback legado
+        const events = (marketRepository?.listRecentEvents?.(scope, limit) || []).map(mapPublic);
+        sendJson(res, 200, {
+          events,
+          page: 1,
+          limit,
+          total: events.length,
+          totalPages: events.length ? 1 : 0,
+          readOnly: true,
+        });
         return;
       }
 
