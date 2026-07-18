@@ -74,6 +74,8 @@ const CHAOS_SCENARIOS = new Set([
   'russian_click',
   'russian_dead',
   'russian_start',
+  'roast_personal',
+  'group_times',
 ]);
 
 function isChaosScenario(key) {
@@ -105,6 +107,19 @@ A pessoa (user=) é o centro da teoria. Estilo: "Existem fortes indícios de que
   russian_dead: `Comentário de "morte" virtual na roleta russa (mico, sem XP) em pt-BR de zap. 1–3 frases completas. Sem gore. Só o comentário.`,
 
   russian_start: `Abertura teatral da roleta russa virtual no grupo (1 bala). 1–3 frases completas em pt-BR. Só o texto.`,
+
+  roast_personal: `Você é comediante de stand-up brasileiro, ácido e sarcástico.
+Faça um ROAST do user= baseado APENAS nos fatos= fornecidos.
+2–4 frases completas em pt-BR. Sem palavrão proibido pesado, sem preconceito, sem inventar crimes reais.
+Pode zoar emprego, cassino, casamento, saldo e mico do grupo. Só o roast final.`,
+
+  group_times: `Você é editor do jornal sarcástico "The Group Times" de um grupo de WhatsApp.
+Com base nos events= do dia, escreva 3 manchetes engraçadas.
+Formato:
+MANCHETE: ...
+ECONOMIA: ...
+FOFOCA: ...
+Cada linha: título curto + 1 frase. pt-BR. Sem inventar números que não estejam nos eventos. Só o texto.`,
 });
 
 const CHAOS_SYSTEM_DEFAULT = `Você gera texto cômico de bot WhatsApp BR. 2–4 frases COMPLETAS em pt-BR.
@@ -490,6 +505,17 @@ const FALLBACKS = {
       ].join('\n'),
     ]);
   },
+  roast_personal: (v) =>
+    pick([
+      `${v.user || v.userName || 'Fulano'} é tão previsível no cassino que até o pasteldavizinha já cobrou juros morais. ${v.facts ? 'Os fatos não mentem — o ego sim.' : 'Saldo magro, moral mais magra ainda.'}`,
+      `Roast express: ${v.user || 'você'} sobrevive de daily e de desculpa. O grupo agradece o entretenimento barato.`,
+    ]),
+  group_times: (v) =>
+    [
+      'MANCHETE: O dia foi mediano. O ego, não.',
+      'ECONOMIA: Preços e pastéis no piloto automático.',
+      `FOFOCA: ${v.count || 0} eventos no log. Alguém sofreu, alguém lucrou.`,
+    ].join('\n'),
   default: () =>
     pick([
       'O chat reage em silêncio… por enquanto.',
@@ -866,6 +892,8 @@ export function createFlavorService(deps = {}) {
         russian_click: `Comente o click (câmara vazia) da roleta russa. Dados: ${facts || 'nenhum'}.`,
         russian_dead: `Comente a “morte” virtual na roleta. Dados: ${facts || 'nenhum'}.`,
         russian_start: `Abra a roleta russa no grupo. Dados: ${facts || 'nenhum'}.`,
+        roast_personal: `Roast de *${userName || 'Fulano'}*. Fatos:\n${String(vars?.facts || facts || 'poucos dados').slice(0, 900)}`,
+        group_times: `Jornal The Group Times. Eventos do dia:\n${String(vars?.events || facts || 'nenhum').slice(0, 1200)}`,
       }[key] || `Escreva o texto do comando. Dados: ${facts || 'nenhum'}.`;
 
       const prompt = [

@@ -90,6 +90,7 @@ function topicBasico(p) {
     `\`${p}topmsg\` — quem mais fala`,
     `\`${p}daily\` — recompensa diária`,
     `\`${p}coins\` / \`${p}saldo\` · \`${p}pay 50 @user\``,
+    `\`${p}conquistas\` — badges desbloqueadas`,
     '',
     `_Voltar: \`${p}ajuda\`_`,
   ].join('\n');
@@ -111,6 +112,10 @@ function topicEconomia(p) {
     `\`${p}bolsa\` — cotações · \`${p}carteira\` — suas ações`,
     `\`${p}bolsa comprar bombatech 3\``,
     `\`${p}bolsa vender pato 1\``,
+    '',
+    '*Negócios*',
+    `\`${p}negocio\` · \`${p}negocio comprar barraca\``,
+    `\`${p}coletar\` · \`${p}negocio consertar barraca\``,
     '',
     `_Voltar: \`${p}ajuda\`_`,
   ].join('\n');
@@ -176,6 +181,7 @@ function topicZoeira(p) {
     `\`${p}cancelar @user\` · \`${p}fofoca @user\``,
     `\`${p}oraculo Vou namorar?\` — IA maluca (≠ tarô)`,
     `\`${p}illuminati\` — conspiração aleatória`,
+    `\`${p}roast @user\` — humilhação com fatos do bot`,
     `\`${p}lore\` — memória do grupo`,
     `\`${p}esquecelore @user\` · \`${p}esquecelore tudo sim\``,
     '',

@@ -532,6 +532,60 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    propertiesEnabled: normalizeBoolean(
+      raw.propertiesEnabled,
+      DEFAULT_FUN_CONFIG.propertiesEnabled
+    ),
+    propertyMaxOwned: normalizeInt(raw.propertyMaxOwned, DEFAULT_FUN_CONFIG.propertyMaxOwned, {
+      min: 1,
+      max: 6,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    propertyTickMs: normalizeInt(raw.propertyTickMs, DEFAULT_FUN_CONFIG.propertyTickMs, {
+      min: 60_000,
+      max: 6 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    propertyMinHealthToEarn: normalizeInt(
+      raw.propertyMinHealthToEarn,
+      DEFAULT_FUN_CONFIG.propertyMinHealthToEarn,
+      { min: 0, max: 100, rounding: 'floor', clamp: true }
+    ),
+    roastEnabled: normalizeBoolean(raw.roastEnabled, DEFAULT_FUN_CONFIG.roastEnabled),
+    roastCooldownMs: normalizeInt(raw.roastCooldownMs, DEFAULT_FUN_CONFIG.roastCooldownMs, {
+      min: 60_000,
+      max: 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    roastMaxChars: normalizeInt(raw.roastMaxChars, DEFAULT_FUN_CONFIG.roastMaxChars, {
+      min: 200,
+      max: 2000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    groupNewsEnabled: normalizeBoolean(
+      raw.groupNewsEnabled,
+      DEFAULT_FUN_CONFIG.groupNewsEnabled
+    ),
+    groupNewsHour: normalizeInt(raw.groupNewsHour, DEFAULT_FUN_CONFIG.groupNewsHour, {
+      min: 0,
+      max: 23,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    groupNewsMinute: normalizeInt(raw.groupNewsMinute, DEFAULT_FUN_CONFIG.groupNewsMinute, {
+      min: 0,
+      max: 59,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    achievementsEnabled: normalizeBoolean(
+      raw.achievementsEnabled,
+      DEFAULT_FUN_CONFIG.achievementsEnabled
+    ),
     memoryEnabled: normalizeBoolean(raw.memoryEnabled, DEFAULT_FUN_CONFIG.memoryEnabled),
     memoryMaxFacts: normalizeInt(raw.memoryMaxFacts, DEFAULT_FUN_CONFIG.memoryMaxFacts, {
       min: 10,

@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '15';
+export const FUN_SCHEMA_VERSION = '16';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -56,6 +56,7 @@ export const FUN_COMMANDS = Object.freeze({
   ILLUMINATI: 'illuminati',
   LORE: 'lore',
   FORGET_LORE: 'forget_lore',
+  ROAST: 'roast',
   // Colecionáveis / mercado
   GALLERY: 'gallery',
   INVENTORY: 'inventory',
@@ -66,6 +67,11 @@ export const FUN_COMMANDS = Object.freeze({
   MARKET_EVENT: 'market_event',
   WEAPONS: 'weapons',
   ASSAULT: 'assault',
+  // Negócios / propriedades
+  PROPERTY: 'property',
+  COLLECT: 'collect',
+  // Conquistas
+  ACHIEVEMENTS: 'achievements',
   // Bolsa de valores (ações das empresas)
   BOLSA: 'bolsa',
   CARTEIRA: 'carteira',
@@ -115,6 +121,8 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     FUN_COMMANDS.ASSAULT,
     FUN_COMMANDS.WEAPONS,
     FUN_COMMANDS.BAZAAR,
+    FUN_COMMANDS.ROAST,
+    FUN_COMMANDS.ACHIEVEMENTS,
     // emprego: anúncio curto no grupo no start
     FUN_COMMANDS.EMPLOYMENT,
   ])
@@ -249,6 +257,9 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   esquecerlore: FUN_COMMANDS.FORGET_LORE,
   limparlore: FUN_COMMANDS.FORGET_LORE,
   forgetlore: FUN_COMMANDS.FORGET_LORE,
+  roast: FUN_COMMANDS.ROAST,
+  zoar: FUN_COMMANDS.ROAST,
+  humilhar: FUN_COMMANDS.ROAST,
   rankcassino: FUN_COMMANDS.RANK_CASINO,
   rankcasino: FUN_COMMANDS.RANK_CASINO,
   topcassino: FUN_COMMANDS.RANK_CASINO,
@@ -291,6 +302,19 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   artevento: FUN_COMMANDS.MARKET_EVENT,
   armas: FUN_COMMANDS.WEAPONS,
   weapons: FUN_COMMANDS.WEAPONS,
+  propriedades: FUN_COMMANDS.PROPERTY,
+  propriedade: FUN_COMMANDS.PROPERTY,
+  negocio: FUN_COMMANDS.PROPERTY,
+  negócios: FUN_COMMANDS.PROPERTY,
+  negocios: FUN_COMMANDS.PROPERTY,
+  property: FUN_COMMANDS.PROPERTY,
+  coletar: FUN_COMMANDS.COLLECT,
+  collect: FUN_COMMANDS.COLLECT,
+  sacar: FUN_COMMANDS.COLLECT,
+  conquistas: FUN_COMMANDS.ACHIEVEMENTS,
+  conquista: FUN_COMMANDS.ACHIEVEMENTS,
+  achievements: FUN_COMMANDS.ACHIEVEMENTS,
+  badges: FUN_COMMANDS.ACHIEVEMENTS,
   armamento: FUN_COMMANDS.WEAPONS,
   assaltar: FUN_COMMANDS.ASSAULT,
   assalto: FUN_COMMANDS.ASSAULT,
@@ -560,6 +584,21 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   chaosTimeoutMs: 28_000,
   chaosMaxChars: 700,
   chaosMaxTokens: 360,
+  // Negócios / propriedades (renda em buffer + /coletar)
+  propertiesEnabled: true,
+  propertyMaxOwned: 2,
+  propertyTickMs: 15 * 60_000,
+  propertyMinHealthToEarn: 15,
+  // Roast
+  roastEnabled: true,
+  roastCooldownMs: 60 * 60_000,
+  roastMaxChars: 700,
+  // Jornal diário (The Group Times)
+  groupNewsEnabled: true,
+  groupNewsHour: 23,
+  groupNewsMinute: 59,
+  // Conquistas
+  achievementsEnabled: true,
   // Memória persistente por grupo (lore seletiva)
   memoryEnabled: true,
   memoryMaxFacts: 50,
@@ -582,4 +621,77 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   profileBlocklist: [],
   profileAiExtract: true,
   profileExtractTimeoutMs: 22_000,
+});
+
+/**
+ * Catálogo de conquistas (metas recalibradas à economia real).
+ * @type {Readonly<Record<string, { id: string, name: string, description: string, icon: string }>>}
+ */
+export const ACHIEVEMENTS = Object.freeze({
+  coins_2k: {
+    id: 'coins_2k',
+    name: 'Bolso gordo',
+    description: 'Ter 2.000 coins no saldo',
+    icon: '💰',
+  },
+  first_share: {
+    id: 'first_share',
+    name: 'O Investidor',
+    description: 'Comprar a primeira ação na bolsa',
+    icon: '📈',
+  },
+  crash_unlucky_5: {
+    id: 'crash_unlucky_5',
+    name: 'Viciado em Crash',
+    description: 'Perder 5 vezes seguidas no Crash',
+    icon: '🚀',
+  },
+  longshot_win: {
+    id: 'longshot_win',
+    name: 'A Sorte do Azarado',
+    description: 'Vencer no Crash com multiplicador ≥ 5×',
+    icon: '🎰',
+  },
+  cancel_10: {
+    id: 'cancel_10',
+    name: 'O Coringa',
+    description: 'Cancelar 10 pessoas',
+    icon: '🤡',
+  },
+  divorce_3: {
+    id: 'divorce_3',
+    name: 'Coração de Pedra',
+    description: 'Divorciar 3 vezes',
+    icon: '💔',
+  },
+  marry_3: {
+    id: 'marry_3',
+    name: 'Casamenteiro',
+    description: 'Casar 3 vezes',
+    icon: '💍',
+  },
+  assault_win_15: {
+    id: 'assault_win_15',
+    name: 'O Assaltante',
+    description: '15 assaltos bem-sucedidos',
+    icon: '🔫',
+  },
+  assault_fail_10: {
+    id: 'assault_fail_10',
+    name: 'Presidiário',
+    description: 'Falhar 10 assaltos',
+    icon: '🚓',
+  },
+  first_property: {
+    id: 'first_property',
+    name: 'Patrãozinho',
+    description: 'Comprar o primeiro negócio',
+    icon: '🏪',
+  },
+  collect_500: {
+    id: 'collect_500',
+    name: 'Caixa cheia',
+    description: 'Coletar 500c de renda de negócios',
+    icon: '💵',
+  },
 });
