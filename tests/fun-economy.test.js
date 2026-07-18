@@ -459,11 +459,35 @@ test('economia: alignEventCopy corrige gasolina na fofoca com ticker de defesa',
   });
   assert.equal(fixed.realigned, true);
   // pode cair em direction e/ou category — ambos são incoerências da fofoca
-  assert.ok(['category', 'direction', 'weak-tone'].includes(fixed.reason));
+  assert.ok(['category', 'direction', 'weak-tone', 'company'].includes(fixed.reason));
   const blob = `${fixed.title}\n${fixed.body}`;
   assert.notEqual(inferNarrativeCategory(blob), 'combustivel');
   assert.match(blob, /defesa|colete|Satélite|satelite|satélite/i);
   assert.notEqual(inferNarrativeDirection(blob), 'down');
+});
+
+test('economia: alignEventCopy corrige PatoCoin na fofoca com ticker BombaTech', () => {
+  const fixed = alignEventCopy({
+    title: 'PatoCoin viraliza no grupo',
+    body: [
+      'Ninguém sabe por quê. Todo mundo jura que sabe.',
+      'Print de gráfico torto, sticker de pato, FOMO coletivo.',
+      'Do nada o bairro trata peixeira como “ativo”.',
+    ].join('\n'),
+    direction: 'up',
+    category: 'arma',
+    companyId: 'bombatech',
+    archetype: 'meme_spike',
+    random: () => 0.1,
+  });
+  assert.equal(fixed.realigned, true);
+  const blob = `${fixed.title}\n${fixed.body}`;
+  assert.ok(
+    !/patocoin/i.test(blob) || /bombatech|arma|peixeira|faca|a[cç]o/i.test(blob),
+    'copy realinhada não pode ficar só em PatoCoin com foco BombaTech'
+  );
+  // não deve ancorar PatoCoin no título se o foco é BombaTech
+  assert.ok(!/PatoCoin/i.test(fixed.title), `title ainda PatoCoin: ${fixed.title}`);
 });
 
 test('economia: resolveEventProposal descarta copy se bias troca por overheat', () => {

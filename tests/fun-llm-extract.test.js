@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 
 import {
   extractChatText,
+  extractJsonBlob,
   looksLikeIncompleteOrMeta,
 } from '../fun/llm/openaiClient.js';
 import { createFlavorService } from '../fun/llm/flavorService.js';
@@ -68,6 +69,25 @@ test('extractChatText: reasoning com frase final boa', () => {
     ],
   });
   assert.match(t, /moeda te escolheu|Aproveita/i);
+});
+
+test('extractJsonBlob / invent: JSON no reasoning do DeepSeek thinking', () => {
+  const blob = extractJsonBlob(
+    'thinking about market...\nfinal: {"archetype":"scandal","category":"tech","companyId":"bombatech","title":"BombaTech explode","body":"ação sobe"}'
+  );
+  assert.match(blob, /BombaTech explode/);
+  const t = extractChatText({
+    choices: [
+      {
+        message: {
+          content: '',
+          reasoning_content:
+            'raciocínio longo...\n{"archetype":"scandal","category":"tech","companyId":"bombatech","title":"BombaTech explode","body":"ação sobe"}',
+        },
+      },
+    ],
+  });
+  assert.match(t, /"title"\s*:\s*"BombaTech explode"/);
 });
 
 test('looksLikeIncompleteOrMeta rejeita eco de lista de cenários (illuminati bug)', () => {

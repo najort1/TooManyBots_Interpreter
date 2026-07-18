@@ -37,10 +37,10 @@ function uniqueGroup() {
   return `120363${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 90 + 10)}@g.us`;
 }
 
-test('default zen model é mimo-v2.5-free', () => {
-  assert.equal(DEFAULT_FUN_CONFIG.zenModel, 'mimo-v2.5-free');
+test('default zen model é deepseek-v4-flash-free', () => {
+  assert.equal(DEFAULT_FUN_CONFIG.zenModel, 'deepseek-v4-flash-free');
   const cfg = resolveFunConfig({});
-  assert.equal(cfg.zenModel, 'mimo-v2.5-free');
+  assert.equal(cfg.zenModel, 'deepseek-v4-flash-free');
   assert.equal(cfg.memoryEnabled, true);
   assert.equal(cfg.memoryMaxFacts, 50);
 });

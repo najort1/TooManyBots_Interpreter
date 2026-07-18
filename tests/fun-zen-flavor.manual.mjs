@@ -9,7 +9,7 @@ const system = [
   'Responda SOMENTE com a frase final em português.',
 ].join('\n');
 
-for (const model of ['mimo-v2.5-free', 'deepseek-v4-flash-free', 'hy3-free']) {
+for (const model of ['deepseek-v4-flash-free', 'mimo-v2.5-free', 'hy3-free']) {
   const t = Date.now();
   try {
     const r = await openaiChatComplete({
@@ -32,8 +32,8 @@ const svc = createFlavorService({
     resolveFunConfig({
       zenEnabled: true,
       zenBaseUrl: 'http://127.0.0.1:3000',
-      zenModel: 'mimo-v2.5-free',
-      zenMaxTokens: 100,
+      zenModel: 'deepseek-v4-flash-free',
+      zenMaxTokens: 400,
       ollamaEnabled: false,
     }),
 });
