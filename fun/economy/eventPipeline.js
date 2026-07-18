@@ -14,7 +14,7 @@ import {
 } from './archetypes.js';
 import { fingerprintText, clamp } from './math.js';
 import { REASON_GUIDE } from './deception.js';
-import { getCompany, listCompanies } from './companies.js';
+import { getCompany, listCompanies, categoriesForCompany } from './companies.js';
 
 export const EVENT_DESC_MAX = 900;
 export const EVENT_DESC_LINES_MAX = 8;
@@ -93,6 +93,52 @@ export function buildJournalistUserPrompt(facts) {
   return `FACTS oficiais (não invente outros números):\n${JSON.stringify(facts, null, 0)}`;
 }
 
+/** Manchete de bairro (pt-BR) — não schema/inglês de instrução. */
+export function looksLikeStreetHeadline(text) {
+  const s = String(text || '').trim();
+  if (s.length < 16 || s.length > 140) return false;
+  if (looksLikeInventPromptEcho(s)) return false;
+  // precisa de alguma “vida” de mercado/rua
+  if (
+    !/[áàâãéêíóôõúç]/i.test(s) &&
+    !/\b(fila|preço|preco|gasolina|peixe|bomba|uno|pato|estoque|blitz|zap|bairro|desce|sobe|explode|sumiu|lote)\b/i.test(
+      s
+    )
+  ) {
+    // inglês puro de schema
+    if (/\b(category|companyId|archetype|must|should|omit|coherent)\b/i.test(s)) return false;
+  }
+  if (/^(category|companyId|archetype|title|body)\b/i.test(s)) return false;
+  return true;
+}
+
+/**
+ * Eco do system/user prompt (DeepSeek thinking às vezes recicla regras como "manchete").
+ */
+export function looksLikeInventPromptEcho(text) {
+  const s = String(text || '').trim();
+  if (!s) return true;
+  if (
+    /JSON [uú]nico|NUNCA diga|impactPct|goodForCategories|archetype DEVE|companyId DEVE|sem markdown|sem texto fora|Responda APENAS|Ensure not to say|se o archetype|if archetype|category one of|category uma das|one of:|coherent with|coerente com a empresa|listados \(ou omita\)|IDs de empresa|FACTS oficiais|user prompt|combustivel\|municao\|arma|title ≤|body:\s*5 a 8|ALTERNE alta e queda/i.test(
+      s
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(if |se o |ensure |n[aã]o invente|nunca diga|category one|category uma|companyId DEVE|REGRAS:)/i.test(
+      s
+    )
+  ) {
+    return true;
+  }
+  // schema / inglês de instrução
+  if (/\b(must be|should be|omit|required field|json object)\b/i.test(s) && s.length < 200) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Parse da IA inventora — descarta impactPct se vier.
  */
@@ -124,6 +170,7 @@ export function parseInventJson(raw) {
     const title = String(j.title || 'Movimento de mercado').slice(0, 100);
     const body = clampEventDescription(j.body || j.description || '');
     if (!body) return null;
+    if (looksLikeInventPromptEcho(title) || looksLikeInventPromptEcho(body)) return null;
 
     // impactPct da IA é IGNORADO de propósito (contrato anti-colapso)
     return {
@@ -140,6 +187,79 @@ export function parseInventJson(raw) {
   } catch {
     return null;
   }
+}
+
+/**
+ * Zen free às vezes devolve prosa em vez de JSON.
+ * Tenta recuperar title/body + classifica archetype/categoria/empresa.
+ * Rejeita eco óbvio do system prompt.
+ */
+export function salvageInventFromProse(raw) {
+  let text = String(raw || '')
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+  if (!text || text.length < 28) return null;
+
+  // eco / fragmento de instrução (system prompt ou schema em inglês)
+  if (looksLikeInventPromptEcho(text)) return null;
+
+  // tenta JSON de novo após limpar fence
+  const asJson = parseInventJson(text);
+  if (asJson) return { ...asJson, salvaged: false };
+
+  const lines = text
+    .split(/\n+/)
+    .map((l) => l.replace(/^[*#>\-\d.\s]+/, '').trim())
+    .filter((l) => l && !looksLikeInventPromptEcho(l) && looksLikeStreetHeadline(l));
+  // se filtro de manchete zerou, tenta linhas longas sem eco
+  const fallbackLines = text
+    .split(/\n+/)
+    .map((l) => l.replace(/^[*#>\-\d.\s]+/, '').trim())
+    .filter((l) => l.length >= 24 && !looksLikeInventPromptEcho(l));
+  const pickLines = lines.length ? lines : fallbackLines;
+  if (!pickLines.length) return null;
+
+  let title = pickLines[0].slice(0, 80);
+  let bodyLines = pickLines.slice(1);
+  if (pickLines.length === 1 && pickLines[0].length > 70) {
+    const m = pickLines[0].match(/^(.{12,72}?)([.!?…])\s+(.+)$/s);
+    if (m) {
+      title = `${m[1]}${m[2]}`.slice(0, 80);
+      bodyLines = [m[3]];
+    }
+  }
+  // se título parece "Empresa: resto", ok
+  title = title.replace(/^["“]|["”]$/g, '').trim();
+  if (looksLikeInventPromptEcho(title) || !looksLikeStreetHeadline(title)) return null;
+  let body = clampEventDescription(bodyLines.join('\n') || pickLines[0]);
+  if (!body || body.length < 36) {
+    // single-line salvage: repete título como body se for manchete boa
+    if (title.length >= 36 && looksLikeStreetHeadline(title)) {
+      body = title;
+    } else {
+      return null;
+    }
+  }
+  if (looksLikeInventPromptEcho(body)) return null;
+
+  const blob = `${title}\n${body}`;
+  const archetype = classifyFreeTextToArchetype(blob);
+  if (!getArchetype(archetype)) return null;
+
+  return {
+    archetype,
+    category: inferNarrativeCategory(blob) || undefined,
+    companyId: inferNarrativeCompany(blob) || undefined,
+    title: title.slice(0, 100) || 'Movimento de mercado',
+    body,
+    salvaged: true,
+  };
+}
+
+/** JSON primeiro; se falhar, tenta prosa (Zen free). */
+export function parseInventResponse(raw) {
+  return parseInventJson(raw) || salvageInventFromProse(raw);
 }
 
 export function parseJournalistJson(raw) {
@@ -316,13 +436,18 @@ function normalizeNarrativeText(text) {
  * @returns {'up'|'down'|'flat'}
  */
 export function inferNarrativeDirection(text) {
-  const t = normalizeNarrativeText(text);
+  // remove negações comuns pra não contar "nem fila" / "sem escassez" como alta
+  let t = normalizeNarrativeText(text);
   if (!t.trim()) return 'flat';
+  t = t
+    .replace(/\b(nem|sem|nao|não|nenhuma?|nenhum)\s+(fila|escassez|apert[oa]|fomo|alta|subida)\b/g, ' ')
+    .replace(/\b(nao|não)\s+(subiu|sobe|encarec|sumiu|lotou)\b/g, ' ')
+    .replace(/\b(nao|não)\s+(caiu|desce|barato|sobra|esfria)\b/g, ' ');
 
   const upRe =
-    /mais cara|mais caro|subiu|sobe|subida|alta inesper|encarec|escassez|sumiu|fila|fomo|apert(o|ou)|lotou|procura|escasso|seco|sem produto|preco sobe|preço sobe|gasolina cara|encareceu|disparou|esquent|prateleira magra|falta de|escasso/;
+    /mais cara|mais caro|subiu|sobe|subida|alta inesper|encarec|escassez|sumiu|\bfila\b|fomo|apert(o|ou)|lotou|procura|escasso|seco|sem produto|preco sobe|preço sobe|gasolina cara|encareceu|disparou|esquent|prateleira magra|falta de|viraliz|fomo/;
   const downRe =
-    /mais barata|mais barato|caiu|desce|queda|barato|sobra|desconto|freia|morreu a procura|promo|esfria|recu(a|ou)|desceu|alivi|mais em conta|baixa(r|ou)? o preco|baixa(r|ou)? o preço|preco cai|preço cai|estoque sobra|estoque encalhad|encalhad|liquidac|liquida[cç][aã]o|excesso|desovar|lote barato|promocao|promoção|realizou|tomou lucro|ninguem quer|ninguém quer|estoque gigante|caminh[aã]o inteiro|parado num deposito|parado no deposito/;
+    /mais barata|mais barato|caiu|desce|queda|barato|sobra|desconto|freia|morreu a procura|promo|esfria|recu(a|ou)|desceu|alivi|mais em conta|baixa(r|ou)? o preco|baixa(r|ou)? o preço|preco cai|preço cai|estoque sobra|estoque encalhad|encalhad|liquidac|liquida[cç][aã]o|excesso|desovar|lote barato|promocao|promoção|realizou|tomou lucro|ninguem quer|ninguém quer|estoque gigante|caminh[aã]o inteiro|parado num deposito|parado no deposito|esfria|bolso vazio/;
 
   let up = 0;
   let down = 0;
@@ -339,6 +464,50 @@ export function inferNarrativeDirection(text) {
   if (up > down) return 'up';
   if (down > up) return 'down';
   return 'flat';
+}
+
+/**
+ * Cópia pública coerente com o ticker anunciado?
+ * (direção, setor e empresa citados no texto)
+ */
+export function isCopyCoherent({
+  title,
+  body,
+  direction,
+  category = null,
+  companyId = null,
+} = {}) {
+  const blob = `${title || ''}\n${body || ''}`;
+  if (!String(body || title || '').trim()) return false;
+  const nDir = inferNarrativeDirection(blob);
+  const nCat = inferNarrativeCategory(blob);
+  const nCo = inferNarrativeCompany(blob);
+  const dir =
+    direction === 'up' || direction === 'down' || direction === 'flat' ? direction : 'flat';
+  const cid = String(companyId || '');
+  const companyCats = cid ? categoriesForCompany(cid) : [];
+  const pureStock = Boolean(cid) && companyCats.length === 0;
+
+  if ((dir === 'up' && nDir === 'down') || (dir === 'down' && nDir === 'up')) return false;
+  if (dir === 'flat' && (nDir === 'up' || nDir === 'down')) return false;
+  if (category && nCat && nCat !== category) return false;
+  if (cid && nCo && nCo !== cid) return false;
+  // PatoCoin (só bolsa) não pode misturar itens de rua no corpo (peixeira, gasolina…)
+  if (pureStock && mentionsStreetGoods(blob)) return false;
+  // empresa de rua: se o texto ancora a empresa, o setor do texto deve ser dela
+  if (nCo && nCat) {
+    const coCats = categoriesForCompany(nCo);
+    if (coCats.length && !coCats.includes(nCat)) return false;
+  }
+  return true;
+}
+
+/** Itens de rua explícitos — não “munição” genérica do fallback sintético. */
+function mentionsStreetGoods(text) {
+  const t = normalizeNarrativeText(text);
+  return /peixeira|pistola|rifle|\bfaca\b|canivete|gasolina|gal[aã]o|litro|colete|cartucho|escapamento|\bmoto\b|\bcarro\b|posto da|blindad/.test(
+    t
+  );
 }
 
 /**
@@ -361,12 +530,18 @@ export function inferNarrativeCategory(text) {
     scores[cat] = (scores[cat] || 0) + n;
   };
 
-  if (/gasolina|combust|posto|bomba|gal[aã]o|litro|ze do gas|z[eé] do g[aá]s|caminh[aã]o.*(comb|gas)|tanque/.test(t)) {
+  // "bomba" de gasolina ≠ BombaTech; não usar "bomba" solto em combustível
+  if (/gasolina|combust|posto|gal[aã]o|litro|ze do gas|z[eé] do g[aá]s|caminh[aã]o.*(comb|gas)|tanque|bomba de gasolina|bomba do posto/.test(t)) {
     bump('combustivel', 3);
   }
-  if (/municao|muni[cç][aã]o|cartucho|carregador|tiro/.test(t)) bump('municao', 2);
-  if (/arma|pistola|rifle|faca|peixeira|canivete|a[cç]o de fogo/.test(t)) bump('arma', 2);
-  if (/moto|carro|veiculo|ve[ií]culo|escapamento|oficina|duas rodas|uno/.test(t)) {
+  if (/municao|muni[cç][aã]o|cartucho|carregador/.test(t)) bump('municao', 3);
+  // \barma\b evita "armadilha"; peixeira/pistola/etc. são âncoras fortes
+  if (
+    /\barma\b|pistola|rifle|\bfaca\b|peixeira|canivete|a[cç]ao de fogo|bombatech/.test(t)
+  ) {
+    bump('arma', 3);
+  }
+  if (/moto|carro|veiculo|ve[ií]culo|escapamento|oficina|duas rodas|uno motors|\buno\b/.test(t)) {
     bump('veiculo', 2);
   }
   if (/colete|defesa|blindad|satelite|sat[eé]lite|escudo|tatico|t[aá]tico/.test(t)) {
@@ -382,6 +557,38 @@ export function inferNarrativeCategory(text) {
     }
   }
   return bestScore >= 2 ? best : null;
+}
+
+/**
+ * Infere se o texto ancora uma empresa pelo nome (PatoCoin vs BombaTech…).
+ * @returns {string|null} company id
+ */
+export function inferNarrativeCompany(text) {
+  const t = normalizeNarrativeText(text);
+  if (!t.trim()) return null;
+  const scores = Object.create(null);
+  const bump = (id, n = 1) => {
+    scores[id] = (scores[id] || 0) + n;
+  };
+
+  if (/patocoin|pato coin|sticker de pato|\bpatos?\b.*coin|coin.*pato/.test(t)) {
+    bump('patocoin', 4);
+  }
+  if (/bombatech|bomba tech/.test(t)) bump('bombatech', 4);
+  if (/peixaria|jo[aã]o.*peixe/.test(t)) bump('peixaria', 3);
+  if (/uno motors|\buno\b.*motor|oficina.*uno/.test(t)) bump('uno_motors', 3);
+  if (/burgerzap|burger zap|lanche.*app/.test(t)) bump('burgerzap', 3);
+  if (/satelite br|sat[eé]lite br|satelite_br/.test(t)) bump('satelite_br', 3);
+
+  let best = null;
+  let bestScore = 0;
+  for (const [id, sc] of Object.entries(scores)) {
+    if (sc > bestScore) {
+      best = id;
+      bestScore = sc;
+    }
+  }
+  return bestScore >= 3 ? best : null;
 }
 
 const CATEGORY_LABEL = Object.freeze({
@@ -485,7 +692,34 @@ export function pickAlignedTemplate({
       : byCompany.length
         ? byCompany
         : pool;
-  const pick = prefer[Math.floor(random() * prefer.length)] || seeds[0];
+
+  // Só seeds cuja copy já é coerente com o ticker anunciado
+  const coherent = prefer.filter((s) =>
+    isCopyCoherent({
+      title: s.title,
+      body: s.body,
+      direction: dir,
+      category: category || s.category,
+      companyId: companyId || s.companyId,
+    })
+  );
+  const list = coherent.length ? coherent : [];
+  if (!list.length) {
+    const fb = buildDirectionFallbackCopy({
+      direction: dir,
+      category: category || prefer[0]?.category,
+      companyId: companyId || prefer[0]?.companyId,
+    });
+    return {
+      title: fb.title,
+      body: fb.body,
+      archetype: archetype || (dir === 'up' ? 'supply_shock' : dir === 'down' ? 'liquidity_flood' : 'soft_recovery'),
+      category: category || prefer[0]?.category || null,
+      companyId: companyId || prefer[0]?.companyId || null,
+      synthetic: true,
+    };
+  }
+  const pick = list[Math.floor(random() * list.length)];
   return {
     title: pick.title,
     body: pick.body,
@@ -519,31 +753,30 @@ export function alignEventCopy({
   const combined = `${title || ''}\n${body || ''}`;
   const narr = inferNarrativeDirection(combined);
   const textCat = inferNarrativeCategory(combined);
-  const empty = !String(body || '').trim();
+  const textCompany = inferNarrativeCompany(combined);
+  const focusCompany = String(companyId || '').toLowerCase();
 
-  const directionContradicts =
-    (dir === 'up' && narr === 'down') ||
-    (dir === 'down' && narr === 'up') ||
-    (dir === 'flat' && (narr === 'up' || narr === 'down'));
-
-  // gasolina na fofoca + colete no ticker = incoerente
-  const categoryContradicts =
-    Boolean(category) && Boolean(textCat) && textCat !== category;
-
-  // preço subiu/caiu de verdade mas o texto não tem tom de preço → forçar copy alinhada
-  const weakTone = (dir === 'up' || dir === 'down') && narr === 'flat' && !empty;
-
-  if (!empty && !directionContradicts && !categoryContradicts && !weakTone) {
+  // Um único portão: se já é coerente, não mexe
+  if (
+    isCopyCoherent({
+      title,
+      body,
+      direction: dir,
+      category,
+      companyId,
+    })
+  ) {
     return {
       title: String(title || 'Movimento de mercado').slice(0, 100),
       body: clampEventDescription(body),
       realigned: false,
       narrativeDirection: narr,
       narrativeCategory: textCat,
+      narrativeCompany: textCompany,
     };
   }
 
-  // Preferir fallback sintético da categoria real (evita seed de munição em defesa)
+  // Preferir template alinhado; se ainda incoerente, sintético da categoria real
   const seed = pickAlignedTemplate({
     direction: dir,
     archetype,
@@ -551,14 +784,31 @@ export function alignEventCopy({
     companyId,
     random,
   });
-  // Se o seed de template ainda é de outra categoria, força sintético
   let titleOut = seed.title;
   let bodyOut = seed.body;
-  if (category && seed.category && seed.category !== category && !seed.synthetic) {
+  if (
+    !isCopyCoherent({
+      title: titleOut,
+      body: bodyOut,
+      direction: dir,
+      category,
+      companyId,
+    })
+  ) {
     const fb = buildDirectionFallbackCopy({ direction: dir, category, companyId });
     titleOut = fb.title;
     bodyOut = fb.body;
   }
+
+  const directionContradicts =
+    (dir === 'up' && narr === 'down') ||
+    (dir === 'down' && narr === 'up') ||
+    (dir === 'flat' && (narr === 'up' || narr === 'down'));
+  const categoryContradicts =
+    Boolean(category) && Boolean(textCat) && textCat !== category;
+  const companyContradicts =
+    Boolean(focusCompany) && Boolean(textCompany) && textCompany !== focusCompany;
+  const weakTone = (dir === 'up' || dir === 'down') && narr === 'flat';
 
   return {
     title: String(titleOut || 'Movimento de mercado').slice(0, 100),
@@ -571,9 +821,12 @@ export function alignEventCopy({
       ? 'direction'
       : categoryContradicts
         ? 'category'
-        : weakTone
-          ? 'weak-tone'
-          : 'empty',
+        : companyContradicts
+          ? 'company'
+          : weakTone
+            ? 'weak-tone'
+            : 'empty',
+    narrativeCompany: focusCompany || textCompany,
   };
 }
 
