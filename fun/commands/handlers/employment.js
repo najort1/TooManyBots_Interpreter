@@ -94,7 +94,10 @@ export async function handleEmploymentCommand({
       '',
       `Código: *${result.code}*`,
       `Expira em *15 min*.`,
-      result.fee > 0 ? `Taxa: *${result.fee}*c` : '_1ª tentativa grátis_',
+      result.fee > 0 ? `Taxa: *${result.fee}*c` : '_1ª candidatura grátis (sem taxa)_',
+      '',
+      '📱 Na página: leia as instruções com calma.',
+      '_1 treino grátis (não conta CD/taxa) · depois o teste real._',
       '',
       '_Resultado só na página do teste — o grupo não recebe pass/fail._',
     ].join('\n')

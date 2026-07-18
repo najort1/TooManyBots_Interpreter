@@ -199,6 +199,90 @@ test('falha no teste: CD 7 dias + taxa na retentativa', () => {
   assert.equal(other.fee, 0);
 });
 
+test('treino grátis: 1× por attempt no banco (F5 não libera outro)', () => {
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const jobRepo = createFunJobRepository({ getDatabase: getDb });
+  const jobs = createJobService({ repository: repo, jobRepository: jobRepo });
+  const scope = uniqueGroup();
+  const u = uniqueJid('5588');
+  repo.addCoins({ userJid: u, scopeKey: scope, amount: 100, reason: 'seed' });
+  const cfg = resolveFunConfig({
+    publicBaseUrl: 'https://test.local',
+    jobTokenSecret: 'unit-test-practice',
+  });
+
+  const app = jobs.startApplication({
+    userJid: u,
+    scopeKey: scope,
+    jobId: 'bombeiro',
+    funConfig: cfg,
+  });
+  assert.equal(app.ok, true);
+
+  const open = jobs.openAttempt({ token: app.token, code: app.code, funConfig: cfg });
+  assert.equal(open.ok, true);
+  assert.equal(open.practiceAvailable, true);
+  assert.equal(open.practiceUsed, false);
+
+  const claim = jobs.claimPractice({
+    attemptId: app.attempt.id,
+    token: app.token,
+    funConfig: cfg,
+  });
+  assert.equal(claim.ok, true);
+  assert.equal(claim.practiceUsed, true);
+
+  // segundo claim (simula F5 + treino de novo) bloqueia
+  const again = jobs.claimPractice({
+    attemptId: app.attempt.id,
+    token: app.token,
+    funConfig: cfg,
+  });
+  assert.equal(again.ok, false);
+  assert.equal(again.reason, 'practice-used');
+
+  const open2 = jobs.openAttempt({ token: app.token, code: app.code, funConfig: cfg });
+  assert.equal(open2.ok, true);
+  assert.equal(open2.practiceAvailable, false);
+  assert.equal(open2.practiceUsed, true);
+
+  const prac = jobs.finishPractice({
+    attemptId: app.attempt.id,
+    token: app.token,
+    score: 7,
+    metrics: { lostHouses: 1 },
+    funConfig: cfg,
+  });
+  assert.equal(prac.ok, true);
+  assert.equal(prac.practice, true);
+  assert.equal(prac.score, 7);
+
+  // treino não aplica CD nem contrata
+  assert.equal(jobs.getEmployment(u, scope), null);
+  const stillOpen = jobs.startApplication({
+    userJid: u,
+    scopeKey: scope,
+    jobId: 'hacker',
+    funConfig: cfg,
+  });
+  // ainda sem emprego; pode candidatar a outro cargo (não bloqueado por CD do bombeiro)
+  assert.equal(stillOpen.ok, true);
+
+  // teste real ainda funciona no mesmo attempt do bombeiro
+  const real = jobs.finishAttempt({
+    attemptId: app.attempt.id,
+    token: app.token,
+    score: 20,
+    durationMs: 25_000,
+    metrics: { lostHouses: 0 },
+    funConfig: cfg,
+  });
+  assert.equal(real.ok, true);
+  assert.equal(real.passed, true);
+  assert.equal(jobs.getEmployment(u, scope)?.jobId, 'bombeiro');
+});
+
 test('validateGameResult rejeita score impossível', () => {
   const repo = createFunStatsRepository({ getDatabase: getDb });
   repo.ensureFunSchema();

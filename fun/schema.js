@@ -418,6 +418,9 @@ export function buildFunSchemaSql() {
       token_nonce     TEXT    NOT NULL DEFAULT '',
       score           INTEGER NOT NULL DEFAULT 0,
       metrics_json    TEXT    NOT NULL DEFAULT '{}',
+      practice_used   INTEGER NOT NULL DEFAULT 0,
+      practice_score  INTEGER NOT NULL DEFAULT 0,
+      practice_at     INTEGER NOT NULL DEFAULT 0,
       created_at      INTEGER NOT NULL,
       started_at      INTEGER NOT NULL DEFAULT 0,
       finished_at     INTEGER NOT NULL DEFAULT 0,
@@ -772,6 +775,29 @@ export function ensureFunSchema(db) {
       CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_stock_hist
         ON fun_stock_price_history(scope_key, company_id, created_at DESC);
     `);
+  } catch {
+    // ignore
+  }
+
+  // Treino grátis do teste de emprego (1× por attempt — controlado no banco)
+  try {
+    const attCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_job_attempts)`).all();
+    const attNames = new Set(attCols.map((c) => String(c.name || '')));
+    if (attNames.size && !attNames.has('practice_used')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_job_attempts ADD COLUMN practice_used INTEGER NOT NULL DEFAULT 0`
+      );
+    }
+    if (attNames.size && !attNames.has('practice_score')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_job_attempts ADD COLUMN practice_score INTEGER NOT NULL DEFAULT 0`
+      );
+    }
+    if (attNames.size && !attNames.has('practice_at')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_job_attempts ADD COLUMN practice_at INTEGER NOT NULL DEFAULT 0`
+      );
+    }
   } catch {
     // ignore
   }

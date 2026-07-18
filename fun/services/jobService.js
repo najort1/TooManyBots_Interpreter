@@ -226,6 +226,123 @@ export function createJobService({
       job,
       game: job?.game,
       gameConfig: job?.gameConfig,
+      practiceAvailable: !attempt.practiceUsed,
+      practiceUsed: Boolean(attempt.practiceUsed),
+      practiceScore: Number(attempt.practiceScore) || 0,
+    };
+  }
+
+  /**
+   * Resolve attempt a partir de id e/ou token (mesma regra do finish).
+   */
+  function resolveAttempt({ attemptId, token, funConfig = {}, now = Date.now() }) {
+    let attempt = attemptId ? jobRepository.getAttempt(attemptId) : null;
+    if (!attempt && token) {
+      const v = verifyJobToken(token, secretOf(funConfig), now);
+      if (!v.ok) return { ok: false, reason: v.reason || 'bad-token' };
+      attempt = jobRepository.getAttempt(v.payload.aid);
+    }
+    if (!attempt) return { ok: false, reason: 'unknown-attempt' };
+    if (attempt.status === 'passed' || attempt.status === 'failed') {
+      return { ok: false, reason: 'already-finished', attempt };
+    }
+    if (attempt.expiresAt > 0 && now > attempt.expiresAt && attempt.status === 'pending') {
+      jobRepository.finishAttempt({
+        id: attempt.id,
+        status: 'expired',
+        now,
+      });
+      return { ok: false, reason: 'expired' };
+    }
+    if (!['pending', 'in_progress'].includes(attempt.status)) {
+      return { ok: false, reason: 'bad-status', attempt };
+    }
+    return { ok: true, attempt };
+  }
+
+  /**
+   * Reserva o treino grátis no banco (1× por attempt).
+   * F5 / reabrir página não libera outro treino.
+   */
+  function claimPractice({
+    attemptId,
+    token,
+    funConfig = {},
+    now = Date.now(),
+  }) {
+    const resolved = resolveAttempt({ attemptId, token, funConfig, now });
+    if (!resolved.ok) return resolved;
+
+    if (resolved.attempt.practiceUsed) {
+      return {
+        ok: false,
+        reason: 'practice-used',
+        attempt: resolved.attempt,
+        practiceAvailable: false,
+        practiceUsed: true,
+        practiceScore: Number(resolved.attempt.practiceScore) || 0,
+      };
+    }
+
+    const claimed = jobRepository.claimPractice({ id: resolved.attempt.id, now });
+    if (!claimed.claimed) {
+      // race: outro request já reservou
+      return {
+        ok: false,
+        reason: 'practice-used',
+        attempt: claimed.attempt,
+        practiceAvailable: false,
+        practiceUsed: true,
+        practiceScore: Number(claimed.attempt?.practiceScore) || 0,
+      };
+    }
+
+    return {
+      ok: true,
+      attempt: claimed.attempt,
+      practiceAvailable: false,
+      practiceUsed: true,
+      job: getJob(claimed.attempt?.jobId),
+    };
+  }
+
+  /**
+   * Grava pontuação do treino (não afeta CD, taxa nem contratação).
+   * Exige practice_used já reservado via claimPractice.
+   */
+  function finishPractice({
+    attemptId,
+    token,
+    score,
+    metrics = {},
+    funConfig = {},
+    now = Date.now(),
+  }) {
+    const resolved = resolveAttempt({ attemptId, token, funConfig, now });
+    if (!resolved.ok) return resolved;
+
+    if (!resolved.attempt.practiceUsed) {
+      // reserva + grava em um passo (cliente antigo / claim falhou e jogou mesmo assim)
+      const claimed = jobRepository.claimPractice({ id: resolved.attempt.id, now });
+      if (!claimed.claimed && !claimed.attempt?.practiceUsed) {
+        return { ok: false, reason: 'practice-unavailable', attempt: claimed.attempt };
+      }
+    }
+
+    const updated = jobRepository.recordPracticeScore({
+      id: resolved.attempt.id,
+      score: Math.floor(Number(score) || 0),
+      metrics: metrics && typeof metrics === 'object' ? metrics : {},
+    });
+
+    return {
+      ok: true,
+      practice: true,
+      practiceUsed: true,
+      practiceAvailable: false,
+      score: Math.floor(Number(score) || 0),
+      attempt: updated,
+      job: getJob(updated?.jobId || resolved.attempt.jobId),
     };
   }
 
@@ -458,7 +575,9 @@ export function createJobService({
       );
     }
     lines.push('Candidatar: `/emprego bombeiro` · `/emprego estagiario` · `/emprego hacker`');
-    lines.push('_1ª tentativa grátis · retentativa com taxa + CD 7 dias por cargo_');
+    lines.push(
+      '_1ª candidatura sem taxa · na página: 1 treino grátis (não conta) · falha no teste real = CD 7 dias + taxa na retentativa_'
+    );
     return lines.join('\n');
   }
 
@@ -467,6 +586,8 @@ export function createJobService({
     getEmployment,
     startApplication,
     openAttempt,
+    claimPractice,
+    finishPractice,
     finishAttempt,
     validateGameResult,
     resign,

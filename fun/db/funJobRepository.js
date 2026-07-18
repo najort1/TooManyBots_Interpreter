@@ -34,6 +34,9 @@ function mapAttempt(row) {
     tokenNonce: String(row.token_nonce || ''),
     score: Number(row.score) || 0,
     metrics,
+    practiceUsed: Number(row.practice_used) === 1 || Number(row.practice_used) > 0,
+    practiceScore: Number(row.practice_score) || 0,
+    practiceAt: Number(row.practice_at) || 0,
     createdAt: Number(row.created_at) || 0,
     startedAt: Number(row.started_at) || 0,
     finishedAt: Number(row.finished_at) || 0,
@@ -258,6 +261,55 @@ export function createFunJobRepository({ getDatabase = getDb } = {}) {
     return Number(row?.c) || 0;
   }
 
+  /**
+   * Reserva o treino grátis (1× por attempt). Atômico: só grava se practice_used = 0.
+   * @returns {{ claimed: boolean, attempt: ReturnType<typeof mapAttempt> | null }}
+   */
+  function claimPractice({ id, now = Date.now() }) {
+    ensureSchema();
+    const ts = Number(now) || Date.now();
+    const result = getDatabase()
+      .prepare(
+        `UPDATE ${ANALYTICS_SCHEMA}.fun_job_attempts
+         SET practice_used = 1, practice_at = ?
+         WHERE id = ?
+           AND status IN ('pending', 'in_progress')
+           AND COALESCE(practice_used, 0) = 0`
+      )
+      .run(ts, String(id));
+    const attempt = getAttempt(id);
+    return {
+      claimed: Number(result.changes) > 0,
+      attempt,
+    };
+  }
+
+  function recordPracticeScore({ id, score = 0, metrics = {} }) {
+    ensureSchema();
+    const current = getAttempt(id);
+    if (!current) return null;
+    const merged = {
+      ...(current.metrics || {}),
+      practice: {
+        score: Math.floor(Number(score) || 0),
+        ...(metrics && typeof metrics === 'object' ? metrics : {}),
+      },
+    };
+    getDatabase()
+      .prepare(
+        `UPDATE ${ANALYTICS_SCHEMA}.fun_job_attempts
+         SET practice_score = ?, metrics_json = ?
+         WHERE id = ? AND COALESCE(practice_used, 0) = 1
+           AND status IN ('pending', 'in_progress')`
+      )
+      .run(
+        Math.floor(Number(score) || 0),
+        JSON.stringify(merged),
+        String(id)
+      );
+    return getAttempt(id);
+  }
+
   return {
     getUserJob,
     setUserJob,
@@ -273,5 +325,7 @@ export function createFunJobRepository({ getDatabase = getDb } = {}) {
     markAttemptStarted,
     finishAttempt,
     countPriorAttempts,
+    claimPractice,
+    recordPracticeScore,
   };
 }
