@@ -456,6 +456,8 @@ export async function handleAssaultCommand({
   listContacts,
   reply,
   flavorService,
+  achievementService = null,
+  newsService = null,
   args = [],
   mentionedJids = [],
   quotedParticipant = '',
@@ -595,6 +597,10 @@ export async function handleAssaultCommand({
         ]
       : [
           `Tirou *${result.stolen}* coins de *${pvpName}*`,
+          result.stolenBuffer > 0
+            ? `· Caixa do negócio (*${result.propertyName || 'propriedade'}*): *${result.stolenBuffer}*c${result.propertyDamage ? ` · dano ${result.propertyDamage}` : ''}`
+            : null,
+          result.stolenWallet > 0 ? `· Bolso: *${result.stolenWallet}*c` : null,
           `Chance ~*${chancePct}%* · ${result.weapon?.emoji || ''} ${result.weapon?.name}`,
           result.usedGas ? 'Fuga com combustível ajudou.' : null,
           `Seu saldo: *${result.coins}* · alvo: *${result.targetCoins}*`,
@@ -606,6 +612,35 @@ export async function handleAssaultCommand({
       .filter((l) => l != null && l !== false)
       .join('\n')
   );
+
+  // hooks: conquistas + jornal
+  try {
+    if (result.success) {
+      achievementService?.check?.(userJid, scopeKey, 'assault_win', {}, funConfig);
+      newsService?.log?.(scopeKey, 'assault_win', {
+        userJid,
+        payload: {
+          amount: result.stolen,
+          buffer: result.stolenBuffer || 0,
+          target: pvpName,
+        },
+      });
+      if (result.stolenBuffer > 0) {
+        newsService?.log?.(scopeKey, 'property_rob', {
+          userJid,
+          payload: {
+            amount: result.stolenBuffer,
+            name: result.propertyName,
+          },
+        });
+      }
+    } else {
+      achievementService?.check?.(userJid, scopeKey, 'assault_fail', {}, funConfig);
+    }
+  } catch {
+    /* ignore hooks */
+  }
+
   return { handled: true, result };
 }
 

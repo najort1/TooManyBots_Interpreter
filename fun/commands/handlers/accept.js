@@ -21,6 +21,8 @@ export async function handleAcceptCommand({
   socialHooks,
   funConfig,
   flavorService,
+  achievementService = null,
+  newsService = null,
 }) {
   const pending = gameService.peekIncoming(userJid, scopeKey);
   if (!pending) {
@@ -53,6 +55,17 @@ export async function handleAcceptCommand({
     await reply(
       [`💍 *Casamento confirmado!*`, `*${a}* ❤️ *${b}*`, fl].filter(Boolean).join('\n')
     );
+    try {
+      for (const jid of [result.fromJid, result.toJid]) {
+        achievementService?.check?.(jid, scopeKey, 'marry', {}, funConfig);
+      }
+      newsService?.log?.(scopeKey, 'marry', {
+        userJid: result.fromJid,
+        payload: { a, b },
+      });
+    } catch {
+      /* ignore */
+    }
     return { handled: true, result };
   }
 

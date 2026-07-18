@@ -318,6 +318,8 @@ export async function handleCashoutCommand({
   funConfig,
   reply,
   flavorService,
+  achievementService = null,
+  newsService = null,
 }) {
   const result = casinoService.cashoutCrash({ userJid, scopeKey, funConfig });
   if (!result.ok) {
@@ -340,6 +342,21 @@ export async function handleCashoutCommand({
         .filter(Boolean)
         .join('\n')
     );
+    try {
+      const unlocked =
+        achievementService?.check?.(userJid, scopeKey, 'crash_loss', {}, funConfig) || [];
+      if ((result.stake || 0) >= 40) {
+        newsService?.log?.(scopeKey, 'crash_loss', {
+          userJid,
+          payload: { amount: result.stake },
+        });
+      }
+      if (unlocked.length) {
+        await reply(unlocked.map((u) => `🏆 *${u.icon} ${u.name}*`).join('\n'));
+      }
+    } catch {
+      /* ignore */
+    }
   } else {
     await reply(
       [
@@ -353,6 +370,21 @@ export async function handleCashoutCommand({
         .filter(Boolean)
         .join('\n')
     );
+    try {
+      const unlocked =
+        achievementService?.check?.(
+          userJid,
+          scopeKey,
+          'crash_win',
+          { mult: Number(result.currentMult) || 0 },
+          funConfig
+        ) || [];
+      if (unlocked.length) {
+        await reply(unlocked.map((u) => `🏆 *${u.icon} ${u.name}*`).join('\n'));
+      }
+    } catch {
+      /* ignore */
+    }
   }
   return { handled: true, result };
 }

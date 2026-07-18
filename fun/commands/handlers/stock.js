@@ -46,6 +46,7 @@ export async function handleBolsaCommand({
   reply,
   replyImage,
   args = [],
+  achievementService = null,
 }) {
   if (!stockService) {
     await reply('Bolsa indisponível.');
@@ -93,6 +94,17 @@ export async function handleBolsaCommand({
       funConfig,
     });
     await reply(stockService.formatTradeResult(result));
+    if (result?.ok) {
+      try {
+        const unlocked =
+          achievementService?.check?.(userJid, scopeKey, 'stock_buy', {}, funConfig) || [];
+        if (unlocked.length) {
+          await reply(unlocked.map((u) => `🏆 *${u.icon} ${u.name}*`).join('\n'));
+        }
+      } catch {
+        /* ignore */
+      }
+    }
     return { handled: true };
   }
 

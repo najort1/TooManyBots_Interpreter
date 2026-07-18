@@ -109,6 +109,8 @@ export async function handleDivorceCommand({
   getContactDisplayName,
   funConfig,
   reply,
+  achievementService = null,
+  newsService = null,
 }) {
   const cost = Math.max(0, Math.floor(Number(funConfig?.divorceCost) || 40));
   if (cost > 0 && repository) {
@@ -146,5 +148,18 @@ export async function handleDivorceCommand({
       .filter(Boolean)
       .join('\n')
   );
+  try {
+    const unlocked =
+      achievementService?.check?.(userJid, scopeKey, 'divorce', {}, funConfig) || [];
+    newsService?.log?.(scopeKey, 'divorce', {
+      userJid,
+      payload: { partner: partner },
+    });
+    if (unlocked.length) {
+      await reply(unlocked.map((u) => `🏆 *${u.icon} ${u.name}*`).join('\n'));
+    }
+  } catch {
+    /* ignore */
+  }
   return { handled: true, result };
 }
