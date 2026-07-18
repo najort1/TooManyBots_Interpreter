@@ -22,6 +22,7 @@ import {
   parseInventJson,
   classifyFreeTextToArchetype,
   inferNarrativeDirection,
+  inferNarrativeCategory,
   alignEventCopy,
   pickAlignedTemplate,
   pickDeceptionMode,
@@ -387,7 +388,22 @@ test('economia: inferNarrativeDirection detecta alta vs queda', () => {
     inferNarrativeDirection('Preço recua, estoque sobra, munição mais barata'),
     'down'
   );
+  assert.equal(
+    inferNarrativeDirection(
+      'Zé do gás viu estoque encalhado. Liquidação de combustíveis, excesso no depósito.'
+    ),
+    'down'
+  );
   assert.equal(inferNarrativeDirection('Semana morna, preço anda de lado'), 'flat');
+});
+
+test('economia: inferNarrativeCategory detecta setor da fofoca', () => {
+  assert.equal(
+    inferNarrativeCategory('caminhão de combustível e gasolina no depósito'),
+    'combustivel'
+  );
+  assert.equal(inferNarrativeCategory('colete tático e defesa do satélite'), 'defesa');
+  assert.equal(inferNarrativeCategory('só fofoca sem setor claro'), null);
 });
 
 test('economia: alignEventCopy corrige "subiu" quando preço caiu', () => {
@@ -425,6 +441,29 @@ test('economia: alignEventCopy corrige "subiu" quando preço caiu', () => {
   });
   assert.ok(tpl.synthetic || tpl.category === 'combustivel');
   assert.equal(inferNarrativeDirection(`${tpl.title}\n${tpl.body}`), 'down');
+});
+
+test('economia: alignEventCopy corrige gasolina na fofoca com ticker de defesa', () => {
+  const fixed = alignEventCopy({
+    title: 'Zé do gás viu estoque encalhado na esquina!',
+    body: [
+      'Um caminhão inteiro de combustível ficou parado num depósito.',
+      'Liquidação relâmpago de combustíveis, excesso vira oportunidade.',
+      'Especulação pesada por aqui.',
+    ].join('\n'),
+    direction: 'up',
+    category: 'defesa',
+    companyId: 'satelite_br',
+    archetype: 'supply_shock',
+    random: () => 0.1,
+  });
+  assert.equal(fixed.realigned, true);
+  // pode cair em direction e/ou category — ambos são incoerências da fofoca
+  assert.ok(['category', 'direction', 'weak-tone'].includes(fixed.reason));
+  const blob = `${fixed.title}\n${fixed.body}`;
+  assert.notEqual(inferNarrativeCategory(blob), 'combustivel');
+  assert.match(blob, /defesa|colete|Satélite|satelite|satélite/i);
+  assert.notEqual(inferNarrativeDirection(blob), 'down');
 });
 
 test('economia: resolveEventProposal descarta copy se bias troca por overheat', () => {
