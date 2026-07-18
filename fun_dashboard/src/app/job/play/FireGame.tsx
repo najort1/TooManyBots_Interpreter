@@ -75,13 +75,12 @@ export function FireGame({ config, onDone }: Props) {
   const [banner, setBanner] = useState("Toque nas chamas · fogo forte pede + toques");
   const [shake, setShake] = useState(false);
   const [flashRed, setFlashRed] = useState(false);
-  const [intro, setIntro] = useState(true);
 
   const done = useRef(false);
   const scoreRef = useRef(0);
   const lostRef = useRef(0);
   const comboRef = useRef(0);
-  const t0 = useRef(0);
+  const t0 = useRef(Date.now());
   const tickCount = useRef(0);
   const onDoneRef = useRef(onDone);
   onDoneRef.current = onDone;
@@ -93,15 +92,7 @@ export function FireGame({ config, onDone }: Props) {
   }, []);
 
   useEffect(() => {
-    const t = setTimeout(() => {
-      setIntro(false);
-      t0.current = Date.now();
-    }, 1300);
-    return () => clearTimeout(t);
-  }, []);
-
-  useEffect(() => {
-    if (intro) return;
+    t0.current = Date.now();
 
     const timerIv = setInterval(() => {
       if (done.current) return;
@@ -121,11 +112,11 @@ export function FireGame({ config, onDone }: Props) {
       const progressPhase =
         scoreRef.current < target * 0.37 ? 0 : scoreRef.current < target * 0.72 ? 1 : 2;
       const phase = Math.max(timePhase, progressPhase);
-      // +0.2 em relação ao último ajuste
-      const spawnChance = [0.42, 0.56, 0.69][phase];
+      // −0.1 vs. último ajuste (spawn / pressão)
+      const spawnChance = [0.32, 0.46, 0.59][phase];
       const maxSpawn = [1, 2, 2][phase];
       const heatStart = [1, 1, 2][phase];
-      const spreadChance = [0.08, 0.15, 0.24][phase];
+      const spreadChance = [0.03, 0.08, 0.14][phase];
       const heatEvery = phase === 0 ? 2 : 1;
 
       setCells((prev) => {
@@ -142,8 +133,8 @@ export function FireGame({ config, onDone }: Props) {
               key: next[i].key + 1,
             };
           }
-          // no máximo: chance de virar cinza (tempo de reagir, mas aperta)
-          if (next[i].heat >= MAX_HEAT && Math.random() < 0.17) {
+          // no máximo: chance de virar cinza (−0.1 vs. 0.17)
+          if (next[i].heat >= MAX_HEAT && Math.random() < 0.07) {
             next[i] = { heat: -1, splash: 0, key: next[i].key + 1 };
             lostRef.current += 1;
             setLost(lostRef.current);
@@ -183,7 +174,7 @@ export function FireGame({ config, onDone }: Props) {
           const idx = Math.floor(Math.random() * empty.length);
           const i = empty.splice(idx, 1)[0];
           next[i] = {
-            heat: heatStart + (phase >= 2 && Math.random() < 0.25 ? 1 : 0),
+            heat: heatStart + (phase >= 2 && Math.random() < 0.15 ? 1 : 0),
             splash: 0,
             key: next[i].key + 1,
           };
@@ -213,10 +204,10 @@ export function FireGame({ config, onDone }: Props) {
       clearInterval(timerIv);
       clearInterval(gameIv);
     };
-  }, [intro, durationMs, maxLost, finish]);
+  }, [durationMs, maxLost, finish]);
 
   const extinguish = (i: number) => {
-    if (done.current || intro) return;
+    if (done.current) return;
     setCells((prev) => {
       const cell = prev[i];
       if (!cell || cell.heat <= 0) {
@@ -260,110 +251,95 @@ export function FireGame({ config, onDone }: Props) {
       <div className="pointer-events-none absolute inset-0 fire-sky" aria-hidden />
 
       <div className="relative z-10 space-y-3">
-        {intro ? (
-          <div className="flex min-h-[360px] flex-col items-center justify-center text-center">
-            <p className="animate-bounce text-5xl">🚒</p>
-            <h2 className="mt-3 text-xl font-semibold text-zinc-50">Chamado de emergência</h2>
-            <p className="mt-2 max-w-xs text-sm text-zinc-400">
-              Apague <strong className="text-orange-300">{target}</strong> focos em{" "}
-              <strong className="text-zinc-200">{Math.ceil(durationMs / 1000)}s</strong>.
-              Cada toque baixa 1 de calor — fogo alto precisa de vários jatos. Máx.{" "}
-              {maxLost} casas perdidas.
-            </p>
+        <div className="rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-3 backdrop-blur-sm">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Focos apagados
+              </p>
+              <p className="text-2xl font-semibold tabular-nums text-zinc-50">
+                {score}
+                <span className="text-base font-normal text-zinc-500">/{target}</span>
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+                Tempo
+              </p>
+              <p
+                className={`font-mono text-2xl font-semibold tabular-nums ${
+                  urgent ? "animate-pulse text-red-400" : "text-zinc-50"
+                }`}
+              >
+                {left}s
+              </p>
+            </div>
           </div>
-        ) : (
-          <>
-            <div className="rounded-xl border border-zinc-700/80 bg-zinc-900/80 p-3 backdrop-blur-sm">
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                    Focos apagados
-                  </p>
-                  <p className="text-2xl font-semibold tabular-nums text-zinc-50">
-                    {score}
-                    <span className="text-base font-normal text-zinc-500">/{target}</span>
-                  </p>
-                </div>
-                <div className="text-right">
-                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-                    Tempo
-                  </p>
-                  <p
-                    className={`font-mono text-2xl font-semibold tabular-nums ${
-                      urgent ? "animate-pulse text-red-400" : "text-zinc-50"
-                    }`}
-                  >
-                    {left}s
-                  </p>
-                </div>
-              </div>
 
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-zinc-800">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-all duration-200"
-                  style={{ width: `${progress * 100}%` }}
-                />
-              </div>
-              <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-zinc-800">
-                <div
-                  className={`h-full rounded-full transition-all duration-100 ${
-                    urgent ? "bg-red-500" : "bg-sky-500/80"
-                  }`}
-                  style={{ width: `${timePct * 100}%` }}
-                />
-              </div>
-
-              <div className="mt-2 flex items-center justify-between text-xs text-zinc-400">
-                <span>
-                  Perdidas{" "}
-                  <strong className={lost > 0 ? "text-red-400" : "text-zinc-300"}>
-                    {lost}/{maxLost}
-                  </strong>
-                </span>
-                <span>
-                  {combo >= 2 ? (
-                    <span className="font-semibold text-sky-300">Combo ×{combo}</span>
-                  ) : (
-                    <span className="text-zinc-600">toque nas chamas</span>
-                  )}
-                </span>
-              </div>
-            </div>
-
-            <p className="min-h-[1.25rem] text-center text-sm text-orange-200/90">{banner}</p>
-
+          <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-zinc-800">
             <div
-              className="grid gap-2"
-              style={{ gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))` }}
-            >
-              {cells.map((cell, i) => (
-                <button
-                  key={`${i}-${cell.key}`}
-                  type="button"
-                  onClick={() => extinguish(i)}
-                  disabled={cell.heat < 0}
-                  className={`fire-cell relative flex min-h-[72px] flex-col items-center justify-center rounded-xl border-2 text-3xl transition-transform active:scale-90 ${heatClass(
-                    cell.heat
-                  )} ${cell.splash > 0 ? "fire-splash" : ""}`}
-                >
-                  <span className="relative z-10 drop-shadow-sm">{heatLabel(cell.heat)}</span>
-                  {cell.heat > 0 && (
-                    <span className="absolute bottom-1 right-1.5 z-10 rounded bg-black/40 px-1 font-mono text-[10px] text-orange-100">
-                      {cell.heat}
-                    </span>
-                  )}
-                  {cell.splash > 0 && (
-                    <span className="fire-water-drops pointer-events-none absolute inset-0" />
-                  )}
-                </button>
-              ))}
-            </div>
+              className="h-full rounded-full bg-emerald-500 transition-all duration-200"
+              style={{ width: `${progress * 100}%` }}
+            />
+          </div>
+          <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-zinc-800">
+            <div
+              className={`h-full rounded-full transition-all duration-100 ${
+                urgent ? "bg-red-500" : "bg-sky-500/80"
+              }`}
+              style={{ width: `${timePct * 100}%` }}
+            />
+          </div>
 
-            <p className="text-center text-[11px] leading-relaxed text-zinc-500">
-              🕯️ 1 jato · 🔥 2–3 · 💥 4 jatos · fogo forte espalha pro vizinho
-            </p>
-          </>
-        )}
+          <div className="mt-2 flex items-center justify-between text-xs text-zinc-400">
+            <span>
+              Perdidas{" "}
+              <strong className={lost > 0 ? "text-red-400" : "text-zinc-300"}>
+                {lost}/{maxLost}
+              </strong>
+            </span>
+            <span>
+              {combo >= 2 ? (
+                <span className="font-semibold text-sky-300">Combo ×{combo}</span>
+              ) : (
+                <span className="text-zinc-600">toque nas chamas</span>
+              )}
+            </span>
+          </div>
+        </div>
+
+        <p className="min-h-[1.25rem] text-center text-sm text-orange-200/90">{banner}</p>
+
+        <div
+          className="grid gap-2"
+          style={{ gridTemplateColumns: `repeat(${COLS}, minmax(0, 1fr))` }}
+        >
+          {cells.map((cell, i) => (
+            <button
+              key={`${i}-${cell.key}`}
+              type="button"
+              onClick={() => extinguish(i)}
+              disabled={cell.heat < 0}
+              className={`fire-cell relative flex min-h-[72px] flex-col items-center justify-center rounded-xl border-2 text-3xl transition-transform active:scale-90 ${heatClass(
+                cell.heat
+              )} ${cell.splash > 0 ? "fire-splash" : ""}`}
+            >
+              <span className="relative z-10 drop-shadow-sm">{heatLabel(cell.heat)}</span>
+              {cell.heat > 0 && (
+                <span className="absolute bottom-1 right-1.5 z-10 rounded bg-black/40 px-1 font-mono text-[10px] text-orange-100">
+                  {cell.heat}
+                </span>
+              )}
+              {cell.splash > 0 && (
+                <span className="fire-water-drops pointer-events-none absolute inset-0" />
+              )}
+            </button>
+          ))}
+        </div>
+
+        <p className="text-center text-[11px] leading-relaxed text-zinc-500">
+          🕯️ 1 jato · 🔥 2–3 · 💥 4 jatos · fogo forte espalha pro vizinho
+        </p>
       </div>
     </div>
   );
