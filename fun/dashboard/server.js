@@ -127,10 +127,21 @@ export function startFunDashboardServer(deps = {}) {
       }
 
       if (req.method === 'GET' && path === '/api/fun/health') {
+        let llm = null;
+        try {
+          const { getLlmMetrics, inventTemplateAlert } = await import('../llm/llmMetrics.js');
+          llm = {
+            ...getLlmMetrics(),
+            inventAlert: inventTemplateAlert(0.4, 5),
+          };
+        } catch {
+          llm = null;
+        }
         sendJson(res, 200, {
           ok: true,
           service: 'fun-dashboard-api',
           ts: Date.now(),
+          llm,
         });
         return;
       }
@@ -549,6 +560,73 @@ export function startFunDashboardServer(deps = {}) {
           gameConfig: opened.gameConfig,
           status: opened.attempt.status,
           expiresAt: opened.attempt.expiresAt,
+          practiceAvailable: opened.practiceAvailable !== false,
+          practiceUsed: Boolean(opened.practiceUsed),
+          practiceScore: Number(opened.practiceScore) || 0,
+        });
+        return;
+      }
+
+      // Reserva treino grátis (1× por attempt — banco, não localStorage)
+      if (req.method === 'POST' && path === '/api/fun/job/practice/claim') {
+        if (!jobService) {
+          sendJson(res, 503, { error: 'job-service-unavailable' });
+          return;
+        }
+        const body = await readBody(req);
+        const cfg = getConfig();
+        const claimed = jobService.claimPractice({
+          attemptId: body.attemptId || '',
+          token: body.token || '',
+          funConfig: cfg,
+        });
+        if (!claimed.ok) {
+          sendJson(res, 400, {
+            ok: false,
+            reason: claimed.reason,
+            practiceAvailable: false,
+            practiceUsed: true,
+            practiceScore: Number(claimed.practiceScore) || 0,
+          });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          practiceAvailable: false,
+          practiceUsed: true,
+          attemptId: claimed.attempt?.id,
+        });
+        return;
+      }
+
+      // Pontuação do treino (não contrata, não aplica CD)
+      if (req.method === 'POST' && path === '/api/fun/job/practice/finish') {
+        if (!jobService) {
+          sendJson(res, 503, { error: 'job-service-unavailable' });
+          return;
+        }
+        const body = await readBody(req);
+        const cfg = getConfig();
+        const finished = jobService.finishPractice({
+          attemptId: body.attemptId || '',
+          token: body.token || '',
+          score: body.score,
+          metrics: body.metrics || {},
+          funConfig: cfg,
+        });
+        if (!finished.ok) {
+          sendJson(res, 400, { ok: false, reason: finished.reason });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          practice: true,
+          practiceUsed: true,
+          practiceAvailable: false,
+          score: finished.score,
+          jobId: finished.job?.id,
+          jobName: finished.job?.name,
+          emoji: finished.job?.emoji,
         });
         return;
       }
