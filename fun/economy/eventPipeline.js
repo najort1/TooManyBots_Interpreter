@@ -34,27 +34,14 @@ export function clampEventDescription(raw) {
   return lines.join('\n').slice(0, EVENT_DESC_MAX);
 }
 
-/** Prompt: IA NÃO manda impactPct. */
-export const EVENT_INVENT_SYSTEM = `Você gera EVENTOS de mercado de rua (WhatsApp BR) para um jogo.
-
-JSON único sem markdown:
-{"archetype":"...","category":"combustivel|municao|arma|veiculo|defesa","companyId":"...","title":"...","body":"..."}
-
-REGRAS:
-- archetype DEVE ser um dos IDs listados no user prompt
-- ALTERNE alta e queda: NÃO faça só lançamento/boom/luxo. Prefira também: estoque sobrando, demanda fraca, blitze, bolso vazio, normalização
-- companyId DEVE ser um dos IDs de empresa listados (ou omita)
-- category uma das: combustivel, municao, arma, veiculo, defesa — e coerente com a empresa
-- title ≤80 chars, manchete de bairro
-- body: 5 a 8 linhas (\\n), 350–850 chars, fofoca/besteirol leve pt-BR
-- COERÊNCIA OBRIGATÓRIA title+body com o archetype:
-  * alta (supply_shock, demand_boom, meme_spike, blitz_luxury): escassez, fila, preço sobe, aperto
-  * queda (liquidity_flood, demand_slump, profit_take, austerity_soft): sobra, desconto, preço cai, freio
-  * flat (soft_recovery, rumor_only): lateral, boato, sem drama de preço
-  NUNCA diga "mais cara/subiu" se o archetype é de queda; NUNCA diga "mais barata/caiu" se é de alta
-- NÃO invente preços em coins
-- NÃO envie impactPct, percentuais de preço, supplyDelta nem demandDelta
-- NÃO repita os ganchos proibidos do user prompt`;
+/**
+ * System curto — DeepSeek free gasta tokens no thinking;
+ * regras longas viram eco no content em vez de JSON.
+ */
+export const EVENT_INVENT_SYSTEM = `Evento de mercado de rua (pt-BR, WhatsApp). Responda SÓ JSON:
+{"archetype":"<id>","category":"combustivel|municao|arma|veiculo|defesa","companyId":"<id>","title":"<manchete ≤80>","body":"<3-6 frases fofoca>"}
+archetype/companyId = IDs do user. category coerente com a empresa.
+Alta = escassez/fila; queda = sobra/desconto; flat = lateral. Sem preços em coins, sem %.`;
 
 export const JOURNALIST_SYSTEM = `Você é repórter de rua do bairro. Você NÃO inventa números de mercado.
 Recebe FACTS oficiais (JSON). Use só esses números se citar %.
@@ -83,7 +70,7 @@ export function buildInventUserPrompt({
     companyMoods.length
       ? `Clima: ${companyMoods.map((m) => `${m.id}:${m.mood}`).join(', ')}`
       : null,
-    'Gere UM evento coerente (JSON).',
+    'Gere UM evento. Só o objeto JSON (nada de explicar regras).',
   ]
     .filter(Boolean)
     .join('\n');
@@ -142,12 +129,55 @@ export function looksLikeInventPromptEcho(text) {
 /**
  * Parse da IA inventora — descarta impactPct se vier.
  */
+/**
+ * Fecha JSON truncado pelo max_tokens (body cortado no meio).
+ */
+export function repairTruncatedInventJson(text) {
+  let s = String(text || '').trim();
+  if (!s.includes('{')) return '';
+  // pega do primeiro {
+  const start = s.indexOf('{');
+  s = s.slice(start);
+  if (!s) return '';
+  try {
+    JSON.parse(s);
+    return s;
+  } catch {
+    /* repair */
+  }
+  // fecha aspas abertas e chaves
+  let out = s;
+  const quotes = (out.match(/"/g) || []).length;
+  if (quotes % 2 === 1) out += '"';
+  // remove vírgula trailing antes de fechar
+  out = out.replace(/,\s*$/, '');
+  const open = (out.match(/\{/g) || []).length;
+  const close = (out.match(/\}/g) || []).length;
+  if (open > close) out += '}'.repeat(open - close);
+  try {
+    JSON.parse(out);
+    return out;
+  } catch {
+    return '';
+  }
+}
+
 export function parseInventJson(raw) {
   const text = String(raw || '').trim();
+  let blob = '';
   const m = text.match(/\{[\s\S]*\}/);
-  if (!m) return null;
+  if (m) blob = m[0];
+  else blob = repairTruncatedInventJson(text);
+  if (!blob) return null;
   try {
-    const j = JSON.parse(m[0]);
+    let j;
+    try {
+      j = JSON.parse(blob);
+    } catch {
+      const fixed = repairTruncatedInventJson(blob || text);
+      if (!fixed) return null;
+      j = JSON.parse(fixed);
+    }
     let archetype = String(j.archetype || j.eventTag || j.tag || '')
       .trim()
       .toLowerCase();
@@ -171,6 +201,14 @@ export function parseInventJson(raw) {
     const body = clampEventDescription(j.body || j.description || '');
     if (!body) return null;
     if (looksLikeInventPromptEcho(title) || looksLikeInventPromptEcho(body)) return null;
+    // rejeita título em inglês de raciocínio
+    if (
+      title.length < 80 &&
+      !/[áàâãéêíóôõúç]/i.test(title) &&
+      /\b(the|list|exactly|should|archetype|category)\b/i.test(title)
+    ) {
+      return null;
+    }
 
     // impactPct da IA é IGNORADO de propósito (contrato anti-colapso)
     return {
