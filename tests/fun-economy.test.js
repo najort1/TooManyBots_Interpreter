@@ -21,6 +21,9 @@ import {
   resolveEventProposal,
   parseInventJson,
   classifyFreeTextToArchetype,
+  inferNarrativeDirection,
+  alignEventCopy,
+  pickAlignedTemplate,
   pickDeceptionMode,
   applyDeceptionPlan,
   defaultRegulatorKnobs,
@@ -373,4 +376,73 @@ test('economia: fingerprint anti-repeat e knobs clamp', () => {
   assert.ok(k.volMult <= 1.8);
   assert.ok(k.deceptionRate >= 0.02);
   assert.ok(k.eventFreqMult >= 0.5);
+});
+
+test('economia: inferNarrativeDirection detecta alta vs queda', () => {
+  assert.equal(
+    inferNarrativeDirection('Gasolina tá mais cara que ontem, subida inesperada'),
+    'up'
+  );
+  assert.equal(
+    inferNarrativeDirection('Preço recua, estoque sobra, munição mais barata'),
+    'down'
+  );
+  assert.equal(inferNarrativeDirection('Semana morna, preço anda de lado'), 'flat');
+});
+
+test('economia: alignEventCopy corrige "subiu" quando preço caiu', () => {
+  const bad = alignEventCopy({
+    title: 'Gasolina tá mais cara que ontem, galera desconfiada',
+    body: [
+      'Rolou aquele clima de aperto no bairro hoje.',
+      'Parece que a gasolina deu uma leve subida inesperada nos postos por aí.',
+      'A galera tá de olho na carteira.',
+    ].join('\n'),
+    direction: 'down',
+    archetype: 'liquidity_flood',
+    category: 'combustivel',
+    companyId: 'peixaria',
+    random: () => 0.1,
+  });
+  assert.equal(bad.realigned, true);
+  assert.notEqual(inferNarrativeDirection(`${bad.title}\n${bad.body}`), 'up');
+  assert.match(bad.title + bad.body, /combust|esfria|alivi|barat|recu/i);
+
+  const ok = alignEventCopy({
+    title: 'Combustível esfria um pouco',
+    body: 'Parece que combustível deu uma aliviada no preço por aí.\nEstoque sobra.',
+    direction: 'down',
+    category: 'combustivel',
+    random: () => 0.2,
+  });
+  assert.equal(ok.realigned, false);
+
+  const tpl = pickAlignedTemplate({
+    direction: 'down',
+    category: 'combustivel',
+    companyId: 'peixaria',
+    random: () => 0,
+  });
+  assert.ok(tpl.synthetic || tpl.category === 'combustivel');
+  assert.equal(inferNarrativeDirection(`${tpl.title}\n${tpl.body}`), 'down');
+});
+
+test('economia: resolveEventProposal descarta copy se bias troca por overheat', () => {
+  const reg = clampKnobs({ ...defaultRegulatorKnobs(), eventImpactMult: 1 });
+  // heat alto + bias up + random baixo → troca pra correção
+  const resolved = resolveEventProposal(
+    {
+      archetype: 'supply_shock',
+      category: 'combustivel',
+      companyId: 'peixaria',
+      title: 'Gasolina tá mais cara que ontem',
+      body: 'Subida inesperada nos postos.\nFila e aperto.',
+    },
+    { reg, random: () => 0.01, overheat: 0.9 }
+  );
+  // ou manteve supply_shock, ou trocou e limpou body
+  if (resolved.archetype !== 'supply_shock') {
+    assert.equal(resolved.body, '');
+    assert.ok(resolved.biasMismatch || resolved.archetypeSwapped);
+  }
 });

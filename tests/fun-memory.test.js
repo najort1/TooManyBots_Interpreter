@@ -1,5 +1,5 @@
 /**
- * Memória seletiva por grupo + modelo Zen default + lore commands.
+ * Memória seletiva por grupo + entity IDs + lore commands.
  */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -14,8 +14,10 @@ import { createFunMemoryRepository } from '../fun/db/funMemoryRepository.js';
 import {
   createGroupMemoryService,
   parseFactsJson,
+  validateExtractedFact,
   jaccard,
   tokenSet,
+  keywordSignature,
 } from '../fun/services/groupMemoryService.js';
 import { parseFunCommand, resolveFunConfig } from '../fun/index.js';
 import { FUN_COMMANDS, DEFAULT_FUN_CONFIG } from '../fun/constants.js';
@@ -50,25 +52,63 @@ test('parseFunCommand: lore / esquecelore', () => {
   assert.equal(parseFunCommand('/limparlore', '/').command, FUN_COMMANDS.FORGET_LORE);
 });
 
-test('parseFactsJson extrai array e rejeita lixo', () => {
+test('parseFactsJson: subjects por ID numérico; rejeita nomes', () => {
   const ok = parseFactsJson(
-    `Aqui: [{"kind":"epic_fail","summary":"João derrubou o café no teclado ao vivo","subjects":["João"],"keywords":["cafe","teclado"],"score":72}]`
+    `{"facts":[{"kind":"epic_fail","summary":"João derrubou o café no teclado ao vivo","subjects":[0],"keywords":["cafe","teclado"],"score":72}]}`,
+    { batchSize: 3 }
   );
   assert.equal(ok.length, 1);
   assert.equal(ok[0].kind, 'epic_fail');
+  assert.deepEqual(ok[0].subjectIndices, [0]);
   assert.match(ok[0].summary, /café|cafe|teclado/i);
+
+  // nomes em subjects → descarta (zero confusão de pessoa)
+  const bad = parseFactsJson(
+    `[{"kind":"event","summary":"Maria pagou o almoço do grupo inteiro","subjects":["Maria"],"score":70}]`,
+    { batchSize: 2 }
+  );
+  assert.equal(bad.length, 0);
 
   assert.equal(parseFactsJson('nada de util').length, 0);
   assert.equal(parseFactsJson('').length, 0);
 });
 
-test('jaccard / tokenSet dedup basico', () => {
+test('validateExtractedFact: schema rígido', () => {
+  assert.equal(
+    validateExtractedFact({ kind: 'event', summary: 'curto', subjects: [0] }),
+    null
+  );
+  assert.equal(
+    validateExtractedFact({
+      kind: 'nope',
+      summary: 'Fato longo o suficiente para passar no min length',
+      subjects: [0],
+    }),
+    null
+  );
+  const v = validateExtractedFact(
+    {
+      kind: 'epic_fail',
+      summary: 'Pedro bateu o carro no poste da esquina kkk',
+      subjects: ['[1]', 0],
+      keywords: ['carro'],
+      score: 80,
+    },
+    { batchSize: 4 }
+  );
+  assert.ok(v);
+  assert.deepEqual(v.subjectIndices, [1, 0]);
+});
+
+test('jaccard / keywordSignature dedup basico', () => {
   const a = tokenSet('joao derrubou o cafe no teclado');
   const b = tokenSet('joao derrubou cafe teclado de novo');
   assert.ok(jaccard(a, b) > 0.3);
+  const sig = keywordSignature(['wifi', 'clutch', 'predio'], 'wifi cai no clutch');
+  assert.ok(sig.includes('wifi') || sig.includes('clutch'));
 });
 
-test('memoryRepository: insert, reinforce, prune, forget', () => {
+test('memoryRepository: insert, reinforce overwrite summary, prune, forget', () => {
   const repo = createFunMemoryRepository({ getDatabase: getDb });
   const scope = uniqueGroup();
 
@@ -86,11 +126,13 @@ test('memoryRepository: insert, reinforce, prune, forget', () => {
     summary: 'Pedro atrasa o daily e vira piada recorrente',
     score: 80,
     keywords: ['atraso'],
+    overwriteSummary: true,
   });
   assert.equal(f2.hits, 2);
   assert.equal(f2.score, 80);
+  assert.match(f2.summary, /piada recorrente/i);
+  assert.ok(f2.lastSeenAt >= f1.lastSeenAt);
 
-  // enche e pruna
   for (let i = 0; i < 12; i += 1) {
     repo.insertFact({
       scopeKey: scope,
@@ -108,7 +150,7 @@ test('memoryRepository: insert, reinforce, prune, forget', () => {
   assert.equal(repo.countFacts(scope), 0);
 });
 
-test('groupMemoryService: observe ignora comando/curto; flush com mock Zen', async () => {
+test('groupMemoryService: observe ignora comando/curto; flush com mock Zen + IDs', async () => {
   const prev = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
 
@@ -116,21 +158,30 @@ test('groupMemoryService: observe ignora comando/curto; flush com mock Zen', asy
     const repo = createFunMemoryRepository({ getDatabase: getDb });
     const scope = uniqueGroup();
     let zenCalls = 0;
+    /** @type {object[]} */
+    const zenOptsLog = [];
 
     const mem = createGroupMemoryService({
       memoryRepository: repo,
-      getContactDisplayName: (j) => j.split('@')[0],
-      generateZen: async () => {
+      getContactDisplayName: (j) => (j.includes('5599') ? 'Ana' : j.split('@')[0]),
+      generateZen: async (opts) => {
         zenCalls += 1;
-        return JSON.stringify([
-          {
-            kind: 'epic_fail',
-            summary: 'Ana mandou figurinha no lugar do comprovante e o grupo explodiu',
-            subjects: ['Ana'],
-            keywords: ['figurinha', 'comprovante'],
-            score: 78,
-          },
-        ]);
+        zenOptsLog.push(opts || {});
+        // extract usa jsonMode; persona não — devolve shape adequado
+        if (opts?.jsonMode) {
+          return JSON.stringify({
+            facts: [
+              {
+                kind: 'epic_fail',
+                summary: 'Ana mandou figurinha no lugar do comprovante e o grupo explodiu',
+                subjects: [0],
+                keywords: ['figurinha', 'comprovante'],
+                score: 78,
+              },
+            ],
+          });
+        }
+        return '• Grupo zoa figurinha no comprovante';
       },
       generateOllama: async () => {
         throw new Error('should-not-ollama');
@@ -181,18 +232,25 @@ test('groupMemoryService: observe ignora comando/curto; flush com mock Zen', asy
       });
     }
 
-    // aguarda flush async
     await new Promise((r) => setTimeout(r, 80));
-    // força se ainda não flushou (race)
     if (repo.countFacts(scope) === 0) {
       await mem.forceFlush(scope, cfg);
     }
 
     assert.ok(zenCalls >= 1, 'zen extract chamado');
+    assert.ok(
+      zenOptsLog.some((o) => o.jsonMode === true),
+      `jsonMode no Zen extract; opts=${JSON.stringify(zenOptsLog)}`
+    );
     assert.ok(repo.countFacts(scope) >= 1, 'fato persistido');
 
+    const facts = repo.listFacts(scope, { limit: 5 });
+    assert.ok(facts[0].subjects.includes(u), 'subject mapeado para JID');
+
     const lore = mem.buildLoreContext(scope, { userJids: [u], limit: 5, funConfig: cfg });
-    assert.match(lore, /figurinha|comprovante|Ana|Lore|Clima/i);
+    assert.match(lore, /<group_lore>/);
+    assert.match(lore, /figurinha|comprovante|Ana/i);
+    assert.match(lore, /NUNCA altere o sujeito|PROIBIDO conectar/i);
 
     const list = mem.formatLoreList(scope, { funConfig: cfg });
     assert.match(list, /Lore do grupo/i);
@@ -202,21 +260,39 @@ test('groupMemoryService: observe ignora comando/curto; flush com mock Zen', asy
   }
 });
 
-test('groupMemoryService: Zen falha → Ollama no extract', async () => {
+test('groupMemoryService: Zen falha → Ollama no extract com format json', async () => {
   const prev = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
   try {
     const repo = createFunMemoryRepository({ getDatabase: getDb });
     const scope = uniqueGroup();
     let ollama = 0;
+    /** @type {object[]} */
+    const ollamaOptsLog = [];
+    const u = uniqueJid('5588');
     const mem = createGroupMemoryService({
       memoryRepository: repo,
+      getContactDisplayName: () => 'Beto',
       generateZen: async () => {
         throw new Error('zen-down');
       },
-      generateOllama: async () => {
+      generateOllama: async (opts) => {
         ollama += 1;
-        return `[{"kind":"rivalry","summary":"Beto e Carla brigam por quem manda mais figurinha feia","subjects":["Beto","Carla"],"keywords":["figurinha","rival"],"score":66}]`;
+        ollamaOptsLog.push(opts || {});
+        if (opts?.format === 'json') {
+          return JSON.stringify({
+            facts: [
+              {
+                kind: 'rivalry',
+                summary: 'Beto e Carla brigam por quem manda mais figurinha feia',
+                subjects: [0],
+                keywords: ['figurinha', 'rival'],
+                score: 66,
+              },
+            ],
+          });
+        }
+        return '• Rivalidade de figurinha feia';
       },
     });
     const cfg = resolveFunConfig({
@@ -225,7 +301,6 @@ test('groupMemoryService: Zen falha → Ollama no extract', async () => {
       zenEnabled: true,
       ollamaEnabled: true,
     });
-    const u = uniqueJid('5588');
     for (let i = 0; i < 3; i += 1) {
       mem._pushRaw(scope, {
         userJid: u,
@@ -236,16 +311,20 @@ test('groupMemoryService: Zen falha → Ollama no extract', async () => {
     }
     const r = await mem.forceFlush(scope, cfg);
     assert.equal(r.ok, true);
-    // extract + possível refresh persona
     assert.ok(ollama >= 1, `ollama fallback esperado, got ${ollama}`);
+    assert.ok(
+      ollamaOptsLog.some((o) => o.format === 'json'),
+      `format json no extract; opts=${JSON.stringify(ollamaOptsLog)}`
+    );
     assert.ok(repo.countFacts(scope) >= 1);
+    assert.ok(repo.listFacts(scope, { limit: 1 })[0].subjects.includes(u));
   } finally {
     if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
     else process.env.FUN_DISABLE_LIVE_LLM = '1';
   }
 });
 
-test('groupMemoryService: dedup reforça em vez de duplicar', async () => {
+test('groupMemoryService: descarta fato se LLM devolver nome em subjects', async () => {
   const prev = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
   try {
@@ -256,23 +335,69 @@ test('groupMemoryService: dedup reforça em vez de duplicar', async () => {
       generateZen: async () =>
         JSON.stringify([
           {
-            kind: 'running_gag',
-            summary: 'Todo mundo zoa o Wi-Fi do predio que cai no clutch',
-            subjects: ['Grupo'],
-            keywords: ['wifi', 'clutch', 'predio'],
-            score: 70,
+            kind: 'event',
+            summary: 'Alguem inventou um mico sem ID valido de sujeito',
+            subjects: ['João'],
+            score: 90,
           },
         ]),
       generateOllama: async () => '[]',
     });
     const cfg = resolveFunConfig({ memoryMinScore: 20, zenEnabled: true });
+    for (let i = 0; i < 3; i += 1) {
+      mem._pushRaw(scope, {
+        userJid: uniqueJid(),
+        name: 'Joao',
+        text: `mico aleatorio ${i} bem longo o suficiente`,
+        at: Date.now(),
+      });
+    }
+    await mem.forceFlush(scope, cfg);
+    assert.equal(repo.countFacts(scope), 0, 'nome solto não persiste');
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});
 
-    for (let round = 0; round < 2; round += 1) {
+test('groupMemoryService: dedup reforça e sobrescreve summary', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const repo = createFunMemoryRepository({ getDatabase: getDb });
+    const scope = uniqueGroup();
+    const u = uniqueJid('5533');
+    let round = 0;
+    const mem = createGroupMemoryService({
+      memoryRepository: repo,
+      getContactDisplayName: () => 'Fulano',
+      generateZen: async () => {
+        round += 1;
+        return JSON.stringify({
+          facts: [
+            {
+              kind: 'running_gag',
+              summary:
+                round === 1
+                  ? 'Todo mundo zoa o Wi-Fi do predio que cai no clutch'
+                  : 'Wi-Fi do predio cai no clutch e vira meme recorrente',
+              subjects: [0],
+              keywords: ['wifi', 'clutch', 'predio'],
+              score: 70,
+            },
+          ],
+        });
+      },
+      generateOllama: async () => '{"facts":[]}',
+    });
+    const cfg = resolveFunConfig({ memoryMinScore: 20, zenEnabled: true });
+
+    for (let r = 0; r < 2; r += 1) {
       for (let i = 0; i < 3; i += 1) {
         mem._pushRaw(scope, {
-          userJid: uniqueJid(),
+          userJid: u,
           name: 'Fulano',
-          text: `wifi caiu no clutch de novo ${round}-${i}`,
+          text: `wifi caiu no clutch de novo ${r}-${i}`,
           at: Date.now(),
         });
       }
@@ -280,9 +405,9 @@ test('groupMemoryService: dedup reforça em vez de duplicar', async () => {
     }
 
     const facts = repo.listFacts(scope, { limit: 20 });
-    // deve ter poucos fatos (dedup), com hits se reforçou
     assert.ok(facts.length <= 3);
-    assert.ok(facts.some((f) => f.hits >= 1));
+    assert.ok(facts.some((f) => f.hits >= 2));
+    assert.ok(facts.some((f) => /meme recorrente|wifi|clutch/i.test(f.summary)));
   } finally {
     if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
     else process.env.FUN_DISABLE_LIVE_LLM = '1';
@@ -303,8 +428,9 @@ test('handlers: /lore e /esquecelore tudo sim', async () => {
 
   const mem = createGroupMemoryService({
     memoryRepository: repo,
-    generateZen: async () => '[]',
-    generateOllama: async () => '[]',
+    getContactDisplayName: () => 'Fulano',
+    generateZen: async () => '{"facts":[]}',
+    generateOllama: async () => '{"facts":[]}',
   });
 
   const replies = [];
@@ -370,4 +496,29 @@ test('handlers: esquecelore @user remove só o sujeito', async () => {
   assert.equal(repo.countFacts(scope), 1);
   const left = repo.listFacts(scope, { limit: 10 });
   assert.equal(left[0].subjects.includes(b), true);
+});
+
+test('buildLoreContext: persona cache hit', () => {
+  const repo = createFunMemoryRepository({ getDatabase: getDb });
+  const scope = uniqueGroup();
+  const u = uniqueJid('5510');
+  repo.insertFact({
+    scopeKey: scope,
+    kind: 'event',
+    summary: 'Fato cacheavel de teste de persona no grupo',
+    subjects: [u],
+    score: 70,
+  });
+  repo.setPersona(scope, 'Grupo caótico de testes', 1);
+
+  const mem = createGroupMemoryService({
+    memoryRepository: repo,
+    getContactDisplayName: () => 'Tester',
+  });
+  const a = mem.buildLoreContext(scope, { limit: 3, funConfig: {} });
+  const b = mem.buildLoreContext(scope, { limit: 3, funConfig: {} });
+  assert.match(a, /<group_lore>/);
+  assert.match(a, /Grupo caótico|Fato cacheavel|Tester/i);
+  assert.equal(mem._personaCache.has(scope), true);
+  assert.match(b, /group_lore/);
 });
