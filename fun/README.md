@@ -107,7 +107,7 @@ Ajuda no zap: `/ajuda` · `/ajuda economia` · `/ajuda mundo` · `/ajuda cassino
 | **Economia** | `/loja` `/mercado` `/armas` `/adquirir gasolina` `/inventario` `/bazar` `/assaltar` |
 | **Mundo & auto** | `/ajuda mundo` — relógio, quiet hours, notícias de mercado, negócios, jornal 23:59, conquistas |
 | **Negócios** | `/negocio` `/negocio comprar barraca` `/coletar` `/negocio consertar barraca` |
-| **Bolsa** | `/bolsa` `/carteira` `/bolsa comprar bombatech 3` `/bolsa vender pato 1` |
+| **Bolsa** | `/bolsa` `/carteira` `/bolsa comprar bombatech 3` `/bolsa vender pato 1` · web read-only `/bolsa/<id-grupo>` |
 | **Conquistas** | `/conquistas` |
 | **Social** | `/marry @user` `/aceitar` `/recusar` `/divorce` `/ship @a @b` |
 | **Emprego** | `/emprego` `/emprego bombeiro` `/demitir sim` `/trabalhar` |
@@ -142,6 +142,21 @@ Fluxo típico de evento:
 5. Relógio do mundo (`worldAutonomous`) anuncia no grupo sem mensagem humana.
 
 Empresas (bolsa / personalidade): BurgerZap, Uno Motors, BombaTech, Peixaria do João, Satélite BR, PatoCoin — ver `economy/companies.js`.
+
+### Corretora web (somente leitura · isolada do admin)
+
+Cada grupo tem a sua bolsa. O **bot manda o link já com o id do grupo** — não há seletor de grupos na web (privacidade).
+
+| URL | Auth | O que faz |
+|-----|------|-----------|
+| `/bolsa/<id-grupo>` | **Público** | Só corretora: cotações, ATH, gráfico, datas, notícias |
+| `/bolsa` | Público | “Use o link do zap” — **sem listar grupos** |
+
+- **Fora** do dashboard admin (sem sidebar / groups / settings).
+- APIs GET only: `/api/fun/bolsa`, `/history`, `/events` — sem compra/venda, sem eco de JID no JSON.
+- Ordens **somente no WhatsApp**.
+- Histórico: `fun_stock_price_history` (schema v18).
+- Link no `/bolsa` do zap: `config.public.json` → `publicBaseUrl`.
 
 Itens de rua: `shop/collectibles.js` (gasolina, armas, veículos, etc.).
 
