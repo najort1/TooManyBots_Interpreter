@@ -476,7 +476,7 @@ export function startFunDashboardServer(deps = {}) {
           sendJson(res, 404, { error: 'grupo-nao-encontrado' });
           return;
         }
-        const limit = Math.min(40, Math.max(1, Number(url.searchParams.get('limit') || 6)));
+        const limit = Math.min(40, Math.max(1, Number(url.searchParams.get('limit') || 14)));
         const page = Math.max(1, Math.floor(Number(url.searchParams.get('page') || 1)));
         const mapPublic = (e) => ({
           id: e.id,

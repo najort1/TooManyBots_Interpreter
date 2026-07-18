@@ -697,10 +697,10 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
    * Paginação de notícias/eventos de mercado (DESC por data).
    * @returns {{ events: object[], total: number, page: number, limit: number, totalPages: number }}
    */
-  function listEventsPage(scopeKey, { page = 1, limit = 6 } = {}) {
+  function listEventsPage(scopeKey, { page = 1, limit = 14 } = {}) {
     ensureSchema();
     const s = String(scopeKey || '');
-    const lim = Math.max(1, Math.min(40, Math.floor(Number(limit) || 6)));
+    const lim = Math.max(1, Math.min(40, Math.floor(Number(limit) || 14)));
     let p = Math.max(1, Math.floor(Number(page) || 1));
     if (!s) {
       return { events: [], total: 0, page: 1, limit: lim, totalPages: 0 };

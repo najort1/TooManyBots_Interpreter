@@ -120,7 +120,7 @@ export const funApi = {
   ) => {
     // aceita limit numérico legado: bolsaEvents(scope, 10)
     const page = typeof opts === "number" ? 1 : opts.page || 1;
-    const limit = typeof opts === "number" ? opts : opts.limit || 6;
+    const limit = typeof opts === "number" ? opts : opts.limit || 14;
     const q = new URLSearchParams({
       scope,
       page: String(page),
