@@ -72,11 +72,17 @@ import {
   handleGossipCommand,
   handleOracleCommand,
   handleIlluminatiCommand,
+  handleRoastCommand,
 } from './handlers/chaos.js';
 import {
   handleLoreCommand,
   handleForgetLoreCommand,
 } from './handlers/memory.js';
+import {
+  handlePropertyCommand,
+  handleCollectCommand,
+} from './handlers/property.js';
+import { handleAchievementsCommand } from './handlers/achievements.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -135,6 +141,11 @@ export async function routeFunCommand(ctx) {
     stockService,
     jobService,
     chaosService,
+    propertyService,
+    roastService,
+    newsService,
+    achievementService,
+    casinoRepository,
     groupMemoryService,
     profileService,
     socialHooks,
@@ -190,6 +201,11 @@ export async function routeFunCommand(ctx) {
     stockService,
     jobService,
     chaosService,
+    propertyService,
+    roastService,
+    newsService,
+    achievementService,
+    casinoRepository,
     groupMemoryService,
     profileService,
     socialHooks,
@@ -346,6 +362,14 @@ export async function routeFunCommand(ctx) {
       return handleLoreCommand(base);
     case FUN_COMMANDS.FORGET_LORE:
       return handleForgetLoreCommand(base);
+    case FUN_COMMANDS.ROAST:
+      return handleRoastCommand(base);
+    case FUN_COMMANDS.PROPERTY:
+      return handlePropertyCommand(base);
+    case FUN_COMMANDS.COLLECT:
+      return handleCollectCommand(base);
+    case FUN_COMMANDS.ACHIEVEMENTS:
+      return handleAchievementsCommand(base);
     default:
       return { handled: false };
   }

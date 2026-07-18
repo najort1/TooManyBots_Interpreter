@@ -29,10 +29,17 @@ import { createFunStockRepository } from './db/funStockRepository.js';
 import { createStockService } from './services/stockService.js';
 import { createFunJobRepository } from './db/funJobRepository.js';
 import { createFunUserPrefsRepository } from './db/funUserPrefsRepository.js';
+import { createFunPropertyRepository } from './db/funPropertyRepository.js';
+import { createFunNewsRepository } from './db/funNewsRepository.js';
+import { createFunAchievementRepository } from './db/funAchievementRepository.js';
 import { createGroupMembershipService } from './utils/groupMembership.js';
 import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
 import { createChaosService } from './services/chaosService.js';
+import { createPropertyService } from './services/propertyService.js';
+import { createRoastService } from './services/roastService.js';
+import { createNewsService } from './services/newsService.js';
+import { createAchievementService } from './services/achievementService.js';
 import { createFunMemoryRepository } from './db/funMemoryRepository.js';
 import { createFunProfileRepository } from './db/funProfileRepository.js';
 import { createGroupMemoryService } from './services/groupMemoryService.js';
@@ -97,6 +104,12 @@ export function createFunModule(deps = {}) {
       repository,
       stockRepository,
     });
+  const propertyRepository =
+    deps.propertyRepository || createFunPropertyRepository({ getDatabase });
+  const newsRepository =
+    deps.newsRepository || createFunNewsRepository({ getDatabase });
+  const achievementRepository =
+    deps.achievementRepository || createFunAchievementRepository({ getDatabase });
   const relationshipService = createRelationshipService({
     relationshipRepository,
     actionRepository,
@@ -148,6 +161,12 @@ export function createFunModule(deps = {}) {
     repository,
     bridgeService,
   });
+  const propertyService =
+    deps.propertyService ||
+    createPropertyService({
+      repository,
+      propertyRepository,
+    });
   const marketService =
     deps.marketService ||
     createMarketService({
@@ -157,6 +176,7 @@ export function createFunModule(deps = {}) {
       factionService,
       casinoRepository,
       stockService,
+      propertyService,
       getLogger,
       generateZen: deps.openaiChatComplete,
       generateOllama: deps.ollamaGenerate,
@@ -206,6 +226,28 @@ export function createFunModule(deps = {}) {
       // Zen principal · Ollama fallback · template no fim
       zenGenerate: deps.openaiChatComplete || deps.zenGenerate,
       generate: deps.ollamaGenerate || deps.generate,
+    });
+  const achievementService =
+    deps.achievementService ||
+    createAchievementService({
+      achievementRepository,
+      repository,
+    });
+  const roastService =
+    deps.roastService ||
+    createRoastService({
+      repository,
+      jobService,
+      relationshipService,
+      factionService,
+      casinoRepository,
+      flavorService,
+    });
+  const newsService =
+    deps.newsService ||
+    createNewsService({
+      newsRepository,
+      flavorService,
     });
 
   let initialized = false;
@@ -260,6 +302,11 @@ export function createFunModule(deps = {}) {
         stockService,
         jobService,
         chaosService,
+        propertyService,
+        roastService,
+        newsService,
+        achievementService,
+        casinoRepository,
         groupMemoryService,
         profileService,
         socialHooks,
@@ -334,10 +381,6 @@ export function createFunModule(deps = {}) {
     if (funConfig.worldAutonomous === false) {
       return { ok: false, reason: 'world-autonomous-off' };
     }
-    // 01:00–05:59 (default): sem eventos aleatórios na vida real
-    if (isWorldQuietHours(funConfig, now)) {
-      return { ok: false, reason: 'quiet-hours', results: [] };
-    }
 
     const groups = [...getFunGroupWhitelistSet(funConfig)];
     if (!groups.length) {
@@ -347,12 +390,49 @@ export function createFunModule(deps = {}) {
     const post = sendFn || sendText;
     const nameResolver = nameFn || resolveContactName;
     const results = [];
+    const quiet = isWorldQuietHours(funConfig, now);
 
     const postWithMentions = async (toJid, msg, userFmt) => {
       if (!msg || !post || !sock) return;
       const mentions = userFmt?.takeMentions?.() || [];
       await post(sock, toJid, msg, mentions.length ? { mentions } : undefined);
     };
+
+    // The Group Times: 23:59 — mesmo em quiet hours (exceção do relógio)
+    if (newsService?.tryPublish && funConfig.groupNewsEnabled !== false) {
+      for (const scopeKey of groups) {
+        if (!scopeKey || !String(scopeKey).endsWith('@g.us')) continue;
+        try {
+          const edition = await newsService.tryPublish(scopeKey, funConfig, now);
+          if (edition?.ok && edition.text) {
+            await post(sock, scopeKey, edition.text);
+            results.push({
+              scopeKey,
+              kind: 'group-news',
+              ok: true,
+              newsDay: edition.newsDay,
+            });
+          }
+        } catch (err) {
+          results.push({
+            scopeKey,
+            kind: 'group-news',
+            ok: false,
+            reason: err?.message || 'news-error',
+          });
+        }
+      }
+    }
+
+    // 01:00–05:59: sem mercado/eventos aleatórios (jornal já rodou acima se aplicável)
+    if (quiet) {
+      return {
+        ok: true,
+        reason: 'quiet-hours',
+        results,
+        fired: results.filter((r) => r.ok).length,
+      };
+    }
 
     for (const scopeKey of groups) {
       if (!scopeKey || !String(scopeKey).endsWith('@g.us')) continue;
@@ -557,6 +637,11 @@ export function createFunModule(deps = {}) {
       marketService,
       marketRepository,
       stockService,
+      propertyService,
+      roastService,
+      newsService,
+      achievementService,
+      casinoRepository,
       stockRepository,
       jobService,
       jobRepository,
