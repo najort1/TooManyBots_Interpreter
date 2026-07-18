@@ -451,12 +451,13 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // OpenCode Zen Proxy (OpenAI-compatible)
   zenEnabled: true,
   zenBaseUrl: 'http://127.0.0.1:3000',
-  // mimo responde content direto (deepseek free costuma ecoar prompt / reasoning)
-  zenModel: 'mimo-v2.5-free',
-  zenTimeoutMs: 20_000,
-  zenMaxTokens: 400,
+  // deepseek-v4-flash-free: raciocina antes de responder (melhor invent/flavor)
+  zenModel: 'deepseek-v4-flash-free',
+  // thinking models precisam de mais tempo que mimo
+  zenTimeoutMs: 45_000,
+  zenMaxTokens: 900,
   /** Orçamento total Zen→Ollama→template por resposta de flavor (ms). */
-  flavorTimeoutMs: 28_000,
+  flavorTimeoutMs: 55_000,
   zenTemperature: 0.85,
   zenApiKey: '',
   // Ollama local (fallback)

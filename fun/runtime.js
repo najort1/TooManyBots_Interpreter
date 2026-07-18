@@ -272,7 +272,7 @@ export async function startFunBot(options = {}) {
   const ollamaOn = config.ollamaEnabled !== false;
   if (zenOn) {
     console.log(
-      `[fun] Flavor LLM: Zen principal → ${config.zenBaseUrl || 'http://127.0.0.1:3000'} · model=${config.zenModel || 'mimo-v2.5-free'}`
+      `[fun] Flavor LLM: Zen principal → ${config.zenBaseUrl || 'http://127.0.0.1:3000'} · model=${config.zenModel || 'deepseek-v4-flash-free'}`
     );
   }
   if (ollamaOn && config.ollamaWarmupOnBoot !== false) {

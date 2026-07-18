@@ -124,8 +124,66 @@ function pickBestFromReasoning(reasoning) {
 }
 
 /**
+ * Extrai objeto JSON embutido em prosa/reasoning (DeepSeek thinking).
+ * Preferência: último bloco {...} parseável com chaves úteis.
+ */
+export function extractJsonBlob(text) {
+  const s = String(text || '');
+  if (!s.includes('{')) return '';
+  // fenced ```json ... ```
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence?.[1]) {
+    const inner = fence[1].trim();
+    try {
+      JSON.parse(inner);
+      return inner;
+    } catch {
+      /* try brace scan */
+    }
+  }
+  let best = '';
+  for (let i = 0; i < s.length; i += 1) {
+    if (s[i] !== '{') continue;
+    let depth = 0;
+    for (let j = i; j < s.length; j += 1) {
+      const ch = s[j];
+      if (ch === '{') depth += 1;
+      else if (ch === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          const slice = s.slice(i, j + 1);
+          try {
+            const obj = JSON.parse(slice);
+            if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
+              // rejeita schema de exemplo do prompt: {"title":"..."}
+              const values = Object.values(obj).map((v) => String(v ?? ''));
+              if (values.every((v) => !v || v === '...' || /^\.+$/.test(v))) continue;
+              if (values.some((v) => /\|/.test(v) && /combustivel|municao|arma/.test(v))) continue;
+              const keys = Object.keys(obj);
+              if (keys.some((k) => /^(title|body|archetype|category|companyId)$/i.test(k))) {
+                const title = String(obj.title || '');
+                if (title && !/DEVE|one of|listados|omit/i.test(title)) {
+                  best = slice;
+                }
+              } else if (!best && keys.length >= 2) {
+                best = slice;
+              }
+            }
+          } catch {
+            /* keep scanning */
+          }
+          break;
+        }
+      }
+    }
+  }
+  return best;
+}
+
+/**
  * Extrai texto final. Modelos free (DeepSeek) costumam encher reasoning_content
  * e deixar content vazio ou com fragmento — NÃO devolver rascunho.
+ * Thinking models: JSON de invent costuma estar no content ou no fim do reasoning.
  */
 export function extractChatText(data) {
   if (!data || typeof data !== 'object') return '';
@@ -134,8 +192,10 @@ export function extractChatText(data) {
 
   const msg = choice.message || {};
   const content = normalizeContent(msg.content ?? choice.text ?? '');
-  if (content && !looksLikeIncompleteOrMeta(content)) {
-    return content;
+  if (content) {
+    const jsonFromContent = extractJsonBlob(content);
+    if (jsonFromContent) return jsonFromContent;
+    if (!looksLikeIncompleteOrMeta(content)) return content;
   }
 
   // content lixo/vazio → tenta reasoning com filtro rígido
@@ -143,6 +203,8 @@ export function extractChatText(data) {
     msg.reasoning_content || msg.reasoning || msg.thinking || choice.reasoning || ''
   );
   if (reasoning) {
+    const jsonFromReason = extractJsonBlob(reasoning);
+    if (jsonFromReason) return jsonFromReason;
     const fromReason = pickBestFromReasoning(reasoning);
     if (fromReason) return fromReason;
   }
@@ -166,7 +228,7 @@ export function extractChatText(data) {
  */
 export async function openaiChatComplete({
   baseUrl = 'http://127.0.0.1:3000',
-  model = 'mimo-v2.5-free',
+  model = 'deepseek-v4-flash-free',
   prompt,
   system = '',
   timeoutMs = 20_000,
@@ -205,7 +267,7 @@ export async function openaiChatComplete({
 
   try {
     const body = {
-      model: String(model || 'mimo-v2.5-free'),
+      model: String(model || 'deepseek-v4-flash-free'),
       messages,
       temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.85,
       max_tokens: Math.max(32, Math.min(2000, Math.floor(Number(maxTokens) || 400))),

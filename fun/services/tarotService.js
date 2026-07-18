@@ -142,7 +142,7 @@ export function createTarotService({
       try {
         const raw = await generateZen({
           baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
-          model: funConfig.zenModel || 'mimo-v2.5-free',
+          model: funConfig.zenModel || 'deepseek-v4-flash-free',
           system,
           prompt,
           timeoutMs: o.timeoutMs,

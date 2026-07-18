@@ -481,7 +481,7 @@ export function createProfileService({
         try {
           const out = await generateZen({
             baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
-            model: funConfig.zenModel || 'mimo-v2.5-free',
+            model: funConfig.zenModel || 'deepseek-v4-flash-free',
             system: EXTRACT_SYSTEM,
             prompt,
             timeoutMs: o.timeout,

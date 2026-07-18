@@ -758,7 +758,7 @@ function resolveOllamaEndpoint(cfg) {
 function resolveZenEndpoint(cfg) {
   return {
     baseUrl: String(cfg.zenBaseUrl || 'http://127.0.0.1:3000').trim(),
-    model: String(cfg.zenModel || 'mimo-v2.5-free').trim() || 'mimo-v2.5-free',
+    model: String(cfg.zenModel || 'deepseek-v4-flash-free').trim() || 'deepseek-v4-flash-free',
     timeoutMs: Math.max(500, Math.floor(Number(cfg.zenTimeoutMs) || 20_000)),
     maxTokens: Math.max(64, Math.floor(Number(cfg.zenMaxTokens) || 400)),
     temperature: Number.isFinite(Number(cfg.zenTemperature)) ? Number(cfg.zenTemperature) : 0.85,
