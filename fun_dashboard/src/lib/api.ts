@@ -1,4 +1,8 @@
 import type {
+  BolsaBoard,
+  BolsaEvent,
+  BolsaHistory,
+  BolsaRange,
   CasinoPayload,
   Faction,
   FunConfig,
@@ -89,4 +93,46 @@ export const funApi = {
       dropped: number;
       config?: Record<string, unknown>;
     }>("/api/fun/outbound"),
+
+  /** Corretora read-only (público por grupo). */
+  bolsa: (scope: string) =>
+    request<BolsaBoard>(`/api/fun/bolsa?scope=${encodeURIComponent(scope)}`),
+
+  bolsaHistory: (
+    scope: string,
+    company: string,
+    opts: { range?: BolsaRange; from?: number; to?: number; limit?: number } = {}
+  ) => {
+    const q = new URLSearchParams({
+      scope,
+      company,
+    });
+    if (opts.range) q.set("range", opts.range);
+    if (opts.from) q.set("from", String(opts.from));
+    if (opts.to) q.set("to", String(opts.to));
+    if (opts.limit) q.set("limit", String(opts.limit));
+    return request<BolsaHistory>(`/api/fun/bolsa/history?${q.toString()}`);
+  },
+
+  bolsaEvents: (
+    scope: string,
+    opts: { page?: number; limit?: number } | number = {}
+  ) => {
+    // aceita limit numérico legado: bolsaEvents(scope, 10)
+    const page = typeof opts === "number" ? 1 : opts.page || 1;
+    const limit = typeof opts === "number" ? opts : opts.limit || 6;
+    const q = new URLSearchParams({
+      scope,
+      page: String(page),
+      limit: String(limit),
+    });
+    return request<{
+      events: BolsaEvent[];
+      page: number;
+      limit: number;
+      total: number;
+      totalPages: number;
+      readOnly?: boolean;
+    }>(`/api/fun/bolsa/events?${q.toString()}`);
+  },
 };

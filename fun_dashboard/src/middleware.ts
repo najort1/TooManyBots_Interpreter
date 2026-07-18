@@ -146,6 +146,8 @@ export const config = {
     "/overview/:path*",
     "/ranking/:path*",
     "/casino/:path*",
+    "/bolsa",
+    "/bolsa/:path*",
     "/groups/:path*",
     "/settings/:path*",
     "/api/fun/:path*",

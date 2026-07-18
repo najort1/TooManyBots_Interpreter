@@ -115,3 +115,105 @@ export type Faction = {
   vaultCoins: number;
   motto?: string;
 };
+
+/** Cotação pública (read-only) da corretora Fun. */
+export type BolsaQuote = {
+  id: string;
+  name: string;
+  emoji: string;
+  ticker: string;
+  blurb: string;
+  price: number;
+  previousPrice: number;
+  highPrice: number;
+  atHigh: boolean;
+  trend: string;
+  delta: number;
+  deltaPct: number;
+  fromAthPct: number;
+  dividendYield: number;
+  dividendRare: boolean;
+  risk: number;
+  volatility: number;
+  volumeBuy: number;
+  volumeSell: number;
+  eventShock: number;
+  updatedAt: number;
+};
+
+export type BolsaBoard = {
+  /** Nome amigável do grupo (sem JID). */
+  groupName?: string;
+  enabled: boolean;
+  readOnly?: boolean;
+  ts: number;
+  quotes: BolsaQuote[];
+  summary: {
+    count: number;
+    advancing: number;
+    declining: number;
+    unchanged: number;
+    avgDeltaPct: number;
+    atHighCount: number;
+  };
+  movers: {
+    topGainers: BolsaQuote[];
+    topLosers: BolsaQuote[];
+    nearAth: BolsaQuote[];
+  };
+  tradeHint: {
+    channel: string;
+    buy: string;
+    sell: string;
+    portfolio: string;
+  };
+};
+
+export type BolsaHistoryPoint = {
+  price: number;
+  previousPrice: number;
+  highPrice: number;
+  createdAt: number;
+};
+
+export type BolsaHistory = {
+  ok: boolean;
+  companyId: string;
+  name: string;
+  emoji: string;
+  range: string;
+  from: number;
+  to: number;
+  points: BolsaHistoryPoint[];
+  stats: {
+    high: number;
+    low: number;
+    open: number;
+    close: number;
+    changePct: number;
+    samples: number;
+  };
+  quote: {
+    price: number;
+    previousPrice: number;
+    highPrice: number;
+    atHigh: boolean;
+    trend: string;
+    deltaPct: number;
+    dividendYield: number;
+  } | null;
+  readOnly?: boolean;
+};
+
+export type BolsaEvent = {
+  id: string;
+  title: string;
+  description: string;
+  category: string;
+  impactPct: number;
+  companyId: string;
+  archetype: string;
+  createdAt: number;
+};
+
+export type BolsaRange = "1d" | "7d" | "30d" | "90d" | "all";
