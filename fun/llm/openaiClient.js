@@ -173,6 +173,8 @@ export async function openaiChatComplete({
   maxTokens = 400,
   temperature = 0.85,
   apiKey = '',
+  /** Força resposta JSON (OpenAI-compat: response_format json_object). */
+  jsonMode = false,
   fetchImpl,
 } = {}) {
   const userText = String(prompt ?? '').trim();
@@ -202,16 +204,21 @@ export async function openaiChatComplete({
   const timer = setTimeout(() => controller.abort(), ms);
 
   try {
+    const body = {
+      model: String(model || 'mimo-v2.5-free'),
+      messages,
+      temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.85,
+      max_tokens: Math.max(32, Math.min(2000, Math.floor(Number(maxTokens) || 400))),
+      stream: false,
+    };
+    if (jsonMode) {
+      body.response_format = { type: 'json_object' };
+    }
+
     const res = await fetchFn(joinUrl(baseUrl, '/v1/chat/completions'), {
       method: 'POST',
       headers,
-      body: JSON.stringify({
-        model: String(model || 'mimo-v2.5-free'),
-        messages,
-        temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.85,
-        max_tokens: Math.max(32, Math.min(2000, Math.floor(Number(maxTokens) || 400))),
-        stream: false,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     });
 

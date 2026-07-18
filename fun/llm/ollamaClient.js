@@ -118,6 +118,8 @@ export async function ollamaGenerate({
   temperature = 0.85,
   keepAlive = -1,
   think = false,
+  /** Ex.: 'json' — força saída JSON (Ollama format). */
+  format = null,
   fetchImpl,
   serialize = true,
 } = {}) {
@@ -138,6 +140,9 @@ export async function ollamaGenerate({
         num_predict: Math.max(16, Math.min(2000, Math.floor(Number(numPredict) || 400))),
       },
     };
+    if (format === 'json' || format === true) {
+      body.format = 'json';
+    }
 
     const data = await postGenerate(body, { baseUrl, timeoutMs, fetchImpl });
     return extractTextFromOllamaPayload(data);

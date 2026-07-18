@@ -1,25 +1,39 @@
 /**
- * Memória seletiva por grupo — buffer de chat → extract LLM (Zen→Ollama) → fatos.
- * Só salva o ouro (engraçado/útil); dedup + cap + TTL.
+ * Memória seletiva por grupo — buffer → extract LLM (IDs de batch) → fatos com JID.
+ * Zero confusão de pessoas: subjects só via índices [0],[1] mapeados para JID.
+ * Injeção seletiva com <group_lore> (não RAG genérico).
  */
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
 
+const VALID_KINDS = new Set([
+  'running_gag',
+  'rivalry',
+  'catchphrase',
+  'epic_fail',
+  'ship_lore',
+  'nickname',
+  'event',
+]);
+
 const EXTRACT_SYSTEM = `Você extrai FATOS engraçados ou úteis de um trecho de chat de WhatsApp BR (grupo de amigos).
 
-REGRAS:
-- Retorne JSON array (sem markdown): [] ou até 2 objetos.
-- Cada objeto: {"kind":"running_gag|rivalry|catchphrase|epic_fail|ship_lore|nickname|event","summary":"1 frase curta ≤150 chars","subjects":["nome1"],"keywords":["kw1","kw2"],"score":35-95}
-- Só salve o que for engraçado, mico, rivalidade, bordão, apelido, lore social.
-- NÃO salve: bom dia, ok, sticker vazio, comando de bot, links, spam, dados sensíveis (telefone, endereço, senha, PIX real).
-- NÃO invente o que não está no trecho.
-- Se nada valer a pena: []
-- summary em pt-BR, tom de zap, sem aspas externas.
+REGRAS OBRIGATÓRIAS:
+1. Responda SOMENTE com JSON válido (objeto ou array). Sem markdown, sem texto fora do JSON.
+2. Formato preferido: {"facts":[...]} ou array [...]. Cada fato:
+   {"kind":"running_gag|rivalry|catchphrase|epic_fail|ship_lore|nickname|event","summary":"1 frase ≤150 chars","subjects":[0],"keywords":["kw1"],"score":35-95}
+3. "subjects" DEVE ser array de IDs NUMÉRICOS do batch (ex: 0, 1, 2). NUNCA nomes, NUNCA strings de pessoa.
+4. O ID em subjects é o índice da mensagem [N] que identifica o AUTOR/sujeito do fato (quem FEZ a ação ou é o foco real). Não confunda quem fala sobre quem.
+5. Só salve engraçado, mico, rivalidade, bordão, apelido, lore social. Se nada valer: {"facts":[]}
+6. NÃO invente o que não está no trecho. NÃO salve: bom dia, ok, comando de bot, links, spam, dados sensíveis.
+7. summary em pt-BR, tom de zap, sem aspas externas.
 Só o JSON.`;
 
 const PERSONA_SYSTEM = `Resuma o clima de um grupo WhatsApp BR em 3 a 5 bullets curtos (lore cômica), com base nos fatos dados.
 pt-BR, sem inventar nomes que não estejam nos fatos. Máx 450 caracteres. Sem markdown pesado. Só o texto.`;
+
+const PERSONA_CACHE_TTL_MS = 30 * 60_000;
 
 function numOr(v, fb) {
   const n = Number(v);
@@ -52,9 +66,17 @@ function jaccard(a, b) {
   return union > 0 ? inter / union : 0;
 }
 
+/** Hash barato: top-3 tokens/keywords ordenados. */
+function keywordSignature(keywords = [], summary = '') {
+  const fromKw = (keywords || []).map(normalizeKey).filter((t) => t.length >= 3);
+  const fromSum = [...tokenSet(summary)];
+  const toks = [...new Set([...fromKw, ...fromSum])].sort();
+  return toks.slice(0, 3).join('|');
+}
+
 function looksSensitive(text) {
   const t = String(text || '');
-  if (/\b\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}\b/.test(t)) return true; // cpf-ish
+  if (/\b\d{3}[.\s]?\d{3}[.\s]?\d{3}[-.\s]?\d{2}\b/.test(t)) return true;
   if (/\b\d{10,13}\b/.test(t) && /(zap|whats|telefone|celular|pix)/i.test(t)) return true;
   if (/(senha|password|token|api[_-]?key)\s*[:=]/i.test(t)) return true;
   return false;
@@ -65,37 +87,104 @@ function isCommandLike(text, prefix = '/') {
   return t.startsWith(String(prefix || '/'));
 }
 
-function parseFactsJson(raw) {
+/**
+ * Extrai índice de subject da LLM: 0, "0", "[0]", "[1]".
+ * Retorna null se for nome ou inválido.
+ */
+function parseSubjectIndex(raw) {
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw >= 0) return raw;
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+  const m = s.match(/^\[?\s*(\d+)\s*\]?$/);
+  if (m) return Number(m[1]);
+  return null;
+}
+
+/**
+ * Valida fato bruto pós-parse (antes do map de JID).
+ * subjects ainda podem ser índices numéricos.
+ */
+export function validateExtractedFact(fact, { batchSize = 0, summaryMax = 160 } = {}) {
+  if (!fact || typeof fact !== 'object') return null;
+  const kind = String(fact.kind || 'event')
+    .trim()
+    .toLowerCase();
+  if (!VALID_KINDS.has(kind)) return null;
+
+  let summary = String(fact.summary || '')
+    .trim()
+    .replace(/^["'“”]+|["'“”]+$/g, '');
+  if (summary.length < 12) return null;
+  if (looksSensitive(summary)) return null;
+  summary = summary.slice(0, Math.max(80, Math.min(200, summaryMax)));
+
+  const rawSubjects = Array.isArray(fact.subjects) ? fact.subjects : [];
+  const indices = [];
+  for (const s of rawSubjects) {
+    const idx = parseSubjectIndex(s);
+    if (idx == null) continue; // nome solto → ignora (não aceita)
+    if (batchSize > 0 && idx >= batchSize) continue;
+    if (!indices.includes(idx)) indices.push(idx);
+  }
+  // zero alucinação de autoria: sem subject ID válido → descarta
+  if (!indices.length) return null;
+
+  const keywords = Array.isArray(fact.keywords)
+    ? fact.keywords
+        .map((k) => String(k || '').trim().toLowerCase())
+        .filter((k) => k.length >= 2)
+        .slice(0, 10)
+    : [];
+
+  const score = Math.max(0, Math.min(100, Math.round(Number(fact.score) || 50)));
+
+  return {
+    kind,
+    summary,
+    subjectIndices: indices.slice(0, 6),
+    keywords,
+    score,
+    signature: keywordSignature(keywords, summary),
+  };
+}
+
+/**
+ * Parse JSON de extract — aceita array, {facts:[]}, {items:[]}, ou objeto único.
+ */
+export function parseFactsJson(raw, { batchSize = 0, summaryMax = 160 } = {}) {
   const text = String(raw || '').trim();
   if (!text) return [];
-  // tenta array direto
-  let m = text.match(/\[[\s\S]*\]/);
-  if (!m) {
-    // objeto único
-    const o = text.match(/\{[\s\S]*\}/);
-    if (o) m = [`[${o[0]}]`];
-  }
-  if (!m) return [];
+
+  let parsed = null;
   try {
-    const arr = JSON.parse(m[0]);
-    if (!Array.isArray(arr)) return [];
-    return arr
-      .filter((x) => x && typeof x === 'object')
-      .map((x) => ({
-        kind: String(x.kind || 'event').trim().toLowerCase(),
-        summary: String(x.summary || '').trim().slice(0, 160),
-        subjects: Array.isArray(x.subjects)
-          ? x.subjects.map((s) => String(s || '').trim()).filter(Boolean).slice(0, 6)
-          : [],
-        keywords: Array.isArray(x.keywords)
-          ? x.keywords.map((s) => String(s || '').trim().toLowerCase()).filter(Boolean).slice(0, 10)
-          : [],
-        score: Math.max(0, Math.min(100, Math.round(Number(x.score) || 50))),
-      }))
-      .filter((x) => x.summary.length >= 12 && !looksSensitive(x.summary));
+    parsed = JSON.parse(text);
   } catch {
-    return [];
+    // tenta extrair bloco JSON embutido
+    const arr = text.match(/\[[\s\S]*\]/);
+    const obj = text.match(/\{[\s\S]*\}/);
+    const candidate = arr?.[0] || obj?.[0];
+    if (!candidate) return [];
+    try {
+      parsed = JSON.parse(candidate);
+    } catch {
+      return [];
+    }
   }
+
+  let list = [];
+  if (Array.isArray(parsed)) {
+    list = parsed;
+  } else if (parsed && typeof parsed === 'object') {
+    if (Array.isArray(parsed.facts)) list = parsed.facts;
+    else if (Array.isArray(parsed.items)) list = parsed.items;
+    else if (Array.isArray(parsed.data)) list = parsed.data;
+    else if (parsed.summary || parsed.kind) list = [parsed];
+  }
+
+  return list
+    .map((x) => validateExtractedFact(x, { batchSize, summaryMax }))
+    .filter(Boolean)
+    .slice(0, 2);
 }
 
 export function createGroupMemoryService({
@@ -110,6 +199,8 @@ export function createGroupMemoryService({
 
   /** @type {Map<string, { msgs: object[], lastFlushAt: number, flushing: boolean }>} */
   const buffers = new Map();
+  /** @type {Map<string, { text: string, factCount: number, at: number }>} */
+  const personaCache = new Map();
 
   function opts(funConfig = {}) {
     return {
@@ -144,6 +235,41 @@ export function createGroupMemoryService({
     return String(jid || '').split('@')[0] || '?';
   }
 
+  function firstName(jidOrName) {
+    const raw = String(jidOrName || '').trim();
+    if (!raw) return '?';
+    if (raw.includes('@')) {
+      const dn = displayOf(raw);
+      return dn.split(/\s+/)[0] || dn || '?';
+    }
+    return raw.split(/\s+/)[0] || raw;
+  }
+
+  function invalidatePersonaCache(scopeKey) {
+    personaCache.delete(String(scopeKey || ''));
+  }
+
+  function getPersonaCached(scopeKey) {
+    const k = String(scopeKey || '');
+    const hit = personaCache.get(k);
+    if (hit && Date.now() - hit.at < PERSONA_CACHE_TTL_MS) {
+      return {
+        scopeKey: k,
+        personaText: hit.text,
+        factCount: hit.factCount,
+        updatedAt: hit.at,
+        fromCache: true,
+      };
+    }
+    const row = memoryRepository.getPersona(scopeKey);
+    personaCache.set(k, {
+      text: row.personaText || '',
+      factCount: row.factCount || 0,
+      at: Date.now(),
+    });
+    return { ...row, fromCache: false };
+  }
+
   /**
    * Observa mensagem do grupo (fire-and-forget safe).
    */
@@ -162,11 +288,9 @@ export function createGroupMemoryService({
     }
     const body = String(text || '').trim();
     if (!body) return { observed: false, reason: 'short' };
-    // comando antes do minChars — "/lore" é curto mas não é chat
     if (isCommandLike(body, o.prefix)) return { observed: false, reason: 'command' };
     if (body.length < o.minChars) return { observed: false, reason: 'short' };
     if (looksSensitive(body)) return { observed: false, reason: 'sensitive' };
-    // mídia sem legenda
     if (!body && messageType && messageType !== 'text') {
       return { observed: false, reason: 'media-empty' };
     }
@@ -187,7 +311,6 @@ export function createGroupMemoryService({
     const firstFill = buf.lastFlushAt === 0 && buf.msgs.length >= o.flushMin;
 
     if ((dueByCount || dueByTime || firstFill) && !buf.flushing) {
-      // async sem await no caller
       void flushScope(scopeKey, funConfig, now).catch((err) => {
         getLogger?.()?.debug?.(
           { err: { message: err?.message || 'memory-flush' } },
@@ -222,22 +345,40 @@ export function createGroupMemoryService({
 
       for (const fact of extracted.slice(0, 2)) {
         if (fact.score < o.minScore) continue;
+        // subjects já são JIDs (pós map de IDs)
+        if (!fact.subjects?.length) continue;
+
         const hit = findSimilar(existing, fact);
         if (hit) {
+          // overwrite summary + last_seen (relógio reseta) em vez de só hits
           memoryRepository.reinforceFact(hit.id, {
             summary: fact.summary.slice(0, o.summaryMax),
             score: fact.score,
             keywords: fact.keywords,
+            overwriteSummary: true,
             now,
           });
           reinforced += 1;
+          // atualiza mirror local p/ dedup no mesmo flush
+          const idx = existing.findIndex((e) => e.id === hit.id);
+          if (idx >= 0) {
+            existing[idx] = {
+              ...existing[idx],
+              summary: fact.summary.slice(0, o.summaryMax),
+              score: Math.max(existing[idx].score, fact.score),
+              keywords: [
+                ...new Set([...(existing[idx].keywords || []), ...(fact.keywords || [])]),
+              ].slice(0, 12),
+              hits: (existing[idx].hits || 1) + 1,
+              lastSeenAt: now,
+            };
+          }
         } else {
-          // resolve subjects names → keep as names (not always jid)
           const rec = memoryRepository.insertFact({
             scopeKey,
             kind: fact.kind,
             summary: fact.summary.slice(0, o.summaryMax),
-            subjects: resolveSubjects(batch, fact.subjects),
+            subjects: fact.subjects,
             keywords: fact.keywords,
             score: fact.score,
             source: 'chat',
@@ -257,54 +398,68 @@ export function createGroupMemoryService({
       });
       memoryRepository.pruneToCap(scopeKey, o.maxFacts);
 
-      // persona a cada flush com mudanças ou a cada ~3 flushes
       if (inserted + reinforced > 0 || random() < 0.35) {
         await refreshPersona(scopeKey, funConfig, o);
       }
 
       return { ok: true, inserted, reinforced, batchSize: batch.length };
     } finally {
+      // lock rigoroso: nunca deixa flushing preso após erro LLM
       buf.flushing = false;
     }
   }
 
-  function resolveSubjects(batch, names) {
-    const out = [];
-    const nameMap = new Map();
-    for (const m of batch) {
-      if (m.userJid) nameMap.set(normalizeKey(m.name), m.userJid);
+  /**
+   * Mapeia subjectIndices → JIDs reais do batch. Descarta se nenhum JID válido.
+   */
+  function mapSubjectsToJids(batch, subjectIndices) {
+    const jids = [];
+    for (const idx of subjectIndices || []) {
+      const m = batch[idx];
+      if (!m?.userJid) continue;
+      const jid = String(m.userJid);
+      if (!jids.includes(jid)) jids.push(jid);
     }
-    for (const n of names || []) {
-      const jid = nameMap.get(normalizeKey(n));
-      out.push(jid || String(n));
-    }
-    // always include speakers from batch if empty
-    if (!out.length) {
-      for (const m of batch.slice(-3)) {
-        if (m.userJid && !out.includes(m.userJid)) out.push(m.userJid);
-      }
-    }
-    return out.slice(0, 6);
+    return jids.slice(0, 6);
   }
 
   function findSimilar(existing, fact) {
+    const fSig = fact.signature || keywordSignature(fact.keywords, fact.summary);
     const fTokens = tokenSet(fact.summary);
     const fKw = new Set((fact.keywords || []).map(normalizeKey).filter(Boolean));
+    const fSubjects = new Set((fact.subjects || []).map(String));
+
+    // 1) assinatura barata (top-3 tokens)
+    if (fSig) {
+      for (const e of existing) {
+        const eSig = keywordSignature(e.keywords, e.summary);
+        if (eSig && eSig === fSig) return e;
+      }
+    }
+
     let best = null;
     let bestScore = 0;
     for (const e of existing) {
       const eTokens = tokenSet(e.summary);
       const sim = jaccard(fTokens, eTokens);
       const kwSim = jaccard(fKw, new Set((e.keywords || []).map(normalizeKey)));
-      const s = Math.max(sim, kwSim * 0.9);
+      let s = Math.max(sim, kwSim * 0.9);
+
+      // mesma kind + subjects sobrepostos → limiar mais baixo (overwrite)
+      const sameKind = e.kind === fact.kind;
+      const subjOverlap = (e.subjects || []).some((x) => fSubjects.has(String(x)));
+      if (sameKind && subjOverlap) {
+        s = Math.max(s, sim + 0.08);
+        if (sim >= 0.3) s = Math.max(s, 0.45);
+      }
+
       if (s > bestScore) {
         bestScore = s;
         best = e;
       }
     }
-    // limiar: evita duplicata
     if (bestScore >= 0.42) return best;
-    // substring quase igual
+
     const n = normalizeKey(fact.summary);
     for (const e of existing) {
       const en = normalizeKey(e.summary);
@@ -315,26 +470,74 @@ export function createGroupMemoryService({
     return null;
   }
 
+  function formatBatchLines(batch) {
+    return batch
+      .map((m, i) => {
+        const name = String(m.name || firstName(m.userJid) || '?').slice(0, 40);
+        return `[${i}] ${name}: ${m.text}`;
+      })
+      .join('\n');
+  }
+
   async function extractFacts(batch, existing, funConfig, o) {
-    const lines = batch.map((m) => `${m.name}: ${m.text}`).join('\n');
+    const lines = formatBatchLines(batch);
     const known = existing
       .slice(0, 12)
-      .map((f) => `- [${f.kind}] ${f.summary}`)
+      .map((f) => {
+        const who = (f.subjects || [])
+          .map((s) => firstName(s))
+          .filter(Boolean)
+          .slice(0, 3)
+          .join(', ');
+        return `- [${f.kind}] (${who || '?'}) ${f.summary}`;
+      })
       .join('\n');
+
     const prompt = [
-      'Trecho recente do grupo:',
+      'Analise as seguintes mensagens do grupo (IDs entre colchetes):',
       lines,
       '',
-      known ? `Já sabemos (NÃO repita; só reforce se for o MESMO fato):\n${known}` : 'Sem lore prévia.',
+      'Regras:',
+      '1. Extraia apenas fatos engraçados ou úteis (0 a 2).',
+      '2. Em subjects use OBRIGATORIAMENTE os IDs numéricos das mensagens (ex: 0, 2). Nunca nomes.',
+      '3. subjects = quem FEZ / é o foco do fato (não confunda falante com assunto).',
+      '4. NÃO invente. Se não souber o sujeito com ID claro, não extraia o fato.',
+      '5. Retorne JSON: {"facts":[...]}',
       '',
-      'Extraia 0–2 fatos novos engraçados/úteis em JSON array.',
+      known
+        ? `Já sabemos (NÃO repita; se for o MESMO fato, a gente reforça no backend):\n${known}`
+        : 'Sem lore prévia.',
+      '',
+      'Exemplo de shape:',
+      '{"facts":[{"kind":"epic_fail","summary":"João bateu o carro no poste","subjects":[0],"keywords":["carro","poste"],"score":72}]}',
     ].join('\n');
 
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') {
       return [];
     }
 
-    // Zen
+    const mapParsed = (raw) => {
+      const validated = parseFactsJson(raw, {
+        batchSize: batch.length,
+        summaryMax: o.summaryMax,
+      });
+      const out = [];
+      for (const f of validated) {
+        const jids = mapSubjectsToJids(batch, f.subjectIndices);
+        if (!jids.length) continue; // sem JID = descarta (anti-alucinação de autoria)
+        out.push({
+          kind: f.kind,
+          summary: f.summary,
+          subjects: jids,
+          keywords: f.keywords,
+          score: f.score,
+          signature: f.signature,
+        });
+      }
+      return out;
+    };
+
+    // Zen + jsonMode
     if (funConfig.zenEnabled !== false) {
       try {
         const raw = await generateZen({
@@ -344,11 +547,12 @@ export function createGroupMemoryService({
           prompt,
           timeoutMs: o.extractTimeout,
           maxTokens: 500,
-          temperature: 0.55,
+          temperature: 0.45,
           apiKey: funConfig.zenApiKey || '',
+          jsonMode: true,
         });
-        const parsed = parseFactsJson(raw);
-        if (parsed.length) return parsed;
+        const mapped = mapParsed(raw);
+        if (mapped.length) return mapped;
       } catch (err) {
         getLogger?.()?.warn?.(
           { err: { message: err?.message || 'zen-memory' } },
@@ -357,7 +561,7 @@ export function createGroupMemoryService({
       }
     }
 
-    // Ollama fallback
+    // Ollama + format json
     if (funConfig.ollamaEnabled !== false) {
       try {
         const raw = await generateOllama({
@@ -369,9 +573,10 @@ export function createGroupMemoryService({
           keepAlive: funConfig.ollamaKeepAlive ?? -1,
           think: false,
           numPredict: 400,
-          temperature: 0.55,
+          temperature: 0.45,
+          format: 'json',
         });
-        return parseFactsJson(raw);
+        return mapParsed(raw);
       } catch (err) {
         getLogger?.()?.warn?.(
           { err: { message: err?.message || 'ollama-memory' } },
@@ -390,10 +595,16 @@ export function createGroupMemoryService({
     });
     if (!facts.length) {
       memoryRepository.setPersona(scopeKey, '', 0);
+      invalidatePersonaCache(scopeKey);
       return { ok: true, empty: true };
     }
 
-    const list = facts.map((f) => `• (${f.kind}, ${f.score}) ${f.summary}`).join('\n');
+    const list = facts
+      .map((f) => {
+        const who = (f.subjects || []).map((s) => firstName(s)).join(', ');
+        return `• (${f.kind}, ${f.score}, ${who || '?'}) ${f.summary}`;
+      })
+      .join('\n');
     let text = '';
 
     if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.zenEnabled !== false) {
@@ -432,7 +643,6 @@ export function createGroupMemoryService({
     }
 
     if (!text) {
-      // template persona
       text = facts
         .slice(0, 5)
         .map((f) => `• ${f.summary}`)
@@ -443,19 +653,27 @@ export function createGroupMemoryService({
     }
 
     memoryRepository.setPersona(scopeKey, text, facts.length);
+    personaCache.set(String(scopeKey || ''), {
+      text,
+      factCount: facts.length,
+      at: Date.now(),
+    });
     return { ok: true, text };
   }
 
   /**
-   * Bloco de contexto pra injetar em prompts de flavor/caos.
+   * Bloco estruturado <group_lore> pra injetar em prompts de flavor/caos.
+   * Regras anti-alucinação + autor por primeiro nome (não JID cru).
    */
   function buildLoreContext(scopeKey, { userJids = [], limit = 5, funConfig = {} } = {}) {
     const o = opts(funConfig);
     if (!o.enabled || !scopeKey) return '';
 
-    const persona = memoryRepository.getPersona(scopeKey);
+    const persona = getPersonaCached(scopeKey);
+    // SQL já filtra score e limita — não traz 50 pra RAM
+    const fetchLimit = Math.max(8, Math.min(12, Math.max(limit * 2, 10)));
     const facts = memoryRepository.listFacts(scopeKey, {
-      limit: o.maxFacts,
+      limit: fetchLimit,
       minScore: Math.max(0, o.minScore - 10),
     });
     if (!facts.length && !persona.personaText) return '';
@@ -474,16 +692,34 @@ export function createGroupMemoryService({
       .sort((a, b) => b.rank - a.rank);
 
     const top = scored.slice(0, Math.max(1, Math.min(8, limit))).map((x) => x.f);
-    const lines = [];
+    const lines = [
+      '<group_lore>',
+      'Regras de uso da Lore:',
+      '- Estes são fatos passados do grupo. Use-os APENAS se a mensagem atual tiver relação direta.',
+      '- É PROIBIDO conectar um fato novo a uma lore antiga se a relação não for óbvia.',
+      '- NUNCA altere o sujeito da lore. Se a lore diz que [Nome] fez X, não atribua a outra pessoa.',
+      '- Se não houver conexão clara, IGNORE a lore por completo.',
+      '- NÃO invente detalhes (números, medidas, causas) que não estejam no fato.',
+    ];
+
     if (persona.personaText) {
-      lines.push(`Clima do grupo: ${persona.personaText.replace(/\n+/g, ' · ').slice(0, 280)}`);
+      lines.push(
+        '',
+        `Clima: ${persona.personaText.replace(/\n+/g, ' · ').slice(0, 280)}`
+      );
     }
     if (top.length) {
-      lines.push('Lore (use só se encaixar, não force):');
+      lines.push('', 'Fatos:');
       for (const f of top) {
-        lines.push(`- [${f.kind}] ${f.summary}`);
+        const authors = (f.subjects || [])
+          .map((s) => firstName(s))
+          .filter(Boolean)
+          .slice(0, 3);
+        const who = authors.length ? authors.join(', ') : '?';
+        lines.push(`- [${f.kind}] (Autor: ${who}): ${f.summary}`);
       }
     }
+    lines.push('</group_lore>');
     return lines.join('\n');
   }
 
@@ -493,7 +729,7 @@ export function createGroupMemoryService({
       limit,
       minScore: 0,
     });
-    const persona = memoryRepository.getPersona(scopeKey);
+    const persona = getPersonaCached(scopeKey);
     if (!facts.length) {
       return [
         '🧠 *Lore do grupo*',
@@ -506,7 +742,13 @@ export function createGroupMemoryService({
       lines.push(persona.personaText, '');
     }
     for (const f of facts.slice(0, limit)) {
-      lines.push(`• _${f.kind}_ · ${f.summary} _(★${f.score} · ×${f.hits})_`);
+      const who = (f.subjects || [])
+        .map((s) => firstName(s))
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(', ');
+      const tag = who ? ` · ${who}` : '';
+      lines.push(`• _${f.kind}_${tag} · ${f.summary} _(★${f.score} · ×${f.hits})_`);
     }
     lines.push('', `_Cap *${o.maxFacts}* · \`/esquecelore @user\` · \`/esquecelore tudo sim\``);
     return lines.join('\n');
@@ -516,19 +758,20 @@ export function createGroupMemoryService({
     const n = memoryRepository.deleteByScope(scopeKey);
     memoryRepository.clearPersona(scopeKey);
     buffers.delete(String(scopeKey || ''));
+    invalidatePersonaCache(scopeKey);
     return n;
   }
 
   function forgetSubject(scopeKey, userJid) {
-    return memoryRepository.deleteBySubject(scopeKey, userJid);
+    const n = memoryRepository.deleteBySubject(scopeKey, userJid);
+    if (n > 0) invalidatePersonaCache(scopeKey);
+    return n;
   }
 
-  /** Força flush (testes / debug). */
   async function forceFlush(scopeKey, funConfig = {}) {
     return flushScope(scopeKey, funConfig, Date.now());
   }
 
-  /** Injeta msgs no buffer (testes). */
   function _pushRaw(scopeKey, msg) {
     const buf = getBuf(scopeKey);
     buf.msgs.push(msg);
@@ -544,10 +787,20 @@ export function createGroupMemoryService({
     forgetSubject,
     refreshPersona,
     parseFactsJson,
+    validateExtractedFact,
     findSimilar,
+    mapSubjectsToJids,
     _pushRaw,
     _buffers: buffers,
+    _personaCache: personaCache,
   };
 }
 
-export { parseFactsJson, normalizeKey, jaccard, tokenSet };
+export {
+  parseSubjectIndex,
+  normalizeKey,
+  jaccard,
+  tokenSet,
+  keywordSignature,
+  VALID_KINDS,
+};
