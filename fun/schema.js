@@ -478,6 +478,62 @@ export function buildFunSchemaSql() {
       announced_at  INTEGER NOT NULL,
       PRIMARY KEY (scope_key, user_jid, year)
     );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_properties (
+      id              TEXT PRIMARY KEY,
+      scope_key       TEXT    NOT NULL,
+      user_jid        TEXT    NOT NULL,
+      property_type   TEXT    NOT NULL,
+      health          REAL    NOT NULL DEFAULT 100,
+      buffer_coins    INTEGER NOT NULL DEFAULT 0,
+      last_tick_at    INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL,
+      UNIQUE(scope_key, user_jid, property_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_properties_scope
+      ON fun_properties(scope_key);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_properties_user
+      ON fun_properties(scope_key, user_jid);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_daily_events (
+      id            TEXT PRIMARY KEY,
+      scope_key     TEXT    NOT NULL,
+      event_type    TEXT    NOT NULL,
+      user_jid      TEXT,
+      payload_json  TEXT    NOT NULL DEFAULT '{}',
+      created_at    INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_daily_events_scope
+      ON fun_daily_events(scope_key, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_group_news_meta (
+      scope_key              TEXT PRIMARY KEY,
+      last_daily_news_day    TEXT    NOT NULL DEFAULT '',
+      updated_at             INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_achievements (
+      user_jid         TEXT    NOT NULL,
+      scope_key        TEXT    NOT NULL,
+      achievement_id   TEXT    NOT NULL,
+      unlocked_at      INTEGER NOT NULL,
+      PRIMARY KEY (user_jid, scope_key, achievement_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_achievements_scope
+      ON fun_achievements(scope_key, user_jid);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_achievement_progress (
+      user_jid     TEXT    NOT NULL,
+      scope_key    TEXT    NOT NULL,
+      counter_key  TEXT    NOT NULL,
+      value        INTEGER NOT NULL DEFAULT 0,
+      updated_at   INTEGER NOT NULL,
+      PRIMARY KEY (user_jid, scope_key, counter_key)
+    );
   `;
 }
 
