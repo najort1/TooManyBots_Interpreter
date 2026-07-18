@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import {
   extractChatText,
   extractJsonBlob,
+  extractJsonFromChat,
   looksLikeIncompleteOrMeta,
 } from '../fun/llm/openaiClient.js';
 import { createFlavorService } from '../fun/llm/flavorService.js';
@@ -88,6 +89,44 @@ test('extractJsonBlob / invent: JSON no reasoning do DeepSeek thinking', () => {
     ],
   });
   assert.match(t, /"title"\s*:\s*"BombaTech explode"/);
+});
+
+test('extractChatText: content inglês lixo não bloqueia JSON no reasoning', () => {
+  const t = extractChatText({
+    choices: [
+      {
+        message: {
+          content: 'exactly as listed? The list shows',
+          reasoning_content:
+            'We need to generate JSON.\n{"archetype":"demand_slump","category":"arma","companyId":"bombatech","title":"Blitze esfria o aço","body":"Centro lotado de blitze e ninguém compra peixeira hoje."}',
+        },
+      },
+    ],
+  });
+  assert.match(t, /Blitze esfria o aço/);
+  assert.equal(looksLikeIncompleteOrMeta('exactly as listed? The list shows'), true);
+});
+
+test('extractJsonFromChat: content vazio + eco no reasoning → vazio (sem prosa)', () => {
+  const t = extractJsonFromChat({
+    choices: [
+      {
+        message: {
+          content: '',
+          reasoning_content:
+            'category uma das: combustivel, municao, arma, veiculo, defesa — e coerente com a empresa. Peixaria is odd.',
+        },
+      },
+    ],
+  });
+  assert.equal(t, '');
+  assert.equal(looksLikeIncompleteOrMeta('itself? Actually'), true);
+  assert.equal(
+    looksLikeIncompleteOrMeta(
+      'category uma das: combustivel, municao, arma — e coerente com a empresa'
+    ),
+    true
+  );
 });
 
 test('looksLikeIncompleteOrMeta rejeita eco de lista de cenários (illuminati bug)', () => {

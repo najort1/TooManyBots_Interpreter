@@ -34,11 +34,22 @@ export function looksLikeIncompleteOrMeta(text) {
   if (!s) return true;
   if (s.length < 12) return true;
 
-  // meta / planning
+  // meta / planning / raciocínio em inglês (DeepSeek thinking)
   if (
-    /\b(I need|we are|the user|therefore|let me|shouldn'?t|in Portuguese|as an AI|the answer|funny line|write a|thinking)\b/i.test(
+    /\b(I need|we are|the user|therefore|let me|shouldn'?t|in Portuguese|as an AI|the answer|funny line|write a|thinking|as listed|the list shows|we need to|we should|valid archetypes|prefer(ence)? is|avoid simply|generate a single|JSON event|itself\?|Actually|That's \d|Count characters|All good|Now output)\b/i.test(
       s
     )
+  ) {
+    return true;
+  }
+  if (/\b(category uma das|companyId DEVE|coerente com a empresa|archetype DEVE)\b/i.test(s)) {
+    return true;
+  }
+  // trecho curto de inglês sem pt-BR (rascunho de reasoning)
+  if (
+    s.length < 80 &&
+    !/[áàâãéêíóôõúç]/i.test(s) &&
+    /\b(the|list|shows|exactly|should|would|could|must)\b/i.test(s)
   ) {
     return true;
   }
@@ -181,6 +192,26 @@ export function extractJsonBlob(text) {
 }
 
 /**
+ * Só JSON de invent/market — nunca prosa de reasoning (evita eco do system).
+ */
+export function extractJsonFromChat(data) {
+  if (!data || typeof data !== 'object') return '';
+  const choice = Array.isArray(data.choices) ? data.choices[0] : null;
+  if (!choice) return '';
+  const msg = choice.message || {};
+  const content = normalizeContent(msg.content ?? choice.text ?? '');
+  const reasoning = normalizeContent(
+    msg.reasoning_content || msg.reasoning || msg.thinking || choice.reasoning || ''
+  );
+  return (
+    extractJsonBlob(content) ||
+    extractJsonBlob(reasoning) ||
+    extractJsonBlob(`${content}\n${reasoning}`) ||
+    ''
+  );
+}
+
+/**
  * Extrai texto final. Modelos free (DeepSeek) costumam encher reasoning_content
  * e deixar content vazio ou com fragmento — NÃO devolver rascunho.
  * Thinking models: JSON de invent costuma estar no content ou no fim do reasoning.
@@ -192,24 +223,24 @@ export function extractChatText(data) {
 
   const msg = choice.message || {};
   const content = normalizeContent(msg.content ?? choice.text ?? '');
-  if (content) {
-    const jsonFromContent = extractJsonBlob(content);
-    if (jsonFromContent) return jsonFromContent;
-    if (!looksLikeIncompleteOrMeta(content)) return content;
-  }
-
-  // content lixo/vazio → tenta reasoning com filtro rígido
   const reasoning = normalizeContent(
     msg.reasoning_content || msg.reasoning || msg.thinking || choice.reasoning || ''
   );
+
+  // 1) JSON em content ou reasoning (prioridade absoluta p/ invent/market)
+  const onlyJson = extractJsonFromChat(data);
+  if (onlyJson) return onlyJson;
+
+  // 2) content limpo (flavor pt-BR) — nunca eco de regras
+  if (content && !looksLikeIncompleteOrMeta(content)) return content;
+
+  // 3) reasoning com frase final boa (só flavor; invent usa extractJsonFromChat)
   if (reasoning) {
-    const jsonFromReason = extractJsonBlob(reasoning);
-    if (jsonFromReason) return jsonFromReason;
     const fromReason = pickBestFromReasoning(reasoning);
-    if (fromReason) return fromReason;
+    if (fromReason && !looksLikeIncompleteOrMeta(fromReason)) return fromReason;
   }
 
-  // content incompleto mas era o único: ainda rejeita (melhor template)
+  // content incompleto / meta: rejeita (cascade Ollama/template)
   return '';
 }
 
@@ -237,6 +268,11 @@ export async function openaiChatComplete({
   apiKey = '',
   /** Força resposta JSON (OpenAI-compat: response_format json_object). */
   jsonMode = false,
+  /**
+   * true = só devolve JSON (invent/market). Sem prosa de reasoning.
+   * Evita eco "category uma das…" virar invent.
+   */
+  jsonOnly = false,
   fetchImpl,
 } = {}) {
   const userText = String(prompt ?? '').trim();
@@ -270,7 +306,8 @@ export async function openaiChatComplete({
       model: String(model || 'deepseek-v4-flash-free'),
       messages,
       temperature: Number.isFinite(Number(temperature)) ? Number(temperature) : 0.85,
-      max_tokens: Math.max(32, Math.min(2000, Math.floor(Number(maxTokens) || 400))),
+      // invent com thinking precisa de folga no completion
+      max_tokens: Math.max(32, Math.min(4000, Math.floor(Number(maxTokens) || 400))),
       stream: false,
     };
     if (jsonMode) {
@@ -290,6 +327,14 @@ export async function openaiChatComplete({
     }
 
     const data = await res.json();
+    if (jsonOnly || jsonMode) {
+      const only = extractJsonFromChat(data);
+      if (only) return only;
+      // content truncado sem fechar } — ainda tenta extractChatText/json blob
+      const content = normalizeContent(data?.choices?.[0]?.message?.content || '');
+      if (content && content.includes('{')) return content;
+      return '';
+    }
     return extractChatText(data);
   } catch (err) {
     if (err?.name === 'AbortError') {

@@ -461,52 +461,66 @@ export function createMarketService({
         mood: co.risk > 0.7 ? 'hot' : co.risk < 0.3 ? 'stable' : 'warm',
       })),
     });
-    const inventSystem = `${EVENT_INVENT_SYSTEM}
+    // System curto: thinking free ecoa regras longas em vez de JSON
+    const inventSystem = EVENT_INVENT_SYSTEM;
 
-FORMATO: responda SOMENTE um objeto JSON válido (sem markdown, sem texto antes/depois).
-Campos: archetype, category, companyId, title, body.`;
-
-    // 1) Zen — principal
+    // 1) Zen — principal (só jsonMode; free-mode do DeepSeek só raciocina e não fecha JSON)
     if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.zenEnabled !== false) {
-      try {
-        const raw = await generateZen({
-          baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
-          model: funConfig.zenModel || 'deepseek-v4-flash-free',
-          system: inventSystem,
-          prompt,
-          timeoutMs: Math.max(8000, numOr(funConfig.zenTimeoutMs, 45000)),
-          // thinking models gastam tokens em reasoning — reserva folga pro JSON final
-          maxTokens: Math.max(900, numOr(funConfig.zenMaxTokens, 600) + 400),
-          temperature: 0.85,
-          apiKey: funConfig.zenApiKey || '',
-          jsonMode: true,
-        });
-        const parsed = parseInventResponse(raw);
-        if (parsed) {
-          const source = parsed.salvaged ? 'zen-salvage' : 'zen';
-          log?.info?.(
-            { source, model: funConfig.zenModel, title: parsed.title },
-            'fun market invent via zen'
+      const maxTok = Math.max(1600, numOr(funConfig.zenMaxTokens, 900) + 800);
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          const raw = await generateZen({
+            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
+            model: funConfig.zenModel || 'deepseek-v4-flash-free',
+            system: inventSystem,
+            prompt,
+            timeoutMs: Math.max(12000, numOr(funConfig.zenTimeoutMs, 45000)),
+            maxTokens: maxTok,
+            temperature: attempt === 1 ? 0.7 : 0.9,
+            apiKey: funConfig.zenApiKey || '',
+            jsonMode: true,
+            jsonOnly: true,
+          });
+          const parsed = parseInventResponse(raw);
+          if (parsed) {
+            const source = parsed.salvaged ? 'zen-salvage' : 'zen';
+            log?.info?.(
+              {
+                source,
+                model: funConfig.zenModel,
+                title: parsed.title,
+                attempt,
+              },
+              'fun market invent via zen'
+            );
+            return {
+              ...parsed,
+              description: parsed.body,
+              source,
+              _regAfterSeed: regAfterSeed,
+              _seed: seed,
+            };
+          }
+          console.warn(
+            `[fun/market] zen invent inválido (#${attempt}, modelo=${funConfig.zenModel || 'deepseek-v4-flash-free'}) raw=${String(raw || '').slice(0, 100).replace(/\s+/g, ' ')}`
           );
-          return {
-            ...parsed,
-            description: parsed.body,
-            source,
-            _regAfterSeed: regAfterSeed,
-            _seed: seed,
-          };
+          log?.warn?.(
+            {
+              model: funConfig.zenModel,
+              attempt,
+              preview: String(raw || '').slice(0, 160),
+            },
+            'fun market zen invent invalid'
+          );
+        } catch (err) {
+          console.warn(`[fun/market] zen event fail (#${attempt}): ${err?.message || err}`);
+          log?.warn?.(
+            { err: err?.message || String(err), attempt },
+            'fun market zen invent fail'
+          );
         }
-        console.warn(
-          `[fun/market] zen invent inválido (modelo=${funConfig.zenModel || 'deepseek-v4-flash-free'}) → tenta ollama`
-        );
-        log?.warn?.(
-          { model: funConfig.zenModel, preview: String(raw || '').slice(0, 120) },
-          'fun market zen invent invalid → ollama'
-        );
-      } catch (err) {
-        console.warn(`[fun/market] zen event fail: ${err?.message || err} → ollama`);
-        log?.warn?.({ err: err?.message || String(err) }, 'fun market zen invent fail → ollama');
       }
+      console.warn('[fun/market] zen esgotou tentativas → tenta ollama');
     }
 
     // 2) Ollama — fallback
