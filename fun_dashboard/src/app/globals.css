@@ -16,16 +16,168 @@
 }
 
 .dark {
-  --background: #09090b;
+  --background: #0e0e10;
   --foreground: #fafafa;
   --surface: #18181b;
-  --border: #27272a;
+  --border: #2d2d2d;
   --muted: #a1a1aa;
-  --chart-line: #fafafa;
-  --chart-fill: rgba(250, 250, 250, 0.1);
+  --chart-line: #e4e4e7;
+  --chart-fill: rgba(52, 211, 153, 0.12);
   --chart-ath: #71717a;
   --chart-grid: #3f3f46;
+  --beco-glow: rgba(52, 211, 153, 0.08);
+  --beco-accent: #34d399;
   color-scheme: dark;
+}
+
+/* Identidade Corretora do Beco — desktop terminal */
+.beco-terminal {
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+}
+
+.beco-panel {
+  border: 1px solid var(--border, #e4e4e7);
+  background: var(--surface, #fff);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.06);
+  position: relative;
+  overflow: hidden;
+}
+
+.dark .beco-panel {
+  border-color: #2d2d2d;
+  background: #18181b;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.dark .beco-panel::before {
+  content: "";
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(135deg, var(--beco-glow) 0%, transparent 42%),
+    repeating-linear-gradient(
+      -18deg,
+      transparent,
+      transparent 11px,
+      rgba(255, 255, 255, 0.012) 11px,
+      rgba(255, 255, 255, 0.012) 12px
+    );
+  opacity: 1;
+}
+
+.beco-panel > * {
+  position: relative;
+  z-index: 1;
+}
+
+.beco-mark::before {
+  content: "◈";
+  margin-right: 0.4em;
+  color: var(--beco-accent, #10b981);
+  font-size: 0.75em;
+  opacity: 0.85;
+}
+
+.beco-price-led {
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  text-shadow: 0 0 24px rgba(52, 211, 153, 0.15);
+}
+
+.dark .beco-price-led {
+  text-shadow: 0 0 32px rgba(52, 211, 153, 0.22);
+}
+
+@keyframes beco-price-up {
+  0% {
+    transform: translateY(4px);
+    opacity: 0.55;
+  }
+  40% {
+    transform: translateY(-1px);
+    color: #34d399;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes beco-price-down {
+  0% {
+    transform: translateY(-4px);
+    opacity: 0.55;
+  }
+  40% {
+    transform: translateY(1px);
+    color: #f87171;
+  }
+  100% {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.beco-flash-up {
+  animation: beco-price-up 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.beco-flash-down {
+  animation: beco-price-down 0.55s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.beco-active-row {
+  transform: scale(1.01);
+  box-shadow:
+    0 0 0 1px rgba(52, 211, 153, 0.35),
+    0 10px 28px rgba(0, 0, 0, 0.28);
+}
+
+.dark .beco-active-row {
+  background: #202025 !important;
+}
+
+.beco-badge {
+  padding: 0.3rem 0.65rem !important;
+  border-radius: 999px !important;
+  letter-spacing: 0.01em;
+}
+
+.beco-btn-skew {
+  position: relative;
+  overflow: hidden;
+}
+
+.beco-btn-skew::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 10px;
+  height: 100%;
+  background: linear-gradient(
+    115deg,
+    transparent 40%,
+    rgba(52, 211, 153, 0.18) 50%,
+    transparent 60%
+  );
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .beco-flash-up,
+  .beco-flash-down,
+  .beco-active-row {
+    animation: none !important;
+    transform: none !important;
+  }
 }
 
 @theme inline {

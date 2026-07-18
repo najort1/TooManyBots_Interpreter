@@ -1,13 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  LineChart,
   RefreshCw,
   MessageCircle,
   Star,
-  Activity,
-  Search,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,12 +12,12 @@ import { Select } from "@/components/ui/select";
 import { MetricStrip } from "@/components/metrics/MetricStrip";
 import { PriceChart } from "@/components/bolsa/PriceChart";
 import { NewsPaperModal } from "@/components/bolsa/NewsPaperModal";
+import { DesktopLayout } from "@/components/bolsa/BolsaDesktop";
 import { funApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import {
   formatCoins,
   formatPct,
-  formatWhen,
 } from "@/lib/format";
 import {
   loadFavorites,
@@ -28,11 +25,6 @@ import {
   toggleFavorite,
 } from "@/lib/bolsaFavorites";
 import {
-  cardClass,
-  cardRaisedClass,
-  formatClock,
-  impactStars,
-  newsAffects,
   riskLabel,
   riskTone,
   volLabel,
@@ -54,7 +46,8 @@ const RANGES: { id: BolsaRange; label: string }[] = [
 ];
 
 const REFRESH_MS = 45_000;
-const NEWS_PAGE_SIZE = 6;
+/** Desktop sidebar alta: mais itens por página; mobile paginação segue ok. */
+const NEWS_PAGE_SIZE = 14;
 
 type Props = {
   scope: string;
@@ -87,6 +80,11 @@ export function BolsaTerminal({ scope, className }: Props) {
   const [query, setQuery] = useState("");
   const [chartVariant, setChartVariant] = useState<"area" | "line">("area");
   const [prevPrices, setPrevPrices] = useState<Record<string, number>>({});
+  /** Sparklines de sessão (últimos ticks polled). */
+  const [sparks, setSparks] = useState<Record<string, number[]>>({});
+  const [priceFlash, setPriceFlash] = useState<"up" | "down" | null>(null);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
 
   useEffect(() => {
     setFavorites(loadFavorites());
@@ -103,8 +101,28 @@ export function BolsaTerminal({ scope, className }: Props) {
           const map: Record<string, number> = {};
           for (const q of prev.quotes) map[q.id] = q.price;
           setPrevPrices(map);
+          const sid = selectedRef.current || b.quotes[0]?.id;
+          const sel = prev.quotes.find((q) => q.id === sid);
+          const nextSel = b.quotes.find((q) => q.id === sid);
+          if (sel && nextSel && nextSel.price !== sel.price) {
+            setPriceFlash(nextSel.price > sel.price ? "up" : "down");
+            window.setTimeout(() => setPriceFlash(null), 600);
+          }
         }
         return b;
+      });
+      setSparks((prev) => {
+        const next = { ...prev };
+        for (const q of b.quotes) {
+          const seed =
+            next[q.id]?.length
+              ? next[q.id]
+              : [Math.max(1, q.previousPrice || q.price), q.price];
+          const arr = [...seed];
+          if (arr[arr.length - 1] !== q.price) arr.push(q.price);
+          next[q.id] = arr.slice(-16);
+        }
+        return next;
       });
       const t = Date.now();
       setUpdatedAt(t);
@@ -292,11 +310,13 @@ export function BolsaTerminal({ scope, className }: Props) {
     chartVariant,
     setChartVariant,
     prevPrices,
+    sparks,
+    priceFlash,
     s,
   };
 
   return (
-    <div className={cn("w-full", className)}>
+    <div className={cn("w-full beco-terminal", className)}>
       {/* Mobile: layout atual compacto */}
       <div className="lg:hidden">
         <MobileLayout {...shared} />
@@ -354,480 +374,10 @@ type Shared = {
   chartVariant: "area" | "line";
   setChartVariant: (v: "area" | "line") => void;
   prevPrices: Record<string, number>;
+  sparks: Record<string, number[]>;
+  priceFlash: "up" | "down" | null;
   s: BolsaBoard["summary"] | undefined;
 };
-
-/* ═══════════════════════════════════════════
- * DESKTOP — 3 colunas densas
- * ═══════════════════════════════════════════ */
-function DesktopLayout(p: Shared) {
-  return (
-    <div className="mx-auto flex w-full max-w-[1600px] flex-col gap-6 px-2 xl:px-0">
-      {/* Toolbar / status */}
-      <header
-        className={cn(
-          cardClass,
-          "flex flex-wrap items-center justify-between gap-4 px-5 py-3.5"
-        )}
-      >
-        <div className="flex flex-wrap items-center gap-3">
-          <Badge tone={p.marketOpen ? "success" : "warn"}>
-            {p.marketOpen ? "● Mercado aberto" : "● Bolsa fechada"}
-          </Badge>
-          <span className="font-mono text-xs tabular-nums text-zinc-500 dark:text-zinc-400">
-            {formatClock(p.nowTick)}
-          </span>
-          {p.board?.groupName ? (
-            <span className="text-sm font-medium text-zinc-800 dark:text-zinc-100">
-              {p.board.groupName}
-            </span>
-          ) : null}
-          <Badge tone="ink">Somente leitura</Badge>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-zinc-500 dark:text-zinc-400">
-            Tick global · polling 45s
-          </span>
-          <span className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-2.5 py-1 font-mono text-xs tabular-nums text-zinc-800 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100">
-            Próx. {p.loading ? "…" : `${p.secsLeft}s`}
-          </span>
-          {p.updatedAt ? (
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">
-              Atualizado {formatWhen(p.updatedAt)}
-            </span>
-          ) : null}
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => void p.loadBoard()}
-            disabled={p.loading}
-          >
-            <RefreshCw
-              className={cn("h-3.5 w-3.5", p.loading && "animate-spin")}
-            />
-            Atualizar
-          </Button>
-        </div>
-      </header>
-
-      {p.error ? (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
-          {p.error}
-          <Button
-            variant="secondary"
-            size="sm"
-            className="ml-3"
-            onClick={() => void p.loadBoard()}
-          >
-            Tentar de novo
-          </Button>
-        </div>
-      ) : null}
-
-      {/* Radar strip */}
-      <RadarStrip board={p.board} onPick={p.setSelected} />
-
-      {/* Main 3-col */}
-      <div className="grid grid-cols-12 gap-6">
-        {/* LEFT — empresas */}
-        <aside className="col-span-12 flex flex-col gap-4 xl:col-span-3">
-          <div className={cn(cardClass, "flex min-h-[520px] flex-col")}>
-            <div className="border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-                Empresas
-              </div>
-              <div className="relative mt-2">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" />
-                <input
-                  value={p.query}
-                  onChange={(e) => p.setQuery(e.target.value)}
-                  placeholder="Buscar ticker…"
-                  className="h-9 w-full rounded-lg border border-zinc-200 bg-zinc-50 pl-8 pr-3 text-sm text-zinc-900 placeholder:text-zinc-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-zinc-900/10 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:focus-visible:ring-white/15"
-                />
-              </div>
-              <div className="mt-2 flex gap-2">
-                <Select
-                  value={p.filter}
-                  onChange={(e) =>
-                    p.setFilter(e.target.value as typeof p.filter)
-                  }
-                  className="h-8 text-xs"
-                  aria-label="Filtro"
-                >
-                  <option value="all">Todas</option>
-                  <option value="up">Alta</option>
-                  <option value="down">Baixa</option>
-                  <option value="ath">ATH</option>
-                </Select>
-                <Select
-                  value={p.sort}
-                  onChange={(e) => p.setSort(e.target.value as typeof p.sort)}
-                  className="h-8 text-xs"
-                  aria-label="Ordenar"
-                >
-                  <option value="delta">Var</option>
-                  <option value="price">Preço</option>
-                  <option value="ath">ATH</option>
-                  <option value="name">Nome</option>
-                </Select>
-              </div>
-            </div>
-
-            {p.favorites.length > 0 ? (
-              <div className="border-b border-zinc-100 px-3 py-2 dark:border-zinc-800">
-                <div className="mb-1 px-1 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
-                  ★ Favoritos
-                </div>
-                <div className="flex flex-wrap gap-1">
-                  {p.favorites.map((id) => {
-                    const q = p.board?.quotes.find((x) => x.id === id);
-                    if (!q) return null;
-                    return (
-                      <button
-                        key={id}
-                        type="button"
-                        onClick={() => p.setSelected(id)}
-                        className={cn(
-                          "rounded-md px-2 py-1 text-xs transition-transform active:scale-[0.98]",
-                          p.selected === id
-                            ? "bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900"
-                            : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-200"
-                        )}
-                      >
-                        {q.emoji} {q.name}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            ) : null}
-
-            <ul className="max-h-[560px] flex-1 overflow-y-auto p-2">
-              {!p.rows.length ? (
-                <li className="px-3 py-10 text-center text-sm text-zinc-500">
-                  {p.loading ? "Carregando…" : "Nenhuma ação."}
-                </li>
-              ) : (
-                p.rows.map((q) => (
-                  <CompanyRow
-                    key={q.id}
-                    q={q}
-                    active={p.selected === q.id}
-                    fav={p.favorites.includes(q.id)}
-                    prev={p.prevPrices[q.id]}
-                    onPick={() => p.setSelected(q.id)}
-                    onFav={() => p.onToggleFav(q.id)}
-                    dense
-                  />
-                ))
-              )}
-            </ul>
-          </div>
-
-          <MarketHeatmap
-            quotes={p.board?.quotes || []}
-            selected={p.selected}
-            onPick={p.setSelected}
-          />
-        </aside>
-
-        {/* CENTER — protagonista */}
-        <section className="col-span-12 flex flex-col gap-5 xl:col-span-6">
-          {p.quote ? (
-            <div className={cn(cardRaisedClass, "px-6 py-5")}>
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-[26px] font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
-                      <span className="mr-2" aria-hidden>
-                        {p.quote.emoji}
-                      </span>
-                      {p.quote.name}
-                    </h2>
-                    <span className="font-mono text-sm text-zinc-400">
-                      {p.quote.ticker}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => p.onToggleFav(p.quote!.id)}
-                      className="rounded-md p-1.5 text-zinc-400 transition hover:bg-zinc-100 hover:text-amber-500 dark:hover:bg-zinc-800"
-                      aria-label="Favoritar"
-                    >
-                      <Star
-                        className={cn(
-                          "h-4 w-4",
-                          p.favorites.includes(p.quote.id) &&
-                            "fill-amber-400 text-amber-400"
-                        )}
-                      />
-                    </button>
-                  </div>
-                  <div className="mt-3 flex flex-wrap items-end gap-3">
-                    <PriceFlash
-                      price={p.quote.price}
-                      prev={p.prevPrices[p.quote.id]}
-                      className="text-5xl font-semibold tabular-nums tracking-tight"
-                    />
-                    <DeltaBadge pct={p.quote.deltaPct} large />
-                  </div>
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    <Badge tone={p.marketOpen ? "success" : "warn"}>
-                      {p.marketOpen ? "Mercado aberto" : "Fechado"}
-                    </Badge>
-                    {p.quote.atHigh ? (
-                      <Badge tone="success">ATH</Badge>
-                    ) : (
-                      <Badge tone="neutral">
-                        ATH {formatCoins(p.quote.highPrice)} ·{" "}
-                        {formatPct(p.quote.fromAthPct)}
-                      </Badge>
-                    )}
-                    <Badge tone={riskTone(p.quote.risk)}>
-                      Risco {riskLabel(p.quote.risk)}
-                    </Badge>
-                    {p.quote.dividendRare ? (
-                      <Badge tone="warn">Div. raro</Badge>
-                    ) : p.quote.dividendYield > 0 ? (
-                      <Badge tone="success">
-                        Yield ~{(p.quote.dividendYield * 100).toFixed(1)}%
-                      </Badge>
-                    ) : null}
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {/* Chart toolbar */}
-          <div className="flex flex-wrap items-center gap-2">
-            {RANGES.map((r) => (
-              <button
-                key={r.id}
-                type="button"
-                onClick={() => {
-                  p.setRange(r.id);
-                  p.setFromDate("");
-                  p.setToDate("");
-                }}
-                className={cn(
-                  "h-9 min-w-[2.75rem] rounded-lg px-3 text-xs font-semibold transition active:scale-[0.98]",
-                  p.range === r.id && !p.fromDate && !p.toDate
-                    ? "bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900"
-                    : "bg-white text-zinc-600 ring-1 ring-zinc-200 hover:bg-zinc-50 dark:bg-zinc-900 dark:text-zinc-300 dark:ring-zinc-700"
-                )}
-              >
-                {r.label}
-              </button>
-            ))}
-            <span className="mx-1 h-5 w-px bg-zinc-200 dark:bg-zinc-700" />
-            {(["area", "line"] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => p.setChartVariant(v)}
-                className={cn(
-                  "h-9 rounded-lg px-3 text-xs font-medium capitalize transition",
-                  p.chartVariant === v
-                    ? "bg-zinc-200 text-zinc-900 dark:bg-zinc-700 dark:text-zinc-50"
-                    : "text-zinc-500 hover:text-zinc-800 dark:text-zinc-400 dark:hover:text-zinc-200"
-                )}
-              >
-                {v === "area" ? "Área" : "Linha"}
-              </button>
-            ))}
-            <div className="ml-auto flex items-end gap-2">
-              <label className="text-[10px] font-medium uppercase text-zinc-400">
-                De
-                <input
-                  type="date"
-                  value={p.fromDate}
-                  onChange={(e) => p.setFromDate(e.target.value)}
-                  className="ml-1 h-9 rounded-lg border border-zinc-200 bg-white px-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                />
-              </label>
-              <label className="text-[10px] font-medium uppercase text-zinc-400">
-                Até
-                <input
-                  type="date"
-                  value={p.toDate}
-                  onChange={(e) => p.setToDate(e.target.value)}
-                  className="ml-1 h-9 rounded-lg border border-zinc-200 bg-white px-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
-                />
-              </label>
-              {(p.fromDate || p.toDate) && (
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    p.setFromDate("");
-                    p.setToDate("");
-                  }}
-                >
-                  Limpar
-                </Button>
-              )}
-            </div>
-          </div>
-
-          <PriceChart
-            points={p.history?.points || []}
-            ath={p.quote?.highPrice || p.history?.quote?.highPrice || 0}
-            height={380}
-            variant={p.chartVariant}
-            className="min-h-[380px]"
-          />
-
-          {/* Big stats */}
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-            <BigStat
-              label="Preço atual"
-              value={formatCoins(p.quote?.price ?? 0)}
-              hint={p.quote ? formatPct(p.quote.deltaPct) : undefined}
-              tone={
-                (p.quote?.deltaPct ?? 0) > 0
-                  ? "up"
-                  : (p.quote?.deltaPct ?? 0) < 0
-                    ? "down"
-                    : "flat"
-              }
-            />
-            <BigStat
-              label="Máx período"
-              value={formatCoins(p.history?.stats?.high ?? p.quote?.highPrice ?? 0)}
-            />
-            <BigStat
-              label="Dividend yield"
-              value={
-                p.quote?.dividendRare
-                  ? "raro"
-                  : p.quote && p.quote.dividendYield > 0
-                    ? `${(p.quote.dividendYield * 100).toFixed(1)}%`
-                    : "—"
-              }
-            />
-            <BigStat
-              label="Volatilidade"
-              value={p.quote ? volLabel(p.quote.volatility) : "—"}
-              hint={
-                p.history?.stats
-                  ? `${p.history.stats.samples} pts · var ${formatPct(p.history.stats.changePct)}`
-                  : p.histLoading
-                    ? "…"
-                    : undefined
-              }
-            />
-          </div>
-
-          {p.history?.stats ? (
-            <div className="grid grid-cols-4 gap-3">
-              <MiniStat label="Abertura" value={formatCoins(p.history.stats.open)} />
-              <MiniStat label="Máx" value={formatCoins(p.history.stats.high)} />
-              <MiniStat label="Mín" value={formatCoins(p.history.stats.low)} />
-              <MiniStat
-                label="Fechamento"
-                value={formatCoins(p.history.stats.close)}
-              />
-            </div>
-          ) : null}
-
-          {p.quote ? (
-            <div className={cn(cardClass, "px-5 py-4")}>
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                Sobre a empresa
-              </div>
-              <p className="mt-2 text-[15px] leading-relaxed text-zinc-700 dark:text-zinc-200">
-                {p.quote.blurb || "Sem descrição."}
-              </p>
-            </div>
-          ) : null}
-        </section>
-
-        {/* RIGHT — notícias + CTA */}
-        <aside className="col-span-12 flex flex-col gap-5 xl:col-span-3">
-          <div className={cn(cardClass, "flex min-h-[420px] flex-col")}>
-            <div className="flex items-center justify-between border-b border-zinc-100 px-4 py-3 dark:border-zinc-800">
-              <h3 className="flex items-center gap-1.5 text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                <LineChart className="h-4 w-4 opacity-60" />
-                Notícias
-              </h3>
-              {p.newsTotal > 0 ? (
-                <span className="text-[11px] tabular-nums text-zinc-500">
-                  {p.newsTotal}
-                </span>
-              ) : null}
-            </div>
-            <div className="flex-1 space-y-3 overflow-y-auto p-3">
-              {!p.events.length && !p.newsLoading ? (
-                <p className="py-8 text-center text-sm text-zinc-500">
-                  Sem eventos recentes.
-                </p>
-              ) : p.newsLoading && !p.events.length ? (
-                <p className="py-8 text-center text-sm text-zinc-500">
-                  Carregando…
-                </p>
-              ) : (
-                p.events.map((ev) => (
-                  <NewsCard
-                    key={ev.id}
-                    event={ev}
-                    quotes={p.board?.quotes || []}
-                    onOpen={() => p.setOpenNews(ev)}
-                  />
-                ))
-              )}
-            </div>
-            {p.newsTotalPages > 1 ? (
-              <div className="flex items-center justify-between border-t border-zinc-100 px-3 py-2 dark:border-zinc-800">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={p.newsPage <= 1 || p.newsLoading}
-                  onClick={() => p.setNewsPage((x) => Math.max(1, x - 1))}
-                >
-                  Anterior
-                </Button>
-                <span className="text-[11px] tabular-nums text-zinc-500">
-                  {p.newsPage}/{p.newsTotalPages}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={
-                    p.newsPage >= p.newsTotalPages || p.newsLoading
-                  }
-                  onClick={() =>
-                    p.setNewsPage((x) =>
-                      p.newsTotalPages
-                        ? Math.min(p.newsTotalPages, x + 1)
-                        : x
-                    )
-                  }
-                >
-                  Próxima
-                </Button>
-              </div>
-            ) : null}
-          </div>
-
-          <TradeCta board={p.board} />
-
-          <MetricStrip
-            items={[
-              { label: "Empresas", value: p.s?.count ?? 0 },
-              {
-                label: "Alta",
-                value: p.s?.advancing ?? 0,
-                hint: p.s ? formatPct(p.s.avgDeltaPct) : undefined,
-              },
-              { label: "Baixa", value: p.s?.declining ?? 0 },
-              { label: "No ATH", value: p.s?.atHighCount ?? 0 },
-            ]}
-          />
-        </aside>
-      </div>
-    </div>
-  );
-}
 
 /* ═══════════════════════════════════════════
  * MOBILE — layout original (compacto)
@@ -1226,45 +776,6 @@ function DeltaBadge({ pct, large }: { pct: number; large?: boolean }) {
   );
 }
 
-function BigStat({
-  label,
-  value,
-  hint,
-  tone = "flat",
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  tone?: "up" | "down" | "flat";
-}) {
-  return (
-    <div
-      className={cn(
-        cardClass,
-        "px-4 py-4 transition hover:-translate-y-0.5 hover:shadow-lg"
-      )}
-    >
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-        {label}
-      </div>
-      <div
-        className={cn(
-          "mt-1.5 text-2xl font-semibold tabular-nums tracking-tight text-zinc-900 dark:text-zinc-50",
-          tone === "up" && "text-emerald-700 dark:text-emerald-400",
-          tone === "down" && "text-red-600 dark:text-red-400"
-        )}
-      >
-        {value}
-      </div>
-      {hint ? (
-        <div className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          {hint}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 function MiniStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-lg border border-zinc-200 bg-white px-3 py-2 dark:border-zinc-800 dark:bg-zinc-900">
@@ -1275,199 +786,6 @@ function MiniStat({ label, value }: { label: string; value: string }) {
         {value}
       </div>
     </div>
-  );
-}
-
-function RadarStrip({
-  board,
-  onPick,
-}: {
-  board: BolsaBoard | null;
-  onPick: (id: string) => void;
-}) {
-  const q = board?.quotes || [];
-  if (!q.length) return null;
-  const gainer = [...q].sort((a, b) => b.deltaPct - a.deltaPct)[0];
-  const loser = [...q].sort((a, b) => a.deltaPct - b.deltaPct)[0];
-  const volatile = [...q].sort((a, b) => b.volatility - a.volatility)[0];
-  const ath = q.find((x) => x.atHigh);
-  const items = [
-    { label: "Maior alta", q: gainer, tone: "up" as const },
-    { label: "Maior baixa", q: loser, tone: "down" as const },
-    { label: "Mais volátil", q: volatile, tone: "flat" as const },
-    { label: "No ATH", q: ath || gainer, tone: "up" as const },
-  ];
-  return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      {items.map((it) =>
-        it.q ? (
-          <button
-            key={it.label}
-            type="button"
-            onClick={() => onPick(it.q!.id)}
-            className={cn(
-              cardClass,
-              "px-4 py-3 text-left transition hover:-translate-y-0.5 active:scale-[0.99]"
-            )}
-          >
-            <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-              <Activity className="h-3 w-3" />
-              {it.label}
-            </div>
-            <div className="mt-1 truncate text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-              {it.q.emoji} {it.q.name}
-            </div>
-            <div
-              className={cn(
-                "mt-0.5 text-xs tabular-nums font-medium",
-                it.tone === "up" && "text-emerald-600 dark:text-emerald-400",
-                it.tone === "down" && "text-red-600 dark:text-red-400",
-                it.tone === "flat" && "text-zinc-500"
-              )}
-            >
-              {formatPct(it.q.deltaPct)} · {formatCoins(it.q.price)}
-            </div>
-          </button>
-        ) : null
-      )}
-    </div>
-  );
-}
-
-function MarketHeatmap({
-  quotes,
-  selected,
-  onPick,
-}: {
-  quotes: BolsaQuote[];
-  selected: string;
-  onPick: (id: string) => void;
-}) {
-  if (!quotes.length) return null;
-  return (
-    <div className={cn(cardClass, "p-3")}>
-      <div className="mb-2 px-1 text-[11px] font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-        Heatmap
-      </div>
-      <div className="grid grid-cols-3 gap-1.5">
-        {quotes.map((q) => {
-          const up = q.deltaPct > 0;
-          const down = q.deltaPct < 0;
-          const intensity = Math.min(1, Math.abs(q.deltaPct) / 12);
-          return (
-            <button
-              key={q.id}
-              type="button"
-              onClick={() => onPick(q.id)}
-              title={`${q.name} ${formatPct(q.deltaPct)}`}
-              className={cn(
-                "flex min-h-[4.5rem] flex-col items-center justify-center rounded-lg border px-1 py-2 text-center transition active:scale-[0.98]",
-                selected === q.id && "ring-2 ring-zinc-900/30 dark:ring-white/30",
-                !up && !down && "border-zinc-200 bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800"
-              )}
-              style={
-                up || down
-                  ? {
-                      backgroundColor: up
-                        ? `rgba(16, 185, 129, ${0.12 + intensity * 0.35})`
-                        : `rgba(239, 68, 68, ${0.12 + intensity * 0.35})`,
-                      borderColor: up
-                        ? "rgba(16, 185, 129, 0.35)"
-                        : "rgba(239, 68, 68, 0.35)",
-                    }
-                  : undefined
-              }
-            >
-              <span className="text-base">{q.emoji}</span>
-              <span className="mt-0.5 max-w-full truncate text-[10px] font-medium text-zinc-800 dark:text-zinc-100">
-                {q.name}
-              </span>
-              <span
-                className={cn(
-                  "text-[10px] font-semibold tabular-nums",
-                  up && "text-emerald-700 dark:text-emerald-400",
-                  down && "text-red-700 dark:text-red-400",
-                  !up && !down && "text-zinc-500"
-                )}
-              >
-                {formatPct(q.deltaPct)}
-              </span>
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function NewsCard({
-  event,
-  quotes,
-  onOpen,
-}: {
-  event: BolsaEvent;
-  quotes: BolsaQuote[];
-  onOpen: () => void;
-}) {
-  const stars = impactStars(event.impactPct);
-  const affects = newsAffects(event, quotes);
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      className={cn(
-        "w-full rounded-xl border border-zinc-200/80 bg-zinc-50/50 px-3 py-3 text-left transition",
-        "hover:-translate-y-0.5 hover:border-zinc-300 hover:shadow-md",
-        "dark:border-zinc-700 dark:bg-[#202025]/80 dark:hover:border-zinc-600"
-      )}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-sm font-semibold leading-snug text-zinc-900 dark:text-zinc-50">
-            {event.title}
-          </div>
-          <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
-            {formatWhen(event.createdAt)}
-            {event.category ? ` · ${event.category}` : ""}
-          </div>
-        </div>
-        <Badge
-          tone={
-            event.impactPct > 0
-              ? "success"
-              : event.impactPct < 0
-                ? "danger"
-                : "neutral"
-          }
-        >
-          {formatPct(event.impactPct, 0)}
-        </Badge>
-      </div>
-      <div className="mt-2 flex items-center gap-2 text-[11px] text-zinc-500 dark:text-zinc-400">
-        <span>Impacto</span>
-        <span className="tracking-tight text-amber-600 dark:text-amber-400">
-          {"★".repeat(stars)}
-          {"☆".repeat(Math.max(0, 5 - stars))}
-        </span>
-      </div>
-      {affects.length ? (
-        <div className="mt-1.5 flex flex-wrap gap-1">
-          {affects.map((q) => (
-            <span
-              key={q.id}
-              className="rounded-md bg-zinc-200/80 px-1.5 py-0.5 text-[10px] font-medium text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
-            >
-              {q.emoji} {q.name}
-            </span>
-          ))}
-        </div>
-      ) : null}
-      {event.description ? (
-        <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-zinc-600 dark:text-zinc-300">
-          {event.description}
-        </p>
-      ) : null}
-    </button>
   );
 }
 
@@ -1537,10 +855,7 @@ function MoverCol({
 function TradeCta({ board }: { board: BolsaBoard | null }) {
   return (
     <aside
-      className={cn(
-        cardClass,
-        "flex flex-wrap items-center gap-3 px-4 py-3.5"
-      )}
+      className="flex flex-wrap items-center gap-3 rounded-lg border border-zinc-200 bg-white px-4 py-3.5 dark:border-zinc-800 dark:bg-zinc-900"
     >
       <MessageCircle className="h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" />
       <div className="min-w-0 flex-1 text-sm text-zinc-700 dark:text-zinc-300">

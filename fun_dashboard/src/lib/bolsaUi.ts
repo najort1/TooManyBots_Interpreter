@@ -51,11 +51,18 @@ export function formatClock(ts: number) {
   }).format(new Date(ts));
 }
 
-/** Card surface utilities (desktop depth). */
-export const cardClass =
-  "rounded-xl border border-zinc-200/90 bg-white shadow-[0_8px_30px_rgba(0,0,0,0.05)] " +
-  "dark:border-[#2d2d2d] dark:bg-[#18181b] dark:shadow-[0_8px_30px_rgba(0,0,0,0.32)]";
+/** Card surface utilities — prefer beco-panel for desktop identity. */
+export const cardClass = "beco-panel";
 
 export const cardRaisedClass =
-  "rounded-xl border border-zinc-200 bg-zinc-50/80 shadow-[0_8px_30px_rgba(0,0,0,0.06)] " +
-  "dark:border-[#35353a] dark:bg-[#202025] dark:shadow-[0_8px_30px_rgba(0,0,0,0.35)]";
+  "beco-panel dark:!bg-[#202025] dark:!border-[#35353a]";
+
+/** Escala de espaço (4–32). */
+export const space = {
+  1: "gap-1",
+  2: "gap-2",
+  3: "gap-3",
+  4: "gap-4",
+  5: "gap-6",
+  6: "gap-8",
+} as const;
