@@ -5,6 +5,8 @@
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
+import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { recordLlmHit } from '../llm/llmMetrics.js';
 import {
   drawTarotCards,
   formatTarotDraw,
@@ -29,7 +31,8 @@ REGRAS DA LEITURA
 5. Não invente coins, XP, datas exatas de morte, "você vai morrer", diagnóstico médico/jurídico.
 6. Não diga que é destino absoluto; fale em tendência, clima, escolha.
 7. Sem listas intermináveis, sem inglês, sem "as an AI".
-8. Responda SÓ com a leitura final (sem preâmbulo tipo "claro, aqui vai").`;
+8. Responda SÓ com a leitura final.
+PROIBIDO: "claro", "aqui vai", "como pediu", descrever o que vai fazer, inglês, meta.`;
 
 function numOr(v, fb) {
   const n = Number(v);
@@ -54,12 +57,31 @@ export function sanitizeTarotText(raw, maxChars = 3000) {
     .replace(/```[\s\S]*?```/g, ' ')
     .trim();
 
-  // corta meta comum no começo
+  // corta meta comum no começo / thinking em inglês
   s = s
     .replace(/^(claro[!.,]?\s*|aqui vai[:\s]*|leitura[:\s]*|como tarólogo[,:]?\s*)/i, '')
     .trim();
+  // se o bloco inteiro é raciocínio em inglês, rejeita
+  if (
+    s.length < 80 &&
+    /\b(I need|we need|the user|thinking|let me|in Portuguese)\b/i.test(s)
+  ) {
+    return '';
+  }
+  // remove linhas de meta no meio
+  s = s
+    .split('\n')
+    .filter((line) => {
+      const t = line.trim();
+      if (!t) return true;
+      if (/^(thinking|step\s*\d|raciocínio)/i.test(t)) return false;
+      if (/\b(I need to|we should write|the answer)\b/i.test(t) && t.length < 100) return false;
+      return true;
+    })
+    .join('\n')
+    .trim();
 
-  if (!s) return '';
+  if (!s || s.length < 16) return '';
 
   const max = Math.max(200, Math.min(3000, Math.floor(Number(maxChars) || 3000)));
   if (s.length <= max) return s;
@@ -140,18 +162,25 @@ export function createTarotService({
 
     if (zenOn(funConfig)) {
       try {
+        const task = resolveZenTaskParams('tarot', funConfig);
         const raw = await generateZen({
-          baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
-          model: funConfig.zenModel || 'deepseek-v4-flash-free',
+          baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
+          model: funConfig.zenModel || 'glm_5_2',
           system,
           prompt,
-          timeoutMs: o.timeoutMs,
-          maxTokens: o.maxTokens,
-          temperature: o.temperature,
+          timeoutMs: Math.max(o.timeoutMs, task.timeoutMs),
+          maxTokens: Math.max(o.maxTokens, task.maxTokens),
+          temperature: Number.isFinite(Number(funConfig.tarotTemperature))
+            ? o.temperature
+            : task.temperature,
           apiKey: funConfig.zenApiKey || '',
+          sendSamplingParams: funConfig.zenSendSamplingParams === true,
         });
         const clean = sanitizeTarotText(raw, o.maxChars);
-        if (clean) return { text: clean, provider: 'zen' };
+        if (clean) {
+          recordLlmHit('tarot', 'zen', {});
+          return { text: clean, provider: 'zen' };
+        }
       } catch (err) {
         try {
           getLogger?.()?.warn?.(
@@ -179,12 +208,16 @@ export function createTarotService({
           temperature: o.temperature,
         });
         const clean = sanitizeTarotText(raw, o.maxChars);
-        if (clean) return { text: clean, provider: 'ollama' };
+        if (clean) {
+          recordLlmHit('tarot', 'ollama', {});
+          return { text: clean, provider: 'ollama' };
+        }
       } catch (err) {
         console.warn(`[fun/tarot] ollama fail reason=${err?.message || 'error'}`);
       }
     }
 
+    recordLlmHit('tarot', 'template', {});
     return {
       text: sanitizeTarotText(fallbackTarotReading(question, cards), o.maxChars),
       provider: 'template',

@@ -5,6 +5,8 @@
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
+import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { recordLlmHit } from '../llm/llmMetrics.js';
 
 const EXTRACT_SYSTEM = `Você extrai dados de perfil social de um texto livre em pt-BR (grupo WhatsApp).
 
@@ -613,16 +615,19 @@ export function createProfileService({
 
       if (funConfig.zenEnabled !== false) {
         try {
+          const task = resolveZenTaskParams('extract', funConfig);
           const out = await generateZen({
-            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
-            model: funConfig.zenModel || 'deepseek-v4-flash-free',
+            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
+            model: funConfig.zenModel || 'glm_5_2',
             system: EXTRACT_SYSTEM,
             prompt,
-            timeoutMs: o.timeout,
-            maxTokens: 360,
-            temperature: 0.3,
+            timeoutMs: Math.max(o.timeout, task.timeoutMs),
+            maxTokens: task.maxTokens,
+            temperature: task.temperature,
             apiKey: funConfig.zenApiKey || '',
             jsonMode: true,
+            jsonOnly: true,
+            sendSamplingParams: funConfig.zenSendSamplingParams === true,
           });
           const parsed = parseExtractJson(out);
           if (parsed) {
@@ -637,6 +642,7 @@ export function createProfileService({
               },
               o.extrasMax
             );
+            recordLlmHit('profile', 'zen', {});
             return { ok: true, fields, source: 'zen' };
           }
         } catch (err) {

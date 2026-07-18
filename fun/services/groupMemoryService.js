@@ -6,6 +6,8 @@
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
+import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { recordLlmHit } from '../llm/llmMetrics.js';
 
 const VALID_KINDS = new Set([
   'running_gag',
@@ -540,19 +542,25 @@ export function createGroupMemoryService({
     // Zen + jsonMode
     if (funConfig.zenEnabled !== false) {
       try {
+        const task = resolveZenTaskParams('extract', funConfig);
         const raw = await generateZen({
-          baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
-          model: funConfig.zenModel || 'deepseek-v4-flash-free',
+          baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
+          model: funConfig.zenModel || 'glm_5_2',
           system: EXTRACT_SYSTEM,
           prompt,
-          timeoutMs: o.extractTimeout,
-          maxTokens: 500,
-          temperature: 0.45,
+          timeoutMs: Math.max(o.extractTimeout, task.timeoutMs),
+          maxTokens: Math.max(task.maxTokens, 500),
+          temperature: task.temperature,
           apiKey: funConfig.zenApiKey || '',
           jsonMode: true,
+          jsonOnly: true,
+          sendSamplingParams: funConfig.zenSendSamplingParams === true,
         });
         const mapped = mapParsed(raw);
-        if (mapped.length) return mapped;
+        if (mapped.length) {
+          recordLlmHit('memory', 'zen', { n: mapped.length });
+          return mapped;
+        }
       } catch (err) {
         getLogger?.()?.warn?.(
           { err: { message: err?.message || 'zen-memory' } },
@@ -609,16 +617,19 @@ export function createGroupMemoryService({
 
     if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.zenEnabled !== false) {
       try {
+        const task = resolveZenTaskParams('persona', funConfig);
         text = await generateZen({
-          baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
-          model: funConfig.zenModel || 'deepseek-v4-flash-free',
+          baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
+          model: funConfig.zenModel || 'glm_5_2',
           system: PERSONA_SYSTEM,
-          prompt: `Fatos do grupo:\n${list}\n\nResuma o clima (≤${o.personaMax} chars):`,
-          timeoutMs: o.extractTimeout,
-          maxTokens: 280,
-          temperature: 0.7,
+          prompt: `Fatos do grupo:\n${list}\n\nResuma o clima em 3–5 bullets (≤${o.personaMax} chars). NÃO invente fatos novos. Só os bullets:`,
+          timeoutMs: Math.max(o.extractTimeout, task.timeoutMs),
+          maxTokens: task.maxTokens,
+          temperature: task.temperature,
           apiKey: funConfig.zenApiKey || '',
+          sendSamplingParams: funConfig.zenSendSamplingParams === true,
         });
+        if (text) recordLlmHit('persona', 'zen', {});
       } catch {
         text = '';
       }

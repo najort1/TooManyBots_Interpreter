@@ -679,3 +679,10 @@ export {
 export { createFlavorService } from './llm/flavorService.js';
 export { ollamaGenerate, ollamaPing, ollamaWarmup, ollamaTouch } from './llm/ollamaClient.js';
 export { openaiChatComplete, openaiPing } from './llm/openaiClient.js';
+export { resolveZenTaskParams, ZEN_TASK_DEFAULTS } from './llm/zenTaskParams.js';
+export {
+  recordLlmHit,
+  getLlmMetrics,
+  resetLlmMetrics,
+  inventTemplateAlert,
+} from './llm/llmMetrics.js';

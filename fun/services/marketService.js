@@ -5,6 +5,8 @@
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
+import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { recordLlmHit, inventTemplateAlert } from '../llm/llmMetrics.js';
 import {
   COLLECTIBLES,
   getCollectible,
@@ -40,6 +42,7 @@ import {
   EVENT_INVENT_SYSTEM,
   JOURNALIST_SYSTEM,
   buildInventUserPrompt,
+  buildJournalistUserPrompt,
   parseInventResponse,
   parseJournalistJson,
   pickTemplateSeed,
@@ -463,27 +466,29 @@ export function createMarketService({
     });
     // System curto: thinking free ecoa regras longas em vez de JSON
     const inventSystem = EVENT_INVENT_SYSTEM;
+    const task = resolveZenTaskParams('invent', funConfig);
 
     // 1) Zen — principal (só jsonMode; free-mode do DeepSeek só raciocina e não fecha JSON)
     if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.zenEnabled !== false) {
-      const maxTok = Math.max(1600, numOr(funConfig.zenMaxTokens, 900) + 800);
       for (let attempt = 1; attempt <= 2; attempt += 1) {
         try {
           const raw = await generateZen({
-            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3000',
-            model: funConfig.zenModel || 'deepseek-v4-flash-free',
+            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
+            model: funConfig.zenModel || 'glm_5_2',
             system: inventSystem,
             prompt,
-            timeoutMs: Math.max(12000, numOr(funConfig.zenTimeoutMs, 45000)),
-            maxTokens: maxTok,
-            temperature: attempt === 1 ? 0.7 : 0.9,
+            timeoutMs: task.timeoutMs,
+            maxTokens: task.maxTokens,
+            temperature: attempt === 1 ? task.temperature : Math.min(1.05, task.temperature + 0.15),
             apiKey: funConfig.zenApiKey || '',
             jsonMode: true,
             jsonOnly: true,
+            sendSamplingParams: funConfig.zenSendSamplingParams === true,
           });
           const parsed = parseInventResponse(raw);
           if (parsed) {
             const source = parsed.salvaged ? 'zen-salvage' : 'zen';
+            recordLlmHit('invent', source, { title: parsed.title, attempt });
             log?.info?.(
               {
                 source,
@@ -502,7 +507,7 @@ export function createMarketService({
             };
           }
           console.warn(
-            `[fun/market] zen invent inválido (#${attempt}, modelo=${funConfig.zenModel || 'deepseek-v4-flash-free'}) raw=${String(raw || '').slice(0, 100).replace(/\s+/g, ' ')}`
+            `[fun/market] zen invent inválido (#${attempt}, modelo=${funConfig.zenModel || 'glm_5_2'}) raw=${String(raw || '').slice(0, 100).replace(/\s+/g, ' ')}`
           );
           log?.warn?.(
             {
@@ -534,12 +539,13 @@ export function createMarketService({
           timeoutMs: Math.max(8000, numOr(funConfig.ollamaTimeoutMs, 25000)),
           keepAlive: funConfig.ollamaKeepAlive ?? -1,
           think: false,
-          numPredict: 480,
+          numPredict: Math.min(600, task.maxTokens),
           temperature: 0.9,
         });
         const parsed = parseInventResponse(raw);
         if (parsed) {
           const source = parsed.salvaged ? 'ollama-salvage' : 'ollama';
+          recordLlmHit('invent', source, { title: parsed.title });
           log?.info?.(
             { source, model: funConfig.ollamaModel, title: parsed.title },
             'fun market invent via ollama (fallback)'
@@ -562,6 +568,12 @@ export function createMarketService({
 
     // 3) Template — último recurso
     const t = pickTemplateSeed(regulator.recentFingerprints || [], random);
+    recordLlmHit('invent', 'template', { title: t.title });
+    const alert = inventTemplateAlert(0.4, 5);
+    if (alert) {
+      console.warn(`[fun/market] ${alert.message}`);
+      log?.warn?.(alert, 'fun market invent template rate high');
+    }
     log?.info?.({ source: 'template', title: t.title }, 'fun market invent template');
     return {
       archetype: t.archetype,
@@ -574,6 +586,44 @@ export function createMarketService({
       _regAfterSeed: regAfterSeed,
       _seed: seed,
     };
+  }
+
+  /**
+   * Opcional: reescreve title/body com FACTS oficiais (direction/%) — anti-alucinação.
+   * Desligado por default (marketJournalistEnabled).
+   */
+  async function maybeJournalistRewrite(facts, funConfig = {}) {
+    if (funConfig.marketJournalistEnabled !== true) return null;
+    if (process.env.FUN_DISABLE_LIVE_LLM === '1') return null;
+    if (funConfig.zenEnabled === false) return null;
+    const task = resolveZenTaskParams('journalist', funConfig);
+    try {
+      const raw = await generateZen({
+        baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
+        model: funConfig.zenModel || 'glm_5_2',
+        system: JOURNALIST_SYSTEM,
+        prompt: buildJournalistUserPrompt(facts),
+        timeoutMs: task.timeoutMs,
+        maxTokens: task.maxTokens,
+        temperature: task.temperature,
+        apiKey: funConfig.zenApiKey || '',
+        jsonMode: true,
+        jsonOnly: true,
+        sendSamplingParams: funConfig.zenSendSamplingParams === true,
+      });
+      const parsed = parseJournalistJson(raw);
+      if (parsed?.title && parsed?.body) {
+        recordLlmHit('journalist', 'zen', { title: parsed.title });
+        return parsed;
+      }
+    } catch (err) {
+      getLogger?.()?.warn?.(
+        { err: err?.message || String(err) },
+        'fun market journalist fail'
+      );
+    }
+    recordLlmHit('journalist', 'skip', {});
+    return null;
   }
 
   /**
@@ -877,6 +927,36 @@ export function createMarketService({
     let title = aligned.title;
     let description = clampEventDescription(aligned.body);
     let copyHardFallback = false;
+
+    // Opcional: jornalista reescreve com FACTS (direction + %) — marketJournalistEnabled
+    if (funConfig.marketJournalistEnabled === true) {
+      const j = await maybeJournalistRewrite(
+        {
+          direction,
+          impactPct,
+          archetype: resolved.archetype,
+          category: resolved.category,
+          companyId: resolved.companyId,
+          companyName: getCompany(resolved.companyId)?.name || '',
+          draftTitle: title,
+          draftBody: description,
+        },
+        funConfig
+      );
+      if (j?.title && j?.body) {
+        const realigned = alignEventCopy({
+          title: j.title,
+          body: j.body,
+          direction,
+          archetype: resolved.archetype,
+          category: resolved.category,
+          companyId: resolved.companyId,
+          random,
+        });
+        title = realigned.title;
+        description = clampEventDescription(realigned.body);
+      }
+    }
 
     // Portão final: se ainda incoerente (LLM criativo / seed residual), copy sintética da categoria real.
     // Isso é a garantia de que o anúncio nunca mente sobre o ticker.
