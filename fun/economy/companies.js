@@ -21,6 +21,7 @@
  * @property {boolean} memeSpikes — PatoCoin
  * @property {number} dividendYield — âncora de yield (0 = só dinâmico; ver economy/dividends.js)
  * @property {string} flavor
+ * @property {string} [blurb] — uma linha humana pro `/bolsa` (texto)
  * @property {string[]} categories — categorias de item que herdam esta persona
  */
 
@@ -44,6 +45,7 @@ export const COMPANIES = Object.freeze([
     memeSpikes: false,
     dividendYield: 0.015,
     flavor: 'estável, fila no app, dividendos de rua',
+    blurb: 'Lanche e licenças do beco. Estável, costuma pagar dividendo.',
     categories: ['licenca'],
   },
   {
@@ -64,6 +66,7 @@ export const COMPANIES = Object.freeze([
     memeSpikes: false,
     dividendYield: 0.008,
     flavor: 'estável, metal e roda — paga quando o caixa respira',
+    blurb: 'Carros e motos da rua. Calma, mexe pouco, paga quando sobra caixa.',
     categories: ['veiculo'],
   },
   {
@@ -84,6 +87,7 @@ export const COMPANIES = Object.freeze([
     memeSpikes: false,
     dividendYield: 0,
     flavor: 'arriscada — dividendo raro de guerra',
+    blurb: 'Armas e munição. Volátil — sobe e desce com o caos do bairro.',
     categories: ['arma', 'municao'],
   },
   {
@@ -104,6 +108,7 @@ export const COMPANIES = Object.freeze([
     memeSpikes: false,
     dividendYield: 0.002,
     flavor: 'pequena — às vezes sobra peixe pro sócio',
+    blurb: 'Gasolina e peixe. Pequena, barata e imprevisível.',
     categories: ['combustivel'],
   },
   {
@@ -124,6 +129,7 @@ export const COMPANIES = Object.freeze([
     memeSpikes: false,
     dividendYield: 0.006,
     flavor: 'gigante — repasse lento e pesado',
+    blurb: 'Defesa e colete. Cara, gigante, mexe devagar.',
     categories: ['defesa'],
   },
   {
@@ -144,6 +150,7 @@ export const COMPANIES = Object.freeze([
     memeSpikes: true,
     dividendYield: 0,
     flavor: 'meme — dividendo raríssimo e gordo',
+    blurb: 'Meme do zap. Pode virar ouro ou virar pó.',
     categories: [], // não ancora categoria; entra em spikes aleatórios
   },
 ]);
