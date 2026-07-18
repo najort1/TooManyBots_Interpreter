@@ -4,7 +4,7 @@
 
 import { parseAmountFromArgs, resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
-import { nameOf } from '../../utils/userLabel.js';
+import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
 
 function arrow(trend) {
   if (trend === 'up') return '↑';
@@ -555,12 +555,16 @@ export async function handleAssaultCommand({
   const isNpc = result.mode === 'bank' || result.mode === 'shop';
   const heistLabel =
     result.heistLabel || (result.mode === 'bank' ? 'Banco central' : 'Lojinha da esquina');
-  const attackerName = nameOf(getContactDisplayName, userJid);
+  // Roteiro LLM precisa de NOME legível (não @JID) — senão inventa "Marlison"
+  const attackerStoryName = displayNameOnly(getContactDisplayName, userJid);
+  const targetStoryName = isNpc
+    ? heistLabel
+    : displayNameOnly(getContactDisplayName, result.targetJid || '') || pvpName;
   const weaponLabel = [result.weapon?.emoji, result.weapon?.name].filter(Boolean).join(' ').trim();
 
   const story = await assaultFlavor(flavorService, assaultScenario(result), {
-    attacker: attackerName,
-    target: isNpc ? heistLabel : pvpName,
+    attacker: attackerStoryName,
+    target: targetStoryName,
     weapon: weaponLabel || result.weapon?.id || '',
     mode: result.mode || 'player',
     success: result.success ? 'sim' : 'nao',

@@ -38,10 +38,11 @@ export function clampEventDescription(raw) {
  * System curto — DeepSeek free gasta tokens no thinking;
  * regras longas viram eco no content em vez de JSON.
  */
-export const EVENT_INVENT_SYSTEM = `Evento de mercado de rua (pt-BR, WhatsApp). Responda SÓ JSON:
+export const EVENT_INVENT_SYSTEM = `Evento de mercado de rua (pt-BR, WhatsApp). Responda SÓ o objeto JSON (primeira e única coisa na resposta):
 {"archetype":"<id>","category":"combustivel|municao|arma|veiculo|defesa","companyId":"<id>","title":"<manchete ≤80>","body":"<3-6 frases fofoca>"}
 archetype/companyId = IDs do user. category coerente com a empresa.
-Alta = escassez/fila; queda = sobra/desconto; flat = lateral. Sem preços em coins, sem %.`;
+Alta = escassez/fila; queda = sobra/desconto; flat = lateral.
+PROIBIDO: texto fora do JSON, "aqui vai", explicar regras, preços em coins, %.`;
 
 export const JOURNALIST_SYSTEM = `Você é repórter de rua do bairro. Você NÃO inventa números de mercado.
 Recebe FACTS oficiais (JSON). Use só esses números se citar %.
