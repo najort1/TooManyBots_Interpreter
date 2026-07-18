@@ -84,6 +84,8 @@ function topicBasico(p) {
     '👤 *Básico*',
     '',
     `\`${p}xp\` / \`${p}perfil\` — você · \`${p}perfil @user\``,
+    `\`${p}perfil set <texto>\` — apelido, bio, niver (IA extrai)`,
+    `\`${p}perfil limpar\` · \`${p}perfil reset @user\` (admin)`,
     `\`${p}rank\` — top XP · \`${p}rankcoins\` — coins`,
     `\`${p}topmsg\` — quem mais fala`,
     `\`${p}daily\` — recompensa diária`,

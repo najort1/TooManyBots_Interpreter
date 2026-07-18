@@ -588,6 +588,39 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    profileEnabled: normalizeBoolean(raw.profileEnabled, DEFAULT_FUN_CONFIG.profileEnabled),
+    profileNicknameMax: normalizeInt(
+      raw.profileNicknameMax,
+      DEFAULT_FUN_CONFIG.profileNicknameMax,
+      { min: 4, max: 32, rounding: 'floor', clamp: true }
+    ),
+    profileBioMax: normalizeInt(raw.profileBioMax, DEFAULT_FUN_CONFIG.profileBioMax, {
+      min: 40,
+      max: 240,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    profileTitleMax: normalizeInt(
+      raw.profileTitleMax ?? raw.titleMaxLen,
+      DEFAULT_FUN_CONFIG.profileTitleMax,
+      { min: 4, max: 32, rounding: 'floor', clamp: true }
+    ),
+    profileBirthdayAnnounce: normalizeBoolean(
+      raw.profileBirthdayAnnounce,
+      DEFAULT_FUN_CONFIG.profileBirthdayAnnounce
+    ),
+    profileBirthdayTz: String(raw.profileBirthdayTz || DEFAULT_FUN_CONFIG.profileBirthdayTz || '')
+      .trim()
+      .slice(0, 64) || DEFAULT_FUN_CONFIG.profileBirthdayTz,
+    profileBlocklist: Array.isArray(raw.profileBlocklist)
+      ? raw.profileBlocklist.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 80)
+      : DEFAULT_FUN_CONFIG.profileBlocklist,
+    profileAiExtract: normalizeBoolean(raw.profileAiExtract, DEFAULT_FUN_CONFIG.profileAiExtract),
+    profileExtractTimeoutMs: normalizeInt(
+      raw.profileExtractTimeoutMs,
+      DEFAULT_FUN_CONFIG.profileExtractTimeoutMs,
+      { min: 5_000, max: 90_000, rounding: 'floor', clamp: true }
+    ),
   };
 }
 

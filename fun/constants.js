@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '14';
+export const FUN_SCHEMA_VERSION = '15';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -572,4 +572,14 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   memoryExtractTimeoutMs: 28_000,
   memoryTtlDays: 45,
   memoryMinScore: 35,
+  // Perfil customizado por grupo (nick / bio / niver / título)
+  profileEnabled: true,
+  profileNicknameMax: 24,
+  profileBioMax: 160,
+  profileTitleMax: 16,
+  profileBirthdayAnnounce: true,
+  profileBirthdayTz: 'America/Sao_Paulo',
+  profileBlocklist: [],
+  profileAiExtract: true,
+  profileExtractTimeoutMs: 22_000,
 });

@@ -34,8 +34,11 @@ import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
 import { createChaosService } from './services/chaosService.js';
 import { createFunMemoryRepository } from './db/funMemoryRepository.js';
+import { createFunProfileRepository } from './db/funProfileRepository.js';
 import { createGroupMemoryService } from './services/groupMemoryService.js';
+import { createProfileService } from './services/profileService.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
+import { nameOf } from './utils/userLabel.js';
 import { getDb } from '../db/context.js';
 import { sendTextMessage, sendImageMessage, sendStickerMessage } from '../engine/sender.js';
 import { getContactDisplayName, listContactDisplayNames } from '../db/index.js';
@@ -118,9 +121,22 @@ export function createFunModule(deps = {}) {
       generateZen: deps.openaiChatComplete,
       generateOllama: deps.ollamaGenerate,
     });
+  const profileRepository =
+    deps.profileRepository || createFunProfileRepository({ getDatabase });
+  const profileService =
+    deps.profileService ||
+    createProfileService({
+      profileRepository,
+      statsRepository: repository,
+      getContactDisplayName: resolveContactName,
+      getLogger,
+      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateOllama: deps.ollamaGenerate || deps.generate,
+    });
   const shopService = createShopService({
     repository,
     effectsRepository,
+    profileService,
   });
   const bridgeService = createBridgeService({
     socialRepository,
@@ -245,6 +261,7 @@ export function createFunModule(deps = {}) {
         jobService,
         chaosService,
         groupMemoryService,
+        profileService,
         socialHooks,
         flavorService,
         getContactDisplayName: resolveContactName,
@@ -343,9 +360,57 @@ export function createFunModule(deps = {}) {
       const userFmt = createUserFormatter({
         getContactDisplayName: nameResolver,
         mentionUsers: funConfig.mentionUsers !== false,
+        resolveNickname: (jid) =>
+          profileService?.getNickname?.(jid, scopeKey) || '',
       });
 
       await runWithUserLabels(userFmt, async () => {
+        // Aniversários do dia (1x/ano/user) — independente de world events de mercado
+        if (
+          profileService?.listBirthdayAnnouncements &&
+          funConfig.profileBirthdayAnnounce !== false &&
+          funConfig.profileEnabled !== false
+        ) {
+          try {
+            const bdays = profileService.listBirthdayAnnouncements(
+              scopeKey,
+              funConfig,
+              now
+            );
+            for (const b of bdays) {
+              const nick = b.nickname || nameResolver?.(b.userJid) || '';
+              const tag = nameOf(nameResolver, b.userJid);
+              const msg = [
+                '🎂 *Aniversário no grupo!*',
+                nick
+                  ? `Hoje é aniversário de ${tag} (*${nick}*)!`
+                  : `Hoje é aniversário de ${tag}!`,
+                '_Parabéns da galera do bot._',
+              ].join('\n');
+              await postWithMentions(scopeKey, msg, userFmt);
+              profileService.markBirthdayAnnounced(
+                scopeKey,
+                b.userJid,
+                b.year,
+                now
+              );
+              results.push({
+                scopeKey,
+                kind: 'birthday',
+                ok: true,
+                userJid: b.userJid,
+              });
+            }
+          } catch (err) {
+            results.push({
+              scopeKey,
+              kind: 'birthday',
+              ok: false,
+              reason: err?.message || 'birthday-error',
+            });
+          }
+        }
+
         const worldEventsOn =
           typeof groupRepository?.isWorldEventsEnabled === 'function'
             ? groupRepository.isWorldEventsEnabled(scopeKey, funConfig)
@@ -499,6 +564,8 @@ export function createFunModule(deps = {}) {
       chaosService,
       groupMemoryService,
       memoryRepository,
+      profileService,
+      profileRepository,
       socialHooks,
       flavorService,
       identityMap,

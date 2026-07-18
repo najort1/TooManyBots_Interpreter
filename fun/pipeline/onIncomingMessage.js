@@ -8,6 +8,7 @@ import {
   createUserFormatter,
   runWithUserLabels,
   nameOf as labelUser,
+  displayNameOnly,
   ensureActorMention,
 } from '../utils/userLabel.js';
 
@@ -104,6 +105,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     jobService,
     chaosService,
     groupMemoryService,
+    profileService,
     socialHooks,
     flavorService,
     getContactDisplayName,
@@ -292,6 +294,14 @@ export async function handleFunIncomingMessage(deps, ctx) {
   const userFmt = createUserFormatter({
     getContactDisplayName,
     mentionUsers: funConfig.mentionUsers !== false,
+    resolveNickname: (jid) => {
+      if (!profileService?.getNickname || !scope?.scopeKey) return '';
+      try {
+        return profileService.getNickname(jid, scope.scopeKey) || '';
+      } catch {
+        return '';
+      }
+    },
   });
   const formatUser = (jid) => userFmt.formatUser(jid);
 
@@ -500,6 +510,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           jobService,
           chaosService,
           groupMemoryService,
+          profileService,
           socialHooks,
           flavorService,
           getContactDisplayName,
@@ -618,11 +629,22 @@ export async function handleFunIncomingMessage(deps, ctx) {
                 groupLore = '';
               }
             }
-            // LLM: nome legível, sem @ (evita ruído no prompt)
-            const plain =
-              typeof getContactDisplayName === 'function'
-                ? getContactDisplayName(userJid)
-                : '';
+            if (profileService?.buildIdentityBlock) {
+              try {
+                const idBlock = profileService.buildIdentityBlock(
+                  scope.scopeKey,
+                  [userJid],
+                  funConfig
+                );
+                if (idBlock) {
+                  groupLore = groupLore ? `${groupLore}\n${idBlock}` : idBlock;
+                }
+              } catch {
+                // ignore
+              }
+            }
+            // LLM: nome legível / nick, sem @ (evita ruído no prompt)
+            const plain = displayNameOnly(getContactDisplayName, userJid);
             const fl = await flavorService.italicLine('level_up', {
               level: award.level,
               user: plain || userJid?.split?.('@')?.[0] || '',

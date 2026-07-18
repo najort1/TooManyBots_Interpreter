@@ -27,6 +27,23 @@ async function chaosText(flavorService, scenario, vars, templateFn, loreOpts = {
       // ignore
     }
   }
+  // identidade custom (nick/bio) — bloco separado da lore de micos
+  if (loreOpts.profileService?.buildIdentityBlock && loreOpts.scopeKey) {
+    try {
+      const idBlock = loreOpts.profileService.buildIdentityBlock(
+        loreOpts.scopeKey,
+        loreOpts.userJids || [],
+        loreOpts.funConfig || {}
+      );
+      if (idBlock) {
+        merged.groupLore = merged.groupLore
+          ? `${merged.groupLore}\n${idBlock}`
+          : idBlock;
+      }
+    } catch {
+      // ignore
+    }
+  }
 
   if (!flavorService) return safe();
 
@@ -48,6 +65,7 @@ async function chaosText(flavorService, scenario, vars, templateFn, loreOpts = {
 function loreBag(ctx) {
   return {
     groupMemoryService: ctx.groupMemoryService,
+    profileService: ctx.profileService,
     scopeKey: ctx.scopeKey,
     funConfig: ctx.funConfig,
     userJids: ctx.userJids || [],
@@ -63,6 +81,7 @@ export async function handleRussianCommand({
   reply,
   flavorService,
   groupMemoryService,
+  profileService,
 }) {
   if (!isGroup) {
     await reply('Roleta russa só no *grupo*. Lá o mico é coletivo.');
@@ -96,7 +115,7 @@ export async function handleRussianCommand({
     { chambers: result.chambers, deathMin },
     () =>
       `Tambor com *${result.chambers}* câmaras · *1* bala. Cada um faz \`/puxar\`. Quem levar, “morre” (virtualmente).`,
-    loreBag({ groupMemoryService, scopeKey, funConfig, userJids: [userJid] })
+    loreBag({ groupMemoryService, profileService, scopeKey, funConfig, userJids: [userJid] })
   );
 
   await reply(
@@ -123,6 +142,7 @@ export async function handlePullCommand({
   reply,
   flavorService,
   groupMemoryService,
+  profileService,
 }) {
   if (!isGroup) {
     await reply('`/puxar` só funciona na roleta do *grupo*.');
@@ -155,7 +175,7 @@ export async function handlePullCommand({
       'russian_dead',
       { user: who, deathLabel: result.deathLabel },
       () => `*${who}* foi de base (virtual). XP em luto por *${result.deathLabel}*.`,
-      loreBag({ groupMemoryService, scopeKey, funConfig, userJids: [userJid] })
+      loreBag({ groupMemoryService, profileService, scopeKey, funConfig, userJids: [userJid] })
     );
     await reply(
       [
@@ -175,7 +195,7 @@ export async function handlePullCommand({
     'russian_click',
     { user: who, remaining: result.remaining, chambers: result.chambers },
     () => `*${who}* ouviu o click. Restam *${result.remaining}* câmaras.`,
-    loreBag({ groupMemoryService, scopeKey, funConfig, userJids: [userJid] })
+    loreBag({ groupMemoryService, profileService, scopeKey, funConfig, userJids: [userJid] })
   );
   await reply(
     [
@@ -206,6 +226,7 @@ export async function handleCancelCommand({
   identityMap,
   flavorService,
   groupMemoryService,
+  profileService,
 }) {
   if (!chaosService) {
     await reply('Tribunal offline.');
@@ -241,7 +262,7 @@ export async function handleCancelCommand({
     'cancel_absurd',
     { user: name },
     () => chaosService.cancelAbsurd(name),
-    loreBag({ groupMemoryService, scopeKey, funConfig, userJids: [target, userJid] })
+    loreBag({ groupMemoryService, profileService, scopeKey, funConfig, userJids: [target, userJid] })
   );
 
   await reply(
@@ -265,6 +286,7 @@ export async function handleGossipCommand({
   identityMap,
   flavorService,
   groupMemoryService,
+  profileService,
 }) {
   if (!chaosService) {
     await reply('Rádio peão offline.');
@@ -300,7 +322,7 @@ export async function handleGossipCommand({
     'gossip_fake',
     { user: name },
     () => chaosService.gossipFake(name),
-    loreBag({ groupMemoryService, scopeKey, funConfig, userJids: [target, userJid] })
+    loreBag({ groupMemoryService, profileService, scopeKey, funConfig, userJids: [target, userJid] })
   );
 
   await reply(
@@ -320,6 +342,7 @@ export async function handleOracleCommand({
   args,
   flavorService,
   groupMemoryService,
+  profileService,
 }) {
   if (!chaosService) {
     await reply('Oráculo dormindo.');
@@ -350,7 +373,7 @@ export async function handleOracleCommand({
     'oracle_insane',
     { question: qShort },
     () => chaosService.oracleInsane(qShort),
-    loreBag({ groupMemoryService, scopeKey, funConfig, userJids: [userJid] })
+    loreBag({ groupMemoryService, profileService, scopeKey, funConfig, userJids: [userJid] })
   );
 
   await reply(['🔮 *Oráculo maluco*', '', body].join('\n'));
@@ -366,6 +389,7 @@ export async function handleIlluminatiCommand({
   reply,
   flavorService,
   groupMemoryService,
+  profileService,
 }) {
   if (!chaosService) {
     await reply('Sociedade secreta offline.');
@@ -391,7 +415,7 @@ export async function handleIlluminatiCommand({
     'illuminati_theory',
     { user: name },
     () => chaosService.illuminatiTheory(name),
-    loreBag({ groupMemoryService, scopeKey, funConfig, userJids: [targetJid, userJid] })
+    loreBag({ groupMemoryService, profileService, scopeKey, funConfig, userJids: [targetJid, userJid] })
   );
 
   await reply(

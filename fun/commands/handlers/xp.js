@@ -3,20 +3,54 @@ import { renderProfileCardPng } from '../../formatters/rankCardImage.js';
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
+import { isGroupAdmin } from '../../utils/groupMembership.js';
+import { formatBirthdayDisplay } from '../../services/profileService.js';
+
+function normSub(s) {
+  return String(s || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function formatSetConfirm(profile, changed = []) {
+  const lines = ['✅ *Perfil atualizado*'];
+  if (changed.includes('nickname') || profile.nickname) {
+    lines.push(`• Apelido: *${profile.nickname || '—'}*`);
+  }
+  if (changed.includes('bio') || profile.bio) {
+    lines.push(`• Conhecido por: ${profile.bio || '—'}`);
+  }
+  if (changed.includes('birthday') || profile.birthdayMd) {
+    lines.push(
+      `• Aniversário: *${formatBirthdayDisplay(profile.birthdayMd) || '—'}*`
+    );
+  }
+  if (changed.includes('title') || profile.title) {
+    lines.push(`• Título: _${profile.title || '—'}_`);
+  }
+  if (changed.length) {
+    lines.push('', `_Campos: ${changed.join(', ')}_`);
+  }
+  return lines.join('\n');
+}
 
 /**
- * /xp · /perfil [@pessoa | reply]
+ * /xp · /perfil [@pessoa | set | limpar | reset]
  * Perfil próprio ou de outro no mesmo grupo (scope).
  */
 export async function handleXpCommand({
   userJid,
   scopeKey,
+  isGroup = true,
   rankService,
   relationshipService,
   effectsRepository,
   casinoService,
   factionService,
   jobService,
+  profileService,
   getContactDisplayName,
   listContacts,
   reply,
@@ -28,21 +62,165 @@ export async function handleXpCommand({
   sock,
   identityMap,
 }) {
+  const p = funConfig.prefix || '/';
   const contacts = typeof listContacts === 'function' ? listContacts() : [];
+  const sub = normSub(args[0]);
+  const restArgs = args.slice(1);
 
-  // target opcional: menção, reply ou nome/número nos args
+  // ── /perfil set|setar|editar|configurar <texto livre> ──
+  if (
+    sub === 'set' ||
+    sub === 'setar' ||
+    sub === 'editar' ||
+    sub === 'configurar' ||
+    sub === 'definir'
+  ) {
+    if (!isGroup) {
+      await reply('Perfil customizado é *por grupo*. Use no chat do grupo.');
+      return { handled: true, reason: 'dm' };
+    }
+    if (funConfig.profileEnabled === false) {
+      await reply('Perfil customizado desligado neste bot.');
+      return { handled: true };
+    }
+    if (!profileService) {
+      await reply('Perfil offline.');
+      return { handled: true };
+    }
+    const freeText = restArgs.join(' ').trim();
+    if (!freeText) {
+      await reply(
+        [
+          '📝 *Montar perfil*',
+          `Manda tudo de uma vez: \`${p}perfil set me chamam de Nina, sou a das figurinhas, niver 12/08\``,
+          '',
+          'Campos: *apelido* · *conhecido por* · *aniversário* (dia/mês)',
+          `Ver: \`${p}perfil\` · limpar: \`${p}perfil limpar\``,
+        ].join('\n')
+      );
+      return { handled: true, reason: 'usage' };
+    }
+
+    await reply('_Anotando seu perfil…_');
+    const result = await profileService.applyFreeText({
+      userJid,
+      scopeKey,
+      text: freeText,
+      funConfig,
+    });
+    if (!result.ok) {
+      await reply(
+        [
+          'Não entendi o que salvar.',
+          result.hint || `Tenta: \`${p}perfil set apelido Nina, niver 15/03, conhecido por chegar atrasado\``,
+          result.errors?.length ? `Detalhe: ${result.errors.join(', ')}` : null,
+        ]
+          .filter(Boolean)
+          .join('\n')
+      );
+      return { handled: true, reason: result.reason };
+    }
+    await reply(formatSetConfirm(result.profile, result.changed));
+    return { handled: true, result };
+  }
+
+  // ── /perfil limpar|clear ──
+  if (sub === 'limpar' || sub === 'clear' || sub === 'apagar') {
+    if (!isGroup) {
+      await reply('Limpar perfil só no *grupo*.');
+      return { handled: true };
+    }
+    if (!profileService) {
+      await reply('Perfil offline.');
+      return { handled: true };
+    }
+    profileService.clearOwn({ userJid, scopeKey });
+    await reply('🧹 Perfil customizado *zerado* neste grupo (apelido, bio, niver, título).');
+    return { handled: true, cleared: true };
+  }
+
+  // ── /perfil reset @user (admin) ──
+  if (sub === 'reset' || sub === 'resetar') {
+    if (!isGroup) {
+      await reply('Reset de perfil só no *grupo*.');
+      return { handled: true };
+    }
+    if (!profileService) {
+      await reply('Perfil offline.');
+      return { handled: true };
+    }
+    const admin = await isGroupAdmin(sock, scopeKey, userJid);
+    if (!admin) {
+      await reply('Só *admin do grupo* pode resetar perfil de outra pessoa.');
+      return { handled: true, reason: 'not-admin' };
+    }
+    const resolved = await resolveUserTarget({
+      args: restArgs,
+      mentionedJids,
+      quotedParticipant,
+      excludeJid: '',
+      identityMap,
+      sock,
+      groupJid: scopeKey,
+      contacts,
+    });
+    if (!resolved?.jid || !isCanonicalUserJid(resolved.jid)) {
+      await reply(`Uso: \`${p}perfil reset @pessoa\``);
+      return { handled: true, reason: 'target-unresolved' };
+    }
+    profileService.adminReset({ userJid: resolved.jid, scopeKey });
+    const who = nameOf(getContactDisplayName, resolved.jid);
+    await reply(`🧹 Perfil de ${who} foi *limpo* por um admin.`);
+    return { handled: true, reset: resolved.jid };
+  }
+
+  // ── Ver perfil (próprio ou outro) ──
+  // Se o 1º arg é subcomando desconhecido e não parece target, ajuda
+  const PROFILE_SUBS = new Set([
+    'set',
+    'setar',
+    'editar',
+    'configurar',
+    'definir',
+    'limpar',
+    'clear',
+    'apagar',
+    'reset',
+    'resetar',
+    'ajuda',
+    'help',
+  ]);
+  if (sub === 'ajuda' || sub === 'help') {
+    await reply(
+      [
+        '👤 *Perfil*',
+        `\`${p}perfil\` — ver o seu`,
+        `\`${p}perfil @user\` — ver o de alguém`,
+        `\`${p}perfil set <texto livre>\` — IA extrai apelido/bio/niver`,
+        `\`${p}perfil limpar\` — zera o seu`,
+        `\`${p}perfil reset @user\` — admin limpa ofensivo`,
+      ].join('\n')
+    );
+    return { handled: true };
+  }
+
   let targetJid = userJid;
   const wantsOther =
     (Array.isArray(mentionedJids) && mentionedJids.length > 0) ||
     Boolean(String(quotedParticipant || '').trim()) ||
-    (Array.isArray(args) && args.some((a) => String(a || '').trim()));
+    (Array.isArray(args) &&
+      args.some((a) => {
+        const t = String(a || '').trim();
+        if (!t) return false;
+        return !PROFILE_SUBS.has(normSub(t));
+      }));
 
   if (wantsOther) {
     const resolved = await resolveUserTarget({
       args,
       mentionedJids,
       quotedParticipant,
-      excludeJid: '', // pode ser o próprio se marcarem a si
+      excludeJid: '',
       identityMap,
       sock,
       groupJid: scopeKey,
@@ -75,7 +253,6 @@ export async function handleXpCommand({
   if (relationshipService) {
     const marriage = relationshipService.getMarriage(targetJid, scopeKey);
     if (marriage?.partnerJid) {
-      // chat: @menção; imagem: nome de exibição (nunca o número cru se houver nome)
       partnerName = nameOf(getContactDisplayName, marriage.partnerJid);
       partnerNamePlain = displayNameOnly(getContactDisplayName, marriage.partnerJid);
     }
@@ -112,7 +289,7 @@ export async function handleXpCommand({
     }
   }
 
-  const stats = profile.stats || {
+  const stats = { ...(profile.stats || {
     xp: 0,
     level: 1,
     dailyStreak: 0,
@@ -120,7 +297,20 @@ export async function handleXpCommand({
     title: '',
     messageCount: 0,
     xpAwardedCount: 0,
-  };
+  }) };
+
+  let customProfile = null;
+  if (profileService?.getProfile) {
+    try {
+      customProfile = profileService.getProfile(targetJid, scopeKey);
+      if (customProfile?.title) stats.title = customProfile.title;
+      else if (!stats.title && customProfile?.title === '') {
+        // keep stats title as fallback already in getProfile
+      }
+    } catch {
+      customProfile = null;
+    }
+  }
 
   let activeBuffs = [];
   if (typeof listActiveEffects === 'function') {
@@ -136,8 +326,10 @@ export async function handleXpCommand({
     employment = null;
   }
 
+  const plainName = displayNameOnly(getContactDisplayName, targetJid);
   const profileOpts = {
     displayName: name,
+    plainDisplayName: plainName,
     userJid: targetJid,
     stats,
     rank: profile.rank,
@@ -153,11 +345,11 @@ export async function handleXpCommand({
     casino,
     factionLabel,
     employment,
+    customProfile,
   };
 
   if (funConfig.rankCardImage !== false && typeof replyImage === 'function') {
     try {
-      const plainName = displayNameOnly(getContactDisplayName, targetJid);
       const png = renderProfileCardPng({
         displayName: plainName,
         userJid: targetJid,
@@ -175,6 +367,7 @@ export async function handleXpCommand({
         casino,
         employment,
         isSelf,
+        customProfile,
       });
       await replyImage(png, isSelf ? '📊 Seu perfil' : `📊 Perfil`);
       return { handled: true, targetJid, isSelf, image: true };

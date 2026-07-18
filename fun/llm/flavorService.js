@@ -657,7 +657,7 @@ EPÍLOGO
 Várias frases por cena. NÃO encurte. Sem inventar números de jogo:`
     : 'Texto (1 a 3 frases, pt-BR de zap):';
   const loreBlock = groupLore
-    ? `\nLore do grupo (use só se encaixar na piada; NÃO invente lore nova):\n${groupLore.slice(0, 700)}\n`
+    ? `\n${String(groupLore).includes('<group_lore>') ? groupLore.slice(0, 900) : `<group_lore>\nRegras: use APENAS se houver relação direta; NUNCA troque o autor do fato; se não encaixar, IGNORE.\n${groupLore.slice(0, 700)}\n</group_lore>`}\n`
     : '';
   return `${hint}\nContexto fixo (não invente além disso): ${facts || 'nenhum'}${loreBlock}\n${shape}`;
 }
@@ -874,7 +874,9 @@ export function createFlavorService(deps = {}) {
           ? `Contexto: ${facts}.`
           : null,
         groupLore
-          ? `Lore do grupo (só se encaixar; não invente):\n${groupLore.slice(0, 400)}`
+          ? String(groupLore).includes('<group_lore>')
+            ? groupLore.slice(0, 550)
+            : `<group_lore>\nUse só se encaixar; NÃO troque autores; NÃO invente.\n${groupLore.slice(0, 400)}\n</group_lore>`
           : null,
         'Responda só com o texto pronto pro zap (sem instruções, sem meta):',
       ]

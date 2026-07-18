@@ -452,6 +452,32 @@ export function buildFunSchemaSql() {
       fact_count    INTEGER NOT NULL DEFAULT 0,
       updated_at    INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_user_profiles (
+      user_jid       TEXT    NOT NULL,
+      scope_key      TEXT    NOT NULL,
+      nickname       TEXT    NOT NULL DEFAULT '',
+      bio            TEXT    NOT NULL DEFAULT '',
+      birthday_md    TEXT    NOT NULL DEFAULT '',
+      title          TEXT    NOT NULL DEFAULT '',
+      raw_note       TEXT    NOT NULL DEFAULT '',
+      updated_at     INTEGER NOT NULL,
+      PRIMARY KEY (user_jid, scope_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_profiles_scope_bday
+      ON fun_user_profiles(scope_key, birthday_md);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_profiles_scope_nick
+      ON fun_user_profiles(scope_key, nickname);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_birthday_announced (
+      scope_key     TEXT    NOT NULL,
+      user_jid      TEXT    NOT NULL,
+      year          INTEGER NOT NULL,
+      announced_at  INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, user_jid, year)
+    );
   `;
 }
 
@@ -620,6 +646,25 @@ export function ensureFunSchema(db) {
         last_trade_at   INTEGER NOT NULL DEFAULT 0,
         PRIMARY KEY (user_jid, scope_key)
       );
+    `);
+  } catch {
+    // ignore
+  }
+
+  // Migra títulos legados (fun_user_stats.title → fun_user_profiles)
+  try {
+    db.exec(`
+      INSERT INTO ${ANALYTICS_SCHEMA}.fun_user_profiles
+        (user_jid, scope_key, nickname, bio, birthday_md, title, raw_note, updated_at)
+      SELECT user_jid, scope_key, '', '', '', TRIM(title), '', updated_at
+      FROM ${ANALYTICS_SCHEMA}.fun_user_stats
+      WHERE TRIM(COALESCE(title, '')) != ''
+      ON CONFLICT(user_jid, scope_key) DO UPDATE SET
+        title = CASE
+          WHEN TRIM(${ANALYTICS_SCHEMA}.fun_user_profiles.title) = ''
+          THEN excluded.title
+          ELSE ${ANALYTICS_SCHEMA}.fun_user_profiles.title
+        END
     `);
   } catch {
     // ignore

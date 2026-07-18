@@ -33,12 +33,33 @@ export function normalizeMentionJid(jid) {
 
 /**
  * Nome legível (sem menção).
+ * Prefere apelido do perfil do grupo (ALS / opts.resolveNickname) → pushName WA → número.
  */
-export function displayNameOnly(getContactDisplayName, jid) {
+export function displayNameOnly(getContactDisplayName, jid, opts = {}) {
   const j = String(jid || '').trim();
   if (!j) return 'alguém';
-  const name =
-    typeof getContactDisplayName === 'function' ? getContactDisplayName(j) : '';
+
+  const store = userLabelContext.getStore();
+  const resolveNick =
+    typeof opts.resolveNickname === 'function'
+      ? opts.resolveNickname
+      : typeof store?.resolveNickname === 'function'
+        ? store.resolveNickname
+        : null;
+  if (resolveNick) {
+    try {
+      const nick = String(resolveNick(j) || '').trim();
+      if (nick) return nick;
+    } catch {
+      // ignore
+    }
+  }
+
+  const getName =
+    typeof getContactDisplayName === 'function'
+      ? getContactDisplayName
+      : store?.getContactDisplayName;
+  const name = typeof getName === 'function' ? getName(j) : '';
   const n = String(name || '').trim();
   if (n) return n;
   const local = jidLocalPart(j);
@@ -100,6 +121,8 @@ export function nameOf(getContactDisplayName, jid) {
 export function createUserFormatter({
   getContactDisplayName = null,
   mentionUsers = true,
+  /** (jid) => nickname | '' — perfil customizado do grupo */
+  resolveNickname = null,
 } = {}) {
   const pending = new Set();
   const mention = mentionUsers !== false;
@@ -134,6 +157,8 @@ export function createUserFormatter({
     trackMention,
     mentionUsers: mention,
     getContactDisplayName,
+    resolveNickname:
+      typeof resolveNickname === 'function' ? resolveNickname : null,
   };
 }
 
@@ -147,6 +172,7 @@ export function runWithUserLabels(formatter, fn) {
       trackMention: formatter.trackMention,
       mentionUsers: formatter.mentionUsers,
       getContactDisplayName: formatter.getContactDisplayName,
+      resolveNickname: formatter.resolveNickname,
     },
     fn
   );

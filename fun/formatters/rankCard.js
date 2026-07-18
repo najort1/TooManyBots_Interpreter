@@ -88,13 +88,14 @@ export function formatXpProfile({
   messagesRank = null,
   messagesTotal = 0,
   employment = null,
+  customProfile = null,
 }) {
   const xp = Number(stats?.xp) || 0;
   const progress = progressInLevel(xp);
   const level = Number(stats?.level) || progress.level;
   const streak = Number(stats?.dailyStreak) || 0;
   const coins = Number(stats?.coins) || 0;
-  const title = String(stats?.title || '').trim();
+  const title = String(customProfile?.title || stats?.title || '').trim();
   const messages = Number(stats?.messageCount) || 0;
   const xpAwards = Number(stats?.xpAwardedCount) || 0;
   const who = title
@@ -150,6 +151,25 @@ export function formatXpProfile({
       '*Cassino*',
       `• Lucro *${sign}${profit}* · jogos *${Number(casino.games) || 0}*`,
       `• Apostado *${Number(casino.wagered) || 0}* · ganho *${Number(casino.won) || 0}*`
+    );
+  }
+
+  const identity = [];
+  if (customProfile?.nickname) identity.push(`• Apelido: *${customProfile.nickname}*`);
+  if (customProfile?.bio) identity.push(`• Conhecido por: ${customProfile.bio}`);
+  if (customProfile?.birthdayMd) {
+    const md = String(customProfile.birthdayMd);
+    const m = md.match(/^(\d{2})-(\d{2})$/);
+    const pretty = m ? `${m[2]}/${m[1]}` : md;
+    identity.push(`• Aniversário: *${pretty}*`);
+  }
+  if (identity.length) {
+    lines.push('', '*Identidade*', ...identity);
+  } else if (isSelf) {
+    lines.push(
+      '',
+      '*Identidade*',
+      '• Ainda vazio · `/perfil set me chamam de …, niver DD/MM`'
     );
   }
 

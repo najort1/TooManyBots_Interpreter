@@ -704,6 +704,17 @@ function drawBadgeIcon(ctx, kind, cx, cy, color) {
     ctx.fill();
   } else if (kind === 'chip') {
     drawChip(ctx, cx, cy, 9, color, 'rgba(255,255,255,0.7)');
+  } else if (kind === 'star') {
+    drawStar(ctx, cx, cy, 9, color);
+  } else if (kind === 'spark') {
+    // diamante / sparkle simples
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 8);
+    ctx.lineTo(cx + 5, cy);
+    ctx.lineTo(cx, cy + 8);
+    ctx.lineTo(cx - 5, cy);
+    ctx.closePath();
+    ctx.fill();
   }
   ctx.restore();
 }
@@ -790,11 +801,18 @@ export function renderProfileCardPng({
   casino = null,
   employment = null,
   isSelf = true,
+  customProfile = null,
   nowMs = Date.now(),
 } = {}) {
   const t = resolveCardTheme('profile', nowMs);
   const name = shortName(displayName, userJid, 26);
-  const title = String(stats.title || '').trim();
+  const title = String(customProfile?.title || stats.title || '').trim();
+  const bio = String(customProfile?.bio || '').trim();
+  const bdayRaw = String(customProfile?.birthdayMd || '').trim();
+  const bday = (() => {
+    const m = bdayRaw.match(/^(\d{2})-(\d{2})$/);
+    return m ? `${m[2]}/${m[1]}` : '';
+  })();
   const xp = Number(stats.xp) || 0;
   const progress = progressInLevel(xp);
   const level = Number(stats.level) || progress.level;
@@ -808,6 +826,22 @@ export function renderProfileCardPng({
 
   // chips de conquista — monta a lista antes pra saber quantas linhas vão ocupar
   const chips = [];
+  if (bio) {
+    chips.push({
+      icon: 'spark',
+      sub: 'Conhecido por',
+      label: shortName(bio, '', 34),
+      color: t.accent2 || t.accent,
+    });
+  }
+  if (bday) {
+    chips.push({
+      icon: 'star',
+      sub: 'Aniversário',
+      label: bday,
+      color: t.success || t.accent,
+    });
+  }
   if (employment?.job) {
     chips.push({
       icon: 'briefcase',

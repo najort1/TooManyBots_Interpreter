@@ -56,6 +56,41 @@ function collectParticipantIds(participants = []) {
  * @param {object} [opts]
  * @param {number} [opts.ttlMs]
  */
+/**
+ * Verifica se userJid é admin/superadmin no grupo (Baileys groupMetadata).
+ */
+export async function isGroupAdmin(sock, groupJid, userJid) {
+  if (!sock || typeof sock.groupMetadata !== 'function') return false;
+  const g = String(groupJid || '').trim();
+  const u = String(userJid || '').trim();
+  if (!g.endsWith('@g.us') || !u) return false;
+  try {
+    const meta = await sock.groupMetadata(g);
+    const parts = meta?.participants || [];
+    const ul = localPart(u);
+    for (const p of parts) {
+      const ids = [
+        p?.id,
+        p?.jid,
+        p?.phoneNumber,
+        p?.participantPn,
+        p?.participant_pn,
+      ]
+        .filter(Boolean)
+        .map(String);
+      const match = ids.some((id) => id === u || localPart(id) === ul);
+      if (!match) continue;
+      const admin = String(p?.admin || p?.isAdmin || '').toLowerCase();
+      if (admin === 'admin' || admin === 'superadmin' || p?.admin === true) {
+        return true;
+      }
+    }
+  } catch {
+    return false;
+  }
+  return false;
+}
+
 export function createGroupMembershipService({ ttlMs = 5 * 60_000 } = {}) {
   /** @type {Map<string, { set: Set<string>, name: string, at: number }>} */
   const cache = new Map();

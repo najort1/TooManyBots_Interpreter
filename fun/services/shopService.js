@@ -7,6 +7,7 @@ import { getShopItem, listShopItems } from '../shop/catalog.js';
 export function createShopService({
   repository,
   effectsRepository,
+  profileService = null,
 } = {}) {
   if (!repository) throw new Error('[fun/shopService] repository required');
   if (!effectsRepository) throw new Error('[fun/shopService] effectsRepository required');
@@ -109,12 +110,23 @@ export function createShopService({
         cooldownMs: 0,
       });
     } else if (item.kind === 'title') {
-      repository.setTitle({
-        userJid: u,
-        scopeKey: s,
-        title: cleanTitle,
-        now,
-      });
+      // unificado no perfil customizado (+ espelho em stats via profileService)
+      if (profileService?.setTitle) {
+        profileService.setTitle({
+          userJid: u,
+          scopeKey: s,
+          title: cleanTitle,
+          funConfig,
+          now,
+        });
+      } else {
+        repository.setTitle({
+          userJid: u,
+          scopeKey: s,
+          title: cleanTitle,
+          now,
+        });
+      }
     }
 
     const coins = repository.getUserStats(u, s)?.coins || 0;
