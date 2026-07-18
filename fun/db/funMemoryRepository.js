@@ -119,14 +119,18 @@ export function createFunMemoryRepository({ getDatabase = getDb } = {}) {
     return Number(row?.n) || 0;
   }
 
-  function reinforceFact(id, { summary, score, keywords, now = Date.now() } = {}) {
+  /**
+   * Reforça fato: hits++, last_seen_at reseta (TTL “renova”).
+   * overwriteSummary=true (default se summary vier): atualiza o texto (fatos recentes sobrescrevem).
+   */
+  function reinforceFact(id, { summary, score, keywords, overwriteSummary = true, now = Date.now() } = {}) {
     ensureSchema();
     const current = getFact(id);
     if (!current) return null;
     const ts = Number(now) || Date.now();
-    const nextSummary = summary
-      ? String(summary).trim().slice(0, 200)
-      : current.summary;
+    const incoming = summary ? String(summary).trim().slice(0, 200) : '';
+    const nextSummary =
+      incoming && overwriteSummary !== false ? incoming : current.summary;
     const nextScore = Math.max(
       current.score,
       Math.min(100, Math.round(Number(score != null ? score : current.score) || current.score))
