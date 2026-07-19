@@ -93,35 +93,49 @@ export function createNewsService({
       byType.set(e.eventType, list);
     }
 
+    const allOf = (type) => byType.get(type) || [];
     const pick = (type) => {
-      const list = byType.get(type) || [];
+      const list = allOf(type);
       return list[Math.floor(random() * list.length)] || null;
     };
 
     const crash = pick('crash_loss') || pick('casino_loss');
     const marry = pick('marry');
     const assault = pick('assault_win');
+    const assaultN = allOf('assault_win').length;
     const market = pick('market_move');
     const prop = pick('property_buy') || pick('property_rob');
+
+    // usa os números reais do grupo (não texto genérico idêntico)
+    const assaultTotal = allOf('assault_win').reduce(
+      (s, e) => s + (Number(e.payload?.amount) || 0),
+      0
+    );
 
     const headline =
       crash
         ? `*MANCHETE:* Alguém perdeu *${crash.payload?.amount || '?'}c* e jurou que foi bug.`
-        : assault
-          ? `*MANCHETE:* Assalto rendeu *${assault.payload?.amount || '?'}c*. O bairro viu.`
-          : `*MANCHETE:* O dia foi mediano. O ego, não.`;
+        : assaultN > 1
+          ? `*MANCHETE:* *${assaultN}* assaltos no dia · *${assaultTotal}c* no total. O bairro viu.`
+          : assault
+            ? `*MANCHETE:* Assalto rendeu *${assault.payload?.amount || '?'}c*. O bairro viu.`
+            : `*MANCHETE:* O dia foi mediano. O ego, não.`;
 
     const eco =
       market
         ? `*ECONOMIA:* Mercado moveu *${market.payload?.deltaPct ?? '?'}%* em ${market.payload?.name || 'algo'}.`
         : prop
           ? `*ECONOMIA:* Negócio novo no pedaço — alguém se achou patrão.`
-          : `*ECONOMIA:* Bolsa e pastel no piloto automático.`;
+          : assaultN
+            ? `*ECONOMIA:* Fluxo de assalto no ar. Contador: *${assaultTotal}c*.`
+            : `*ECONOMIA:* Bolsa e pastel no piloto automático.`;
 
     const fofoca =
       marry
         ? `*FOFOCA:* Casamento no sistema. Apostas de divórcio abertas.`
-        : `*FOFOCA:* Ninguém se divorciou (ainda). Decepcionante.`;
+        : assaultN
+          ? `*FOFOCA:* Alguém jura que o assalto foi “estratégia”. Ninguém acredita.`
+          : `*FOFOCA:* Ninguém se divorciou (ainda). Decepcionante.`;
 
     lines.push(headline, eco, fofoca);
     lines.push('', `_Eventos registrados: ${events.length}_`);
@@ -130,6 +144,7 @@ export function createNewsService({
 
   async function composeEdition(scopeKey, funConfig = {}, now = Date.now()) {
     const since = now - 24 * 60 * 60_000;
+    // SEMPRE filtrado por scopeKey — nunca mistura eventos de outro grupo
     const events = newsRepository.listSince(scopeKey, since);
     let text = '';
     let provider = 'template';
@@ -139,6 +154,7 @@ export function createNewsService({
         .slice(0, 40)
         .map((e) => {
           const p = e.payload || {};
+          // reforça isolamento: se payload vier com jid, só o tipo+números
           return `${e.eventType}${p.amount != null ? ` amount=${p.amount}` : ''}${p.name ? ` name=${p.name}` : ''}${p.deltaPct != null ? ` delta=${p.deltaPct}%` : ''}`;
         })
         .join('\n');
@@ -146,14 +162,28 @@ export function createNewsService({
         const out = await flavorService.line('group_times', {
           events: summary,
           count: events.length,
+          // isolamento do anti-repeat / ban list por grupo
+          scopeKey: String(scopeKey || ''),
         });
         const raw = typeof out === 'string' ? out : out?.text;
-        if (raw && String(raw).trim().length > 40) {
+        const providerHit = flavorService.lastProvider?.() || 'llm';
+        // template-timeout devolve fallback curto — não trate como LLM
+        if (
+          raw &&
+          String(raw).trim().length > 40 &&
+          !String(providerHit).includes('template')
+        ) {
           text = `📰 *The Group Times*\n\n${String(raw).trim()}`.slice(0, 1800);
-          provider = flavorService.lastProvider?.() || 'llm';
+          provider = providerHit;
+        } else if (raw && String(raw).trim().length > 40 && providerHit === 'template') {
+          // line() devolveu template via fallback interno
+          text = `📰 *The Group Times*\n\n${String(raw).trim()}`.slice(0, 1800);
+          provider = 'template';
         }
-      } catch {
-        // fallback
+      } catch (err) {
+        console.warn(
+          `[fun/news] compose LLM fail scope=${String(scopeKey).slice(0, 28)}: ${err?.message || err}`
+        );
       }
     }
 
@@ -161,6 +191,10 @@ export function createNewsService({
       text = templateHeadlines(events);
       provider = 'template';
     }
+
+    console.log(
+      `[fun/news] edition scope=${String(scopeKey).slice(0, 28)} provider=${provider} events=${events.length}`
+    );
 
     return { text, provider, eventCount: events.length };
   }

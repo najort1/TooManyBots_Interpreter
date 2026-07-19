@@ -399,27 +399,45 @@ export function createFunModule(deps = {}) {
     };
 
     // The Group Times: 23:59 — mesmo em quiet hours (exceção do relógio)
+    // Em paralelo por grupo: serial + timeout curto fazia só o 1º levar LLM e o resto template.
     if (newsService?.tryPublish && funConfig.groupNewsEnabled !== false) {
-      for (const scopeKey of groups) {
-        if (!scopeKey || !String(scopeKey).endsWith('@g.us')) continue;
+      const newsScopes = groups.filter((s) => s && String(s).endsWith('@g.us'));
+      const newsJobs = newsScopes.map(async (scopeKey) => {
         try {
           const edition = await newsService.tryPublish(scopeKey, funConfig, now);
           if (edition?.ok && edition.text) {
             await post(sock, scopeKey, edition.text);
-            results.push({
+            return {
               scopeKey,
               kind: 'group-news',
               ok: true,
               newsDay: edition.newsDay,
-            });
+              provider: edition.provider || null,
+              eventCount: edition.eventCount ?? null,
+            };
           }
+          return {
+            scopeKey,
+            kind: 'group-news',
+            ok: false,
+            reason: edition?.reason || 'skip',
+          };
         } catch (err) {
-          results.push({
+          return {
             scopeKey,
             kind: 'group-news',
             ok: false,
             reason: err?.message || 'news-error',
-          });
+          };
+        }
+      });
+      const newsResults = await Promise.all(newsJobs);
+      for (const r of newsResults) {
+        results.push(r);
+        if (r.ok) {
+          console.log(
+            `[fun/news] published ${String(r.scopeKey).slice(0, 28)} provider=${r.provider} events=${r.eventCount}`
+          );
         }
       }
     }
@@ -521,8 +539,29 @@ export function createFunModule(deps = {}) {
                 typeof marketService.formatEventAnnouncement === 'function'
                   ? marketService.formatEventAnnouncement(hit, nameResolver)
                   : '';
-              await postWithMentions(scopeKey, msg, userFmt);
-              results.push({ scopeKey, kind: 'market', ok: true });
+              const text = String(msg || '').trim();
+              if (text) {
+                await postWithMentions(scopeKey, text, userFmt);
+                results.push({
+                  scopeKey,
+                  kind: 'market',
+                  ok: true,
+                  sent: true,
+                  source: hit.source || hit.event?.source || null,
+                });
+              } else {
+                // bug clássico: contava "1 anúncio" sem mandar nada no zap
+                console.warn(
+                  `[fun/market] evento ok em ${scopeKey} mas anúncio vazio (source=${hit.source || hit.event?.source || '?'}) — não enviou`
+                );
+                results.push({
+                  scopeKey,
+                  kind: 'market',
+                  ok: false,
+                  reason: 'empty-announce',
+                  source: hit.source || hit.event?.source || null,
+                });
+              }
             } else if (hit && !hit.ok) {
               results.push({ scopeKey, kind: 'market', ok: false, reason: hit.reason });
             }
