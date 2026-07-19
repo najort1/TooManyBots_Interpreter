@@ -35,10 +35,30 @@ test('resolveZenTaskParams: invent vs extract vs flavor', () => {
   assert.ok(invent.maxTokens >= 1000);
   assert.ok(extract.temperature <= 0.45);
   assert.ok(flavor.temperature >= 0.85);
+  // invent longo: default ≥90s (antes 45s abortava com gen pronta no proxy)
+  assert.ok(invent.timeoutMs >= 90_000, `invent timeout ${invent.timeoutMs}`);
   assert.deepEqual(
     Object.keys(ZEN_TASK_DEFAULTS).sort(),
     ['assault', 'chaos', 'extract', 'flavor', 'invent', 'journalist', 'persona', 'tarot'].sort()
   );
+});
+
+test('resolveZenTaskParams: invent timeout não é esmagado pelo zenTimeoutMs global curto', () => {
+  const cfg = resolveFunConfig({
+    zenTimeoutMs: 45_000,
+    zenInventTimeoutMs: 120_000,
+  });
+  const invent = resolveZenTaskParams('invent', cfg);
+  assert.equal(invent.timeoutMs, 120_000);
+  // override flat
+  const longer = resolveZenTaskParams('invent', {
+    ...cfg,
+    zenInventTimeoutMs: 180_000,
+  });
+  assert.equal(longer.timeoutMs, 180_000);
+  // global curto NÃO vence o default da tarefa invent
+  const onlyGlobal = resolveZenTaskParams('invent', { zenTimeoutMs: 20_000 });
+  assert.ok(onlyGlobal.timeoutMs >= 90_000, `got ${onlyGlobal.timeoutMs}`);
 });
 
 test('resolveZenTaskParams: override flat config', () => {

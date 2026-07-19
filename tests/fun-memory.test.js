@@ -525,3 +525,290 @@ test('buildLoreContext: persona cache hit', () => {
   assert.equal(mem._personaCache.has(scope), true);
   assert.match(b, /group_lore/);
 });
+
+/* ——— Anti-alucinação (garantias de pipeline, sem LLM real) ——— */
+
+test('anti-alucinação: defaults de contexto grande (≤40k chars)', () => {
+  assert.ok(DEFAULT_FUN_CONFIG.memoryBufferSize >= 80);
+  assert.ok(DEFAULT_FUN_CONFIG.memoryFlushMinMessages >= 30);
+  assert.ok(DEFAULT_FUN_CONFIG.memoryExtractMaxChars <= 40_000);
+  assert.ok(DEFAULT_FUN_CONFIG.memoryExtractMaxChars >= 20_000);
+  const cfg = resolveFunConfig({});
+  assert.ok(cfg.memoryBufferSize >= 80);
+  assert.ok(cfg.memoryExtractMaxChars <= 40_000);
+  // clamp: não deixa estourar 40k mesmo se config.user pedir 999999
+  const capped = resolveFunConfig({ memoryExtractMaxChars: 999_999 });
+  assert.equal(capped.memoryExtractMaxChars, 40_000);
+});
+
+test('anti-alucinação: descarta índice fora do batch / CPF / kind inventado', () => {
+  // subject [99] com batch de 5 → null
+  assert.equal(
+    validateExtractedFact(
+      {
+        kind: 'epic_fail',
+        summary: 'Fato com subject inventado fora do batch de mensagens',
+        subjects: [99],
+        score: 90,
+      },
+      { batchSize: 5 }
+    ),
+    null
+  );
+
+  // CPF no summary → sensível
+  assert.equal(
+    validateExtractedFact({
+      kind: 'event',
+      summary: 'O CPF dele e 123.456.789-09 vazou no grupo',
+      subjects: [0],
+      score: 80,
+    }),
+    null
+  );
+
+  // kind alucinado
+  assert.equal(
+    validateExtractedFact({
+      kind: 'conspiracy_theory',
+      summary: 'Algo bem longo o suficiente mas kind inventado',
+      subjects: [0],
+      score: 80,
+    }),
+    null
+  );
+
+  // subjects mistos: nome + ID válido → fica só o ID
+  const mixed = validateExtractedFact(
+    {
+      kind: 'rivalry',
+      summary: 'Jonas zoou o Eduardo por so cair coroa na moeda',
+      subjects: ['Jonas', 2, 'Eduardo'],
+      score: 70,
+    },
+    { batchSize: 8 }
+  );
+  assert.ok(mixed);
+  assert.deepEqual(mixed.subjectIndices, [2]);
+
+  // parseFactsJson: só o fato com subject válido sobrevive
+  const parsed = parseFactsJson(
+    JSON.stringify({
+      facts: [
+        {
+          kind: 'event',
+          summary: 'Inventei que o Hélio comprou um jato particular no grupo',
+          subjects: ['Hélio'],
+          score: 99,
+        },
+        {
+          kind: 'epic_fail',
+          summary: 'Eduardo jura que caiu so coroa tipo 1 em 300',
+          subjects: [0],
+          keywords: ['coroa', 'moeda'],
+          score: 75,
+        },
+        {
+          kind: 'event',
+          summary: 'Subject index fora do range nao pode passar',
+          subjects: [50],
+          score: 80,
+        },
+      ],
+    }),
+    { batchSize: 8 }
+  );
+  assert.equal(parsed.length, 1);
+  assert.deepEqual(parsed[0].subjectIndices, [0]);
+  assert.match(parsed[0].summary, /coroa/i);
+});
+
+test('anti-alucinação: mapSubjectsToJids não troca autor (batch multi-pessoa)', () => {
+  const repo = createFunMemoryRepository({ getDatabase: getDb });
+  const mem = createGroupMemoryService({ memoryRepository: repo });
+  const eduardo = uniqueJid('5501');
+  const jonas = uniqueJid('5502');
+  const batch = [
+    { userJid: eduardo, name: 'Eduardo', text: 'tava caindo so coroa', at: 1 },
+    { userJid: jonas, name: 'Jonas Marques', text: 'KAKAKA bem vindo ao clube', at: 2 },
+    { userJid: eduardo, name: 'Eduardo', text: 'Eu criei o perfil', at: 3 },
+  ];
+
+  // subjects [0] → só Eduardo
+  assert.deepEqual(mem.mapSubjectsToJids(batch, [0]), [eduardo]);
+  // subjects [1] → só Jonas (não vaza Eduardo)
+  assert.deepEqual(mem.mapSubjectsToJids(batch, [1]), [jonas]);
+  // subjects [0,1] → ambos, ordem de aparição
+  assert.deepEqual(mem.mapSubjectsToJids(batch, [0, 1]), [eduardo, jonas]);
+  // índice fantasma → vazio (não inventa JID)
+  assert.deepEqual(mem.mapSubjectsToJids(batch, [9]), []);
+  assert.deepEqual(mem.mapSubjectsToJids(batch, []), []);
+});
+
+test('anti-alucinação: packBatchForExtract respeita teto e reindexa sem inventar msg', () => {
+  const repo = createFunMemoryRepository({ getDatabase: getDb });
+  const mem = createGroupMemoryService({ memoryRepository: repo });
+  const jid = uniqueJid('5503');
+  const msgs = [];
+  for (let i = 0; i < 80; i += 1) {
+    msgs.push({
+      userJid: jid,
+      name: `User${i}`,
+      text: `mensagem de conversa numero ${i} com bastante texto pra encher o prompt `.repeat(3),
+      at: i,
+    });
+  }
+
+  const packed = mem.packBatchForExtract(msgs, {
+    msgMaxChars: 400,
+    extractMaxChars: 8_000,
+  });
+  assert.ok(packed.length >= 12, `esperava várias msgs, got ${packed.length}`);
+  assert.ok(packed.length < msgs.length, 'deve cortar as mais antigas sob teto baixo');
+
+  // IDs no format são 0..n-1 do packed (não índices fantasma do batch original)
+  const lines = packed
+    .map((m, i) => {
+      const name = String(m.name || '?').slice(0, 40);
+      return `[${i}] ${name}: ${m.text}`;
+    })
+    .join('\n');
+  assert.ok(lines.length <= 8_000 + 500); // folga de formatação
+  assert.match(lines, /^\[0\]/);
+  assert.doesNotMatch(lines, /\[80\]|\[99\]/);
+
+  // última msg do pack = mais recente do input
+  assert.equal(packed[packed.length - 1].at, 79);
+});
+
+test('anti-alucinação: flush com batch grande não grava subject errado nem fato sem ID', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const repo = createFunMemoryRepository({ getDatabase: getDb });
+    const scope = uniqueGroup();
+    const eduardo = uniqueJid('5511');
+    const jonas = uniqueJid('5512');
+    /** @type {string[]} */
+    const prompts = [];
+
+    const mem = createGroupMemoryService({
+      memoryRepository: repo,
+      getContactDisplayName: (j) => (j === eduardo ? 'Eduardo' : j === jonas ? 'Jonas' : '?'),
+      generateZen: async (opts) => {
+        if (opts?.jsonMode) {
+          prompts.push(String(opts.prompt || ''));
+          // LLM "maluca": 1 fato ok (Jonas id 1 no trecho final), 1 com nome, 1 com idx fora
+          return JSON.stringify({
+            facts: [
+              {
+                kind: 'running_gag',
+                summary: 'Jonas zoa Eduardo por so cair coroa na flip',
+                subjects: [1],
+                keywords: ['coroa', 'flip'],
+                score: 80,
+              },
+              {
+                kind: 'event',
+                summary: 'Hélio comprou jato particular segundo a IA sonhadora',
+                subjects: ['Hélio'],
+                score: 99,
+              },
+              {
+                kind: 'event',
+                summary: 'Fato com id de mensagem que nao existe no batch',
+                subjects: [999],
+                score: 90,
+              },
+            ],
+          });
+        }
+        return '• Jonas zoa coroa do Eduardo';
+      },
+      generateOllama: async () => '{"facts":[]}',
+    });
+
+    const cfg = resolveFunConfig({
+      memoryEnabled: true,
+      memoryMinScore: 30,
+      memoryBufferSize: 100,
+      memoryFlushMinMessages: 40,
+      zenEnabled: true,
+    });
+
+    // 50 msgs alternando Eduardo/Jonas — contexto grande como produção
+    for (let i = 0; i < 50; i += 1) {
+      const isEdu = i % 2 === 0;
+      mem._pushRaw(scope, {
+        userJid: isEdu ? eduardo : jonas,
+        name: isEdu ? 'Eduardo' : 'Jonas',
+        text: isEdu
+          ? `Realmente tava dando so coroa flip ${i}`
+          : `KAKAKA bem vindo ao clube flip ${i}`,
+        at: Date.now() + i,
+      });
+    }
+
+    const r = await mem.forceFlush(scope, cfg);
+    assert.equal(r.ok, true);
+    assert.ok(r.batchSize >= 40, `batch grande esperado, got ${r.batchSize}`);
+    assert.ok(prompts.length >= 1, 'prompt enviado ao Zen');
+    // prompt deve carregar MUITAS linhas [n], não 8
+    const lineHits = (prompts[0].match(/^\[\d+\]/gm) || []).length;
+    assert.ok(lineHits >= 40, `prompt com ≥40 msgs, got ${lineHits}`);
+
+    const facts = repo.listFacts(scope, { limit: 10 });
+    // só 1 fato válido (o dos subjects:[1]); alucinações descartadas
+    assert.equal(facts.length, 1, `só 1 fato válido, got ${facts.length}`);
+    assert.deepEqual(facts[0].subjects, [jonas], 'autor = Jonas (id 1), não Eduardo nem Hélio');
+    assert.equal(facts[0].subjects.includes(eduardo), false);
+    assert.match(facts[0].summary, /coroa|Jonas|Eduardo/i);
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});
+
+test('anti-alucinação: facts vazios / lixo da LLM não poluem banco', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const repo = createFunMemoryRepository({ getDatabase: getDb });
+    const scope = uniqueGroup();
+    const mem = createGroupMemoryService({
+      memoryRepository: repo,
+      generateZen: async (opts) => {
+        if (opts?.jsonMode) {
+          return 'Claro! Aqui vai um resumo: o grupo e legal e o Eduardo e o melhor. {"facts":[]}';
+        }
+        return '• clima ok';
+      },
+      generateOllama: async () =>
+        JSON.stringify({
+          facts: [
+            {
+              kind: 'event',
+              summary: 'ok',
+              subjects: [0],
+              score: 90,
+            },
+          ],
+        }),
+    });
+    const cfg = resolveFunConfig({ memoryMinScore: 20, zenEnabled: true, ollamaEnabled: true });
+    for (let i = 0; i < 5; i += 1) {
+      mem._pushRaw(scope, {
+        userJid: uniqueJid('5590'),
+        name: 'X',
+        text: `conversa normal sem mico especial numero ${i}`,
+        at: Date.now() + i,
+      });
+    }
+    await mem.forceFlush(scope, cfg);
+    // Zen devolveu facts:[] (mesmo com blá-blá) → nada; Ollama summary "ok" curto → descarta
+    assert.equal(repo.countFacts(scope), 0);
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});

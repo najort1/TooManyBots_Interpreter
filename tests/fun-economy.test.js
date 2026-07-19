@@ -20,9 +20,14 @@ import {
   sampleImpactFromArchetype,
   resolveEventProposal,
   parseInventJson,
+  planEventSkeleton,
+  shouldKeepAiCopy,
+  buildInventUserPrompt,
   classifyFreeTextToArchetype,
   inferNarrativeDirection,
   inferNarrativeCategory,
+  inferNarrativeCompany,
+  isCopyCoherent,
   alignEventCopy,
   pickAlignedTemplate,
   pickDeceptionMode,
@@ -205,6 +210,64 @@ test('economia C3: IA impactPct é ignorado no parse', () => {
   });
   assert.ok(Math.abs(resolved.impact.shockPct) <= 45);
   assert.ok(Math.abs(resolved.impact.shockPct) < 50);
+});
+
+test('economia: código trava foco; IA só title/body (locked skeleton)', () => {
+  const skeleton = planEventSkeleton({
+    reg: defaultRegulatorKnobs(),
+    random: () => 0.42,
+    overheat: 0,
+  });
+  assert.ok(skeleton.archetype);
+  assert.ok(skeleton.category);
+  assert.ok(skeleton.companyId);
+  assert.equal(skeleton.locked, true);
+
+  // IA manda fofoca + tenta “escolher” outro foco — código ignora
+  const raw = JSON.stringify({
+    title: 'Clipe de pirotecnia BombaTech vira febre e atrai multidão',
+    body: 'A loja encheu, a fila cresceu e a procura sumiu o estoque da prateleira.',
+    archetype: 'meme_spike',
+    category: 'veiculo',
+    companyId: 'uno_motors',
+    impactPct: 50,
+  });
+  const parsed = parseInventJson(raw, skeleton);
+  assert.ok(parsed);
+  assert.equal(parsed.locked, true);
+  assert.equal(parsed.archetype, skeleton.archetype);
+  assert.equal(parsed.category, skeleton.category);
+  assert.equal(parsed.companyId, skeleton.companyId);
+  assert.match(parsed.title, /pirotecnia|BombaTech/i);
+  assert.equal(parsed.ignoredAiImpactPct, 50);
+
+  const prompt = buildInventUserPrompt({
+    facts: {
+      archetype: skeleton.archetype,
+      category: skeleton.category,
+      companyId: skeleton.companyId,
+      direction: skeleton.directionHint,
+    },
+  });
+  assert.match(prompt, /FACTS oficiais/);
+  assert.doesNotMatch(prompt, /Archetypes válidos/);
+
+  assert.equal(
+    shouldKeepAiCopy({
+      title: parsed.title,
+      body: parsed.body,
+      direction: 'up',
+    }),
+    true
+  );
+  assert.equal(
+    shouldKeepAiCopy({
+      title: 'Tudo subiu',
+      body: 'Preço disparou e a fila só cresce',
+      direction: 'down',
+    }),
+    false
+  );
 });
 
 test('economia C3: classificador free-text → arquétipo', () => {
@@ -464,6 +527,46 @@ test('economia: alignEventCopy corrige gasolina na fofoca com ticker de defesa',
   assert.notEqual(inferNarrativeCategory(blob), 'combustivel');
   assert.match(blob, /defesa|colete|Satélite|satelite|satélite/i);
   assert.notEqual(inferNarrativeDirection(blob), 'down');
+});
+
+test('economia: copy BombaTech/pirotecnia (IA) NÃO vira fallback genérico de munição', () => {
+  // regressão: "bombatech" no regex de arma fazia nCat=arma vs category=municao → fallback
+  const title = 'Clipe de pirotecnia BombaTech vira febre e atrai multidão';
+  const body = [
+    'Soltei um vídeo de alguém fazendo show de fogos com produtos da BombaTech e a coisa pegou fogo - literalmente e na web.',
+    'A loja encheu de curiosos querendo montar o próprio espetáculo.',
+    'Vendedor conta que nunca viu tanta procura de uma hora pra outra.',
+    'Os armários já tavam no fim e a fila só crescia.',
+  ].join(' ');
+
+  assert.equal(inferNarrativeCompany(`${title}\n${body}`), 'bombatech');
+  assert.equal(inferNarrativeDirection(`${title}\n${body}`), 'up');
+  // pirotecnia/fogos → municao; NÃO arma só por citar BombaTech
+  assert.equal(inferNarrativeCategory(`${title}\n${body}`), 'municao');
+  assert.equal(
+    isCopyCoherent({
+      title,
+      body,
+      direction: 'up',
+      category: 'municao',
+      companyId: 'bombatech',
+    }),
+    true
+  );
+
+  const aligned = alignEventCopy({
+    title,
+    body,
+    direction: 'up',
+    archetype: 'meme_spike',
+    category: 'municao',
+    companyId: 'bombatech',
+    random: () => 0.1,
+  });
+  assert.equal(aligned.realigned, false, 'não pode matar copy boa da IA');
+  assert.match(aligned.title, /pirotecnia|BombaTech|febre/i);
+  assert.doesNotMatch(aligned.title, /munição aperta no bairro/i);
+  assert.match(aligned.body, /fogos|fila|procura|BombaTech/i);
 });
 
 test('economia: alignEventCopy corrige PatoCoin na fofoca com ticker BombaTech', () => {

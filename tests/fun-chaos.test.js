@@ -169,6 +169,61 @@ test('effectsRepository.isXpBlocked + xpService bloqueia award', () => {
   assert.equal(free.blocked, false);
 });
 
+test('group_times: ban list não vaza ganchos de outro grupo no prompt', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    /** @type {string[]} */
+    const prompts = [];
+    const flavor = createFlavorService({
+      getConfig: () =>
+        resolveFunConfig({
+          zenEnabled: true,
+          ollamaEnabled: false,
+          flavorRecentMax: 10,
+        }),
+      zenGenerate: async (opts) => {
+        prompts.push(String(opts?.prompt || ''));
+        return 'MANCHETE: Assalto no bairro\nECONOMIA: Fluxo de coins\nFOFOCA: Ninguém se divorciou';
+      },
+      generate: async () => {
+        throw new Error('no-ollama');
+      },
+      allowLiveLlm: true,
+    });
+
+    // flavor de outro grupo (simula "vish paulo…")
+    await flavor.line('flip_win', {
+      scopeKey: '120363OTHER@g.us',
+      user: 'Paulo',
+    });
+    // força push manual se flip cair em template
+    // gera no grupo A
+    await flavor.chaosLine('oracle_insane', {
+      scopeKey: '120363OTHER@g.us',
+      question: 'Paulo level cocada preta?',
+    });
+
+    prompts.length = 0;
+    const text = await flavor.chaosLine('group_times', {
+      scopeKey: '120363NEWS@g.us',
+      events: 'assault_win amount=77\nassault_win amount=57',
+      count: 2,
+    });
+
+    assert.match(text, /MANCHETE|Assalto/i);
+    assert.ok(prompts.length >= 1, 'prompt capturado');
+    const p = prompts[prompts.length - 1];
+    assert.match(p, /assault_win amount=77/);
+    assert.doesNotMatch(p, /paulo|cocada|vish/i);
+    assert.doesNotMatch(p, /NÃO repita ganchos/i);
+    assert.doesNotMatch(p, /__angle|deboche/i);
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});
+
 test('flavorService.chaosLine: Zen principal', async () => {
   const prev = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
