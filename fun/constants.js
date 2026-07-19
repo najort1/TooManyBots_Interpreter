@@ -454,8 +454,10 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   zenBaseUrl: 'http://127.0.0.1:3300',
   // glm_5_2: melhor invent/flavor na bateria de comparação (Jul/2026)
   zenModel: 'glm_5_2',
-  // timeout de rede (o modelo em si é fixo no proxy)
-  zenTimeoutMs: 45_000,
+  // timeout de rede global (tarefas longas usam zen*TimeoutMs próprio)
+  zenTimeoutMs: 60_000,
+  /** Invent de evento de mercado — modelo grande demora; 45s gerava timeout com texto pronto. */
+  zenInventTimeoutMs: 120_000,
   zenMaxTokens: 900,
   /** Orçamento total Zen→Ollama→template por resposta de flavor (ms). */
   flavorTimeoutMs: 55_000,
@@ -472,6 +474,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
    */
   zenInventTemperature: 0.75,
   zenInventMaxTokens: 1600,
+  // zenInventTimeoutMs acima (120s)
   zenExtractTemperature: 0.3,
   zenExtractMaxTokens: 400,
   zenFlavorTemperature: 0.95,
@@ -638,13 +641,20 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   memoryMaxFacts: 50,
   memorySummaryMaxChars: 160,
   memoryPersonaMaxChars: 500,
-  memoryBufferSize: 24,
-  memoryFlushMinMessages: 8,
-  memoryFlushIntervalMs: 12 * 60_000,
+  // Modelo grande (~40k chars): manda contexto de conversa de verdade, não 8 linhas
+  memoryBufferSize: 100,
+  memoryFlushMinMessages: 40,
+  memoryFlushIntervalMs: 10 * 60_000,
   memoryMinMsgChars: 12,
-  memoryExtractTimeoutMs: 28_000,
+  memoryExtractTimeoutMs: 45_000,
   memoryTtlDays: 45,
   memoryMinScore: 35,
+  /** Teto do bloco de mensagens no prompt de extract (chars). System+regras cabem à parte. */
+  memoryExtractMaxChars: 36_000,
+  /** Quantos fatos “já sabemos” cabem no prompt. */
+  memoryKnownFactsInPrompt: 24,
+  /** Truncagem por mensagem no buffer/prompt. */
+  memoryMsgMaxChars: 400,
   // Perfil customizado por grupo (nick / bio / niver / título / extras)
   profileEnabled: true,
   profileNicknameMax: 24,

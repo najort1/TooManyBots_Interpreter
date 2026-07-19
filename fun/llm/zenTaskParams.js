@@ -17,56 +17,57 @@ export const ZEN_TASK_DEFAULTS = Object.freeze({
   invent: Object.freeze({
     temperature: 0.75,
     maxTokens: 1600,
-    timeoutMs: 45_000,
+    // GLM invent demora; 45s abortava com a resposta já pronta no proxy
+    timeoutMs: 120_000,
     jsonMode: true,
     jsonOnly: true,
   }),
   extract: Object.freeze({
     temperature: 0.3,
     maxTokens: 400,
-    timeoutMs: 22_000,
+    timeoutMs: 45_000,
     jsonMode: true,
     jsonOnly: true,
   }),
   flavor: Object.freeze({
     temperature: 0.95,
     maxTokens: 220,
-    timeoutMs: 20_000,
+    timeoutMs: 35_000,
     jsonMode: false,
     jsonOnly: false,
   }),
   chaos: Object.freeze({
     temperature: 1.0,
     maxTokens: 400,
-    timeoutMs: 28_000,
+    timeoutMs: 40_000,
     jsonMode: false,
     jsonOnly: false,
   }),
   tarot: Object.freeze({
     temperature: 0.9,
     maxTokens: 1000,
-    timeoutMs: 35_000,
+    timeoutMs: 50_000,
     jsonMode: false,
     jsonOnly: false,
   }),
   assault: Object.freeze({
     temperature: 0.95,
     maxTokens: 550,
-    timeoutMs: 35_000,
+    timeoutMs: 50_000,
     jsonMode: false,
     jsonOnly: false,
   }),
   persona: Object.freeze({
     temperature: 0.7,
     maxTokens: 280,
-    timeoutMs: 22_000,
+    timeoutMs: 35_000,
     jsonMode: false,
     jsonOnly: false,
   }),
   journalist: Object.freeze({
     temperature: 0.7,
     maxTokens: 700,
-    timeoutMs: 25_000,
+    timeoutMs: 45_000,
     jsonMode: true,
     jsonOnly: true,
   }),
@@ -141,8 +142,17 @@ export function resolveZenTaskParams(task, funConfig = {}) {
   const maxTokens = Math.floor(
     clamp(num(nested.maxTokens, num(flatKey.maxTokens, key === 'invent' ? Math.max(globalTok, 1600) : globalTok)), 32, 4000)
   );
+  // Timeout: nested > flat (zenInventTimeoutMs etc.) > default da TAREFA > global zenTimeoutMs.
+  // Antes o global 45s sobrescrevia invent e abortava com a geração já pronta no proxy.
   const timeoutMs = Math.floor(
-    clamp(num(nested.timeoutMs, num(flatKey.timeoutMs, globalTo)), 500, 120_000)
+    clamp(
+      num(
+        nested.timeoutMs,
+        num(flatKey.timeoutMs, num(base.timeoutMs, globalTo))
+      ),
+      500,
+      300_000
+    )
   );
   const jsonMode =
     nested.jsonMode !== undefined

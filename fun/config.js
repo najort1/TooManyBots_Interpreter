@@ -172,10 +172,15 @@ export function normalizeFunConfig(input) {
     zenModel: toText(raw.zenModel, DEFAULT_FUN_CONFIG.zenModel) || DEFAULT_FUN_CONFIG.zenModel,
     zenTimeoutMs: normalizeInt(raw.zenTimeoutMs, DEFAULT_FUN_CONFIG.zenTimeoutMs, {
       min: 500,
-      max: 120_000,
+      max: 300_000,
       rounding: 'floor',
       clamp: true,
     }),
+    zenInventTimeoutMs: normalizeInt(
+      raw.zenInventTimeoutMs,
+      DEFAULT_FUN_CONFIG.zenInventTimeoutMs,
+      { min: 5_000, max: 300_000, rounding: 'floor', clamp: true }
+    ),
     flavorTimeoutMs: normalizeInt(raw.flavorTimeoutMs, DEFAULT_FUN_CONFIG.flavorTimeoutMs, {
       min: 1000,
       max: 60_000,
@@ -204,6 +209,7 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.zenInventMaxTokens,
       { min: 64, max: 4000, rounding: 'floor', clamp: true }
     ),
+    // zenInventTimeoutMs já normalizado acima (junto de zenTimeoutMs)
     zenExtractTemperature: Number.isFinite(Number(raw.zenExtractTemperature))
       ? Math.min(1.5, Math.max(0, Number(raw.zenExtractTemperature)))
       : DEFAULT_FUN_CONFIG.zenExtractTemperature,
@@ -690,14 +696,14 @@ export function normalizeFunConfig(input) {
     ),
     memoryBufferSize: normalizeInt(raw.memoryBufferSize, DEFAULT_FUN_CONFIG.memoryBufferSize, {
       min: 8,
-      max: 60,
+      max: 200,
       rounding: 'floor',
       clamp: true,
     }),
     memoryFlushMinMessages: normalizeInt(
       raw.memoryFlushMinMessages,
       DEFAULT_FUN_CONFIG.memoryFlushMinMessages,
-      { min: 3, max: 40, rounding: 'floor', clamp: true }
+      { min: 3, max: 120, rounding: 'floor', clamp: true }
     ),
     memoryFlushIntervalMs: normalizeInt(
       raw.memoryFlushIntervalMs,
@@ -713,7 +719,7 @@ export function normalizeFunConfig(input) {
     memoryExtractTimeoutMs: normalizeInt(
       raw.memoryExtractTimeoutMs,
       DEFAULT_FUN_CONFIG.memoryExtractTimeoutMs,
-      { min: 5_000, max: 90_000, rounding: 'floor', clamp: true }
+      { min: 5_000, max: 120_000, rounding: 'floor', clamp: true }
     ),
     memoryTtlDays: normalizeInt(raw.memoryTtlDays, DEFAULT_FUN_CONFIG.memoryTtlDays, {
       min: 7,
@@ -727,6 +733,21 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    memoryExtractMaxChars: normalizeInt(
+      raw.memoryExtractMaxChars,
+      DEFAULT_FUN_CONFIG.memoryExtractMaxChars,
+      { min: 4_000, max: 40_000, rounding: 'floor', clamp: true }
+    ),
+    memoryKnownFactsInPrompt: normalizeInt(
+      raw.memoryKnownFactsInPrompt,
+      DEFAULT_FUN_CONFIG.memoryKnownFactsInPrompt,
+      { min: 4, max: 40, rounding: 'floor', clamp: true }
+    ),
+    memoryMsgMaxChars: normalizeInt(
+      raw.memoryMsgMaxChars,
+      DEFAULT_FUN_CONFIG.memoryMsgMaxChars,
+      { min: 80, max: 800, rounding: 'floor', clamp: true }
+    ),
     profileEnabled: normalizeBoolean(raw.profileEnabled, DEFAULT_FUN_CONFIG.profileEnabled),
     profileNicknameMax: normalizeInt(
       raw.profileNicknameMax,
