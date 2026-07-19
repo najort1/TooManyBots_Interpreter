@@ -678,6 +678,42 @@ export function sanitizeFlavor(raw, maxLen = 160) {
   return s;
 }
 
+/**
+ * The Group Times: multi-linha (MANCHETE/ECONOMIA/FOFOCA).
+ * sanitizeFlavor colapsava tudo e matava a edição.
+ */
+export function sanitizeGroupTimes(raw, maxLen = 1200) {
+  let t = String(raw || '')
+    .replace(/\r/g, '')
+    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/```(?:json|text)?/gi, '')
+    .trim();
+  if (!t) return '';
+  // preâmbulo curto
+  t = t.replace(/^(aqui vai[:\s]*|segue[:\s]*|claro[!.,]?\s*)/i, '').trim();
+  if (looksLikeMetaReasoning(t) && t.length < 100) return '';
+
+  const lines = t
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .filter((l) => !/^(thinking|raciocínio|step\s*\d)/i.test(l))
+    .slice(0, 12);
+  if (!lines.length) return '';
+
+  let body = lines.join('\n').trim();
+  if (body.length < 30) return '';
+  if (body.length > maxLen) body = body.slice(0, maxLen).trim();
+  // precisa parecer jornal (pelo menos um rótulo ou 2+ linhas)
+  if (
+    !/manchete|economia|fofoca/i.test(body) &&
+    lines.length < 2
+  ) {
+    return '';
+  }
+  return body;
+}
+
 function buildUserPrompt(scenario, vars) {
   const v = vars && typeof vars === 'object' ? vars : {};
   const groupLore = String(v.groupLore || '').trim();
@@ -888,28 +924,43 @@ export function createFlavorService(deps = {}) {
   const getConfig = deps.getConfig || (() => ({}));
   const getLogger = deps.getLogger || (() => null);
   const generateOllama = deps.generate || ollamaGenerate;
-  /** @type {string[]} */
-  const recentLines = [];
+  /**
+   * Anti-repeat por escopo (grupo). Antes era global e vazava
+   * "vish paulo…" de um grupo pro prompt do jornal de outro.
+   * @type {Map<string, string[]>}
+   */
+  const recentByScope = new Map();
   const random = typeof deps.random === 'function' ? deps.random : Math.random;
 
-  function pushRecent(text, cfg = {}) {
+  function scopeKeyOf(vars = {}) {
+    const s = String(vars?.scopeKey || vars?.__scopeKey || '').trim();
+    return s || '__global__';
+  }
+
+  function pushRecent(text, cfg = {}, scopeKey = '__global__') {
     const max = Math.max(0, Math.min(40, Math.floor(Number(cfg.flavorRecentMax) || 10)));
     if (!max || !text) return;
-    recentLines.push(String(text).slice(0, 200));
-    while (recentLines.length > max) recentLines.shift();
+    const key = String(scopeKey || '__global__');
+    if (!recentByScope.has(key)) recentByScope.set(key, []);
+    const arr = recentByScope.get(key);
+    arr.push(String(text).slice(0, 200));
+    while (arr.length > max) arr.shift();
   }
 
-  function recentBanList(cfg = {}) {
+  function recentBanList(cfg = {}, scopeKey = '__global__') {
     const max = Math.max(0, Math.min(40, Math.floor(Number(cfg.flavorRecentMax) || 10)));
     if (!max) return [];
-    return recentLines.slice(-max);
+    const key = String(scopeKey || '__global__');
+    const arr = recentByScope.get(key) || [];
+    return arr.slice(-max);
   }
 
-  function acceptOrNull(text, cfg = {}) {
+  function acceptOrNull(text, cfg = {}, scopeKey = '__global__', { skipOverlap = false } = {}) {
     const t = String(text || '').trim();
     if (!t) return '';
     if (looksLikeMetaReasoning(t) || looksLikeScoreboardEcho(t)) return '';
-    if (overlapsRecent(t, recentBanList(cfg))) return '';
+    // jornal / formatos fixos: overlap global matava edições parecidas entre grupos
+    if (!skipOverlap && overlapsRecent(t, recentBanList(cfg, scopeKey))) return '';
     return t;
   }
   const generateZen = deps.zenGenerate || openaiChatComplete;
@@ -1005,13 +1056,21 @@ export function createFlavorService(deps = {}) {
     }
 
     if (chaos) {
+      const scopeKey = scopeKeyOf(vars);
       const groupLore = String(vars?.groupLore || '').trim();
       const userName = String(vars?.user || '').trim();
       const question = String(vars?.question || '').trim();
+      const skipMetaKeys = new Set([
+        'groupLore',
+        '__angle',
+        '__genre',
+        'scopeKey',
+        '__scopeKey',
+      ]);
       const facts = Object.entries(vars || {})
         .filter(
           ([k, v]) =>
-            k !== 'groupLore' && v != null && String(v).trim() !== ''
+            !skipMetaKeys.has(k) && v != null && String(v).trim() !== ''
         )
         .map(([k, v]) => `${k}=${String(v).slice(0, 160)}`)
         .join('; ');
@@ -1026,30 +1085,39 @@ export function createFlavorService(deps = {}) {
         russian_dead: `Comente a “morte” virtual na roleta. Dados: ${facts || 'nenhum'}.`,
         russian_start: `Abra a roleta russa no grupo. Dados: ${facts || 'nenhum'}.`,
         roast_personal: `Roast de *${userName || 'Fulano'}*. Fatos:\n${String(vars?.facts || facts || 'poucos dados').slice(0, 900)}`,
-        group_times: `Jornal The Group Times. Eventos do dia:\n${String(vars?.events || facts || 'nenhum').slice(0, 1200)}`,
+        group_times: `Jornal The Group Times DESTE grupo. Eventos do dia (só estes):\n${String(vars?.events || 'nenhum').slice(0, 1200)}\nTotal de eventos: ${vars?.count ?? '?'}.`,
       }[key] || `Escreva o texto do comando. Dados: ${facts || 'nenhum'}.`;
 
-      const banned = recentBanList(cfg);
+      // ban só do MESMO grupo — nunca vazamento cross-grupo
+      // jornal: sem ban de flavor de cassino/assalto de outros chats
+      const banned = key === 'group_times' ? [] : recentBanList(cfg, scopeKey);
       const banHint =
         banned.length > 0
-          ? `NÃO repita ganchos: ${banned
+          ? `NÃO repita ganchos DESTE grupo: ${banned
               .slice(-5)
               .map((b) => fingerprintLine(b))
               .filter(Boolean)
               .join(' | ')}.`
           : '';
+      // group_times já embute events no taskLine — não duplicar Contexto
       const prompt = [
         taskLine,
-        facts && key !== 'russian_click' && key !== 'russian_dead' && key !== 'russian_start'
+        key !== 'group_times' &&
+        facts &&
+        key !== 'russian_click' &&
+        key !== 'russian_dead' &&
+        key !== 'russian_start'
           ? `Contexto: ${facts}.`
           : null,
-        groupLore
+        key !== 'group_times' && groupLore
           ? String(groupLore).includes('<group_lore>')
             ? groupLore.slice(0, 550)
             : `<group_lore>\nUse só se encaixar; NÃO troque autores; NÃO invente.\n${groupLore.slice(0, 400)}\n</group_lore>`
           : null,
         banHint || null,
-        'Responda só com o texto pronto pro zap (sem instruções, sem meta):',
+        key === 'group_times'
+          ? 'Use APENAS os eventos listados acima. NÃO mencione pessoas/fatos de outros grupos. Responda só o texto do jornal:'
+          : 'Responda só com o texto pronto pro zap (sem instruções, sem meta):',
       ]
         .filter(Boolean)
         .join('\n');
@@ -1057,16 +1125,20 @@ export function createFlavorService(deps = {}) {
       return {
         prompt,
         system: chaosSystemFor(key, { short: Boolean(forZen || simple) }),
-        maxChars,
+        maxChars: key === 'group_times' ? Math.max(maxChars, 900) : maxChars,
         assault: false,
         chaos: true,
-        maxTokens: Math.max(220, Math.floor(Number(cfg.chaosMaxTokens) || 400)),
+        maxTokens:
+          key === 'group_times'
+            ? Math.max(400, Math.floor(Number(cfg.chaosMaxTokens) || 500))
+            : Math.max(220, Math.floor(Number(cfg.chaosMaxTokens) || 400)),
       };
     }
 
     let prompt;
+    const scopeKey = scopeKeyOf(vars);
     const angle = vars?.__angle || pickFlavorAngle(random);
-    const banned = recentBanList(cfg);
+    const banned = recentBanList(cfg, scopeKey);
     const banHint =
       banned.length > 0
         ? `NÃO ecoe estes ganchos: ${banned
@@ -1078,7 +1150,15 @@ export function createFlavorService(deps = {}) {
     if (forZen) {
       // prompt curto funciona melhor nos free models do Zen
       const facts = Object.entries(vars || {})
-        .filter(([k, v]) => k !== '__angle' && k !== 'groupLore' && v != null && String(v).trim() !== '')
+        .filter(
+          ([k, v]) =>
+            k !== '__angle' &&
+            k !== 'groupLore' &&
+            k !== 'scopeKey' &&
+            k !== '__scopeKey' &&
+            v != null &&
+            String(v).trim() !== ''
+        )
         .map(([k, v]) => `${k}=${String(v).slice(0, 80)}`)
         .join(', ');
       prompt = simple
@@ -1102,9 +1182,13 @@ export function createFlavorService(deps = {}) {
     const taskName = assault ? 'assault' : chaos ? 'chaos' : 'flavor';
     const task = resolveZenTaskParams(taskName, cfg);
     const ep = resolveZenEndpoint(cfg);
+    const scopeKey = scopeKeyOf(vars);
     const enriched = {
       ...vars,
-      __angle: vars?.__angle || pickFlavorAngle(random),
+      // group_times não usa ângulo de flavor (polui o prompt)
+      ...(key === 'group_times'
+        ? {}
+        : { __angle: vars?.__angle || pickFlavorAngle(random) }),
       ...(assault ? { __genre: vars?.__genre || pickAssaultGenre(random) } : {}),
     };
     const { prompt, system, maxChars, maxTokens } = buildPromptParts(cfg, key, enriched, simple, {
@@ -1112,26 +1196,37 @@ export function createFlavorService(deps = {}) {
       assault,
       chaos,
     });
+    const scopeBan = recentBanList(cfg, scopeKey);
     const assaultPrompt = assault
       ? `${prompt}\nGênero: ${enriched.__genre || 'comédia de bairro'}. NÃO invente coins/saldo/%. ${
-          recentBanList(cfg).length
-            ? `Varie em relação a: ${recentBanList(cfg)
+          scopeBan.length
+            ? `Varie em relação a: ${scopeBan
                 .slice(-3)
                 .map((b) => fingerprintLine(b))
                 .join(' | ')}`
             : ''
         }`
       : prompt;
+    const timeoutMs =
+      key === 'group_times'
+        ? Math.max(ep.timeoutMs, task.timeoutMs, 90_000)
+        : Math.max(ep.timeoutMs, task.timeoutMs);
     try {
       const raw = await generateZen({
         baseUrl: ep.baseUrl,
         model: ep.model,
         system,
         prompt: assault ? assaultPrompt : prompt,
-        timeoutMs: Math.max(ep.timeoutMs, task.timeoutMs),
+        timeoutMs,
         maxTokens: Math.max(
           task.maxTokens,
-          assault ? maxTokens || 1100 : chaos ? maxTokens || 360 : task.maxTokens
+          assault
+            ? maxTokens || 1100
+            : key === 'group_times'
+              ? maxTokens || 500
+              : chaos
+                ? maxTokens || 360
+                : task.maxTokens
         ),
         temperature: task.temperature,
         apiKey: ep.apiKey,
@@ -1139,8 +1234,15 @@ export function createFlavorService(deps = {}) {
       });
       const clean = assault
         ? sanitizeAssaultStory(raw, maxChars)
-        : sanitizeFlavor(raw, maxChars);
-      const accepted = acceptOrNull(clean, cfg);
+        : key === 'group_times'
+          ? sanitizeGroupTimes(raw, maxChars)
+          : sanitizeFlavor(raw, maxChars);
+      const accepted =
+        key === 'group_times'
+          ? clean
+          : acceptOrNull(clean, cfg, scopeKey, {
+              skipOverlap: false,
+            });
       if (!accepted) return { ok: false, reason: 'zen-empty', model: ep.model };
       return { ok: true, text: accepted, provider: 'zen', model: ep.model };
     } catch (err) {
@@ -1156,6 +1258,7 @@ export function createFlavorService(deps = {}) {
   async function tryOllama(cfg, key, vars, { simple = false, assault = false, chaos = false } = {}) {
     if (!ollamaOn(cfg)) return { ok: false, reason: 'ollama-disabled' };
     const ep = resolveOllamaEndpoint(cfg);
+    const scopeKey = scopeKeyOf(vars);
     const { prompt, system, maxChars, maxTokens } = buildPromptParts(cfg, key, vars, simple, {
       forZen: false,
       assault,
@@ -1167,18 +1270,23 @@ export function createFlavorService(deps = {}) {
         model: ep.model,
         system,
         prompt,
-        timeoutMs: assault
-          ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.assaultStoryTimeoutMs) || 40_000))
-          : chaos
-            ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.chaosTimeoutMs) || 28_000))
-            : ep.timeoutMs,
+        timeoutMs:
+          key === 'group_times'
+            ? Math.max(ep.timeoutMs, 60_000)
+            : assault
+              ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.assaultStoryTimeoutMs) || 40_000))
+              : chaos
+                ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.chaosTimeoutMs) || 28_000))
+                : ep.timeoutMs,
         keepAlive: ep.keepAlive,
         think: false,
         numPredict: assault
           ? Math.max(280, Math.min(700, Math.floor(Number(cfg.assaultStoryMaxTokens) || 550)))
-          : chaos
-            ? Math.max(180, Math.floor(Number(cfg.chaosMaxTokens) || maxTokens || 360))
-            : Math.max(32, Math.floor(Number(cfg.ollamaNumPredict) || 80)),
+          : key === 'group_times'
+            ? Math.max(280, Math.floor(Number(cfg.chaosMaxTokens) || maxTokens || 500))
+            : chaos
+              ? Math.max(180, Math.floor(Number(cfg.chaosMaxTokens) || maxTokens || 360))
+              : Math.max(32, Math.floor(Number(cfg.ollamaNumPredict) || 80)),
         temperature: Number.isFinite(Number(cfg.ollamaTemperature))
           ? Math.min(1.1, Number(cfg.ollamaTemperature) + (chaos ? 0.1 : 0))
           : chaos
@@ -1188,7 +1296,9 @@ export function createFlavorService(deps = {}) {
       void maxTokens;
       const clean = assault
         ? sanitizeAssaultStory(raw, maxChars)
-        : sanitizeFlavor(raw, maxChars);
+        : key === 'group_times'
+          ? sanitizeGroupTimes(raw, maxChars)
+          : sanitizeFlavor(raw, maxChars);
       if (!clean) return { ok: false, reason: 'ollama-empty', model: ep.model };
       warm = true;
       lastWarmAt = Date.now();
@@ -1295,6 +1405,7 @@ export function createFlavorService(deps = {}) {
     }
 
     const cfg = getConfig() || {};
+    const scopeKey = scopeKeyOf(vars);
     const safeFallback = fallback(key, vars);
 
     if (!isEnabled(cfg)) {
@@ -1315,7 +1426,7 @@ export function createFlavorService(deps = {}) {
       }
       if (zenResult.ok) {
         lastProvider = 'zen';
-        pushRecent(zenResult.text, cfg);
+        pushRecent(zenResult.text, cfg, scopeKey);
         recordLlmHit('flavor', 'zen', { scenario: key });
         return zenResult.text;
       }
@@ -1337,10 +1448,10 @@ export function createFlavorService(deps = {}) {
         ollamaResult = await tryOllama(cfg, key, vars, { simple: true });
       }
       if (ollamaResult.ok) {
-        const accepted = acceptOrNull(ollamaResult.text, cfg);
+        const accepted = acceptOrNull(ollamaResult.text, cfg, scopeKey);
         if (accepted) {
           lastProvider = 'ollama';
-          pushRecent(accepted, cfg);
+          pushRecent(accepted, cfg, scopeKey);
           recordLlmHit('flavor', 'ollama', { scenario: key });
           return accepted;
         }
@@ -1361,22 +1472,28 @@ export function createFlavorService(deps = {}) {
       lastProvider = 'template';
       recordLlmHit('flavor', 'template', { scenario: key });
       // flavorAlways false: devolve template mesmo assim (comando espera texto); italicLine pode omitir
-      pushRecent(safeFallback, cfg);
+      pushRecent(safeFallback, cfg, scopeKey);
       return safeFallback;
     };
 
+    let budgetTimer = null;
     try {
-      return await Promise.race([
-        cascade(),
+      const result = await Promise.race([
+        cascade().finally(() => {
+          if (budgetTimer) clearTimeout(budgetTimer);
+        }),
         new Promise((resolve) => {
-          setTimeout(() => {
+          budgetTimer = setTimeout(() => {
             lastProvider = 'template-timeout';
             recordLlmHit('flavor', 'template-timeout', { scenario: key });
             resolve(safeFallback);
           }, budgetMs);
         }),
       ]);
+      if (budgetTimer) clearTimeout(budgetTimer);
+      return result;
     } catch {
+      if (budgetTimer) clearTimeout(budgetTimer);
       lastProvider = 'template';
       recordLlmHit('flavor', 'template', { scenario: key });
       return safeFallback;
@@ -1390,6 +1507,7 @@ export function createFlavorService(deps = {}) {
   async function chaosLine(scenario, vars = {}) {
     const cfg = getConfig() || {};
     const key = String(scenario || 'oracle_insane');
+    const scopeKey = scopeKeyOf(vars);
     const safeFallback = fallback(key, vars);
 
     if (!isEnabled(cfg)) {
@@ -1397,13 +1515,28 @@ export function createFlavorService(deps = {}) {
       return safeFallback;
     }
 
-    const budgetMs = Math.max(
-      8_000,
-      Math.min(
-        60_000,
-        Math.floor(Number(cfg.chaosTimeoutMs) || Number(cfg.flavorTimeoutMs) || 28_000)
-      )
-    );
+    // jornal da madrugada: budget maior (vários grupos em paralelo no tick)
+    const budgetMs =
+      key === 'group_times'
+        ? Math.max(
+            45_000,
+            Math.min(
+              120_000,
+              Math.floor(
+                Number(cfg.groupNewsTimeoutMs) ||
+                  Number(cfg.chaosTimeoutMs) ||
+                  Number(cfg.flavorTimeoutMs) ||
+                  90_000
+              )
+            )
+          )
+        : Math.max(
+            8_000,
+            Math.min(
+              60_000,
+              Math.floor(Number(cfg.chaosTimeoutMs) || Number(cfg.flavorTimeoutMs) || 28_000)
+            )
+          );
 
     const cascade = async () => {
       // 1) Zen
@@ -1413,8 +1546,8 @@ export function createFlavorService(deps = {}) {
       }
       if (zenResult.ok) {
         lastProvider = 'zen';
-        pushRecent(zenResult.text, cfg);
-        recordLlmHit('chaos', 'zen', { scenario: key });
+        pushRecent(zenResult.text, cfg, scopeKey);
+        recordLlmHit('chaos', 'zen', { scenario: key, scope: scopeKey.slice(0, 24) });
         return zenResult.text;
       }
       if (zenOn(cfg)) {
@@ -1438,9 +1571,12 @@ export function createFlavorService(deps = {}) {
         ollamaResult = await tryOllama(cfg, key, vars, { simple: true, chaos: true });
       }
       if (ollamaResult.ok) {
-        const accepted = acceptOrNull(ollamaResult.text, cfg) || ollamaResult.text;
+        const accepted =
+          acceptOrNull(ollamaResult.text, cfg, scopeKey, {
+            skipOverlap: key === 'group_times',
+          }) || ollamaResult.text;
         lastProvider = 'ollama';
-        pushRecent(accepted, cfg);
+        pushRecent(accepted, cfg, scopeKey);
         recordLlmHit('chaos', 'ollama', { scenario: key });
         return accepted;
       }
@@ -1459,22 +1595,33 @@ export function createFlavorService(deps = {}) {
 
       lastProvider = 'template';
       recordLlmHit('chaos', 'template', { scenario: key });
-      pushRecent(safeFallback, cfg);
+      pushRecent(safeFallback, cfg, scopeKey);
       return safeFallback;
     };
 
+    let budgetTimer = null;
     try {
-      return await Promise.race([
-        cascade(),
+      const result = await Promise.race([
+        cascade().finally(() => {
+          if (budgetTimer) clearTimeout(budgetTimer);
+        }),
         new Promise((resolve) => {
-          setTimeout(() => {
+          budgetTimer = setTimeout(() => {
             lastProvider = 'template-timeout';
             recordLlmHit('chaos', 'template-timeout', { scenario: key });
+            if (key === 'group_times') {
+              console.warn(
+                `[fun/news] group_times timeout ${budgetMs}ms scope=${scopeKey.slice(0, 28)} → template`
+              );
+            }
             resolve(safeFallback);
           }, budgetMs);
         }),
       ]);
+      if (budgetTimer) clearTimeout(budgetTimer);
+      return result;
     } catch {
+      if (budgetTimer) clearTimeout(budgetTimer);
       lastProvider = 'template';
       recordLlmHit('chaos', 'template', { scenario: key });
       return safeFallback;
@@ -1554,18 +1701,24 @@ export function createFlavorService(deps = {}) {
       return safeFallback;
     };
 
+    let budgetTimer = null;
     try {
-      return await Promise.race([
-        cascade(),
+      const result = await Promise.race([
+        cascade().finally(() => {
+          if (budgetTimer) clearTimeout(budgetTimer);
+        }),
         new Promise((resolve) => {
-          setTimeout(() => {
+          budgetTimer = setTimeout(() => {
             lastProvider = 'template-timeout';
             recordLlmHit('assault', 'template-timeout', { scenario: key });
             resolve(safeFallback);
           }, budgetMs);
         }),
       ]);
+      if (budgetTimer) clearTimeout(budgetTimer);
+      return result;
     } catch {
+      if (budgetTimer) clearTimeout(budgetTimer);
       lastProvider = 'template';
       recordLlmHit('assault', 'template', { scenario: key });
       return safeFallback;
@@ -1593,6 +1746,7 @@ export function createFlavorService(deps = {}) {
     chaosLine,
     fallback,
     sanitizeFlavor,
+    sanitizeGroupTimes,
     sanitizeAssaultStory,
     looksLikeScoreboardEcho,
     warmup,
@@ -1601,7 +1755,9 @@ export function createFlavorService(deps = {}) {
     isWarm: () => warm,
     lastWarmAt: () => lastWarmAt,
     lastProvider: () => lastProvider,
-    recentFingerprints: () => [...recentLines],
+    recentFingerprints: (scopeKey = '__global__') => [
+      ...(recentByScope.get(String(scopeKey || '__global__')) || []),
+    ],
     isEnabled: () => isEnabled(getConfig() || {}),
   };
 }
