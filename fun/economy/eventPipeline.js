@@ -1,5 +1,6 @@
 /**
- * Camadas 2–3: IA sugere archetype + narrativa; catálogo resolve impacto.
+ * Camadas 2–3: código decide evento (archetype/categoria/empresa/%);
+ * IA só escreve fofoca (title/body) a partir de FACTS.
  */
 
 import {
@@ -38,11 +39,16 @@ export function clampEventDescription(raw) {
  * System curto — DeepSeek free gasta tokens no thinking;
  * regras longas viram eco no content em vez de JSON.
  */
-export const EVENT_INVENT_SYSTEM = `Evento de mercado de rua (pt-BR, WhatsApp). Responda SÓ o objeto JSON (primeira e única coisa na resposta):
-{"archetype":"<id>","category":"combustivel|municao|arma|veiculo|defesa","companyId":"<id>","title":"<manchete ≤80>","body":"<3-6 frases fofoca>"}
-archetype/companyId = IDs do user. category coerente com a empresa.
-Alta = escassez/fila; queda = sobra/desconto; flat = lateral.
-PROIBIDO: texto fora do JSON, "aqui vai", explicar regras, preços em coins, %.`;
+/**
+ * IA só escreve fofoca. archetype/category/companyId/% são do CÓDIGO (FACTS).
+ */
+export const EVENT_INVENT_SYSTEM = `Você escreve fofoca de mercado de rua (pt-BR, WhatsApp).
+O EVENTO JÁ FOI DEFINIDO pelo sistema (FACTS no user). Você NÃO escolhe empresa, setor, arquétipo nem %.
+Responda SÓ este JSON (nada fora):
+{"title":"<manchete ≤80 chars>","body":"<3-6 frases de fofoca>"}
+Respeite a direção dos FACTS: up=escassez/fila/procura; down=sobra/desconto; flat=lateral.
+Use a empresa e o setor dos FACTS na fofoca (sem inventar outra empresa).
+PROIBIDO: preços em coins, %, mudar empresa/setor, "aqui vai", explicar regras, texto fora do JSON.`;
 
 export const JOURNALIST_SYSTEM = `Você é repórter de rua do bairro. Você NÃO inventa números de mercado.
 Recebe FACTS oficiais (JSON). Use só esses números se citar %.
@@ -50,17 +56,75 @@ direction=up → texto de alta/escassez; direction=down → texto de queda/sobra
 Tom: fofoca BR, besteirol leve, 5–8 linhas, sem markdown.
 JSON: {"title":"≤80","body":"5-8 linhas com \\n","tone":"bull|bear|chaos|calm"}`;
 
+/**
+ * Código decide o evento (antes da IA). IA só recebe FACTS e escreve title/body.
+ */
+export function planEventSkeleton({ reg = null, random = Math.random, overheat = 0 } = {}) {
+  const recent = reg?.recentArchetypes || [];
+  const heat = Number(overheat) || Number(reg?.marketOverheat) || 0;
+  let archetype =
+    pickArchetypeWeighted(recent, random, reg?.narrativeSeeds?.[0] || null, heat) ||
+    'soft_recovery';
+
+  // mercado quente: corta viés de alta (mesma lógica do resolve)
+  if (
+    heat > 0.35 &&
+    getArchetype(archetype)?.bias === 'up' &&
+    random() < Math.min(0.75, 0.35 + heat * 0.35)
+  ) {
+    archetype = pickArchetypeWeighted(recent, random, 'profit_take', heat) || archetype;
+  }
+  if (!getArchetype(archetype)) archetype = 'soft_recovery';
+
+  const focus = resolveEventFocus(archetype, {}, random);
+  const bias = getArchetype(archetype)?.bias || 'flat';
+  const directionHint = bias === 'up' ? 'up' : bias === 'down' ? 'down' : 'flat';
+
+  return {
+    archetype,
+    category: focus.category,
+    companyId: focus.companyId,
+    company: focus.company,
+    directionHint,
+    locked: true,
+  };
+}
+
+/**
+ * @param {{
+ *   facts?: object,
+ *   recentFingerprints?: string[],
+ * }} opts
+ */
 export function buildInventUserPrompt({
+  facts = null,
   recentFingerprints = [],
+  // legado (ignorado se facts presente)
   recentArchetypes = [],
   narrativeSeed = null,
   companyMoods = [],
 } = {}) {
+  const banned = recentFingerprints.slice(-8).filter(Boolean);
+
+  // Novo contrato: FACTS oficiais do código
+  if (facts && typeof facts === 'object') {
+    return [
+      'FACTS oficiais (já decididos — NÃO altere empresa/setor/direção):',
+      JSON.stringify(facts, null, 0),
+      '',
+      'Escreva só a fofoca (title + body) coerente com esses FACTS.',
+      banned.length ? `NÃO repita ganchos parecidos com: ${banned.join(' || ')}` : null,
+      'Resposta: só {"title":"...","body":"..."}',
+    ]
+      .filter(Boolean)
+      .join('\n');
+  }
+
+  // Legado (testes / tools) — não usado no invent de produção
   const companies = listCompanies()
     .map((c) => `${c.id}(${c.name})`)
     .join(', ');
   const archetypes = ARCHETYPE_IDS.join(', ');
-  const banned = recentFingerprints.slice(-8).filter(Boolean);
   const used = recentArchetypes.slice(-8);
   return [
     `Archetypes válidos: ${archetypes}`,
@@ -71,7 +135,7 @@ export function buildInventUserPrompt({
     companyMoods.length
       ? `Clima: ${companyMoods.map((m) => `${m.id}:${m.mood}`).join(', ')}`
       : null,
-    'Gere UM evento. Só o objeto JSON (nada de explicar regras).',
+    'Gere fofoca {"title","body"} (evento já decidido no backend).',
   ]
     .filter(Boolean)
     .join('\n');
@@ -163,7 +227,13 @@ export function repairTruncatedInventJson(text) {
   }
 }
 
-export function parseInventJson(raw) {
+/**
+ * Parse da fofoca da IA.
+ * @param {string} raw
+ * @param {object|null} locked — skeleton do código (archetype/category/companyId).
+ *   Se presente, a IA NÃO define foco; só title/body contam.
+ */
+export function parseInventJson(raw, locked = null) {
   const text = String(raw || '').trim();
   let blob = '';
   const m = text.match(/\{[\s\S]*\}/);
@@ -179,24 +249,6 @@ export function parseInventJson(raw) {
       if (!fixed) return null;
       j = JSON.parse(fixed);
     }
-    let archetype = String(j.archetype || j.eventTag || j.tag || '')
-      .trim()
-      .toLowerCase();
-    if (!getArchetype(archetype)) {
-      // tenta classificar por palavras-chave se free-form
-      archetype = classifyFreeTextToArchetype(
-        `${j.title || ''} ${j.body || j.description || ''}`
-      );
-    }
-    if (!getArchetype(archetype)) return null;
-
-    const cats = ['combustivel', 'municao', 'arma', 'veiculo', 'defesa'];
-    let category = String(j.category || '').trim().toLowerCase();
-    if (!cats.includes(category)) category = '';
-
-    const companyId = String(j.companyId || j.focusCompany || j.company || '')
-      .trim()
-      .toLowerCase();
 
     const title = String(j.title || 'Movimento de mercado').slice(0, 100);
     const body = clampEventDescription(j.body || j.description || '');
@@ -212,16 +264,46 @@ export function parseInventJson(raw) {
     }
 
     // impactPct da IA é IGNORADO de propósito (contrato anti-colapso)
+    const ignoredAiImpactPct =
+      j.impactPct !== undefined && j.impactPct !== null ? Number(j.impactPct) : undefined;
+
+    // Contrato novo: código trava o foco
+    if (locked?.archetype && getArchetype(locked.archetype)) {
+      return {
+        archetype: locked.archetype,
+        category: locked.category || undefined,
+        companyId: locked.companyId || undefined,
+        title,
+        body,
+        locked: true,
+        ignoredAiImpactPct,
+      };
+    }
+
+    // Legado: se a IA ainda mandar archetype (testes antigos), aceita title/body + campos
+    let archetype = String(j.archetype || j.eventTag || j.tag || '')
+      .trim()
+      .toLowerCase();
+    if (!getArchetype(archetype)) {
+      archetype = classifyFreeTextToArchetype(
+        `${j.title || ''} ${j.body || j.description || ''}`
+      );
+    }
+    // fofoca-only sem locked e sem arch válido: ainda devolve title/body (foco no caller)
+    const cats = ['combustivel', 'municao', 'arma', 'veiculo', 'defesa'];
+    let category = String(j.category || '').trim().toLowerCase();
+    if (!cats.includes(category)) category = '';
+    const companyId = String(j.companyId || j.focusCompany || j.company || '')
+      .trim()
+      .toLowerCase();
+
     return {
-      archetype,
+      archetype: getArchetype(archetype) ? archetype : undefined,
       category: category || undefined,
       companyId: companyId || undefined,
       title,
       body,
-      ignoredAiImpactPct:
-        j.impactPct !== undefined && j.impactPct !== null
-          ? Number(j.impactPct)
-          : undefined,
+      ignoredAiImpactPct,
     };
   } catch {
     return null;
@@ -297,8 +379,39 @@ export function salvageInventFromProse(raw) {
 }
 
 /** JSON primeiro; se falhar, tenta prosa (Zen free). */
-export function parseInventResponse(raw) {
-  return parseInventJson(raw) || salvageInventFromProse(raw);
+export function parseInventResponse(raw, locked = null) {
+  const fromJson = parseInventJson(raw, locked);
+  if (fromJson) return fromJson;
+  const salvaged = salvageInventFromProse(raw);
+  if (!salvaged) return null;
+  if (locked?.archetype && getArchetype(locked.archetype)) {
+    return {
+      ...salvaged,
+      archetype: locked.archetype,
+      category: locked.category || salvaged.category,
+      companyId: locked.companyId || salvaged.companyId,
+      locked: true,
+    };
+  }
+  return salvaged;
+}
+
+/**
+ * Portão leve só para fofoca da IA: mantém texto a menos que
+ * vazio/eco OU direção abertamente oposta ao ticker.
+ * NÃO mata copy por “inferência de setor” (isso era o bug BombaTech).
+ */
+export function shouldKeepAiCopy({ title, body, direction } = {}) {
+  const t = String(title || '').trim();
+  const b = String(body || '').trim();
+  if (!b && !t) return false;
+  if (looksLikeInventPromptEcho(t) || looksLikeInventPromptEcho(b)) return false;
+  const dir =
+    direction === 'up' || direction === 'down' || direction === 'flat' ? direction : 'flat';
+  const nDir = inferNarrativeDirection(`${t}\n${b}`);
+  if (dir === 'up' && nDir === 'down') return false;
+  if (dir === 'down' && nDir === 'up') return false;
+  return true;
 }
 
 export function parseJournalistJson(raw) {
@@ -363,8 +476,9 @@ export function resolveEventProposal(proposal, { reg, random = Math.random, over
     pickArchetypeWeighted(recent, random, reg?.narrativeSeeds?.[0] || null, heat);
 
   let archetypeSwapped = false;
-  // mercado quente: se a IA pediu alta, 55% troca por correção
+  // mercado quente: se pediu alta, chance de correção (exceto foco já travado pelo plan)
   if (
+    !proposal?.locked &&
     heat > 0.35 &&
     getArchetype(archetype)?.bias === 'up' &&
     random() < Math.min(0.75, 0.35 + heat * 0.35)
@@ -484,7 +598,7 @@ export function inferNarrativeDirection(text) {
     .replace(/\b(nao|não)\s+(caiu|desce|barato|sobra|esfria)\b/g, ' ');
 
   const upRe =
-    /mais cara|mais caro|subiu|sobe|subida|alta inesper|encarec|escassez|sumiu|\bfila\b|fomo|apert(o|ou)|lotou|procura|escasso|seco|sem produto|preco sobe|preço sobe|gasolina cara|encareceu|disparou|esquent|prateleira magra|falta de|viraliz|fomo/;
+    /mais cara|mais caro|subiu|sobe|subida|alta inesper|encarec|escassez|sumiu|\bfila\b|fomo|apert(o|ou)|lotou|procura|escasso|seco|sem produto|preco sobe|preço sobe|gasolina cara|encareceu|disparou|esquent|prateleira magra|falta de|viraliz|febre|multidao|multidão|encheu|armarios? no fim|arm[aá]rios? (no|ja|já) (fim|vazio)|nunca viu tanta|pegou fogo|vira febre/;
   const downRe =
     /mais barata|mais barato|caiu|desce|queda|barato|sobra|desconto|freia|morreu a procura|promo|esfria|recu(a|ou)|desceu|alivi|mais em conta|baixa(r|ou)? o preco|baixa(r|ou)? o preço|preco cai|preço cai|estoque sobra|estoque encalhad|encalhad|liquidac|liquida[cç][aã]o|excesso|desovar|lote barato|promocao|promoção|realizou|tomou lucro|ninguem quer|ninguém quer|estoque gigante|caminh[aã]o inteiro|parado num deposito|parado no deposito|esfria|bolso vazio/;
 
@@ -529,11 +643,21 @@ export function isCopyCoherent({
 
   if ((dir === 'up' && nDir === 'down') || (dir === 'down' && nDir === 'up')) return false;
   if (dir === 'flat' && (nDir === 'up' || nDir === 'down')) return false;
-  if (category && nCat && nCat !== category) return false;
   if (cid && nCo && nCo !== cid) return false;
   // PatoCoin (só bolsa) não pode misturar itens de rua no corpo (peixeira, gasolina…)
   if (pureStock && mentionsStreetGoods(blob)) return false;
+
+  // Setor: mismatch só conta se o texto aponta outro ramo de verdade.
+  // Empresa multi-setor (BombaTech = municao+arma): irmãs do mesmo catálogo OK.
+  if (category && nCat && nCat !== category) {
+    const coCats = cid ? categoriesForCompany(cid) : nCo ? categoriesForCompany(nCo) : [];
+    const siblings =
+      coCats.length > 0 && coCats.includes(category) && coCats.includes(nCat);
+    if (!siblings) return false;
+  }
+
   // empresa de rua: se o texto ancora a empresa, o setor do texto deve ser dela
+  // (ou irmão do catálogo da empresa — ex. municao vs arma na BombaTech)
   if (nCo && nCat) {
     const coCats = categoriesForCompany(nCo);
     if (coCats.length && !coCats.includes(nCat)) return false;
@@ -573,11 +697,17 @@ export function inferNarrativeCategory(text) {
   if (/gasolina|combust|posto|gal[aã]o|litro|ze do gas|z[eé] do g[aá]s|caminh[aã]o.*(comb|gas)|tanque|bomba de gasolina|bomba do posto/.test(t)) {
     bump('combustivel', 3);
   }
-  if (/municao|muni[cç][aã]o|cartucho|carregador/.test(t)) bump('municao', 3);
-  // \barma\b evita "armadilha"; peixeira/pistola/etc. são âncoras fortes
+  // munição + pirotecnia de bairro (BombaTech) — sem usar nome da empresa como setor
   if (
-    /\barma\b|pistola|rifle|\bfaca\b|peixeira|canivete|a[cç]ao de fogo|bombatech/.test(t)
+    /municao|muni[cç][aã]o|cartucho|carregador|pirotecnia|fogos?|foguete|estouro|polvora|p[oó]lvora/.test(
+      t
+    )
   ) {
+    bump('municao', 3);
+  }
+  // \barma\b evita "armadilha"; peixeira/pistola/etc. são âncoras fortes
+  // NÃO usar "bombatech" aqui — empresa cobre municao+arma; vira falso mismatch
+  if (/\barma\b|pistola|rifle|\bfaca\b|peixeira|canivete|a[cç]ao de fogo/.test(t)) {
     bump('arma', 3);
   }
   if (/moto|carro|veiculo|ve[ií]culo|escapamento|oficina|duas rodas|uno motors|\buno\b/.test(t)) {

@@ -46,12 +46,15 @@ import {
   parseInventResponse,
   parseJournalistJson,
   pickTemplateSeed,
+  planEventSkeleton,
   resolveEventProposal,
   alignEventCopy,
   isCopyCoherent,
+  shouldKeepAiCopy,
   buildDirectionFallbackCopy,
   fingerprintText,
   clampShockPct,
+  getArchetype,
 } from '../economy/index.js';
 import { nameOf } from '../utils/userLabel.js';
 
@@ -445,30 +448,64 @@ export function createMarketService({
   }
 
   /**
-   * Inventa proposta de evento.
-   * Ordem fixa (sempre):
-   *   1) Zen (principal — mais inteligente / proxy OpenCode)
-   *   2) Ollama (só se Zen falhar ou estiver desligado)
-   *   3) Template local
+   * Inventa só a fofoca (title/body).
+   * Código já decidiu archetype/category/companyId (skeleton).
+   * Ordem: 1) Zen  2) Ollama  3) fallback sintético do skeleton
    */
-  async function inventEvent(funConfig = {}, reg = null) {
+  async function inventEvent(funConfig = {}, reg = null, { overheat = 0 } = {}) {
     const log = getLogger?.();
     const regulator = reg || clampKnobs(defaultRegulatorKnobs());
     const { reg: regAfterSeed, seed } = popNarrativeSeed({ ...regulator });
-    const prompt = buildInventUserPrompt({
-      recentFingerprints: regulator.recentFingerprints || [],
-      recentArchetypes: regulator.recentArchetypes || [],
-      narrativeSeed: seed,
-      companyMoods: listCompanies().map((co) => ({
-        id: co.id,
-        mood: co.risk > 0.7 ? 'hot' : co.risk < 0.3 ? 'stable' : 'warm',
-      })),
+
+    // 0) Código decide o evento (IA não manda no foco)
+    const skeleton = planEventSkeleton({
+      reg: regAfterSeed,
+      random,
+      overheat,
     });
-    // System curto: thinking free ecoa regras longas em vez de JSON
+    const archMeta = getArchetype(skeleton.archetype);
+    const facts = {
+      archetype: skeleton.archetype,
+      label: archMeta?.label || skeleton.archetype,
+      category: skeleton.category,
+      companyId: skeleton.companyId,
+      companyName: skeleton.company?.name || skeleton.companyId,
+      direction: skeleton.directionHint,
+      tone:
+        skeleton.directionHint === 'up'
+          ? 'alta / escassez / fila / procura'
+          : skeleton.directionHint === 'down'
+            ? 'queda / sobra / desconto'
+            : 'lateral / sem drama',
+    };
+    const prompt = buildInventUserPrompt({
+      facts,
+      recentFingerprints: regulator.recentFingerprints || [],
+    });
     const inventSystem = EVENT_INVENT_SYSTEM;
     const task = resolveZenTaskParams('invent', funConfig);
 
-    // 1) Zen — principal (só jsonMode; free-mode do DeepSeek só raciocina e não fecha JSON)
+    const pack = (parsed, source) => ({
+      archetype: skeleton.archetype,
+      category: skeleton.category,
+      companyId: skeleton.companyId,
+      title: parsed.title,
+      body: parsed.body,
+      description: parsed.body,
+      source,
+      locked: true,
+      ignoredAiImpactPct: parsed.ignoredAiImpactPct,
+      _regAfterSeed: regAfterSeed,
+      _seed: seed,
+      _skeleton: skeleton,
+    });
+
+    // 1) Zen
+    const inventTimeoutMs = Math.max(
+      90_000,
+      Math.floor(Number(task.timeoutMs) || 0),
+      Math.floor(Number(funConfig.zenInventTimeoutMs) || 0)
+    );
     if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.zenEnabled !== false) {
       for (let attempt = 1; attempt <= 2; attempt += 1) {
         try {
@@ -477,7 +514,7 @@ export function createMarketService({
             model: funConfig.zenModel || 'glm_5_2',
             system: inventSystem,
             prompt,
-            timeoutMs: task.timeoutMs,
+            timeoutMs: inventTimeoutMs,
             maxTokens: task.maxTokens,
             temperature: attempt === 1 ? task.temperature : Math.min(1.05, task.temperature + 0.15),
             apiKey: funConfig.zenApiKey || '',
@@ -485,8 +522,8 @@ export function createMarketService({
             jsonOnly: true,
             sendSamplingParams: funConfig.zenSendSamplingParams === true,
           });
-          const parsed = parseInventResponse(raw);
-          if (parsed) {
+          const parsed = parseInventResponse(raw, skeleton);
+          if (parsed?.title && parsed?.body) {
             const source = parsed.salvaged ? 'zen-salvage' : 'zen';
             recordLlmHit('invent', source, { title: parsed.title, attempt });
             log?.info?.(
@@ -495,16 +532,16 @@ export function createMarketService({
                 model: funConfig.zenModel,
                 title: parsed.title,
                 attempt,
+                timeoutMs: inventTimeoutMs,
+                skeleton: {
+                  archetype: skeleton.archetype,
+                  category: skeleton.category,
+                  companyId: skeleton.companyId,
+                },
               },
-              'fun market invent via zen'
+              'fun market invent via zen (copy-only)'
             );
-            return {
-              ...parsed,
-              description: parsed.body,
-              source,
-              _regAfterSeed: regAfterSeed,
-              _seed: seed,
-            };
+            return pack(parsed, source);
           }
           console.warn(
             `[fun/market] zen invent inválido (#${attempt}, modelo=${funConfig.zenModel || 'glm_5_2'}) raw=${String(raw || '').slice(0, 100).replace(/\s+/g, ' ')}`
@@ -518,17 +555,21 @@ export function createMarketService({
             'fun market zen invent invalid'
           );
         } catch (err) {
-          console.warn(`[fun/market] zen event fail (#${attempt}): ${err?.message || err}`);
+          const msg = err?.message || String(err);
+          const isTimeout =
+            err?.name === 'AbortError' || /timeout/i.test(msg) || /aborted/i.test(msg);
+          console.warn(`[fun/market] zen event fail (#${attempt}): ${msg}`);
           log?.warn?.(
-            { err: err?.message || String(err), attempt },
+            { err: msg, attempt, isTimeout, timeoutMs: inventTimeoutMs },
             'fun market zen invent fail'
           );
+          if (isTimeout) break;
         }
       }
       console.warn('[fun/market] zen esgotou tentativas → tenta ollama');
     }
 
-    // 2) Ollama — fallback
+    // 2) Ollama
     if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.ollamaEnabled !== false) {
       try {
         const raw = await generateOllama({
@@ -542,21 +583,15 @@ export function createMarketService({
           numPredict: Math.min(600, task.maxTokens),
           temperature: 0.9,
         });
-        const parsed = parseInventResponse(raw);
-        if (parsed) {
+        const parsed = parseInventResponse(raw, skeleton);
+        if (parsed?.title && parsed?.body) {
           const source = parsed.salvaged ? 'ollama-salvage' : 'ollama';
           recordLlmHit('invent', source, { title: parsed.title });
           log?.info?.(
             { source, model: funConfig.ollamaModel, title: parsed.title },
-            'fun market invent via ollama (fallback)'
+            'fun market invent via ollama (copy-only)'
           );
-          return {
-            ...parsed,
-            description: parsed.body,
-            source,
-            _regAfterSeed: regAfterSeed,
-            _seed: seed,
-          };
+          return pack(parsed, source);
         }
         console.warn(
           `[fun/market] ollama invent inválido (modelo=${funConfig.ollamaModel || 'gemma4'}) → template`
@@ -566,25 +601,51 @@ export function createMarketService({
       }
     }
 
-    // 3) Template — último recurso
-    const t = pickTemplateSeed(regulator.recentFingerprints || [], random);
-    recordLlmHit('invent', 'template', { title: t.title });
+    // 3) Fallback sintético no skeleton do código (não deixa a IA “escolher” outro evento)
+    const fb = buildDirectionFallbackCopy({
+      direction: skeleton.directionHint,
+      category: skeleton.category,
+      companyId: skeleton.companyId,
+    });
+    // tenta seed de catálogo alinhado se existir
+    const seedTpl = pickTemplateSeed(regulator.recentFingerprints || [], random);
+    const useSeed =
+      seedTpl &&
+      seedTpl.category === skeleton.category &&
+      (!seedTpl.companyId || seedTpl.companyId === skeleton.companyId);
+
+    const title = useSeed ? seedTpl.title : fb.title;
+    const body = useSeed ? seedTpl.body : fb.body;
+    recordLlmHit('invent', 'template', { title });
     const alert = inventTemplateAlert(0.4, 5);
     if (alert) {
       console.warn(`[fun/market] ${alert.message}`);
       log?.warn?.(alert, 'fun market invent template rate high');
     }
-    log?.info?.({ source: 'template', title: t.title }, 'fun market invent template');
+    log?.info?.(
+      {
+        source: 'template',
+        title,
+        skeleton: {
+          archetype: skeleton.archetype,
+          category: skeleton.category,
+          companyId: skeleton.companyId,
+        },
+      },
+      'fun market invent template (skeleton locked)'
+    );
     return {
-      archetype: t.archetype,
-      category: t.category,
-      companyId: t.companyId,
-      title: t.title,
-      body: t.body,
-      description: t.body,
+      archetype: skeleton.archetype,
+      category: skeleton.category,
+      companyId: skeleton.companyId,
+      title,
+      body,
+      description: body,
       source: 'template',
+      locked: true,
       _regAfterSeed: regAfterSeed,
       _seed: seed,
+      _skeleton: skeleton,
     };
   }
 
@@ -854,7 +915,7 @@ export function createMarketService({
       };
     }
 
-    const draft = await inventEvent(funConfig, reg);
+    const draft = await inventEvent(funConfig, reg, { overheat: heat });
     if (draft._regAfterSeed) reg = clampKnobs({ ...draft._regAfterSeed, marketOverheat: heat });
     // seed do regulador volta como bias de arquétipo (foi popado no invent)
     if (draft._seed) {
@@ -864,6 +925,7 @@ export function createMarketService({
       };
     }
 
+    // Foco sempre do código (skeleton); IA só preenche title/body
     let proposal = {
       archetype: draft.archetype || draft._seed || undefined,
       category: draft.category,
@@ -871,6 +933,7 @@ export function createMarketService({
       title: draft.title,
       body: draft.body || draft.description,
       source: draft.source,
+      locked: draft.locked === true,
     };
 
     // resolve primeiro para saber direção real (pré-deception)
@@ -913,20 +976,57 @@ export function createMarketService({
       avgDelta > 0.5 ? 'up' : avgDelta < -0.5 ? 'down' : 'flat';
     const primaryReason = affected[0]?.primaryReason || 'event_residual';
 
-    // Copy pública SEMPRE alinha com o % / setas do anúncio (não mentir no mesmo post).
-    // Deception hype/contrarian age no follow-up de preço, não na manchete vs ticker.
-    const aligned = alignEventCopy({
-      title: resolved.title,
-      body: resolved.body,
-      direction,
-      archetype: resolved.archetype,
-      category: resolved.category,
-      companyId: resolved.companyId,
-      random,
-    });
-    let title = aligned.title;
-    let description = clampEventDescription(aligned.body);
+    // Fofoca da IA: manter por padrão. Só troca se eco/vazio ou direção ABERTAMENTE oposta.
+    // (Antes: isCopyCoherent matava copy boa por inferência de setor — BombaTech/municao.)
+    const aiSources = new Set(['zen', 'zen-salvage', 'ollama', 'ollama-salvage']);
+    const fromAi = aiSources.has(String(draft.source || ''));
+    let title = String(resolved.title || draft.title || 'Movimento de mercado').slice(0, 100);
+    let description = clampEventDescription(resolved.body || draft.body || '');
     let copyHardFallback = false;
+    let aligned = {
+      realigned: false,
+      reason: null,
+      narrativeDirection: direction,
+    };
+
+    if (fromAi && shouldKeepAiCopy({ title, body: description, direction })) {
+      // mantém fofoca da IA
+      aligned = { realigned: false, reason: null, keptAi: true };
+    } else if (fromAi) {
+      // IA com direção invertida ou lixo → fallback alinhado
+      const fb = buildDirectionFallbackCopy({
+        direction,
+        category: resolved.category,
+        companyId: resolved.companyId,
+      });
+      title = fb.title;
+      description = clampEventDescription(fb.body);
+      copyHardFallback = true;
+      aligned = { realigned: true, reason: 'ai-direction-or-echo', keptAi: false };
+      console.warn(
+        `[fun/market] copy IA descartada (direção/eco) src=${draft.source} ` +
+          `arch=${resolved.archetype} cat=${resolved.category} co=${resolved.companyId}`
+      );
+    } else {
+      // template: ainda alinha se necessário
+      aligned = alignEventCopy({
+        title,
+        body: description,
+        direction,
+        archetype: resolved.archetype,
+        category: resolved.category,
+        companyId: resolved.companyId,
+        random,
+      });
+      title = aligned.title;
+      description = clampEventDescription(aligned.body);
+      if (aligned.realigned) {
+        console.warn(
+          `[fun/market] copy template realinhada (reason=${aligned.reason || '?'}) ` +
+            `arch=${resolved.archetype} cat=${resolved.category}`
+        );
+      }
+    }
 
     // Opcional: jornalista reescreve com FACTS (direction + %) — marketJournalistEnabled
     if (funConfig.marketJournalistEnabled === true) {
@@ -944,31 +1044,15 @@ export function createMarketService({
         funConfig
       );
       if (j?.title && j?.body) {
-        const realigned = alignEventCopy({
-          title: j.title,
-          body: j.body,
-          direction,
-          archetype: resolved.archetype,
-          category: resolved.category,
-          companyId: resolved.companyId,
-          random,
-        });
-        title = realigned.title;
-        description = clampEventDescription(realigned.body);
+        if (shouldKeepAiCopy({ title: j.title, body: j.body, direction })) {
+          title = String(j.title).slice(0, 100);
+          description = clampEventDescription(j.body);
+        }
       }
     }
 
-    // Portão final: se ainda incoerente (LLM criativo / seed residual), copy sintética da categoria real.
-    // Isso é a garantia de que o anúncio nunca mente sobre o ticker.
-    if (
-      !isCopyCoherent({
-        title,
-        body: description,
-        direction,
-        category: resolved.category,
-        companyId: resolved.companyId,
-      })
-    ) {
+    // Último recurso: anúncio sem body
+    if (!String(description || '').trim()) {
       const fb = buildDirectionFallbackCopy({
         direction,
         category: resolved.category,
@@ -1072,6 +1156,7 @@ export function createMarketService({
       deceptionMode,
       archetype: resolved.archetype,
       companyId: resolved.companyId,
+      source: draft.source || event?.source || 'template',
       truth,
     };
   }
