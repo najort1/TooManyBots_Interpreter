@@ -210,13 +210,23 @@ export function createGroupMemoryService({
       maxFacts: Math.max(10, Math.min(120, Math.floor(numOr(funConfig.memoryMaxFacts, 50)))),
       summaryMax: Math.max(80, Math.min(200, Math.floor(numOr(funConfig.memorySummaryMaxChars, 160)))),
       personaMax: Math.max(200, Math.min(800, Math.floor(numOr(funConfig.memoryPersonaMaxChars, 500)))),
-      bufferSize: Math.max(8, Math.min(60, Math.floor(numOr(funConfig.memoryBufferSize, 24)))),
-      flushMin: Math.max(3, Math.min(40, Math.floor(numOr(funConfig.memoryFlushMinMessages, 8)))),
-      flushMs: Math.max(60_000, Math.floor(numOr(funConfig.memoryFlushIntervalMs, 12 * 60_000))),
+      // modelo grande: default ~100 msgs; clamp alto pra caber no orçamento de chars
+      bufferSize: Math.max(8, Math.min(200, Math.floor(numOr(funConfig.memoryBufferSize, 100)))),
+      flushMin: Math.max(3, Math.min(120, Math.floor(numOr(funConfig.memoryFlushMinMessages, 40)))),
+      flushMs: Math.max(60_000, Math.floor(numOr(funConfig.memoryFlushIntervalMs, 10 * 60_000))),
       minChars: Math.max(6, Math.floor(numOr(funConfig.memoryMinMsgChars, 12))),
-      extractTimeout: Math.max(5_000, Math.floor(numOr(funConfig.memoryExtractTimeoutMs, 28_000))),
+      extractTimeout: Math.max(5_000, Math.floor(numOr(funConfig.memoryExtractTimeoutMs, 45_000))),
       ttlDays: Math.max(7, Math.floor(numOr(funConfig.memoryTtlDays, 45))),
       minScore: Math.max(0, Math.min(80, Math.floor(numOr(funConfig.memoryMinScore, 35)))),
+      extractMaxChars: Math.max(
+        4_000,
+        Math.min(40_000, Math.floor(numOr(funConfig.memoryExtractMaxChars, 36_000)))
+      ),
+      knownFactsInPrompt: Math.max(
+        4,
+        Math.min(40, Math.floor(numOr(funConfig.memoryKnownFactsInPrompt, 24)))
+      ),
+      msgMaxChars: Math.max(80, Math.min(800, Math.floor(numOr(funConfig.memoryMsgMaxChars, 400)))),
       prefix: funConfig.prefix || '/',
     };
   }
@@ -301,7 +311,7 @@ export function createGroupMemoryService({
     buf.msgs.push({
       userJid: String(userJid || ''),
       name: displayOf(userJid),
-      text: body.slice(0, 280),
+      text: body.slice(0, o.msgMaxChars),
       at: Number(now) || Date.now(),
     });
     if (buf.msgs.length > o.bufferSize) {
@@ -332,7 +342,8 @@ export function createGroupMemoryService({
     if (buf.msgs.length < 3) return { ok: false, reason: 'too-few' };
 
     buf.flushing = true;
-    const batch = buf.msgs.slice(-o.bufferSize);
+    // empacota o máximo de mensagens que couber no orçamento (~40k), priorizando as recentes
+    const batch = packBatchForExtract(buf.msgs.slice(-o.bufferSize), o);
     buf.msgs = [];
     buf.lastFlushAt = now;
 
@@ -476,15 +487,56 @@ export function createGroupMemoryService({
     return batch
       .map((m, i) => {
         const name = String(m.name || firstName(m.userJid) || '?').slice(0, 40);
-        return `[${i}] ${name}: ${m.text}`;
+        const text = String(m.text || '').slice(0, 800);
+        return `[${i}] ${name}: ${text}`;
       })
       .join('\n');
   }
 
+  /**
+   * Monta o maior trecho possível de conversa sob o teto de chars.
+   * Descarta as mais antigas se estourar; reindexa 0..n-1 pro map de subjects.
+   */
+  function packBatchForExtract(msgs, o) {
+    const msgMax = o.msgMaxChars || 400;
+    const budget = o.extractMaxChars || 36_000;
+    const prepared = (msgs || []).map((m) => ({
+      userJid: m.userJid,
+      name: m.name,
+      text: String(m.text || '').slice(0, msgMax),
+      at: m.at,
+    }));
+    if (!prepared.length) return [];
+
+    // tenta o lote inteiro; se passar do teto, remove do início (mais antigas)
+    let selected = prepared;
+    const lineCost = (m, i) => {
+      const name = String(m.name || firstName(m.userJid) || '?').slice(0, 40);
+      return `[${i}] ${name}: ${m.text}`.length + 1;
+    };
+    const totalCost = (arr) => arr.reduce((sum, m, i) => sum + lineCost(m, i), 0);
+
+    while (selected.length > 12 && totalCost(selected) > budget) {
+      selected = selected.slice(1);
+    }
+    // se ainda estoura com ≤12, trunca texto da mais antiga
+    while (selected.length > 3 && totalCost(selected) > budget) {
+      const head = { ...selected[0], text: String(selected[0].text || '').slice(0, 120) };
+      if (head.text.length >= String(selected[0].text || '').length) {
+        selected = selected.slice(1);
+      } else {
+        selected = [head, ...selected.slice(1)];
+        if (totalCost(selected) > budget) selected = selected.slice(1);
+      }
+    }
+    return selected;
+  }
+
   async function extractFacts(batch, existing, funConfig, o) {
     const lines = formatBatchLines(batch);
+    const knownLimit = o.knownFactsInPrompt || 24;
     const known = existing
-      .slice(0, 12)
+      .slice(0, knownLimit)
       .map((f) => {
         const who = (f.subjects || [])
           .map((s) => firstName(s))
@@ -496,7 +548,8 @@ export function createGroupMemoryService({
       .join('\n');
 
     const prompt = [
-      'Analise as seguintes mensagens do grupo (IDs entre colchetes):',
+      `Analise as seguintes mensagens do grupo (${batch.length} msgs, IDs entre colchetes).`,
+      'Leia o trecho como conversa contínua (contexto importa — quem responde a quem).',
       lines,
       '',
       'Regras:',
@@ -504,7 +557,8 @@ export function createGroupMemoryService({
       '2. Em subjects use OBRIGATORIAMENTE os IDs numéricos das mensagens (ex: 0, 2). Nunca nomes.',
       '3. subjects = quem FEZ / é o foco do fato (não confunda falante com assunto).',
       '4. NÃO invente. Se não souber o sujeito com ID claro, não extraia o fato.',
-      '5. Retorne JSON: {"facts":[...]}',
+      '5. Use o contexto das mensagens vizinhas pra entender o fato (não isole 1 linha).',
+      '6. Retorne JSON: {"facts":[...]}',
       '',
       known
         ? `Já sabemos (NÃO repita; se for o MESMO fato, a gente reforça no backend):\n${known}`
@@ -548,8 +602,8 @@ export function createGroupMemoryService({
           model: funConfig.zenModel || 'glm_5_2',
           system: EXTRACT_SYSTEM,
           prompt,
-          timeoutMs: Math.max(o.extractTimeout, task.timeoutMs),
-          maxTokens: Math.max(task.maxTokens, 500),
+          timeoutMs: Math.max(o.extractTimeout, task.timeoutMs, 45_000),
+          maxTokens: Math.max(task.maxTokens, 700),
           temperature: task.temperature,
           apiKey: funConfig.zenApiKey || '',
           jsonMode: true,
@@ -801,6 +855,7 @@ export function createGroupMemoryService({
     validateExtractedFact,
     findSimilar,
     mapSubjectsToJids,
+    packBatchForExtract,
     _pushRaw,
     _buffers: buffers,
     _personaCache: personaCache,
