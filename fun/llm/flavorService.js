@@ -2,83 +2,79 @@ import { ollamaGenerate, ollamaWarmup, ollamaTouch } from './ollamaClient.js';
 import { openaiChatComplete } from './openaiClient.js';
 import {
   resolveZenTaskParams,
-  pickFlavorAngle,
-  pickAssaultGenre,
   overlapsRecent,
   fingerprintLine,
 } from './zenTaskParams.js';
 import { recordLlmHit } from './llmMetrics.js';
 
-const SYSTEM_PROMPT = `Você é o narrador de um bot de diversão de WhatsApp BR (pt-BR do dia a dia, não de livro).
+/**
+ * System “ápice” (Zen é o principal e mais capaz — prompt completo).
+ * Código = FATOS + lore; modelo inventa tom, humor e texto. Sem few-shots.
+ */
+const SYSTEM_PROMPT = `Você comenta o que rolou num bot de diversão de WhatsApp BR.
 
-Voz: grupo de amigos zoando. Natural, irônico, carinhoso na sacanagem. Pode ter piada leve e duplo sentido de vez em quando — sem forçar, sem cringe, sem soar IA genérica.
+PAPEL
+- Você inventa o comentário inteiro: gancho, tom, humor e frase final.
+- O user message traz só FATOS (quem, o quê, lore do grupo). Não é roteiro de piada — use como matéria-prima.
+- Escreva como alguém do grupo no zap: pt-BR do dia a dia, natural, engraçado quando couber.
+- Você escolhe o tipo de humor (seco, absurdo, irônico, épico, maldoso leve, etc.). Varie entre respostas.
 
-Escreva 1 a 3 frases COMPLETAS (até ~1000 caracteres). Cada frase fecha com ponto ou kkk.
+FORMA
+- 1 a 3 frases COMPLETAS (prefira 1–2). Até o limite de caracteres do user (cabe no WhatsApp).
+- Frases fechadas (ponto ou kkk). Máx 3 emojis se quiser.
+- Sem markdown de lista, sem aspas envolvendo o texto inteiro.
 
-Pode: gíria BR leve (pô, mano, né, viu, kkk, meteu o louco, pagou mico, se lascou).
-Pode: humor seco, indireta, "olha o casal", "foi de base", "hoje não é o dia".
+CONTEXTO DO GRUPO
+- Se houver <group_lore> ou fatos de identidade, use para ser específico a ESTE grupo.
+- Nunca troque o autor de um fato. Se o lore não encaixar, ignore — não force.
 
-NÃO:
-- inventar coins, XP, vencedor, placar ou regra de jogo (o bot já mostrou)
-- repetir placar, números de aposta, "ganhou X coins", "perdeu Y"
-- inglês, tom de anúncio, "seamless/unlock/vibes"
-- ofensa pesada, preconceito, puteiro explícito
-- markdown, lista, aspas no começo/fim
-- explicar o que vai fazer, raciocinar em voz alta, dizer "em português", "pode ser", "outra ideia"
-- frases pela metade
+NÃO
+- Inventar coins, XP, vencedor, placar, quantia de aposta ou regra de jogo (o bot já mostrou os números).
+- Repetir placar / "ganhou X coins" / "perdeu Y".
+- Ofensa pesada, preconceito, conteúdo sexual explícito, doxxing.
+- Preâmbulo ou meta: "aqui vai", "como pediu", raciocinar em voz alta, "em português", "como IA".
+- Frases pela metade. Inglês de assistente.
 
-No máximo 3 emojis. Só o texto final, pronto pra colar no zap.`;
+Só o texto final, pronto pra colar no zap. Comece direto na frase.`;
 
-/** System enxuto pro Zen (modelos free se perdem com prompt longo). */
-const ZEN_SYSTEM_PROMPT = `Narrador de zap BR. Resposta FINAL só: 1–3 frases COMPLETAS em pt-BR (até 400 chars), tom de zoação de grupo.
-PROIBIDO: raciocínio, meta, inglês, placar/coins/XP, descrever o pedido, "aqui vai", "no tom que você pediu", "roteiro de…".
-Máx 3 emojis. Comece direto na frase do grupo.`;
+/** Zen = mesmo system completo (modelo principal). */
+const ZEN_SYSTEM_PROMPT = SYSTEM_PROMPT;
+
+/** Quanto de lore/contexto de grupo cabe no prompt. */
+const LORE_MAX_FLAVOR = 6000;
+const LORE_MAX_CHAOS = 4000;
+const FACT_VALUE_MAX = 200;
 
 /**
- * Roteiro besteirol de assalto — história LONGA (não uma frase).
- * Usado só nos cenários assault_*.
+ * Roteiro de assalto — modelo inventa título, gênero e cenas; código fixa elenco + formato.
  */
-const ASSAULT_STORY_SYSTEM = `Você é roteirista de FILME BESTEIROL brasileiro de assalto (tipo comédia de ação barata de bairro).
+const ASSAULT_STORY_SYSTEM = `Você é roteirista criativo de um mini-filme de assalto pro grupo de WhatsApp BR.
 
-Escreva um ROTEIRO CURTO DE CINEMA, em português do Brasil, bem narrado, engraçado e cinematográfico.
+Invente TUDO: título, gênero, clima, diálogos, gags, reviravoltas. Use o elenco e o resultado (sucesso/falha) dos FATOS — não invente outro protagonista humano no lugar do attacker.
 
-A PRIMEIRA LINHA da resposta DEVE ser o formato abaixo (sem introdução):
-🎬 TÍTULO: (nome inventado do filme, em caps ou estilo cartaz)
+FORMATO OBRIGATÓRIO (primeira linha já é o título; sem introdução):
+🎬 TÍTULO: (nome inventado por você, estilo cartaz)
 CENA 1 — PREPARAÇÃO
-(parágrafo: o plano, o nervoso, a arma, o clima)
 CENA 2 — AÇÃO
-(parágrafo: a entrada, o caos, diálogos curtos entre aspas se quiser)
 CENA 3 — FUGA / CONSEQUÊNCIA
-(parágrafo: fuga, mico ou vitória, sirene, vizinho, etc.)
 EPÍLOGO
-(1–2 frases de fechamento irônico pro grupo do zap)
+(1–2 frases de fechamento pro grupo do zap)
 
-TAMANHO: entre 450 e 900 caracteres no TOTAL. 1–3 frases curtas por cena. Compacto pra WhatsApp — sem monólogo.
+TAMANHO: 450–900 caracteres no total. 1–3 frases curtas por cena. Compacto pra WhatsApp.
 
-TOM: besteirol, exagerado, gíria BR, vergonha alheia carinhosa. Pode ter diálogos curtos.
+Diálogos soam como gente de bairro/zap. NPCs de esquina OK (dono, gato, vizinha).
 
 NÃO:
-- inventar quantia de coins, saldo, multa, XP, chance % ou placar (o bot já mostra os números)
-- inventar OUTRO nome humano pro assaltante — use SEMPRE o "attacker" do contexto (pessoa real do grupo)
-- gore, ofensa pesada, preconceito, conteúdo sexual explícito
-- inglês, lista com bullets, "como IA", meta sobre o prompt
-- preâmbulo do tipo "Aqui vai um roteiro", "no tom que você pediu", "Roteiro besteirol de…"
-- oferta no final ("Quer que eu escreva uma variação…")
+- inventar quantia de coins, saldo, multa, XP, chance % ou placar
+- trocar o nome do assaltante (use exatamente o attacker dos fatos)
+- gore, ofensa pesada, preconceito, sexual explícito
+- preâmbulo ("aqui vai", "roteiro de…"), oferta de variação no final, meta sobre o prompt
 - aspas envolvendo o texto inteiro
 
-Só o roteiro final. Sem linha antes do 🎬. NPCs (dono, gato, vizinha) podem ter nome de esquina.`;
+Só o roteiro final.`;
 
-const ASSAULT_STORY_ZEN_SYSTEM = `Roteirista de filme besteirol BR de assalto. ROTEIRO CURTO (450–900 chars) começando JÁ no formato:
-🎬 TÍTULO:
-CENA 1 — PREPARAÇÃO
-CENA 2 — AÇÃO
-CENA 3 — FUGA / CONSEQUÊNCIA
-EPÍLOGO
-1–3 frases por cena. Compacto pro WhatsApp (não novela).
-ELENCO: o assaltante protagonista DEVE se chamar exatamente o nome em "attacker=" do user (nome de pessoa do grupo). NÃO invente outro nome humano pro assaltante (ex.: Marlison, João, Zé bandido).
-NPCs de bairro OK (dono da loja, gato, vizinha) — nomes genéricos de esquina.
-PROIBIDO: preâmbulo, "aqui vai", "quer que eu escreva variação", coins/saldo/multa/%. Sem gore.
-Só o roteiro — primeira linha = 🎬 TÍTULO. Última linha = fim do EPÍLOGO (sem oferta extra).`;
+/** Zen = mesmo system completo. */
+const ASSAULT_STORY_ZEN_SYSTEM = ASSAULT_STORY_SYSTEM;
 
 function isAssaultScenario(key) {
   return String(key || '').startsWith('assault_');
@@ -101,55 +97,55 @@ function isChaosScenario(key) {
 }
 
 /**
- * Caos social — um system por tarefa (evita o modelo ecoar lista de "cenários").
- * Zen → Ollama → template.
+ * Caos social — um system por tarefa. Sem few-shots; o modelo inventa do zero.
  */
 const CHAOS_TASK_SYSTEM = Object.freeze({
-  cancel_absurd: `Você inventa UM cancelamento ABSURDO e engraçado de WhatsApp BR.
-A pessoa (user=) é o cancelado. Motivo ridículo e único, 2–4 frases completas em pt-BR.
-Só o texto do cancelamento. NÃO liste opções, NÃO fale de fofoca/oráculo/roleta, NÃO explique o prompt.`,
+  cancel_absurd: `Você inventa UM cancelamento absurdo e engraçado de WhatsApp BR.
+A pessoa cancelada é user= nos fatos. Invente um motivo ridículo, específico e único (não genérico).
+2–4 frases completas em pt-BR. Só o texto do cancelamento.
+NÃO liste opções, NÃO fale de fofoca/oráculo/roleta, NÃO explique o prompt.
+Sem preconceito, sem doxxing, sem sexualizar.`,
 
   gossip_fake: `Você inventa UMA fofoca 100% FALSA e engraçada de WhatsApp BR sobre user=.
-Tom de rádio-peão, 2–4 frases completas. Só a fofoca. NÃO liste modos, NÃO meta-comente.`,
+Invente detalhes concretos (hábito, objeto, horário, rumor torto) — você cria tudo.
+2–4 frases completas. Só a fofoca. Sem ofensa pesada, sem preconceito, sem meta.`,
 
-  oracle_insane: `Você é oráculo LOUCO de WhatsApp BR. Responda question= com profecia absurda
-(estilo: sim, porém depois de três pombos, um Uno azul e senhora de milho). 2–4 frases completas.
-Só a resposta. NÃO liste cenários, NÃO diga "em português".`,
+  oracle_insane: `Você é o oráculo maluco do grupo de WhatsApp BR.
+Responda question= com uma profecia absurda e original que VOCÊ inventa do zero (imagens, condições, reviravoltas — livre).
+2–4 frases completas. Só a resposta. Sem autoajuda séria, sem listar modos, sem meta.`,
 
   illuminati_theory: `Você inventa UMA teoria da conspiração engraçada (Illuminati de zoeira) em pt-BR.
-A pessoa (user=) é o centro da teoria. Estilo: "Existem fortes indícios de que X controla o preço do pão francês desde 2009."
-2–3 frases COMPLETAS. Só a teoria. NÃO escreva "Cenários:", NÃO liste cancelamento/fofoca/oráculo/roleta.`,
+A pessoa (user=) é o centro. Invente o dossiê falso inteiro.
+2–4 frases COMPLETAS. Só a teoria. NÃO liste outros comandos (cancelamento/fofoca/oráculo).`,
 
-  russian_click: `Comentário de suspense de roleta russa virtual (câmara vazia / click) em pt-BR de zap. 1–3 frases completas. Só o comentário.`,
+  russian_click: `Comentário sobre roleta russa virtual: câmara vazia / click. pt-BR de zap.
+Invente o suspense/humor. 1–3 frases completas. Só o comentário.`,
 
-  russian_dead: `Comentário de "morte" virtual na roleta russa (mico, sem XP) em pt-BR de zap. 1–3 frases completas. Sem gore. Só o comentário.`,
+  russian_dead: `Comentário de "morte" virtual na roleta russa (mico, sem XP). pt-BR de zap.
+Invente o tom. 1–3 frases. Sem gore real. Só o comentário.`,
 
-  russian_start: `Abertura teatral da roleta russa virtual no grupo (1 bala). 1–3 frases completas em pt-BR. Só o texto.`,
+  russian_start: `Abertura da roleta russa virtual no grupo (1 bala). Invente o clima teatral.
+1–3 frases completas em pt-BR. Só o texto.`,
 
-  roast_personal: `Você é comediante de stand-up brasileiro, ácido e sarcástico.
-Faça um ROAST do user= baseado APENAS nos fatos= fornecidos.
-2–4 frases completas em pt-BR. Sem palavrão proibido pesado, sem preconceito, sem inventar crimes reais.
-Pode zoar emprego, cassino, casamento, saldo e mico do grupo. Só o roast final.`,
+  roast_personal: `Faça um ROAST engraçado de user= usando APENAS os facts= fornecidos.
+Você inventa o ângulo e as farpas — sem inventar crimes reais nem dados que não estejam nos fatos.
+2–4 frases em pt-BR. Sem preconceito, sem ofensa a trauma/identidade. Só o roast final.`,
 
-  group_times: `Você é editor do jornal sarcástico "The Group Times" de um grupo de WhatsApp.
-Com base nos events= do dia, escreva 3 manchetes engraçadas.
-Formato:
+  group_times: `Você é o editor do jornal do grupo ("The Group Times").
+Com base nos events= do dia, invente 3 seções engraçadas e originais.
+Formato fixo (rótulos em PT):
 MANCHETE: ...
 ECONOMIA: ...
 FOFOCA: ...
-Cada linha: título curto + 1 frase. pt-BR. Sem inventar números que não estejam nos eventos. Só o texto.`,
+Cada linha: título curto + 1 frase. pt-BR. Só use números/pessoas que estejam nos eventos. Só o texto.`,
 });
 
-const CHAOS_SYSTEM_DEFAULT = `Você gera texto cômico de bot WhatsApp BR. 2–4 frases COMPLETAS em pt-BR.
-Só o texto final pronto pro zap. Sem listas, sem "cenários", sem meta, sem inglês.`;
+const CHAOS_SYSTEM_DEFAULT = `Você gera texto cômico original de bot WhatsApp BR. 2–4 frases COMPLETAS em pt-BR.
+Invente o conteúdo do zero a partir dos fatos. Só o texto final pro zap. Sem listas de modos, sem meta, sem inglês de assistente.`;
 
-function chaosSystemFor(key, { short = false } = {}) {
+function chaosSystemFor(key) {
   const base = CHAOS_TASK_SYSTEM[key] || CHAOS_SYSTEM_DEFAULT;
-  const antiMeta =
-    ' PROIBIDO preâmbulo ("aqui vai", "como pediu", descrever a tarefa). Comece no texto final.';
-  if (!short) return base + antiMeta;
-  // Zen free: prompt enxuto, tarefa única
-  return `${base} Máx 500 chars. Zero raciocínio. ${antiMeta}`;
+  return `${base} PROIBIDO preâmbulo ("aqui vai", "como pediu", descrever a tarefa). Comece no texto final.`;
 }
 
 /** Fallbacks estáticos — sempre seguros se LLM falhar. */
@@ -718,79 +714,85 @@ function buildUserPrompt(scenario, vars) {
   const v = vars && typeof vars === 'object' ? vars : {};
   const groupLore = String(v.groupLore || '').trim();
   const facts = Object.entries(v)
-    .filter(([k, val]) => k !== 'groupLore' && val != null && String(val).trim() !== '')
-    .map(([k, val]) => `${k}=${String(val).slice(0, 80)}`)
+    .filter(
+      ([k, val]) =>
+        k !== 'groupLore' &&
+        k !== '__angle' &&
+        k !== '__genre' &&
+        k !== 'scopeKey' &&
+        k !== '__scopeKey' &&
+        val != null &&
+        String(val).trim() !== ''
+    )
+    .map(([k, val]) => `${k}=${String(val).slice(0, FACT_VALUE_MAX)}`)
     .join('; ');
 
+  // Situação factual só — o modelo inventa tom/humor/título do comentário.
   const scenarioHints = {
-    faction_create: 'Zoação leve sobre panelinha recém-criada no grupo.',
-    faction_join: 'Comente alguém entrando na panelinha — tom de “bem-vindo ao caos”.',
-    faction_leave: 'Comente saída de panelinha sem ser cruel de verdade.',
-    mission_spawn: 'Missão mista entre panelinhas: cooperação forçada, prêmio real.',
-    event_start: 'Evento relâmpago (trégua falsa / cross-panelinha) — sai da bolha.',
-    marry_propose: 'Pedido de casamento no zap: vergonha alheia e torcida do grupo.',
-    marry_accept: 'Casamento aceito: parabéns com pitada de deboche carinhoso.',
-    marry_mutual: 'Pedido mútuo: raro, quase assustador, engraçado.',
-    job_done: 'Alguém “trabalhou” no bot e ganhou coins (não invente o valor).',
-    flip_win: 'Ganhou no cara ou coroa — sorte com cara de skill (sem inventar valor).',
-    flip_lose: 'Perdeu no cara ou coroa — mico leve, sem humilhar de graça.',
-    roulette_win:
-      'Ganhou na ROLETA (bola/cor). Zoação de cassino de bairro — NÃO fale de moeda/cara/coroa. Sem inventar payout.',
-    roulette_lose:
-      'Perdeu na ROLETA (bola foi noutro lugar). Mico leve de mesa — NÃO fale de moeda/cara/coroa. Sem inventar valor.',
-    slot_win: 'Ganhou no SLOT (rolos). Tom de máquina caça-níquel — sem moeda, sem inventar mult.',
-    slot_lose: 'Perdeu no SLOT. Alavanca comeu a ficha — sem cara/coroa, sem inventar valor.',
-    crash_win: 'Cashout no CRASH (foguete) a tempo. Timing covarde e lucrativo — sem inventar mult se não vier no contexto.',
-    crash_lose: 'Crash explodiu com o jogador a bordo. Mico de ganância — sem inventar números.',
-    bj_win: 'Ganhou no BLACKJACK vs dealer. Mesa de cartas — sem moeda, sem inventar mão.',
-    bj_lose: 'Perdeu no BLACKJACK. Dealer ou estouro — mico leve, sem inventar total.',
-    bj_push: 'Empate (push) no BLACKJACK — stake de volta, drama morreu no meio.',
-    russian_click: 'Roleta russa: click (câmara vazia). Suspense de grupo, sem inventar morte.',
-    russian_dead: 'Roleta russa: BANG virtual. Mico + sem XP. Não invente tempo/coins.',
-    cancel_absurd:
-      'Gere o MOTIVO PRINCIPAL de cancelamento ABSURDO de user=. Seja criativo e único (não genérico). 2–4 frases. Sem ofensa real/preconceito.',
-    gossip_fake:
-      'Gere UMA fofoca 100% FALSA e engraçada sobre user=. Tom de rádio-peão. 2–4 frases. Sem ofensa pesada.',
-    oracle_insane:
-      'Oráculo INSANO: responda question= com profecia absurda (pombos, Uno azul, milho, elevador…). 2–4 frases. Sem conselho sério de autoajuda.',
-    illuminati_theory:
-      'Teoria Illuminati com user= no centro (pão, Wi-Fi, ônibus, café…). Tom dossiê falso. 2–3 frases.',
-    russian_start:
-      'Abertura teatral da roleta russa virtual no grupo (1 bala). Suspense de zoeira. 1–3 frases.',
-    bet_result: 'Resultado de aposta PvP: use os nomes; não invente pot/números.',
-    ship: 'Ship do grupo: use o clima do percent se tiver; pode ser safado de leve.',
-    lucky_hit: 'Deu sorte no comando de sorte — raro e gostoso.',
-    lucky_miss: 'Azar no comando de sorte — clássico, sem drama falso.',
-    level_up: 'Level up de XP — orgulho irônico de ranqueiro de grupo.',
-    assault_bank_win:
-      'ROTEIRO BESTEIROL CURTO: assalto a BANCO que DEU CERTO. Elenco: attacker, weapon. Cenas curtas, diálogos breves. NÃO invente coins/saldo/chance%.',
-    assault_bank_fail:
-      'ROTEIRO BESTEIROL CURTO: assalto a BANCO que FALHOU. Mico, fuga torta. NÃO invente multa/coins.',
-    assault_shop_win:
-      'ROTEIRO BESTEIROL CURTO: assalto a LOJINHA que DEU CERTO. Humor de bairro, dono, gato no balcão. NÃO invente coins.',
-    assault_shop_fail:
-      'ROTEIRO BESTEIROL CURTO: assalto a LOJINHA que FALHOU. Dono mais malandro. NÃO invente coins.',
-    assault_player_win:
-      'ROTEIRO BESTEIROL CURTO: assalto PvP (attacker vs target) que DEU CERTO. For fun no zap. NÃO invente quantias. Sem bullying pesado.',
-    assault_player_fail:
-      'ROTEIRO BESTEIROL CURTO: assalto PvP que FALHOU (attacker vs target). Mico de grupo. NÃO invente multa/coins.',
+    faction_create: 'Panelinha (time) recém-criada no grupo.',
+    faction_join: 'Alguém entrou numa panelinha.',
+    faction_leave: 'Alguém saiu de uma panelinha (ou ela dissolveu).',
+    mission_spawn: 'Missão mista entre panelinhas apareceu.',
+    event_start: 'Evento relâmpago cross-panelinha começou.',
+    marry_propose: 'Pedido de casamento no bot (zap).',
+    marry_accept: 'Casamento aceito no bot.',
+    marry_mutual: 'Pedido de casamento mútuo.',
+    job_done: 'Alguém terminou um "trabalho" no bot e ganhou coins (não invente o valor).',
+    flip_win: 'Ganhou no cara ou coroa.',
+    flip_lose: 'Perdeu no cara ou coroa.',
+    roulette_win: 'Ganhou na ROLETA (bola/cor). Não confunda com cara ou coroa.',
+    roulette_lose: 'Perdeu na ROLETA. Não confunda com cara ou coroa.',
+    slot_win: 'Ganhou no SLOT (rolos).',
+    slot_lose: 'Perdeu no SLOT.',
+    crash_win: 'Cashout a tempo no CRASH (foguete).',
+    crash_lose: 'Crash explodiu com o jogador a bordo.',
+    bj_win: 'Ganhou no BLACKJACK vs dealer.',
+    bj_lose: 'Perdeu no BLACKJACK.',
+    bj_push: 'Empate (push) no BLACKJACK.',
+    russian_click: 'Roleta russa virtual: click (câmara vazia).',
+    russian_dead: 'Roleta russa virtual: bang (morte simbólica, sem XP).',
+    cancel_absurd: 'Cancelamento absurdo da pessoa user=.',
+    gossip_fake: 'Fofoca falsa sobre user=.',
+    oracle_insane: 'Resposta de oráculo maluco à question=.',
+    illuminati_theory: 'Teoria Illuminati de zoeira com user= no centro.',
+    russian_start: 'Abertura da roleta russa virtual no grupo.',
+    bet_result: 'Resultado de aposta PvP (use os nomes; não invente pot/números).',
+    ship: 'Ship do grupo (percent/label nos fatos se houver).',
+    lucky_hit: 'Deu sorte no comando de sorte.',
+    lucky_miss: 'Azar no comando de sorte.',
+    level_up: 'Alguém subiu de nível de XP no bot.',
+    assault_bank_win: 'Assalto a BANCO que DEU CERTO. Elenco: attacker, weapon.',
+    assault_bank_fail: 'Assalto a BANCO que FALHOU. Elenco: attacker, weapon.',
+    assault_shop_win: 'Assalto a LOJINHA que DEU CERTO.',
+    assault_shop_fail: 'Assalto a LOJINHA que FALHOU.',
+    assault_player_win: 'Assalto PvP (attacker vs target) que DEU CERTO.',
+    assault_player_fail: 'Assalto PvP (attacker vs target) que FALHOU.',
   };
 
   const assault = isAssaultScenario(scenario);
   const hint =
-    scenarioHints[scenario] || 'Comentário de narrador de grupo BR sobre o que rolou.';
+    scenarioHints[scenario] ||
+    'Algo rolou no bot de diversão do grupo — comente com base nos fatos.';
   const shape = assault
-    ? `Escreva o ROTEIRO CURTO (450–900 caracteres). PRIMEIRA LINHA = 🎬 TÍTULO: (sem preâmbulo)
+    ? `Escreva o ROTEIRO CURTO (450–900 caracteres). PRIMEIRA LINHA = 🎬 TÍTULO: (invente o título)
 CENA 1 — PREPARAÇÃO
 CENA 2 — AÇÃO
 CENA 3 — FUGA / CONSEQUÊNCIA
 EPÍLOGO
-1–3 frases por cena. Sem inventar números. NÃO diga "aqui vai" nem "no tom que pediu":`
-    : 'Texto (1 a 3 frases, pt-BR de zap). Comece na frase final, sem "aqui vai":';
+1–3 frases por cena. Sem inventar números de coins. Sem preâmbulo:`
+    : 'Invente o comentário (1 a 3 frases, pt-BR de zap). Você escolhe o humor. Comece na frase final, sem "aqui vai":';
+
   const loreBlock = groupLore
-    ? `\n${String(groupLore).includes('<group_lore>') ? groupLore.slice(0, 900) : `<group_lore>\nRegras: use APENAS se houver relação direta; NUNCA troque o autor do fato; se não encaixar, IGNORE.\n${groupLore.slice(0, 700)}\n</group_lore>`}\n`
+    ? `\n${
+        String(groupLore).includes('<group_lore>')
+          ? groupLore.slice(0, LORE_MAX_FLAVOR)
+          : `<group_lore>\nRegras: use para ser específico deste grupo; NUNCA troque o autor do fato; se não encaixar, IGNORE.\n${groupLore.slice(0, LORE_MAX_FLAVOR)}\n</group_lore>`
+      }\n`
     : '';
-  return `${hint}\nContexto fixo (não invente além disso): ${facts || 'nenhum'}${loreBlock}\n${shape}`;
+
+  return `Situação: ${hint}
+Fatos do momento (não invente placar/coins além disso): ${facts || 'nenhum'}${loreBlock}
+${shape}`;
 }
 
 /** Sanitiza roteiro longo de assalto — mantém parágrafos/cenas. */
@@ -1072,7 +1074,7 @@ export function createFlavorService(deps = {}) {
           ([k, v]) =>
             !skipMetaKeys.has(k) && v != null && String(v).trim() !== ''
         )
-        .map(([k, v]) => `${k}=${String(v).slice(0, 160)}`)
+        .map(([k, v]) => `${k}=${String(v).slice(0, FACT_VALUE_MAX)}`)
         .join('; ');
 
       // Prompt focado na TAREFA (nunca "lista de cenários")
@@ -1080,7 +1082,7 @@ export function createFlavorService(deps = {}) {
         cancel_absurd: `Escreva o cancelamento absurdo de *${userName || 'Fulano'}*.`,
         gossip_fake: `Escreva a fofoca falsa sobre *${userName || 'Fulano'}*.`,
         oracle_insane: `Responda como oráculo maluco: “${question || 'a vida'}”.`,
-        illuminati_theory: `Escreva a teoria Illuminati com *${userName || 'Fulano'}* no centro (pão, Wi-Fi, ônibus…).`,
+        illuminati_theory: `Escreva a teoria Illuminati com *${userName || 'Fulano'}* no centro. Invente o dossiê.`,
         russian_click: `Comente o click (câmara vazia) da roleta russa. Dados: ${facts || 'nenhum'}.`,
         russian_dead: `Comente a “morte” virtual na roleta. Dados: ${facts || 'nenhum'}.`,
         russian_start: `Abra a roleta russa no grupo. Dados: ${facts || 'nenhum'}.`,
@@ -1111,8 +1113,8 @@ export function createFlavorService(deps = {}) {
           : null,
         key !== 'group_times' && groupLore
           ? String(groupLore).includes('<group_lore>')
-            ? groupLore.slice(0, 550)
-            : `<group_lore>\nUse só se encaixar; NÃO troque autores; NÃO invente.\n${groupLore.slice(0, 400)}\n</group_lore>`
+            ? groupLore.slice(0, LORE_MAX_CHAOS)
+            : `<group_lore>\nUse só se encaixar; NÃO troque autores; NÃO invente.\n${groupLore.slice(0, LORE_MAX_CHAOS)}\n</group_lore>`
           : null,
         banHint || null,
         key === 'group_times'
@@ -1124,7 +1126,7 @@ export function createFlavorService(deps = {}) {
 
       return {
         prompt,
-        system: chaosSystemFor(key, { short: Boolean(forZen || simple) }),
+        system: chaosSystemFor(key),
         maxChars: key === 'group_times' ? Math.max(maxChars, 900) : maxChars,
         assault: false,
         chaos: true,
@@ -1137,44 +1139,56 @@ export function createFlavorService(deps = {}) {
 
     let prompt;
     const scopeKey = scopeKeyOf(vars);
-    const angle = vars?.__angle || pickFlavorAngle(random);
     const banned = recentBanList(cfg, scopeKey);
     const banHint =
       banned.length > 0
-        ? `NÃO ecoe estes ganchos: ${banned
+        ? `NÃO ecoe estes ganchos recentes DESTE grupo: ${banned
             .slice(-5)
             .map((b) => fingerprintLine(b))
             .filter(Boolean)
             .join(' | ')}.`
         : '';
-    if (forZen) {
-      // prompt curto funciona melhor nos free models do Zen
+    // Zen e Ollama usam o mesmo user prompt rico (fatos + lore + situação).
+    // O modelo inventa humor/ângulo — o código não força catálogo de ângulos.
+    if (simple) {
       const facts = Object.entries(vars || {})
         .filter(
           ([k, v]) =>
             k !== '__angle' &&
+            k !== '__genre' &&
             k !== 'groupLore' &&
             k !== 'scopeKey' &&
             k !== '__scopeKey' &&
             v != null &&
             String(v).trim() !== ''
         )
-        .map(([k, v]) => `${k}=${String(v).slice(0, 80)}`)
+        .map(([k, v]) => `${k}=${String(v).slice(0, FACT_VALUE_MAX)}`)
         .join(', ');
-      prompt = simple
-        ? `Texto de grupo WhatsApp (pt-BR, até ${maxChars} chars) sobre ${key}. Ângulo: ${angle}. ${facts}. NÃO repita placar/coins. ${banHint} Só o texto final:`
-        : `Comente em 1 a 3 frases (pt-BR, tom de zap, até ${maxChars} chars) o cenário "${key}". Ângulo: ${angle}. Dados (só tom, NÃO repita placar): ${facts || 'nenhum'}. ${banHint} Só o texto final:`;
+      const lore = String(vars?.groupLore || '').trim();
+      prompt = [
+        `Comente em 1–3 frases (pt-BR de zap, até ${maxChars} chars) a situação "${key}".`,
+        `Fatos: ${facts || 'nenhum'}.`,
+        lore
+          ? String(lore).includes('<group_lore>')
+            ? lore.slice(0, LORE_MAX_FLAVOR)
+            : `<group_lore>\n${lore.slice(0, LORE_MAX_FLAVOR)}\n</group_lore>`
+          : null,
+        banHint || null,
+        'Invente o comentário. NÃO repita placar/coins. Só o texto final:',
+      ]
+        .filter(Boolean)
+        .join('\n');
     } else {
-      prompt = simple
-        ? `Texto em pt-BR (até ${maxChars} chars), tom de grupo WhatsApp, cenário=${key}, ângulo=${angle}. Contexto: ${JSON.stringify(vars || {}).slice(0, 300)}. NÃO repita coins/XP. ${banHint} Só o texto:`
-        : `${buildUserPrompt(key, vars)}\nÂngulo: ${angle}. ${banHint}`;
+      prompt = `${buildUserPrompt(key, vars)}
+${banHint}`.trim();
     }
+    // Zen = system completo (ápice). simple = path enxuto só se explicitamente pedido.
     const system = simple
-      ? `Responda somente em português brasileiro, 1 a 3 frases (até ${maxChars} caracteres). Sem aspas, sem markdown, sem listas, sem placar. Só o texto final.`
+      ? `Responda somente em português brasileiro, 1 a 3 frases (até ${maxChars} caracteres). Sem aspas, sem markdown de lista, sem placar. Só o texto final.`
       : forZen
         ? ZEN_SYSTEM_PROMPT
         : SYSTEM_PROMPT;
-    return { prompt, system, maxChars, assault: false, chaos: false, maxTokens: null, angle };
+    return { prompt, system, maxChars, assault: false, chaos: false, maxTokens: null };
   }
 
   async function tryZen(cfg, key, vars, { simple = false, assault = false, chaos = false } = {}) {
@@ -1183,14 +1197,7 @@ export function createFlavorService(deps = {}) {
     const task = resolveZenTaskParams(taskName, cfg);
     const ep = resolveZenEndpoint(cfg);
     const scopeKey = scopeKeyOf(vars);
-    const enriched = {
-      ...vars,
-      // group_times não usa ângulo de flavor (polui o prompt)
-      ...(key === 'group_times'
-        ? {}
-        : { __angle: vars?.__angle || pickFlavorAngle(random) }),
-      ...(assault ? { __genre: vars?.__genre || pickAssaultGenre(random) } : {}),
-    };
+    const enriched = { ...vars };
     const { prompt, system, maxChars, maxTokens } = buildPromptParts(cfg, key, enriched, simple, {
       forZen: true,
       assault,
@@ -1198,7 +1205,8 @@ export function createFlavorService(deps = {}) {
     });
     const scopeBan = recentBanList(cfg, scopeKey);
     const assaultPrompt = assault
-      ? `${prompt}\nGênero: ${enriched.__genre || 'comédia de bairro'}. NÃO invente coins/saldo/%. ${
+      ? `${prompt}
+Invente o gênero e o título. NÃO invente coins/saldo/%. ${
           scopeBan.length
             ? `Varie em relação a: ${scopeBan
                 .slice(-3)

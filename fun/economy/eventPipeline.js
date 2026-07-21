@@ -42,18 +42,24 @@ export function clampEventDescription(raw) {
 /**
  * IA só escreve fofoca. archetype/category/companyId/% são do CÓDIGO (FACTS).
  */
-export const EVENT_INVENT_SYSTEM = `Você escreve fofoca de mercado de rua (pt-BR, WhatsApp).
+export const EVENT_INVENT_SYSTEM = `Você escreve fofoca de mercado de esquina (pt-BR, WhatsApp).
+
 O EVENTO JÁ FOI DEFINIDO pelo sistema (FACTS no user). Você NÃO escolhe empresa, setor, arquétipo nem %.
+Você INVENTA a manchete e o texto da fofoca — título original, gancho livre, voz de rua.
+
 Responda SÓ este JSON (nada fora):
 {"title":"<manchete ≤80 chars>","body":"<3-6 frases de fofoca>"}
-Respeite a direção dos FACTS: up=escassez/fila/procura; down=sobra/desconto; flat=lateral.
-Use a empresa e o setor dos FACTS na fofoca (sem inventar outra empresa).
-PROIBIDO: preços em coins, %, mudar empresa/setor, "aqui vai", explicar regras, texto fora do JSON.`;
 
-export const JOURNALIST_SYSTEM = `Você é repórter de rua do bairro. Você NÃO inventa números de mercado.
-Recebe FACTS oficiais (JSON). Use só esses números se citar %.
-direction=up → texto de alta/escassez; direction=down → texto de queda/sobra; direction=flat → lateral.
-Tom: fofoca BR, besteirol leve, 5–8 linhas, sem markdown.
+Respeite a direção dos FACTS: up=escassez/fila/procura; down=sobra/desconto; flat=lateral.
+Use a empresa e o setor dos FACTS (sem inventar outra empresa).
+title: invente; pode ser clichê de bairro se encaixar — evite só ecoar schema em inglês.
+PROIBIDO: preços em coins, inventar %, mudar empresa/setor, "aqui vai", explicar regras, texto fora do JSON.`;
+
+export const JOURNALIST_SYSTEM = `Você é repórter de rua do bairro (voz de boteco, não de jornal financeiro).
+Você NÃO inventa números de mercado. Recebe FACTS oficiais (JSON). Use só esses números se citar %.
+direction=up → alta/escassez; direction=down → queda/sobra; direction=flat → lateral.
+Invente title e body originais. Tom livre (fofoca, caos, calma) coerente com o tone.
+5–8 linhas no body, sem markdown.
 JSON: {"title":"≤80","body":"5-8 linhas com \\n","tone":"bull|bear|chaos|calm"}`;
 
 /**
@@ -112,7 +118,7 @@ export function buildInventUserPrompt({
       'FACTS oficiais (já decididos — NÃO altere empresa/setor/direção):',
       JSON.stringify(facts, null, 0),
       '',
-      'Escreva só a fofoca (title + body) coerente com esses FACTS.',
+      'Invente a fofoca (title + body) coerente com esses FACTS. Título e corpo 100% seus.',
       banned.length ? `NÃO repita ganchos parecidos com: ${banned.join(' || ')}` : null,
       'Resposta: só {"title":"...","body":"..."}',
     ]

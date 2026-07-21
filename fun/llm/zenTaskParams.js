@@ -167,7 +167,9 @@ export function resolveZenTaskParams(task, funConfig = {}) {
 }
 
 /**
- * Ângulos de zoação — diversifica flavor sem alongar o texto.
+ * Legado: catálogo de ângulos/gêneros.
+ * O flavorService NÃO injeta mais isso no prompt — o modelo inventa humor e gênero.
+ * Mantido só para testes/scripts antigos.
  */
 export const FLAVOR_ANGLES = Object.freeze([
   'inveja do grupo',
