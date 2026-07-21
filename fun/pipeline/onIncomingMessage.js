@@ -632,7 +632,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
               try {
                 groupLore = groupMemoryService.buildLoreContext(scope.scopeKey, {
                   userJids: [userJid],
-                  limit: 4,
+                  limit: 8,
                   funConfig,
                 });
               } catch {

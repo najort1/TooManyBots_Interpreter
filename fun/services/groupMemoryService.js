@@ -29,10 +29,11 @@ REGRAS OBRIGATÓRIAS:
 4. O ID em subjects é o índice da mensagem [N] que identifica o AUTOR/sujeito do fato (quem FEZ a ação ou é o foco real). Não confunda quem fala sobre quem.
 5. Só salve engraçado, mico, rivalidade, bordão, apelido, lore social. Se nada valer: {"facts":[]}
 6. NÃO invente o que não está no trecho. NÃO salve: bom dia, ok, comando de bot, links, spam, dados sensíveis.
-7. summary em pt-BR, tom de zap, sem aspas externas.
+7. summary em pt-BR, como alguém contaria no grupo depois (tom de zap), sem aspas externas.
 Só o JSON.`;
 
-const PERSONA_SYSTEM = `Resuma o clima de um grupo WhatsApp BR em 3 a 5 bullets curtos (lore cômica), com base nos fatos dados.
+const PERSONA_SYSTEM = `Resuma o clima de um grupo WhatsApp BR em 3 a 5 bullets curtos de lore cômica, com base nos fatos dados.
+Cada bullet: observação específica (você inventa o ângulo), tom de quem vive o chat.
 pt-BR, sem inventar nomes que não estejam nos fatos. Máx 450 caracteres. Sem markdown pesado. Só o texto.`;
 
 const PERSONA_CACHE_TTL_MS = 30 * 60_000;
@@ -730,13 +731,14 @@ export function createGroupMemoryService({
    * Bloco estruturado <group_lore> pra injetar em prompts de flavor/caos.
    * Regras anti-alucinação + autor por primeiro nome (não JID cru).
    */
-  function buildLoreContext(scopeKey, { userJids = [], limit = 5, funConfig = {} } = {}) {
+  function buildLoreContext(scopeKey, { userJids = [], limit = 8, funConfig = {} } = {}) {
     const o = opts(funConfig);
     if (!o.enabled || !scopeKey) return '';
 
     const persona = getPersonaCached(scopeKey);
-    // SQL já filtra score e limita — não traz 50 pra RAM
-    const fetchLimit = Math.max(8, Math.min(12, Math.max(limit * 2, 10)));
+    // Probe live: 4–8 fatos ranqueados > dump 24 (menos latência, mais hit de lore).
+    const cap = Math.max(4, Math.min(12, Number(limit) || 8));
+    const fetchLimit = Math.max(12, Math.min(24, cap * 2));
     const facts = memoryRepository.listFacts(scopeKey, {
       limit: fetchLimit,
       minScore: Math.max(0, o.minScore - 10),
@@ -756,7 +758,7 @@ export function createGroupMemoryService({
       })
       .sort((a, b) => b.rank - a.rank);
 
-    const top = scored.slice(0, Math.max(1, Math.min(8, limit))).map((x) => x.f);
+    const top = scored.slice(0, cap).map((x) => x.f);
     const lines = [
       '<group_lore>',
       'Regras de uso da Lore:',
@@ -770,7 +772,7 @@ export function createGroupMemoryService({
     if (persona.personaText) {
       lines.push(
         '',
-        `Clima: ${persona.personaText.replace(/\n+/g, ' · ').slice(0, 280)}`
+        `Clima: ${persona.personaText.replace(/\n+/g, ' · ').slice(0, 450)}`
       );
     }
     if (top.length) {

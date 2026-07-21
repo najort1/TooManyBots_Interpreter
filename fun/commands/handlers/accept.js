@@ -1,5 +1,6 @@
 import { ACTION_TYPE } from '../../constants.js';
 import { nameOf } from '../../utils/userLabel.js';
+import { flavorWithLore } from '../../utils/flavorLore.js';
 
 async function flavorItalic(flavorService, scenario, vars) {
   if (!flavorService?.italicLine) return null;
@@ -21,6 +22,8 @@ export async function handleAcceptCommand({
   socialHooks,
   funConfig,
   flavorService,
+  groupMemoryService,
+  profileService,
   achievementService = null,
   newsService = null,
 }) {
@@ -51,7 +54,19 @@ export async function handleAcceptCommand({
     }
     const a = nameOf(getContactDisplayName, result.fromJid);
     const b = nameOf(getContactDisplayName, result.toJid);
-    const fl = await flavorItalic(flavorService, 'marry_accept', { a, b });
+    const fl = await flavorWithLore(
+      flavorService,
+      'marry_accept',
+      { a, b },
+      {
+        groupMemoryService,
+        profileService,
+        scopeKey,
+        userJids: [result.fromJid, result.toJid],
+        funConfig,
+        limit: 8,
+      }
+    );
     await reply(
       [`💍 *Casamento confirmado!*`, `*${a}* ❤️ *${b}*`, fl].filter(Boolean).join('\n')
     );

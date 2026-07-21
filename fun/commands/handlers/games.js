@@ -1,6 +1,7 @@
 import { parseAmountFromArgs, resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf } from '../../utils/userLabel.js';
+import { flavorWithLore } from '../../utils/flavorLore.js';
 
 function parseFlipArgs(args = []) {
   const amount = parseAmountFromArgs(args);
@@ -17,15 +18,6 @@ function parseFlipArgs(args = []) {
   return { amount, choice };
 }
 
-async function flavorItalic(flavorService, scenario, vars) {
-  if (!flavorService?.italicLine) return null;
-  try {
-    return await flavorService.italicLine(scenario, vars);
-  } catch {
-    return null;
-  }
-}
-
 export async function handleFlipCommand({
   userJid,
   scopeKey,
@@ -34,7 +26,17 @@ export async function handleFlipCommand({
   reply,
   args,
   flavorService,
+  groupMemoryService,
+  profileService,
 }) {
+  const loreCtx = {
+    groupMemoryService,
+    profileService,
+    scopeKey,
+    userJids: [userJid],
+    funConfig,
+    limit: 8,
+  };
   const { amount, choice } = parseFlipArgs(args);
   const min = funConfig.flipMin || 5;
   const max = funConfig.flipMax || 80;
@@ -82,10 +84,15 @@ export async function handleFlipCommand({
 
   // vitória só se lado sorteado === escolha (defesa contra bugs antigos)
   const won = Boolean(result.win) && result.pick === result.side;
-  const fl = await flavorItalic(flavorService, won ? 'flip_win' : 'flip_lose', {
-    pick: result.pick,
-    side: result.side,
-  });
+  const fl = await flavorWithLore(
+    flavorService,
+    won ? 'flip_win' : 'flip_lose',
+    {
+      pick: result.pick,
+      side: result.side,
+    },
+    loreCtx
+  );
   const lines = [
     '🪙 *Cara ou coroa*',
     `Sua aposta: *${result.pick}*`,
@@ -108,6 +115,8 @@ export async function handleJobCommand({
   funConfig,
   reply,
   flavorService,
+  groupMemoryService,
+  profileService,
 }) {
   const result = gameService.doJob({ userJid, scopeKey, funConfig });
   if (!result.ok) {
@@ -119,7 +128,19 @@ export async function handleJobCommand({
     return { handled: true };
   }
 
-  const fl = await flavorItalic(flavorService, 'job_done', { flavor: result.flavor });
+  const fl = await flavorWithLore(
+    flavorService,
+    'job_done',
+    { flavor: result.flavor },
+    {
+      groupMemoryService,
+      profileService,
+      scopeKey,
+      userJids: [userJid],
+      funConfig,
+      limit: 8,
+    }
+  );
   await reply(
     [
       '💼 *Trabalho*',
@@ -140,6 +161,8 @@ export async function handleLuckyCommand({
   funConfig,
   reply,
   flavorService,
+  groupMemoryService,
+  profileService,
 }) {
   const result = gameService.doLucky({ userJid, scopeKey, funConfig });
   if (!result.ok) {
@@ -151,7 +174,19 @@ export async function handleLuckyCommand({
     return { handled: true };
   }
 
-  const fl = await flavorItalic(flavorService, result.hit ? 'lucky_hit' : 'lucky_miss', {});
+  const fl = await flavorWithLore(
+    flavorService,
+    result.hit ? 'lucky_hit' : 'lucky_miss',
+    {},
+    {
+      groupMemoryService,
+      profileService,
+      scopeKey,
+      userJids: [userJid],
+      funConfig,
+      limit: 8,
+    }
+  );
   if (result.hit) {
     await reply(
       [`🍀 *Sorte!* Você ganhou *+${result.gain}* coins.`, `Saldo: *${result.coins}*`, fl]

@@ -2,6 +2,8 @@
  * Roast personalizado — dossiê SQLite + LLM (flavor) + template.
  */
 
+import { withGroupLore } from '../utils/flavorLore.js';
+
 const DAY_MS = 24 * 60 * 60_000;
 
 const FALLBACKS = [
@@ -17,6 +19,8 @@ export function createRoastService({
   factionService = null,
   casinoRepository = null,
   flavorService = null,
+  groupMemoryService = null,
+  profileService = null,
   random = Math.random,
 } = {}) {
   function enabled(funConfig = {}) {
@@ -136,11 +140,24 @@ export function createRoastService({
 
     if (flavorService && typeof flavorService.line === 'function') {
       try {
-        const out = await flavorService.line('roast_personal', {
-          user: dossier.name,
-          userName: dossier.name,
-          facts,
-        });
+        const out = await flavorService.line(
+          'roast_personal',
+          withGroupLore(
+            {
+              user: dossier.name,
+              userName: dossier.name,
+              facts,
+            },
+            {
+              groupMemoryService,
+              profileService,
+              scopeKey,
+              userJids: [userJid],
+              funConfig,
+              limit: 8,
+            }
+          )
+        );
         const raw = typeof out === 'string' ? out : out?.text;
         if (raw && String(raw).trim().length > 20) {
           text = String(raw).trim().slice(0, funConfig.roastMaxChars || 700);

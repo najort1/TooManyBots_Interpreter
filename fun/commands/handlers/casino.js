@@ -2,6 +2,7 @@ import { parseAmountFromArgs, resolveUserTarget } from '../../utils/mentions.js'
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
 import { renderLeaderboardPng } from '../../formatters/rankCardImage.js';
+import { flavorWithLore } from '../../utils/flavorLore.js';
 
 function colorLabel(c) {
   if (c === 'red') return 'vermelho';
@@ -10,13 +11,8 @@ function colorLabel(c) {
   return String(c || '?');
 }
 
-async function fl(flavorService, scenario, vars) {
-  if (!flavorService?.italicLine) return null;
-  try {
-    return await flavorService.italicLine(scenario, vars);
-  } catch {
-    return null;
-  }
+async function fl(flavorService, scenario, vars, loreCtx = {}) {
+  return flavorWithLore(flavorService, scenario, vars, loreCtx);
 }
 
 export async function handleRouletteCommand({
@@ -27,7 +23,17 @@ export async function handleRouletteCommand({
   reply,
   args,
   flavorService,
+  groupMemoryService,
+  profileService,
 }) {
+  const loreCtx = {
+    groupMemoryService,
+    profileService,
+    scopeKey,
+    userJids: [userJid],
+    funConfig,
+    limit: 8,
+  };
   const parsed = casinoService.parseRouletteBet(args);
   if (!parsed.amount || !parsed.choice) {
     await reply(
@@ -69,11 +75,16 @@ export async function handleRouletteCommand({
     result.choice.type === 'color'
       ? colorLabel(result.choice.value)
       : String(result.choice.value);
-  const flavor = await fl(flavorService, result.win ? 'roulette_win' : 'roulette_lose', {
-    pick,
-    ball: result.ball,
-    color: colorLabel(result.color),
-  });
+  const flavor = await fl(
+    flavorService,
+    result.win ? 'roulette_win' : 'roulette_lose',
+    {
+      pick,
+      ball: result.ball,
+      color: colorLabel(result.color),
+    },
+    loreCtx
+  );
   await reply(
     [
       '🎡 *Roleta*',
@@ -103,7 +114,17 @@ export async function handleSlotCommand({
   reply,
   args,
   flavorService,
+  groupMemoryService,
+  profileService,
 }) {
+  const loreCtx = {
+    groupMemoryService,
+    profileService,
+    scopeKey,
+    userJids: [userJid],
+    funConfig,
+    limit: 8,
+  };
   const amount = parseAmountFromArgs(args);
   if (!amount) {
     await reply(
@@ -140,9 +161,14 @@ export async function handleSlotCommand({
     return { handled: true };
   }
 
-  const flavor = await fl(flavorService, result.win ? 'slot_win' : 'slot_lose', {
-    reels: Array.isArray(result.reels) ? result.reels.join(' ') : '',
-  });
+  const flavor = await fl(
+    flavorService,
+    result.win ? 'slot_win' : 'slot_lose',
+    {
+      reels: Array.isArray(result.reels) ? result.reels.join(' ') : '',
+    },
+    loreCtx
+  );
   await reply(
     [
       '🎰 *Slot*',
@@ -320,6 +346,8 @@ export async function handleCashoutCommand({
   flavorService,
   achievementService = null,
   newsService = null,
+  groupMemoryService,
+  profileService,
 }) {
   const result = casinoService.cashoutCrash({ userJid, scopeKey, funConfig });
   if (!result.ok) {
@@ -327,9 +355,21 @@ export async function handleCashoutCommand({
     return { handled: true };
   }
 
-  const flavor = await fl(flavorService, result.crashed ? 'crash_lose' : 'crash_win', {
-    mult: result.crashed ? result.crashAt : result.currentMult,
-  });
+  const flavor = await fl(
+    flavorService,
+    result.crashed ? 'crash_lose' : 'crash_win',
+    {
+      mult: result.crashed ? result.crashAt : result.currentMult,
+    },
+    {
+      groupMemoryService,
+      profileService,
+      scopeKey,
+      userJids: [userJid],
+      funConfig,
+      limit: 8,
+    }
+  );
   if (result.crashed) {
     await reply(
       [
@@ -505,6 +545,8 @@ export async function handleStandCommand({
   funConfig,
   reply,
   flavorService,
+  groupMemoryService,
+  profileService,
 }) {
   const result = casinoService.standBlackjack({ userJid, scopeKey, funConfig });
   if (!result.ok) {
@@ -521,6 +563,14 @@ export async function handleStandCommand({
     {
       pTotal: result.pTotal,
       dTotal: result.dTotal,
+    },
+    {
+      groupMemoryService,
+      profileService,
+      scopeKey,
+      userJids: [userJid],
+      funConfig,
+      limit: 8,
     }
   );
   const msg =

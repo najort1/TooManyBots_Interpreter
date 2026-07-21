@@ -1,15 +1,7 @@
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf } from '../../utils/userLabel.js';
-
-async function flavorItalic(flavorService, scenario, vars) {
-  if (!flavorService?.italicLine) return null;
-  try {
-    return await flavorService.italicLine(scenario, vars);
-  } catch {
-    return null;
-  }
-}
+import { flavorWithLore } from '../../utils/flavorLore.js';
 
 export async function handleMarryCommand({
   userJid,
@@ -25,6 +17,8 @@ export async function handleMarryCommand({
   identityMap,
   funConfig,
   flavorService,
+  groupMemoryService,
+  profileService,
 }) {
   const contacts = typeof listContacts === 'function' ? listContacts() : [];
   const resolved = await resolveUserTarget({
@@ -71,8 +65,22 @@ export async function handleMarryCommand({
     return { handled: true };
   }
 
+  const loreCtx = {
+    groupMemoryService,
+    profileService,
+    scopeKey,
+    userJids: [userJid, target],
+    funConfig,
+    limit: 8,
+  };
+
   if (result.married && result.reason === 'mutual') {
-    const fl = await flavorItalic(flavorService, 'marry_mutual', { a: me, b: other });
+    const fl = await flavorWithLore(
+      flavorService,
+      'marry_mutual',
+      { a: me, b: other },
+      loreCtx
+    );
     await reply(
       [`💍 Pedido mútuo! *${me}* e *${other}* se casaram neste grupo!`, fl]
         .filter(Boolean)
@@ -81,7 +89,12 @@ export async function handleMarryCommand({
     return { handled: true, result };
   }
 
-  const fl = await flavorItalic(flavorService, 'marry_propose', { me, other });
+  const fl = await flavorWithLore(
+    flavorService,
+    'marry_propose',
+    { me, other },
+    loreCtx
+  );
   await reply(
     [
       '💍 *Pedido de casamento*',

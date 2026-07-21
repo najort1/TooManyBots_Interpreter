@@ -1,15 +1,7 @@
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
-
-async function flavorItalic(flavorService, scenario, vars) {
-  if (!flavorService?.italicLine) return null;
-  try {
-    return await flavorService.italicLine(scenario, vars);
-  } catch {
-    return null;
-  }
-}
+import { flavorWithLore } from '../../utils/flavorLore.js';
 
 export async function handleShipCommand({
   userJid,
@@ -25,6 +17,8 @@ export async function handleShipCommand({
   socialHooks,
   funConfig,
   flavorService,
+  groupMemoryService,
+  profileService,
 }) {
   const contacts = typeof listContacts === 'function' ? listContacts() : [];
   const mentions = Array.isArray(mentionedJids) ? [...mentionedJids] : [];
@@ -121,12 +115,24 @@ export async function handleShipCommand({
     }
   }
 
-  const fl = await flavorItalic(flavorService, 'ship', {
-    a: plain(a),
-    b: plain(b),
-    percent: result.percent,
-    label: result.label,
-  });
+  const fl = await flavorWithLore(
+    flavorService,
+    'ship',
+    {
+      a: plain(a),
+      b: plain(b),
+      percent: result.percent,
+      label: result.label,
+    },
+    {
+      groupMemoryService,
+      profileService,
+      scopeKey,
+      userJids: [a, b],
+      funConfig,
+      limit: 8,
+    }
+  );
 
   await reply(
     [
