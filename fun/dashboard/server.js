@@ -55,6 +55,12 @@ export function startFunDashboardServer(deps = {}) {
   const funModule = deps.funModule;
   const getContactDisplayName = deps.getContactDisplayName || (() => '');
   const getLogger = deps.getLogger || (() => null);
+  const getSock = typeof deps.getSock === 'function' ? deps.getSock : () => null;
+  const sendText = deps.sendText || null;
+  const isSocketReady =
+    typeof deps.isSocketReady === 'function'
+      ? deps.isSocketReady
+      : () => Boolean(getSock()?.user?.id || getSock()?.authState?.creds?.me?.id);
 
   if (!funModule?._services) {
     throw new Error('[fun/dashboard] funModule com _services é obrigatório');
@@ -694,6 +700,70 @@ export function startFunDashboardServer(deps = {}) {
           sendJson(res, 200, { ok: true, settings: saved });
           return;
         }
+      }
+
+      // --- Changelog admin (broadcast em todos os grupos whitelist) ---
+      if (req.method === 'GET' && path === '/api/fun/changelog') {
+        const limit = Number(url.searchParams.get('limit') || 20);
+        const history =
+          typeof funModule.listChangelogHistory === 'function'
+            ? funModule.listChangelogHistory({ limit })
+            : [];
+        const cfg = getConfig();
+        const jids = Array.isArray(cfg.groupWhitelistJids) ? cfg.groupWhitelistJids : [];
+        const groups = jids
+          .filter((j) => String(j).endsWith('@g.us'))
+          .map((jid) => ({
+            jid,
+            name: getContactDisplayName(jid) || '',
+          }));
+        sendJson(res, 200, {
+          whatsappReady: Boolean(isSocketReady()),
+          groups,
+          history,
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/api/fun/changelog') {
+        if (typeof funModule.broadcastChangelog !== 'function') {
+          sendJson(res, 503, { error: 'changelog-indisponivel' });
+          return;
+        }
+        const body = await readBody(req);
+        const dryRun = body.dryRun === true || body.preview === true;
+        const result = await funModule.broadcastChangelog({
+          title: body.title,
+          version: body.version,
+          body: body.body || body.message || body.text,
+          lines: body.lines,
+          groupJids: body.groupJids || body.groups,
+          dryRun,
+          sock: getSock?.(),
+          sendText,
+        });
+        if (!result.ok && result.reason === 'empty-body') {
+          sendJson(res, 400, { error: 'body-obrigatorio', ...result });
+          return;
+        }
+        if (!result.ok && result.reason === 'no-groups') {
+          sendJson(res, 400, { error: 'nenhum-grupo-na-whitelist', ...result });
+          return;
+        }
+        if (!result.ok && result.reason === 'whatsapp-offline') {
+          sendJson(res, 503, {
+            error: 'whatsapp-offline',
+            message: 'Sessão WhatsApp não está pronta. Abra o bot e escaneie o QR se precisar.',
+            ...result,
+          });
+          return;
+        }
+        if (!result.ok && result.reason === 'too-long') {
+          sendJson(res, 400, { error: 'mensagem-muito-longa', ...result });
+          return;
+        }
+        sendJson(res, result.ok || dryRun ? 200 : 207, result);
+        return;
       }
 
       sendJson(res, 404, { error: 'not-found' });

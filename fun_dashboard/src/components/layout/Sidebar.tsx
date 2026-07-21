@@ -9,6 +9,7 @@ import {
   Trophy,
   Users,
   Dices,
+  Megaphone,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -19,6 +20,7 @@ const NAV = [
   { href: "/ranking", label: "Ranking", icon: Trophy },
   { href: "/casino", label: "Cassino", icon: Dices },
   { href: "/groups", label: "Grupos", icon: Users },
+  { href: "/changelog", label: "Changelog", icon: Megaphone },
   { href: "/settings", label: "Config", icon: Settings2 },
 ] as const;
 

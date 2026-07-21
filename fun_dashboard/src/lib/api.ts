@@ -4,6 +4,8 @@ import type {
   BolsaHistory,
   BolsaRange,
   CasinoPayload,
+  ChangelogBroadcastResult,
+  ChangelogPayload,
   Faction,
   FunConfig,
   FunGroup,
@@ -93,6 +95,21 @@ export const funApi = {
       dropped: number;
       config?: Record<string, unknown>;
     }>("/api/fun/outbound"),
+
+  changelog: (limit = 20) =>
+    request<ChangelogPayload>(`/api/fun/changelog?limit=${limit}`),
+
+  publishChangelog: (body: {
+    title?: string;
+    version?: string;
+    body: string;
+    groupJids?: string[];
+    dryRun?: boolean;
+  }) =>
+    request<ChangelogBroadcastResult>("/api/fun/changelog", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
 
   /** Corretora read-only (público por grupo). */
   bolsa: (scope: string) =>

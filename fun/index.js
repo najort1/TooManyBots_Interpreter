@@ -39,6 +39,7 @@ import { createChaosService } from './services/chaosService.js';
 import { createPropertyService } from './services/propertyService.js';
 import { createRoastService } from './services/roastService.js';
 import { createNewsService } from './services/newsService.js';
+import { createChangelogService } from './services/changelogService.js';
 import { createAchievementService } from './services/achievementService.js';
 import { createFunMemoryRepository } from './db/funMemoryRepository.js';
 import { createFunProfileRepository } from './db/funProfileRepository.js';
@@ -64,6 +65,7 @@ export function createFunModule(deps = {}) {
   const sendText = deps.sendText || sendTextMessage;
   const sendImage = deps.sendImage || sendImageMessage;
   const sendSticker = deps.sendSticker || sendStickerMessage;
+  const getSock = typeof deps.getSock === 'function' ? deps.getSock : () => null;
   const resolveContactName = deps.getContactDisplayName || getContactDisplayName;
   const resolveContactList = deps.listContacts || (() => listContactDisplayNames(5000));
   const resolveWhitelist =
@@ -242,12 +244,24 @@ export function createFunModule(deps = {}) {
       factionService,
       casinoRepository,
       flavorService,
+      groupMemoryService,
+      profileService,
     });
   const newsService =
     deps.newsService ||
     createNewsService({
       newsRepository,
       flavorService,
+    });
+  const changelogService =
+    deps.changelogService ||
+    createChangelogService({
+      getDatabase,
+      getConfig: () => resolveFunConfig(getConfig() || {}),
+      getSock,
+      sendText,
+      getContactDisplayName: resolveContactName,
+      getLogger,
     });
 
   let initialized = false;
@@ -647,10 +661,30 @@ export function createFunModule(deps = {}) {
     };
   }
 
+  /**
+   * Admin: lança changelog nos grupos da whitelist (via dashboard).
+   */
+  async function broadcastChangelog(opts = {}) {
+    ensureInit();
+    return changelogService.broadcast({
+      ...opts,
+      funConfig: resolveFunConfig(getConfig() || {}),
+      sock: opts.sock || getSock?.(),
+      sendText: opts.sendText || sendText,
+    });
+  }
+
+  function listChangelogHistory(opts = {}) {
+    ensureInit();
+    return changelogService.listHistory(opts);
+  }
+
   return {
     init,
     onIncomingMessage,
     tickWorldEvents,
+    broadcastChangelog,
+    listChangelogHistory,
     warmupLlm,
     stopLlmKeepAlive,
     identityMap,
@@ -679,6 +713,7 @@ export function createFunModule(deps = {}) {
       propertyService,
       roastService,
       newsService,
+      changelogService,
       achievementService,
       casinoRepository,
       stockRepository,

@@ -551,6 +551,23 @@ export function buildFunSchemaSql() {
       updated_at   INTEGER NOT NULL,
       PRIMARY KEY (user_jid, scope_key, counter_key)
     );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_changelog_broadcasts (
+      id              TEXT PRIMARY KEY,
+      title           TEXT    NOT NULL DEFAULT '',
+      version         TEXT    NOT NULL DEFAULT '',
+      body            TEXT    NOT NULL,
+      message_text    TEXT    NOT NULL,
+      target_count    INTEGER NOT NULL DEFAULT 0,
+      ok_count        INTEGER NOT NULL DEFAULT 0,
+      fail_count      INTEGER NOT NULL DEFAULT 0,
+      dry_run         INTEGER NOT NULL DEFAULT 0,
+      results_json    TEXT    NOT NULL DEFAULT '[]',
+      created_at      INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_changelog_created
+      ON fun_changelog_broadcasts(created_at DESC);
   `;
 }
 

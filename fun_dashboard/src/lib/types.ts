@@ -52,6 +52,58 @@ export type Overview = {
   };
 };
 
+export type ChangelogGroup = {
+  jid: string;
+  name: string;
+};
+
+export type ChangelogResultRow = {
+  jid: string;
+  name?: string;
+  ok: boolean;
+  dryRun?: boolean;
+  reason?: string;
+};
+
+export type ChangelogHistoryItem = {
+  id: string;
+  title: string;
+  version: string;
+  body: string;
+  messageText: string;
+  targetCount: number;
+  okCount: number;
+  failCount: number;
+  dryRun: boolean;
+  results: ChangelogResultRow[];
+  createdAt: number;
+};
+
+export type ChangelogPayload = {
+  whatsappReady: boolean;
+  groups: ChangelogGroup[];
+  history: ChangelogHistoryItem[];
+};
+
+export type ChangelogBroadcastResult = {
+  ok: boolean;
+  id?: string;
+  dryRun?: boolean;
+  text?: string;
+  title?: string;
+  version?: string;
+  targetCount?: number;
+  okCount?: number;
+  failCount?: number;
+  results?: ChangelogResultRow[];
+  createdAt?: number;
+  reason?: string;
+  error?: string;
+  message?: string;
+  targets?: string[];
+  preview?: ChangelogGroup[];
+};
+
 export type FunConfig = {
   prefix: string;
   groupWhitelistJids: string[];

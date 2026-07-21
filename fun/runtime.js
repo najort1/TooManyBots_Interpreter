@@ -151,6 +151,9 @@ export async function startFunBot(options = {}) {
 
   const getConfig = () => config;
 
+  let socketGeneration = 0;
+  let currentSocket = null;
+
   const funModule = createFunModule({
     getConfig,
     getLogger: () => logger,
@@ -158,11 +161,9 @@ export async function startFunBot(options = {}) {
     sendImage: sendImageMessage,
     sendSticker: sendStickerMessage,
     getContactDisplayName,
+    getSock: () => currentSocket,
   });
   funModule.init();
-
-  let socketGeneration = 0;
-  let currentSocket = null;
   let saveCreds = null;
   let dashboardStarted = false;
   let messagesEnabled = false;
@@ -257,6 +258,9 @@ export async function startFunBot(options = {}) {
         funModule,
         getContactDisplayName,
         getLogger: () => logger,
+        getSock: () => currentSocket,
+        sendText: sendTextMessage,
+        isSocketReady: () => isSocketReady(currentSocket),
       });
       dashboardStarted = true;
     } catch (err) {
