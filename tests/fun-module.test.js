@@ -398,15 +398,15 @@ test('P0 facÃ§Ãµes, ponte, missÃ£o e evento', () => {
   assert.equal(spawned.ok, true);
   assert.ok(spawned.mission.members.length >= 2);
 
-  const ev = events.startCrossFaction({
+  const ev = events.startHappyHour({
     scopeKey: scope,
-    funConfig: { eventDurationMs: 600000, eventCooldownMs: 0, eventCrossMultiplier: 2 },
+    funConfig: { happyHourDurationMs: 600000, eventCooldownMs: 0, happyHourPayoutMult: 1.5 },
     force: true,
   });
   assert.equal(ev.ok, true);
   const st = events.getStatus(scope);
   assert.equal(st.active, true);
-  assert.equal(st.multiplier, 2);
+  assert.equal(st.multiplier, 1.5);
 });
 
 test('loja: compra boost e gasta coins', () => {

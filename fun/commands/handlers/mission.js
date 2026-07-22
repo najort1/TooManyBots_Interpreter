@@ -131,7 +131,7 @@ export async function handleEventCommand({
     await reply(
       [
         'Nenhum evento ativo agora.',
-        'O bot sorteia sozinho: *trégua falsa* (cross-panelinha) ou *happy hour* (cassino).',
+        'O bot sorteia *happy hour* (cassino) sozinho.',
         cdMin > 0 ? `Próxima janela de sorteio em ~*${cdMin}* min (cooldown).` : 'Fica de olho no chat — pode cair a qualquer momento.',
       ].join('\n')
     );
@@ -150,13 +150,5 @@ export async function handleEventCommand({
     return { handled: true, status };
   }
 
-  await reply(
-    [
-      '⚡ *Evento ativo: TRÉGUA FALSA*',
-      `Multiplicador: *${status.multiplier}x* em interações cross-panelinha`,
-      `Tempo restante: ~*${Math.ceil(status.remainingMs / 60000)}* min`,
-      'Vale para: `/pay` · `/aposta` · `/ship` entre panelinhas diferentes',
-    ].join('\n')
-  );
-  return { handled: true, status };
+  return { handled: true };
 }

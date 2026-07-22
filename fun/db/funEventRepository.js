@@ -85,17 +85,8 @@ export function createFunEventRepository({ getDatabase = getDb } = {}) {
     return get(scopeKey);
   }
 
-  function getActiveCrossEvent(scopeKey, now = Date.now()) {
-    const event = get(scopeKey);
-    const ts = Number(now) || Date.now();
-    if (event.eventType !== 'cross_faction') return null;
-    if (ts < event.startsAt || ts > event.endsAt) return null;
-    return event;
-  }
-
   return {
     get,
     upsert,
-    getActiveCrossEvent,
   };
 }

@@ -5,9 +5,6 @@
 export function createSocialHooks({
   bridgeService,
   missionService,
-  eventService,
-  factionService,
-  repository,
 } = {}) {
   function onSocialPair({
     scopeKey,
@@ -52,53 +49,10 @@ export function createSocialHooks({
       }
     }
 
-    let eventBonus = null;
-    if (eventService && factionService && repository) {
-      const cross = eventService.getCrossMultiplier({
-        scopeKey,
-        fromJid,
-        toJid,
-        factionService,
-        now,
-      });
-      if (cross.cross && cross.mult > 1) {
-        const bonus = Math.max(1, Math.floor(8 * cross.mult));
-        repository.addCoins({
-          userJid: fromJid,
-          scopeKey,
-          amount: bonus,
-          now,
-          reason: 'event-cross',
-        });
-        repository.addCoins({
-          userJid: toJid,
-          scopeKey,
-          amount: bonus,
-          now,
-          reason: 'event-cross',
-        });
-        repository.awardXp({
-          userJid: fromJid,
-          scopeKey,
-          amount: Math.floor(15 * cross.mult),
-          now,
-          cooldownMs: 0,
-        });
-        repository.awardXp({
-          userJid: toJid,
-          scopeKey,
-          amount: Math.floor(15 * cross.mult),
-          now,
-          cooldownMs: 0,
-        });
-        eventBonus = { bonusCoins: bonus, mult: cross.mult };
-      }
-    }
-
     return {
       recorded: true,
       mission,
-      eventBonus,
+      eventBonus: null,
     };
   }
 

@@ -130,6 +130,7 @@ export function createFunModule(deps = {}) {
     casinoRepository,
     effectsRepository,
     eventRepository,
+    getDatabase,
   });
   const tarotService =
     deps.tarotService ||
@@ -199,13 +200,7 @@ export function createFunModule(deps = {}) {
       jobRepository,
     });
   const eventService = createEventService({ eventRepository });
-  const socialHooks = createSocialHooks({
-    bridgeService,
-    missionService,
-    eventService,
-    factionService,
-    repository,
-  });
+  const socialHooks = createSocialHooks({ bridgeService, missionService });
   const chaosService =
     deps.chaosService ||
     createChaosService({

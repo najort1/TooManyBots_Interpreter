@@ -1,6 +1,6 @@
 /**
  * Eventos do Fun — só o bot inicia (surpresa + cooldown).
- * Tipos: cross_faction (trégua falsa) · casino_happy (happy hour)
+ * Só casino_happy (happy hour) — trégua falsa removida.
  */
 
 function numOr(value, fallback) {
@@ -41,17 +41,6 @@ export function createEventService({
         label: 'HAPPY HOUR',
       };
     }
-    const cross = eventRepository.getActiveCrossEvent(scopeKey, now);
-    if (cross) {
-      return {
-        active: true,
-        eventType: 'cross_faction',
-        multiplier: Number(cross.multiplier) || 2,
-        endsAt: cross.endsAt,
-        remainingMs: Math.max(0, cross.endsAt - now),
-        label: cross.payload?.label || 'TRÉGUA FALSA',
-      };
-    }
     return null;
   }
 
@@ -86,42 +75,6 @@ export function createEventService({
     if (!current.lastSpawnAt || cooldown <= 0) return 0;
     const left = cooldown - (now - current.lastSpawnAt);
     return left > 0 ? left : 0;
-  }
-
-  function startCrossFaction({
-    scopeKey,
-    funConfig = {},
-    now = Date.now(),
-    force = false,
-  }) {
-    const duration = Math.max(5 * 60_000, Math.floor(numOr(funConfig.eventDurationMs, 90 * 60_000)));
-    const mult = Number(funConfig.eventCrossMultiplier) || 2;
-
-    if (!force) {
-      const cd = cooldownRemaining(scopeKey, funConfig, now);
-      if (cd > 0) return { ok: false, reason: 'cooldown', retryInMs: cd };
-      if (getActiveEvent(scopeKey, now)) {
-        return { ok: false, reason: 'already-active', status: getStatus(scopeKey, now) };
-      }
-    }
-
-    const event = eventRepository.upsert(scopeKey, {
-      eventType: 'cross_faction',
-      multiplier: mult,
-      startsAt: now,
-      endsAt: now + duration,
-      lastSpawnAt: now,
-      payload: { label: 'TRÉGUA FALSA' },
-    });
-
-    return {
-      ok: true,
-      eventType: 'cross_faction',
-      event,
-      durationMs: duration,
-      multiplier: mult,
-      label: 'TRÉGUA FALSA',
-    };
   }
 
   function startHappyHour({
@@ -198,63 +151,17 @@ export function createEventService({
       return { ok: false, reason: 'no-roll' };
     }
 
-    if (happyOnly) {
-      return startHappyHour({ scopeKey, funConfig, now, force: true });
-    }
-
-    // pesos configuráveis (default: 50/50)
-    const happyWeight = Math.max(0, Number(funConfig.eventHappyWeight) ?? 0.5);
-    const crossWeight = Math.max(0, Number(funConfig.eventCrossWeight) ?? 0.5);
-    const total = happyWeight + crossWeight || 1;
-    const pick = random() * total;
-
-    if (pick < happyWeight) {
-      return startHappyHour({ scopeKey, funConfig, now, force: true });
-    }
-    return startCrossFaction({ scopeKey, funConfig, now, force: true });
-  }
-
-  /**
-   * Multiplicador se interação for entre panelinhas diferentes durante evento.
-   */
-  function getCrossMultiplier({
-    scopeKey,
-    fromJid,
-    toJid,
-    factionService,
-    now = Date.now(),
-  }) {
-    const active = eventRepository.getActiveCrossEvent(scopeKey, now);
-    if (!active) return { mult: 1, active: false };
-
-    const a = factionService?.getUserFaction?.(scopeKey, fromJid);
-    const b = factionService?.getUserFaction?.(scopeKey, toJid);
-    if (!a?.faction || !b?.faction) return { mult: 1, active: true, cross: false };
-    if (a.faction.id === b.faction.id) return { mult: 1, active: true, cross: false };
-
-    return {
-      mult: Number(active.multiplier) || 2,
-      active: true,
-      cross: true,
-    };
+    return startHappyHour({ scopeKey, funConfig, now, force: true });
   }
 
   function formatAnnouncement(spawned) {
     if (!spawned?.ok) return '';
     const minutes = Math.max(1, Math.round((spawned.durationMs || 0) / 60000));
-    if (spawned.eventType === 'casino_happy') {
-      return [
-        '🍸 *HAPPY HOUR — CASSINO*',
-        `O bot abriu a mesa por *${minutes} min*.`,
-        `Payouts de roleta/slot/crash/bj em *x${spawned.multiplier}*.`,
-        '_Surpresa do cassino — aproveitem._',
-      ].join('\n');
-    }
     return [
-      '⚡ *TRÉGUA FALSA*',
-      `Evento relâmpago por *${minutes} min* (o bot sorteou).`,
-      `Interagir com *outra panelinha* paga melhor em /pay, /aposta e /ship (*x${spawned.multiplier}*).`,
-      '_Panelinha isolada perde o meta._',
+      '🍸 *HAPPY HOUR — CASSINO*',
+      `O bot abriu a mesa por *${minutes} min*.`,
+      `Payouts de roleta/slot/crash/bj em *x${spawned.multiplier}*.`,
+      '_Surpresa do cassino — aproveitem._',
     ].join('\n');
   }
 
@@ -262,10 +169,8 @@ export function createEventService({
     getStatus,
     getActiveEvent,
     getHappyHourStatus,
-    startCrossFaction,
     startHappyHour,
     tryAutoSpawn,
-    getCrossMultiplier,
     cooldownRemaining,
     formatAnnouncement,
   };
