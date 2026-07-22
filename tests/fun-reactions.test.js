@@ -42,9 +42,9 @@ test('reactionMediaService: anime usa Nekos.best antes de waifu.pics', async () 
   assert.equal(normalizeReactionAction('abraço'), 'hug');
   assert.deepEqual(getReactionProviderOrder('hug'), [
     'nekos_best',
+    'purrbot',
     'waifu_pics',
     'nekobot',
-    'purrbot',
   ]);
 
   const result = await service.getReaction('hug', {
@@ -58,12 +58,12 @@ test('reactionMediaService: anime usa Nekos.best antes de waifu.pics', async () 
   assert.match(calls[0], /nekos\.best\/api\/v2\/hug/);
 });
 
-test('reactionMediaService: anime sem endpoint no Nekos.best cai para waifu.pics', async () => {
+test('reactionMediaService: anime sem endpoint no Nekos.best cai para purrbot (2a fonte)', async () => {
   const calls = [];
   const service = createReactionMediaService({
     fetchImpl: async (url) => {
       calls.push(String(url));
-      return jsonResponse({ url: 'https://i.waifu.pics/lick.gif' });
+      return jsonResponse({ link: 'https://purrbot.site/img/sfw/lick.gif' });
     },
   });
 
@@ -72,10 +72,10 @@ test('reactionMediaService: anime sem endpoint no Nekos.best cai para waifu.pics
   });
 
   assert.equal(result.ok, true);
-  assert.equal(result.provider, 'waifu.pics');
-  assert.equal(result.url, 'https://i.waifu.pics/lick.gif');
+  assert.equal(result.provider, 'purrbot');
+  assert.equal(result.url, 'https://purrbot.site/img/sfw/lick.gif');
   assert.equal(calls.length, 1);
-  assert.match(calls[0], /api\.waifu\.pics\/sfw\/lick/);
+  assert.match(calls[0], /purrbot\.site\/v2\/img\/sfw\/lick\/gif/);
 });
 
 test('reactionMediaService: memes usam Nekos.best como provedor primario', async () => {
@@ -209,5 +209,74 @@ test('facade: comando /hug envia imagem por Buffer (download proprio) com handle
   assert.equal(images[0].mimeType, 'image/gif');
   assert.match(images[0].caption, /Alice/);
   assert.match(images[0].caption, /Bob/);
-  assert.match(images[0].caption, /nekos\.best/);
+  assert.doesNotMatch(images[0].caption, /fonte/);
+});
+
+test('reactionMediaService: NSFW action usa purrbot_nsfw como provider unico', async () => {
+  const calls = [];
+  const service = createReactionMediaService({
+    fetchImpl: async (url) => {
+      calls.push(String(url));
+      return jsonResponse({ link: 'https://purrbot.site/img/nsfw/anal.gif' });
+    },
+  });
+
+  assert.deepEqual(getReactionProviderOrder('anal'), ['purrbot_nsfw']);
+  assert.deepEqual(getReactionProviderOrder('blowjob'), ['purrbot_nsfw']);
+
+  const result = await service.getReaction('anal', {
+    funConfig: { reactionProviderTimeoutMs: 1000 },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.provider, 'purrbot');
+  assert.equal(result.url, 'https://purrbot.site/img/nsfw/anal.gif');
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /purrbot\.site\/v2\/img\/nsfw\/anal\/gif/);
+});
+
+test('reactionMediaService: NSFW neko usa endpoint neko/gif', async () => {
+  const calls = [];
+  const service = createReactionMediaService({
+    fetchImpl: async (url) => {
+      calls.push(String(url));
+      return jsonResponse({ link: 'https://purrbot.site/img/nsfw/neko.gif' });
+    },
+  });
+
+  const result = await service.getReaction('neko', {
+    funConfig: { reactionProviderTimeoutMs: 1000 },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.url, 'https://purrbot.site/img/nsfw/neko.gif');
+  assert.match(calls[0], /purrbot\.site\/v2\/img\/nsfw\/neko\/gif/);
+});
+
+test('reactionMediaService: provider order SFW com purrbot como segunda opcao', async () => {
+  const calls = [];
+  const service = createReactionMediaService({
+    fetchImpl: async (url) => {
+      calls.push(String(url));
+      return jsonResponse({
+        results: [{ url: 'https://cdn.nekos.best/hug.gif' }],
+      });
+    },
+  });
+
+  assert.deepEqual(getReactionProviderOrder('hug'), [
+    'nekos_best',
+    'purrbot',
+    'waifu_pics',
+    'nekobot',
+  ]);
+
+  const result = await service.getReaction('hug', {
+    funConfig: { reactionProviderTimeoutMs: 1000 },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.provider, 'nekos.best');
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /nekos\.best\/api\/v2\/hug/);
 });
