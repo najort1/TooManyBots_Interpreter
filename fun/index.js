@@ -35,6 +35,7 @@ import { createFunAchievementRepository } from './db/funAchievementRepository.js
 import { createGroupMembershipService } from './utils/groupMembership.js';
 import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
+import { createReactionMediaService } from './services/reactionMediaService.js';
 import { createChaosService } from './services/chaosService.js';
 import { createPropertyService } from './services/propertyService.js';
 import { createRoastService } from './services/roastService.js';
@@ -229,6 +230,12 @@ export function createFunModule(deps = {}) {
       zenGenerate: deps.openaiChatComplete || deps.zenGenerate,
       generate: deps.ollamaGenerate || deps.generate,
     });
+  const reactionMediaService =
+    deps.reactionMediaService ||
+    createReactionMediaService({
+      getConfig: () => resolveFunConfig(getConfig() || {}),
+      getLogger,
+    });
   const achievementService =
     deps.achievementService ||
     createAchievementService({
@@ -325,6 +332,7 @@ export function createFunModule(deps = {}) {
         profileService,
         socialHooks,
         flavorService,
+        reactionMediaService,
         getContactDisplayName: resolveContactName,
         listContacts: resolveContactList,
         sendText,
@@ -727,6 +735,7 @@ export function createFunModule(deps = {}) {
       profileRepository,
       socialHooks,
       flavorService,
+      reactionMediaService,
       identityMap,
       membershipService,
       prefsRepository,

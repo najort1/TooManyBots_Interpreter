@@ -113,6 +113,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     profileService,
     socialHooks,
     flavorService,
+    reactionMediaService,
     getContactDisplayName,
     listContacts,
     sendText,
@@ -373,6 +374,36 @@ export async function handleFunIncomingMessage(deps, ctx) {
     );
   };
 
+  const replyImageUrl = async (imageUrl, caption = '', mimeType = '') => {
+    if (typeof sendImage !== 'function') return;
+    const url = String(imageUrl || '').trim();
+    if (!url) return;
+    const cap = withActorTag(String(caption || '').trim());
+    const mentions = userFmt.takeMentions();
+    const sendOpts = buildSendOpts(mentions);
+
+    const ua = 'TooManyBots-Fun/1.0 (https://github.com/anomalyco/TooManyBots_Interpreter)';
+
+    let imageBuffer;
+    try {
+      const response = await fetch(url, {
+        headers: { 'User-Agent': ua },
+      });
+      if (!response.ok) throw new Error(`fetch-${response.status}`);
+      imageBuffer = Buffer.from(await response.arrayBuffer());
+    } catch {
+      await sendImage(sock, chatJid, { imageUrl: url, caption: cap, mimeType, mentions }, sendOpts);
+      return;
+    }
+
+    await sendImage(
+      sock,
+      chatJid,
+      { imageBuffer, caption: cap, mimeType, mentions },
+      sendOpts
+    );
+  };
+
   /** Figurinha sempre no chat atual (grupo ou DM), não no “modo privado de rank”. */
   const replySticker = async (stickerBuffer) => {
     if (typeof sendSticker !== 'function') {
@@ -523,6 +554,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           profileService,
           socialHooks,
           flavorService,
+          reactionMediaService,
           getContactDisplayName,
           formatUser,
           listContacts,
@@ -530,6 +562,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           replyPrivate,
           replyToChat,
           replyImage,
+          replyImageUrl,
           replySticker,
           mentionedJids,
           quotedParticipant,

@@ -334,6 +334,23 @@ export function normalizeFunConfig(input) {
     ),
     mentionUsers: normalizeBoolean(raw.mentionUsers, DEFAULT_FUN_CONFIG.mentionUsers),
     replyQuoted: normalizeBoolean(raw.replyQuoted, DEFAULT_FUN_CONFIG.replyQuoted),
+    reactionsEnabled: normalizeBoolean(raw.reactionsEnabled, DEFAULT_FUN_CONFIG.reactionsEnabled),
+    reactionProviderTimeoutMs: normalizeInt(
+      raw.reactionProviderTimeoutMs,
+      DEFAULT_FUN_CONFIG.reactionProviderTimeoutMs,
+      { min: 500, max: 30_000, rounding: 'floor', clamp: true }
+    ),
+    reactionAnimeProviderOrder: toStringArray(raw.reactionAnimeProviderOrder).length
+      ? toStringArray(raw.reactionAnimeProviderOrder)
+      : DEFAULT_FUN_CONFIG.reactionAnimeProviderOrder,
+    reactionUserAgent:
+      toText(raw.reactionUserAgent, DEFAULT_FUN_CONFIG.reactionUserAgent) ||
+      DEFAULT_FUN_CONFIG.reactionUserAgent,
+    tenorApiKey:
+      toText(raw.tenorApiKey, process.env.TENOR_API_KEY || DEFAULT_FUN_CONFIG.tenorApiKey) || '',
+    tenorClientKey:
+      toText(raw.tenorClientKey, DEFAULT_FUN_CONFIG.tenorClientKey) ||
+      DEFAULT_FUN_CONFIG.tenorClientKey,
     casinoMin: normalizeInt(raw.casinoMin, DEFAULT_FUN_CONFIG.casinoMin, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
     casinoMax: normalizeInt(raw.casinoMax, DEFAULT_FUN_CONFIG.casinoMax, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
     casinoCooldownMs: normalizeInt(raw.casinoCooldownMs, DEFAULT_FUN_CONFIG.casinoCooldownMs, { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
@@ -880,6 +897,12 @@ export function saveFunUserConfig(input) {
     replyCommandsInPrivate: normalized.replyCommandsInPrivate,
     mentionUsers: normalized.mentionUsers,
     replyQuoted: normalized.replyQuoted,
+    reactionsEnabled: normalized.reactionsEnabled,
+    reactionProviderTimeoutMs: normalized.reactionProviderTimeoutMs,
+    reactionAnimeProviderOrder: normalized.reactionAnimeProviderOrder,
+    reactionUserAgent: normalized.reactionUserAgent,
+    tenorApiKey: normalized.tenorApiKey,
+    tenorClientKey: normalized.tenorClientKey,
   };
   fs.writeFileSync(FUN_USER_CONFIG_PATH, JSON.stringify(payload, null, 2), 'utf-8');
   return normalizeFunConfig(payload);

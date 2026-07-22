@@ -48,6 +48,7 @@ import {
 } from './handlers/casino.js';
 import { handleGroupScopeCommand } from './handlers/groupScope.js';
 import { handleStickerCommand } from './handlers/sticker.js';
+import { handleReactionCommand } from './handlers/reaction.js';
 import { handleTarotCommand } from './handlers/tarot.js';
 import {
   handleGalleryCommand,
@@ -150,12 +151,14 @@ export async function routeFunCommand(ctx) {
     profileService,
     socialHooks,
     flavorService,
+    reactionMediaService,
     getContactDisplayName,
     listContacts,
     reply,
     replyPrivate,
     replyToChat,
     replyImage,
+    replyImageUrl,
     mentionedJids,
     quotedParticipant,
     effectiveRates,
@@ -178,6 +181,7 @@ export async function routeFunCommand(ctx) {
   if (!parsed) return { handled: false };
 
   const base = {
+    text,
     userJid,
     chatJid,
     isGroup,
@@ -210,12 +214,14 @@ export async function routeFunCommand(ctx) {
     profileService,
     socialHooks,
     flavorService,
+    reactionMediaService,
     getContactDisplayName,
     listContacts,
     reply,
     replyPrivate: replyPrivate || reply,
     replyToChat: replyToChat || reply,
     replyImage,
+    replyImageUrl,
     args: parsed.args,
     mentionedJids: mentionedJids || [],
     quotedParticipant: quotedParticipant || '',
@@ -346,6 +352,8 @@ export async function routeFunCommand(ctx) {
       return handleGroupScopeCommand(base);
     case FUN_COMMANDS.STICKER:
       return handleStickerCommand(base);
+    case FUN_COMMANDS.REACTION:
+      return handleReactionCommand(base);
     case FUN_COMMANDS.RUSSIAN:
       return handleRussianCommand(base);
     case FUN_COMMANDS.PULL:

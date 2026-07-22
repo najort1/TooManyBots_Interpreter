@@ -79,6 +79,7 @@ export const FUN_COMMANDS = Object.freeze({
   GROUP_SCOPE: 'group_scope',
   // Mídia
   STICKER: 'sticker',
+  REACTION: 'reaction',
 });
 
 /**
@@ -125,6 +126,7 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     FUN_COMMANDS.ACHIEVEMENTS,
     // emprego: anúncio curto no grupo no start
     FUN_COMMANDS.EMPLOYMENT,
+    FUN_COMMANDS.REACTION,
   ])
 );
 
@@ -271,6 +273,42 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   figurinha: FUN_COMMANDS.STICKER,
   sticker: FUN_COMMANDS.STICKER,
   s: FUN_COMMANDS.STICKER,
+  kiss: FUN_COMMANDS.REACTION,
+  beijo: FUN_COMMANDS.REACTION,
+  beijar: FUN_COMMANDS.REACTION,
+  hug: FUN_COMMANDS.REACTION,
+  abraco: FUN_COMMANDS.REACTION,
+  abraço: FUN_COMMANDS.REACTION,
+  pat: FUN_COMMANDS.REACTION,
+  carinho: FUN_COMMANDS.REACTION,
+  slap: FUN_COMMANDS.REACTION,
+  tapa: FUN_COMMANDS.REACTION,
+  cuddle: FUN_COMMANDS.REACTION,
+  cafune: FUN_COMMANDS.REACTION,
+  cafuné: FUN_COMMANDS.REACTION,
+  bite: FUN_COMMANDS.REACTION,
+  morder: FUN_COMMANDS.REACTION,
+  lick: FUN_COMMANDS.REACTION,
+  lamber: FUN_COMMANDS.REACTION,
+  poke: FUN_COMMANDS.REACTION,
+  cutucar: FUN_COMMANDS.REACTION,
+  handhold: FUN_COMMANDS.REACTION,
+  maosdadas: FUN_COMMANDS.REACTION,
+  maos: FUN_COMMANDS.REACTION,
+  highfive: FUN_COMMANDS.REACTION,
+  tocaqui: FUN_COMMANDS.REACTION,
+  wave: FUN_COMMANDS.REACTION,
+  acenar: FUN_COMMANDS.REACTION,
+  nom: FUN_COMMANDS.REACTION,
+  comer: FUN_COMMANDS.REACTION,
+  happy: FUN_COMMANDS.REACTION,
+  feliz: FUN_COMMANDS.REACTION,
+  cry: FUN_COMMANDS.REACTION,
+  chorar: FUN_COMMANDS.REACTION,
+  laugh: FUN_COMMANDS.REACTION,
+  rir: FUN_COMMANDS.REACTION,
+  bruh: FUN_COMMANDS.REACTION,
+  sus: FUN_COMMANDS.REACTION,
   aposta: FUN_COMMANDS.BET,
   bet: FUN_COMMANDS.BET,
   apostar: FUN_COMMANDS.BET,
@@ -386,6 +424,12 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
    * Ajuda a ver a quem o bot está respondendo em grupo movimentado.
    */
   replyQuoted: true,
+  reactionsEnabled: true,
+  reactionProviderTimeoutMs: 4500,
+  reactionAnimeProviderOrder: ['nekos_best', 'waifu_pics', 'nekobot', 'purrbot'],
+  reactionUserAgent: 'TooManyBots-Fun/1.0 (https://github.com/anomalyco/TooManyBots_Interpreter)',
+  tenorApiKey: '',
+  tenorClientKey: 'toomanybots_fun',
   requireGroupWhitelist: true,
   // DM: comandos no privado se for membro de grupo na whitelist
   allowDm: true,
