@@ -35,7 +35,6 @@ export function isProtectedPath(pathname: string): boolean {
   if (pathname.startsWith("/job/")) {
     return false;
   }
-
   if (pathname === "/overview" || pathname.startsWith("/overview/")) return true;
   if (pathname === "/api/fun/overview") return true;
   if (
