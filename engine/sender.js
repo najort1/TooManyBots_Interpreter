@@ -5,6 +5,11 @@
  * Inclui guard de saída (rate limit / gap / typing) para reduzir ban.
  */
 
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
+import { spawn } from 'child_process';
+import crypto from 'crypto';
 import { delay } from '../utils/async.js';
 import { getDefaultOutboundGuard } from './outboundGuard.js';
 
@@ -96,18 +101,77 @@ export async function sendTextMessage(sock, jid, text, options = undefined) {
   return { skipped: false };
 }
 
+function getTempDir() {
+  const dir = path.join(os.tmpdir(), 'tmb-media');
+  try { fs.mkdirSync(dir, { recursive: true }); } catch { /* ok */ }
+  return dir;
+}
+
+let tempFileCounter = 0;
+
+function isGifBuffer(buffer) {
+  return buffer && buffer.length > 3 && buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46;
+}
+
+function runProcess(cmd, args) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+    let stderr = '';
+    child.stderr.on('data', (chunk) => { stderr += chunk; });
+    child.once('error', (err) => reject(new Error(`spawn ${cmd}: ${err.message}`)));
+    child.once('close', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`${cmd} exit ${code}: ${stderr.slice(0, 300)}`));
+    });
+  });
+}
+
+/**
+ * Converte GIF animado para MP4 via ffmpeg.
+ * Retorna caminho do arquivo MP4 gerado.
+ */
+async function gifToMp4(gifBuffer) {
+  const id = crypto.randomUUID();
+  const inputPath = path.join(getTempDir(), `gif-${id}.gif`);
+  const outputPath = path.join(getTempDir(), `gif-${id}.mp4`);
+
+  fs.writeFileSync(inputPath, gifBuffer);
+  try {
+    await runProcess('ffmpeg', [
+      '-y',
+      '-i', inputPath,
+      '-an',
+      '-vf', 'fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2:flags=lanczos',
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-movflags', '+faststart',
+      outputPath,
+    ]);
+    return outputPath;
+  } finally {
+    try { fs.unlinkSync(inputPath); } catch { /* ok */ }
+  }
+}
+
+function bufferToTempFile(buffer, ext) {
+  const name = `media-${Date.now()}-${++tempFileCounter}${ext}`;
+  const filePath = path.join(getTempDir(), name);
+  fs.writeFileSync(filePath, buffer);
+  return filePath;
+}
+
 export async function sendImageMessage(
   sock,
   jid,
-  { imageBuffer, caption = '', mimeType = '', mentions = [] },
+  { imageBuffer, imageUrl = '', caption = '', mimeType = '', mentions = [] },
   options = undefined
 ) {
   const opts = options && typeof options === 'object' ? options : {};
   const cap = String(caption ?? '').trim();
   const slot = await beforeSend(sock, jid, {
-    text: cap || '[image]',
+    text: cap || '[media]',
     skipGuard: Boolean(opts.skipGuard),
-    skipTyping: true, // mídia sem typing longo
+    skipTyping: true,
     guard: opts.guard,
   });
   if (!slot.ok) return { skipped: true, reason: slot.reason };
@@ -118,23 +182,69 @@ export async function sendImageMessage(
       ? opts.mentions.map((m) => String(m || '').trim()).filter(Boolean)
       : [];
 
-  const payload = {
-    image: imageBuffer,
-    caption: cap || undefined,
-  };
-  if (mimeType) {
-    payload.mimetype = mimeType;
+  let buffer = imageBuffer || null;
+  if (!buffer && String(imageUrl || '').trim()) {
+    try {
+      const resp = await fetch(String(imageUrl).trim(), {
+        headers: { 'User-Agent': 'TooManyBots-Fun/1.0 (https://github.com/anomalyco/TooManyBots_Interpreter)' },
+      });
+      if (resp.ok) buffer = Buffer.from(await resp.arrayBuffer());
+    } catch { /* fallback */
+    }
   }
-  if (mentionList.length) {
-    payload.mentions = mentionList;
-  }
+
   const sendOpts = { __sendSource: opts.__sendSource || 'service' };
-  if (opts.quoted && typeof opts.quoted === 'object') {
-    sendOpts.quoted = opts.quoted;
+  if (opts.quoted && typeof opts.quoted === 'object') sendOpts.quoted = opts.quoted;
+
+  const isGif = buffer ? isGifBuffer(buffer) : /\.gif$/i.test(String(imageUrl));
+
+  if (isGif && buffer) {
+    const mp4Path = await gifToMp4(buffer);
+    const mp4Payload = {
+      video: { stream: fs.createReadStream(mp4Path) },
+      gifPlayback: true,
+      mimetype: 'video/mp4',
+      caption: cap || undefined,
+    };
+    if (mentionList.length) mp4Payload.mentions = mentionList;
+
+    try {
+      await sock.sendMessage(jid, mp4Payload, sendOpts);
+    } finally {
+      try { fs.unlinkSync(mp4Path); } catch { /* ok */ }
+    }
+    afterSend(jid, { text: cap || '[gif]', skipGuard: Boolean(opts.skipGuard), guard: opts.guard });
+    return { skipped: false, gifConverted: true };
   }
-  await sock.sendMessage(jid, payload, sendOpts);
-  afterSend(jid, { text: cap || '[image]', skipGuard: Boolean(opts.skipGuard), guard: opts.guard });
-  return { skipped: false };
+
+  if (buffer) {
+    const ext = isGif ? '.gif' : '.png';
+    const tempPath = bufferToTempFile(buffer, ext);
+    const payload = {
+      image: { stream: fs.createReadStream(tempPath) },
+      mimetype: mimeType || (isGif ? 'image/gif' : 'image/png'),
+      caption: cap || undefined,
+    };
+    if (mentionList.length) payload.mentions = mentionList;
+    await sock.sendMessage(jid, payload, sendOpts);
+    afterSend(jid, { text: cap || '[image]', skipGuard: Boolean(opts.skipGuard), guard: opts.guard });
+    return { skipped: false };
+  }
+
+  if (String(imageUrl || '').trim()) {
+    const url = String(imageUrl).trim();
+    const payload = {
+      image: { url },
+      caption: cap || undefined,
+    };
+    if (mimeType) payload.mimetype = mimeType;
+    if (mentionList.length) payload.mentions = mentionList;
+    await sock.sendMessage(jid, payload, sendOpts);
+    afterSend(jid, { text: cap || '[image-url]', skipGuard: Boolean(opts.skipGuard), guard: opts.guard });
+    return { skipped: false };
+  }
+
+  throw new Error('image-payload-invalid');
 }
 
 /**
