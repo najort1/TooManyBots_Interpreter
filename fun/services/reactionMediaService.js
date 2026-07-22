@@ -15,6 +15,22 @@ const ANIME_ACTIONS = Object.freeze([
 
 const MEME_ACTIONS = Object.freeze(['happy', 'cry', 'laugh', 'bruh', 'sus']);
 
+const NSFW_ACTIONS = Object.freeze([
+  'anal',
+  'blowjob',
+  'cum',
+  'fuck',
+  'neko',
+  'pussylick',
+  'solo',
+  'solo_male',
+  'threesome_fff',
+  'threesome_ffm',
+  'threesome_mmf',
+  'yaoi',
+  'yuri',
+]);
+
 const ACTION_ALIASES = Object.freeze({
   beijo: 'kiss',
   beijar: 'kiss',
@@ -50,6 +66,23 @@ const ACTION_ALIASES = Object.freeze({
   rir: 'laugh',
   bruh: 'bruh',
   sus: 'sus',
+  // NSFW
+  anal: 'anal',
+  blowjob: 'blowjob',
+  boquete: 'blowjob',
+  cum: 'cum',
+  gozo: 'cum',
+  fuck: 'fuck',
+  transar: 'fuck',
+  neko: 'neko',
+  pussylick: 'pussylick',
+  solo: 'solo',
+  solo_male: 'solo_male',
+  threesome_fff: 'threesome_fff',
+  threesome_ffm: 'threesome_ffm',
+  threesome_mmf: 'threesome_mmf',
+  yaoi: 'yaoi',
+  yuri: 'yuri',
 });
 
 const NEKOS_BEST_ACTIONS = new Set([
@@ -100,6 +133,22 @@ const PURRBOT_ACTIONS = new Set([
   'cry',
 ]);
 
+const PURRBOT_NSFW_ACTIONS = new Set([
+  'anal',
+  'blowjob',
+  'cum',
+  'fuck',
+  'neko',
+  'pussylick',
+  'solo',
+  'solo_male',
+  'threesome_fff',
+  'threesome_ffm',
+  'threesome_mmf',
+  'yaoi',
+  'yuri',
+]);
+
 const NEKOBOT_ACTIONS = new Set(['hug', 'kiss', 'pat', 'slap', 'bite', 'cuddle', 'poke']);
 
 const TENOR_QUERIES = Object.freeze({
@@ -124,6 +173,7 @@ export function normalizeReactionAction(value) {
 }
 
 export function getReactionKind(action) {
+  if (NSFW_ACTIONS.includes(action)) return 'nsfw';
   if (MEME_ACTIONS.includes(action)) return 'meme';
   if (ANIME_ACTIONS.includes(action)) return 'anime';
   return '';
@@ -131,6 +181,7 @@ export function getReactionKind(action) {
 
 export function getReactionProviderOrder(action, funConfig = {}) {
   const kind = getReactionKind(action);
+  if (kind === 'nsfw') return ['purrbot_nsfw'];
   if (kind === 'meme') return ['nekos_best', 'tenor', 'waifu_pics', 'purrbot'];
   if (kind !== 'anime') return [];
 
@@ -139,7 +190,7 @@ export function getReactionProviderOrder(action, funConfig = {}) {
     : [];
   const order = configured.length
     ? configured
-    : ['nekos_best', 'waifu_pics', 'nekobot', 'purrbot'];
+    : ['nekos_best', 'purrbot', 'waifu_pics', 'nekobot'];
   return order.map((p) => String(p || '').trim()).filter(Boolean);
 }
 
@@ -279,6 +330,25 @@ function pickTenorUrl(result) {
   );
 }
 
+async function fetchPurrbotNsfw({ action, fetchImpl, timeoutMs, userAgent }) {
+  if (!PURRBOT_NSFW_ACTIONS.has(action)) return null;
+  const endpoint = action === 'neko' ? 'neko/gif' : `${action}/gif`;
+  const url = `https://api.purrbot.site/v2/img/nsfw/${endpoint}`;
+  const data = await fetchJson(fetchImpl, url, {
+    timeoutMs,
+    headers: {
+      'User-Agent': userAgent,
+      Accept: 'application/json',
+    },
+  });
+  if (data?.error) return null;
+  return resultFromUrl({
+    url: data?.link,
+    provider: 'purrbot',
+    action,
+  });
+}
+
 async function fetchTenor({ action, fetchImpl, timeoutMs, funConfig, random }) {
   const key = String(funConfig?.tenorApiKey || process.env.TENOR_API_KEY || '').trim();
   if (!key || !TENOR_QUERIES[action]) return null;
@@ -314,6 +384,7 @@ const PROVIDERS = Object.freeze({
   waifu_pics: fetchWaifuPics,
   nekobot: fetchNekoBot,
   purrbot: fetchPurrbot,
+  purrbot_nsfw: fetchPurrbotNsfw,
 });
 
 export function createReactionMediaService({
@@ -373,4 +444,4 @@ export function createReactionMediaService({
   return { getReaction };
 }
 
-export const REACTION_ACTIONS = Object.freeze([...ANIME_ACTIONS, ...MEME_ACTIONS]);
+export const REACTION_ACTIONS = Object.freeze([...ANIME_ACTIONS, ...MEME_ACTIONS, ...NSFW_ACTIONS]);

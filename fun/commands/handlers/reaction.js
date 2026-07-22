@@ -22,6 +22,22 @@ const ACTION_LABELS = Object.freeze({
   nom: 'deu um nom em',
 });
 
+const NSFW_LABELS = Object.freeze({
+  anal: 'anal',
+  blowjob: 'boquete',
+  cum: 'gozo',
+  fuck: 'transa',
+  neko: 'neko NSFW',
+  pussylick: 'pussylick',
+  solo: 'solo',
+  solo_male: 'solo masculino',
+  threesome_fff: 'trisal FFF',
+  threesome_ffm: 'trisal FFM',
+  threesome_mmf: 'trisal MMF',
+  yaoi: 'yaoi',
+  yuri: 'yuri',
+});
+
 const MEME_LABELS = Object.freeze({
   happy: 'feliz',
   cry: 'chorando',
@@ -37,22 +53,23 @@ function parseCommandHead(text, prefix) {
   return String(raw.slice(p.length).trim().split(/\s+/)[0] || '');
 }
 
-function reactionCaption({ action, kind, userJid, targetJid, getContactDisplayName, provider }) {
+function reactionCaption({ action, kind, userJid, targetJid, getContactDisplayName }) {
   const actor = nameOf(getContactDisplayName, userJid);
-  const source = provider ? `_fonte: ${provider}_` : '';
+
+  if (kind === 'nsfw') {
+    return `*${actor}* enviou *${NSFW_LABELS[action] || action}*.`;
+  }
 
   if (kind === 'meme') {
     const label = MEME_LABELS[action] || action;
-    return [`*${actor}* mandou um *${label}*.`, source].filter(Boolean).join('\n');
+    return `*${actor}* mandou um *${label}*.`;
   }
 
   const verb = ACTION_LABELS[action] || action;
   if (targetJid && isCanonicalUserJid(targetJid)) {
-    return [`*${actor}* ${verb} *${nameOf(getContactDisplayName, targetJid)}*.`, source]
-      .filter(Boolean)
-      .join('\n');
+    return `*${actor}* ${verb} *${nameOf(getContactDisplayName, targetJid)}*.`;
   }
-  return [`*${actor}* usou *${action}*.`, source].filter(Boolean).join('\n');
+  return `*${actor}* usou *${action}*.`;
 }
 
 export async function handleReactionCommand({
@@ -80,7 +97,7 @@ export async function handleReactionCommand({
 
   const contacts = typeof listContacts === 'function' ? listContacts() : [];
   const resolved =
-    kind === 'anime'
+    kind === 'anime' || kind === 'nsfw'
       ? await resolveUserTarget({
           args,
           mentionedJids,
