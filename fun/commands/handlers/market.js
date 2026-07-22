@@ -82,14 +82,16 @@ export async function handleInventoryCommand({
     return { handled: true };
   }
 
-  const ready = (id) =>
-    items.filter((i) => i.itemId === id && i.condition === 'ok' && !i.listed).length;
-  const ammoReady = ready('municao');
-  const gasReady = ready('gasolina');
+  const ammoTotal = items
+    .filter((i) => i.itemId === 'municao' && i.condition === 'ok' && !i.listed)
+    .reduce((sum, i) => sum + (i.usesLeft > 0 ? i.usesLeft : 0), 0);
+  const gasReady = items.filter(
+    (i) => i.itemId === 'gasolina' && i.condition === 'ok' && !i.listed
+  ).length;
 
   const lines = [
     '🎒 *Seu arsenal / mochila*',
-    `🔫 Munição pronta: *${ammoReady}* tiro(s) · ⛽ Gasolina: *${gasReady}*`,
+    `🔫 Munição pronta: *${ammoTotal}* tiro(s) · ⛽ Gasolina: *${gasReady}*`,
     '',
   ];
   for (const it of items) {
@@ -349,9 +351,9 @@ export async function handleBuyCollectibleCommand({
   }
 
   const bag = marketService.inventoryOf(userJid, scopeKey, funConfig);
-  const ammoReady = bag.filter(
-    (i) => i.itemId === 'municao' && i.condition === 'ok' && !i.listed
-  ).length;
+  const ammoReady = bag
+    .filter((i) => i.itemId === 'municao' && i.condition === 'ok' && !i.listed)
+    .reduce((sum, i) => sum + (i.usesLeft > 0 ? i.usesLeft : 0), 0);
   const needsAmmo = result.item.requires === 'municao';
 
   await reply(
