@@ -10,6 +10,7 @@ import type {
   FunConfig,
   FunGroup,
   GroupSettings,
+  NsfwVoteStatus,
   Overview,
   RankEntry,
 } from "./types";
