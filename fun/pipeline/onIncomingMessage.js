@@ -124,6 +124,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
     identityMap,
     membershipService,
     prefsRepository,
+    nsfwVoteRepository,
+    nsfwService,
   } = deps;
 
   const {
@@ -572,6 +574,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
           preferPrivate,
           membershipService,
           prefsRepository,
+          nsfwVoteRepository,
+          nsfwService,
           dmGroups: scope.dmGroups || null,
           rawMessage,
           messageType,

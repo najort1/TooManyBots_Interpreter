@@ -42,6 +42,8 @@ import { createRoastService } from './services/roastService.js';
 import { createNewsService } from './services/newsService.js';
 import { createChangelogService } from './services/changelogService.js';
 import { createAchievementService } from './services/achievementService.js';
+import { createFunNsfwVoteRepository } from './db/funNsfwVoteRepository.js';
+import { createFunNsfwService } from './services/funNsfwService.js';
 import { createFunMemoryRepository } from './db/funMemoryRepository.js';
 import { createFunProfileRepository } from './db/funProfileRepository.js';
 import { createGroupMemoryService } from './services/groupMemoryService.js';
@@ -260,6 +262,11 @@ export function createFunModule(deps = {}) {
       newsRepository,
       flavorService,
     });
+  const nsfwVoteRepository =
+    deps.nsfwVoteRepository || createFunNsfwVoteRepository({ getDatabase });
+  const nsfwService =
+    deps.nsfwService || createFunNsfwService({ nsfwVoteRepository, groupRepository });
+
   const changelogService =
     deps.changelogService ||
     createChangelogService({
@@ -343,6 +350,8 @@ export function createFunModule(deps = {}) {
         identityMap,
         membershipService,
         prefsRepository,
+        nsfwVoteRepository,
+        nsfwService,
       },
       {
         sock: ctx.sock,
@@ -739,6 +748,8 @@ export function createFunModule(deps = {}) {
       identityMap,
       membershipService,
       prefsRepository,
+      nsfwVoteRepository,
+      nsfwService,
     },
   };
 }

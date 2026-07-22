@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '18';
+export const FUN_SCHEMA_VERSION = '20';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -80,6 +80,9 @@ export const FUN_COMMANDS = Object.freeze({
   // Mídia
   STICKER: 'sticker',
   REACTION: 'reaction',
+  // NSFW
+  NSFW_ENABLE: 'nsfw_enable',
+  NSFW_REJECT: 'nsfw_reject',
 });
 
 /**
@@ -402,6 +405,13 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   squad: FUN_COMMANDS.SQUAD,
   evento: FUN_COMMANDS.EVENT,
   event: FUN_COMMANDS.EVENT,
+  // NSFW
+  nsfw_enable: FUN_COMMANDS.NSFW_ENABLE,
+  nsfw: FUN_COMMANDS.NSFW_ENABLE,
+  liberarnsfw: FUN_COMMANDS.NSFW_ENABLE,
+  nsfw_r: FUN_COMMANDS.NSFW_REJECT,
+  nsfw_reject: FUN_COMMANDS.NSFW_REJECT,
+  rejeitarnsfw: FUN_COMMANDS.NSFW_REJECT,
 });
 
 export const ACTION_TYPE = Object.freeze({

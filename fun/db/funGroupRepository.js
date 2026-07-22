@@ -20,6 +20,7 @@ function mapGroupRow(row) {
       row.world_events_enabled === undefined || row.world_events_enabled === null
         ? true
         : Number(row.world_events_enabled) !== 0,
+    permitirNsfw: Number(row.permitir_nsfw ?? 0) !== 0,
     updatedAt: Number(row.updated_at) || 0,
   };
 }
@@ -117,13 +118,20 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       worldEventsEnabled = existing.worldEventsEnabled ? 1 : 0;
     }
 
+    let permitirNsfw = 0;
+    if (input.permitirNsfw === true || input.permitirNsfw === 1) {
+      permitirNsfw = 1;
+    } else if (existing) {
+      permitirNsfw = existing.permitirNsfw ? 1 : 0;
+    }
+
     const updatedAt = Date.now();
 
     db.prepare(
       `INSERT INTO ${ANALYTICS_SCHEMA}.fun_group_settings (
         group_jid, enabled, xp_min, xp_max, cooldown_ms, level_up_announce,
-        daily_xp, daily_coins, rank_limit, world_events_enabled, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        daily_xp, daily_coins, rank_limit, world_events_enabled, permitir_nsfw, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(group_jid) DO UPDATE SET
         enabled = excluded.enabled,
         xp_min = excluded.xp_min,
@@ -134,6 +142,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
         daily_coins = excluded.daily_coins,
         rank_limit = excluded.rank_limit,
         world_events_enabled = excluded.world_events_enabled,
+        permitir_nsfw = excluded.permitir_nsfw,
         updated_at = excluded.updated_at`
     ).run(
       groupJid,
@@ -146,6 +155,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       dailyCoins,
       rankLimit,
       worldEventsEnabled,
+      permitirNsfw,
       updatedAt
     );
 
@@ -176,6 +186,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
         dailyCoins: funConfig.dailyCoins ?? 50,
         rankLimit: funConfig.rankLimit ?? 10,
         worldEventsEnabled: true,
+        permitirNsfw: false,
         source: 'global',
       };
     }
@@ -189,6 +200,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       dailyCoins: saved.dailyCoins,
       rankLimit: saved.rankLimit,
       worldEventsEnabled: saved.worldEventsEnabled !== false,
+      permitirNsfw: saved.permitirNsfw === true,
       source: 'group',
     };
   }

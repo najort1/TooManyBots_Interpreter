@@ -552,6 +552,34 @@ export function buildFunSchemaSql() {
       PRIMARY KEY (user_jid, scope_key, counter_key)
     );
 
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_nsfw_votes (
+      id              TEXT PRIMARY KEY,
+      scope_key       TEXT    NOT NULL,
+      criada_em       INTEGER NOT NULL,
+      expira_em       INTEGER NOT NULL,
+      status          TEXT    NOT NULL DEFAULT 'active',
+      votos_sim       INTEGER NOT NULL DEFAULT 0,
+      votos_nao       INTEGER NOT NULL DEFAULT 0,
+      total_membros   INTEGER NOT NULL DEFAULT 0,
+      resultado       TEXT    NOT NULL DEFAULT '',
+      encerrada_em    INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_nsfw_votes_scope
+      ON fun_nsfw_votes(scope_key, status, expira_em);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_nsfw_vote_ballots (
+      id              TEXT PRIMARY KEY,
+      vote_id         TEXT    NOT NULL,
+      user_jid        TEXT    NOT NULL,
+      voto            TEXT    NOT NULL,
+      criada_em       INTEGER NOT NULL,
+      UNIQUE(vote_id, user_jid)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_nsfw_ballots_vote
+      ON fun_nsfw_vote_ballots(vote_id);
+
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_changelog_broadcasts (
       id              TEXT PRIMARY KEY,
       title           TEXT    NOT NULL DEFAULT '',
@@ -814,6 +842,29 @@ export function ensureFunSchema(db) {
       db.exec(
         `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_job_attempts ADD COLUMN practice_at INTEGER NOT NULL DEFAULT 0`
       );
+    }
+  } catch {
+    // ignore
+  }
+
+  // Migra coluna permitir_nsfw (votação NSFW)
+  try {
+    const gsCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_group_settings)`).all();
+    const gsNames = new Set(gsCols.map(c => String(c.name || '')));
+    if (!gsNames.has('permitir_nsfw')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_settings ADD COLUMN permitir_nsfw INTEGER NOT NULL DEFAULT 0`
+      );
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const voteCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_nsfw_votes)`).all();
+    const voteNames = new Set(voteCols.map(c => String(c.name || '')));
+    if (!voteNames.has('total_membros')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_nsfw_votes ADD COLUMN total_membros INTEGER NOT NULL DEFAULT 0`);
     }
   } catch {
     // ignore

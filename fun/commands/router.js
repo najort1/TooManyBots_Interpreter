@@ -84,6 +84,7 @@ import {
   handleCollectCommand,
 } from './handlers/property.js';
 import { handleAchievementsCommand } from './handlers/achievements.js';
+import { handleNsfwEnableCommand, handleNsfwRejectCommand } from './handlers/nsfwVote.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -175,6 +176,8 @@ export async function routeFunCommand(ctx) {
     mediaMimeType,
     replySticker,
     getLogger,
+    nsfwVoteRepository,
+    nsfwService,
   } = ctx;
 
   const parsed = parseFunCommand(text, funConfig.prefix);
@@ -237,6 +240,8 @@ export async function routeFunCommand(ctx) {
     mediaMimeType: mediaMimeType || '',
     replySticker,
     getLogger,
+    nsfwVoteRepository,
+    nsfwService,
   };
 
   switch (parsed.command) {
@@ -378,6 +383,10 @@ export async function routeFunCommand(ctx) {
       return handleCollectCommand(base);
     case FUN_COMMANDS.ACHIEVEMENTS:
       return handleAchievementsCommand(base);
+    case FUN_COMMANDS.NSFW_ENABLE:
+      return handleNsfwEnableCommand(base);
+    case FUN_COMMANDS.NSFW_REJECT:
+      return handleNsfwRejectCommand(base);
     default:
       return { handled: false };
   }

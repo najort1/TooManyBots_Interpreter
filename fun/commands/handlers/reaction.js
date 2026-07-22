@@ -87,12 +87,24 @@ export async function handleReactionCommand({
   sock,
   identityMap,
   reactionMediaService,
+  nsfwVoteRepository,
 }) {
   const action = normalizeReactionAction(parseCommandHead(text, funConfig?.prefix || '/'));
   const kind = getReactionKind(action);
   if (!action || !kind) {
     await reply('Reacao desconhecida.');
     return { handled: true, reason: 'unknown-reaction' };
+  }
+
+  if (kind === 'nsfw') {
+    const permitido = nsfwVoteRepository?.getPermitirNsfw?.(scopeKey);
+    if (!permitido) {
+      await reply(
+        'Comandos NSFW estão desabilitados neste grupo.\n' +
+        'Inicie uma votação com `/nsfw_enable` para liberar.'
+      );
+      return { handled: true, reason: 'nsfw-disabled' };
+    }
   }
 
   const contacts = typeof listContacts === 'function' ? listContacts() : [];
