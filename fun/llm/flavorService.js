@@ -234,8 +234,28 @@ const FALLBACKS = {
     pick([
       `Apostou em *${v.pick || 'algo'}*, a bola foi em *${v.ball || 'outro lugar'}*. Clássico.`,
       'A roda girou, o saldo encolheu. A roleta não liga pro seu feeling.',
-      'Quase… no sentido de “não”. A bola te deu um chapéu vermelho-e-preto.',
+      'Quase… no sentido de "não". A bola te deu um chapéu vermelho-e-preto.',
       'Mesa fria. Respira, conta até o cooldown e finge que foi estratégia.',
+    ]),
+  roulette_bigwin: (v) =>
+    pick([
+      `ISSO! *${v.ball}* pagou *${v.payout}* moedas! A mesa tá tremendo!`,
+      `Caramba, *${v.pick}* acertou em cheio. ${v.payout} moedas é de respeito.`,
+      'A roleta entregou o jackpot do bolso. Essa noite vai entrar pra história.',
+      `Pagamento gigante! *${v.payout}* moedas na mão. A casa tá de olho em você.`,
+    ]),
+  roulette_zero: (v) =>
+    pick([
+      'Zero. Verde. A casa agradece a colaboração.',
+      'O zero não perdoa. Ninguém leva nada quando ele aparece.',
+      'Verde na mesa. A roleta adora uma tragédia.',
+      'Zero! Quem apostou no zero levantava uma bolada agora.',
+    ]),
+  roulette_lapartage: (v) =>
+    pick([
+      `Zero! Mas devolvemos metade — *${v.refund}* moedas de volta. La Partage.`,
+      'Caiu no zero. Regra da casa: metade do bolso de volta.',
+      'O zero comeu sua aposta, mas a casa é gentil — metade de volta.',
     ]),
   slot_win: () =>
     pick([
@@ -742,6 +762,9 @@ function buildUserPrompt(scenario, vars) {
     flip_lose: 'Perdeu no cara ou coroa.',
     roulette_win: 'Ganhou na ROLETA (bola/cor). Não confunda com cara ou coroa.',
     roulette_lose: 'Perdeu na ROLETA. Não confunda com cara ou coroa.',
+    roulette_bigwin: 'Acertou GRANDE na roleta — pagamento alto.',
+    roulette_zero: 'Zero caiu na roleta — aposta comum perdeu.',
+    roulette_lapartage: 'Zero caiu na roleta, mas o jogador recebeu metade de volta (La Partage).',
     slot_win: 'Ganhou no SLOT (rolos).',
     slot_lose: 'Perdeu no SLOT.',
     crash_win: 'Cashout a tempo no CRASH (foguete).',

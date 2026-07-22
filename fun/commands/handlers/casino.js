@@ -4,6 +4,11 @@ import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
 import { renderLeaderboardPng } from '../../formatters/rankCardImage.js';
 import { flavorWithLore } from '../../utils/flavorLore.js';
 
+import { pickDealer } from '../../casino/rouletteDealer.js';
+import { choiceLabel } from '../../casino/rouletteParser.js';
+import { computeStats } from '../../casino/rouletteStats.js';
+import { buildResultMessage, buildHelpMessage } from '../../casino/rouletteMessages.js';
+
 function colorLabel(c) {
   if (c === 'red') return 'vermelho';
   if (c === 'black') return 'preto';
@@ -34,15 +39,10 @@ export async function handleRouletteCommand({
     funConfig,
     limit: 8,
   };
+
   const parsed = casinoService.parseRouletteBet(args);
   if (!parsed.amount || !parsed.choice) {
-    await reply(
-      [
-        '🎡 *Roleta*',
-        'Uso: `/roleta 20 vermelho` · `/roleta 15 preto` · `/roleta 10 17`',
-        `Min *${funConfig.casinoMin || 5}* · max *${funConfig.casinoMax || 100}*`,
-      ].join('\n')
-    );
+    await reply(buildHelpMessage(funConfig));
     return { handled: true };
   }
 
@@ -71,38 +71,44 @@ export async function handleRouletteCommand({
     return { handled: true };
   }
 
-  const pick =
-    result.choice.type === 'color'
-      ? colorLabel(result.choice.value)
-      : String(result.choice.value);
-  const flavor = await fl(
-    flavorService,
-    result.win ? 'roulette_win' : 'roulette_lose',
-    {
-      pick,
-      ball: result.ball,
-      color: colorLabel(result.color),
-    },
-    loreCtx
-  );
-  await reply(
-    [
-      '🎡 *Roleta*',
-      `Aposta: *${result.stake}* em *${pick}*`,
-      `Bola: *${result.ball}* (${colorLabel(result.color)})`,
-      result.win
-        ? `Ganhou *+${result.payout}* coins 🎉`
-        : `Perdeu *−${result.stake}* coins`,
-      result.usedCharm ? '🔮 Ficha da roleta usada.' : null,
-      result.happy > 1 ? `🍸 Happy hour x${result.happy}` : null,
-      result.jackpotHit ? `💰 *JACKPOT!* +${result.jackpotHit} coins` : null,
-      `Jackpot do grupo: *${result.pot}*`,
-      `Saldo: *${result.coins}*`,
-      flavor,
-    ]
-      .filter(Boolean)
-      .join('\n')
-  );
+  const dealer = pickDealer(scopeKey);
+  const profit = result.payout - result.stake;
+  let scenario = 'roulette_lose';
+  if (result.win && profit >= 500) {
+    scenario = 'roulette_bigwin';
+  } else if (result.win) {
+    scenario = 'roulette_win';
+  } else if (result.laPartage) {
+    scenario = 'roulette_lapartage';
+  } else if (result.ball === 0) {
+    scenario = 'roulette_zero';
+  }
+
+  const flavorVars = {
+    pick: choiceLabel(result.choice),
+    ball: result.ball,
+    color: result.color,
+    payout: result.payout,
+    stake: result.stake,
+    refund: result.laPartageRefund,
+    dealerName: dealer.name,
+    dealerTitle: dealer.title,
+  };
+
+  const dealerPhrase = await fl(flavorService, scenario, flavorVars, loreCtx);
+
+  const recentHistory = casinoService.getRouletteRecent(scopeKey, 30);
+  const stats = computeStats(recentHistory, scopeKey);
+
+  const msg = buildResultMessage({
+    result,
+    dealer,
+    dealerPhrase,
+    stats,
+  });
+
+  await reply(msg);
+
   return { handled: true, result };
 }
 

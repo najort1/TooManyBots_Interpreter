@@ -237,6 +237,17 @@ export function buildFunSchemaSql() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_tournaments_scope
       ON fun_tournaments(scope_key, status, updated_at DESC);
 
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_roulette_history (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_key  TEXT    NOT NULL,
+      ball       INTEGER NOT NULL,
+      color      TEXT    NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_roulette_history_scope
+      ON fun_roulette_history(scope_key, created_at DESC);
+
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_user_prefs (
       user_jid              TEXT PRIMARY KEY,
       preferred_scope_key   TEXT    NOT NULL DEFAULT '',

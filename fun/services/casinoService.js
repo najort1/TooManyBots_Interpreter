@@ -24,9 +24,9 @@ import {
   normalizeBingoMode,
 } from './bingoLogic.js';
 
-const RED_NUMBERS = new Set([
-  1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36,
-]);
+import { parseRouletteBet as parseRoulette } from '../casino/rouletteParser.js';
+import { spinWheel, determineWin, applyLaPartage, calculatePayout } from '../casino/rouletteEngine.js';
+import { createRouletteHistory } from '../casino/rouletteHistory.js';
 
 const SLOT_REELS = ['🍒', '🍋', '🍋', '7️⃣', '🍒', '⭐', '🍋', '💎', '7️⃣', '🍒', '⭐'];
 
@@ -88,11 +88,14 @@ export function createCasinoService({
   casinoRepository,
   effectsRepository = null,
   eventRepository = null,
+  getDatabase = null,
   random = Math.random,
 } = {}) {
   if (!repository) throw new Error('[fun/casinoService] repository required');
   if (!actionRepository) throw new Error('[fun/casinoService] actionRepository required');
   if (!casinoRepository) throw new Error('[fun/casinoService] casinoRepository required');
+
+  const rouletteHistory = createRouletteHistory({ getDatabase });
 
   function stakeBounds(funConfig) {
     return {
@@ -201,25 +204,7 @@ export function createCasinoService({
   }
 
   function parseRouletteBet(args = []) {
-    let amount = null;
-    let choice = null;
-    for (const raw of args) {
-      const t = String(raw || '').trim().toLowerCase();
-      if (!t) continue;
-      if (/^\d+$/.test(t) && amount == null) {
-        amount = Number(t);
-        continue;
-      }
-      const n = t.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-      if (['vermelho', 'red', 'r', 'v'].includes(n)) choice = { type: 'color', value: 'red' };
-      else if (['preto', 'black', 'b', 'p'].includes(n)) choice = { type: 'color', value: 'black' };
-      else if (['verde', 'green', 'zero', '0'].includes(n)) choice = { type: 'number', value: 0 };
-      else if (/^\d{1,2}$/.test(n)) {
-        const num = Number(n);
-        if (num >= 0 && num <= 36) choice = { type: 'number', value: num };
-      }
-    }
-    return { amount, choice };
+    return parseRoulette(args);
   }
 
   function playRoulette({ userJid, scopeKey, amount, choice, funConfig = {}, now = Date.now() }) {
@@ -229,13 +214,10 @@ export function createCasinoService({
     if (!choice) return { ok: false, reason: 'missing-choice' };
     if (stake < min || stake > max) return { ok: false, reason: 'invalid-amount', min, max };
 
-    // amuleto roleta
-    let colorBoost = 0;
     let usedCharm = false;
     if (effectsRepository) {
       const charm = effectsRepository.getEffect(userJid, scopeKey, 'roulette_charm', now);
       if (charm?.charges > 0 && choice.type === 'color') {
-        colorBoost = 0.05;
         usedCharm = true;
       }
     }
@@ -253,38 +235,29 @@ export function createCasinoService({
     if (usedCharm) effectsRepository.consumeCharge(userJid, scopeKey, 'roulette_charm', now);
 
     const jackpotCut = applyJackpotCut(scopeKey, stake, funConfig, now);
-    const ball = rollInt(0, 36, random);
-    const color = ball === 0 ? 'green' : RED_NUMBERS.has(ball) ? 'red' : 'black';
+    const { ball, color } = spinWheel(random);
 
-    let win = false;
-    let payoutMult = 0;
-    if (choice.type === 'color') {
-      // european: 18/37 — small house edge; charm slightly helps via re-roll bias
-      let landed = color;
-      if (colorBoost > 0 && landed !== choice.value && ball !== 0 && random() < colorBoost) {
-        landed = choice.value;
-      }
-      win = landed === choice.value;
-      payoutMult = win ? 2 : 0;
-      // use actual ball color for display; if charm flipped result for payout only
-      if (win && color !== choice.value) {
-        // charm "won" against ball — still show real ball but pay as win
-      }
-    } else {
-      win = ball === choice.value;
-      payoutMult = win ? 36 : 0;
+    const result = determineWin(ball, choice);
+    let { win, payoutMult } = result;
+
+    if (usedCharm && !win && choice.type === 'color' && ball !== 0 && random() < 0.05) {
+      win = true;
+      payoutMult = 2;
     }
 
+    const laPartageResult = applyLaPartage(ball, choice, stake);
+
     const happy = happyMult(scopeKey, now);
-    let payout = win ? Math.floor(stake * payoutMult * happy) : 0;
-    // house edge soft trim on big number wins
-    const edge = Math.min(0.1, Math.max(0, Number(funConfig.casinoHouseEdge) || 0.03));
-    if (win && choice.type === 'number' && edge > 0) {
-      payout = Math.max(stake, Math.floor(payout * (1 - edge * 0.25)));
+    let payout = calculatePayout(stake, win, payoutMult, happy, funConfig, choice);
+
+    if (!win && laPartageResult.applied) {
+      payout = laPartageResult.refund;
     }
 
     const coins = finishSolo({ userJid, scopeKey, stake, payout, game: 'roulette', now });
     const jackpotHit = tryJackpotHit(scopeKey, userJid, funConfig, now);
+
+    rouletteHistory.addResult(scopeKey, ball, color, now);
 
     return {
       ok: true,
@@ -294,12 +267,15 @@ export function createCasinoService({
       win,
       stake,
       payout,
+      payoutMult,
       profit: payout - stake,
       coins,
       jackpotCut,
       jackpotHit,
       happy,
       usedCharm,
+      laPartage: laPartageResult.applied,
+      laPartageRefund: laPartageResult.refund,
       pot: casinoRepository.getJackpot(scopeKey).pot,
     };
   }
@@ -1511,6 +1487,9 @@ export function createCasinoService({
   return {
     parseRouletteBet,
     playRoulette,
+    getRouletteRecent(scopeKey, limit = 30) {
+      return rouletteHistory.getRecent(scopeKey, limit);
+    },
     playSlot,
     getJackpot,
     proposeDiceDuel,
