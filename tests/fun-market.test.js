@@ -485,3 +485,318 @@ test('gasolina no bazar: dependência carro', () => {
 
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
+
+test('bazar preserva usesLeft: pistola com 4 usos vendida mantém 4 usos', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.5,
+  });
+  const scope = uniqueGroup();
+  const a = uniqueJid('5501');
+  const b = uniqueJid('5502');
+  repo.addCoins({ userJid: a, scopeKey: scope, amount: 2000, reason: 'seed' });
+  repo.addCoins({ userJid: b, scopeKey: scope, amount: 2000, reason: 'seed' });
+
+  const inv = marketRepo.addInventory({
+    userJid: a,
+    scopeKey: scope,
+    itemId: 'pistola',
+    acquiredPrice: 260,
+    usesLeft: 4,
+  });
+  assert.equal(inv.usesLeft, 4);
+
+  const listed = market.listOnBazaar({
+    userJid: a,
+    scopeKey: scope,
+    inventoryId: inv.id,
+    price: 500,
+  });
+  assert.equal(listed.ok, true);
+
+  const buy = market.buyFromBazaar({
+    userJid: b,
+    scopeKey: scope,
+    listingId: listed.listing.id,
+  });
+  assert.equal(buy.ok, true);
+  assert.equal(buy.inventory.usesLeft, 4, 'comprador recebe a pistola com os mesmos 4 usos');
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('cancelar listagem no bazar: item volta ao inventário', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.5,
+  });
+  const scope = uniqueGroup();
+  const a = uniqueJid('5503');
+  repo.addCoins({ userJid: a, scopeKey: scope, amount: 2000, reason: 'seed' });
+
+  const inv = marketRepo.addInventory({
+    userJid: a,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 10,
+  });
+  assert.equal(inv.usesLeft, 10);
+
+  const listed = market.listOnBazaar({
+    userJid: a,
+    scopeKey: scope,
+    inventoryId: inv.id,
+    price: 200,
+  });
+  assert.equal(listed.ok, true);
+
+  // item ainda existe no inventário (não foi removido ao listar)
+  const before = marketRepo.getInventoryById(inv.id);
+  assert.notEqual(before, null);
+
+  const cancel = market.cancelListing({
+    userJid: a,
+    scopeKey: scope,
+    listingId: listed.listing.id,
+  });
+  assert.equal(cancel.ok, true);
+  assert.equal(listed.listing.status, 'open');
+
+  // listing fechada como cancelled
+  const cancelledListing = marketRepo.getListing(listed.listing.id);
+  assert.equal(cancelledListing.status, 'cancelled');
+
+  // item intacto no inventário
+  const after = marketRepo.getInventoryById(inv.id);
+  assert.notEqual(after, null);
+  assert.equal(after.usesLeft, 10);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('cancelar listagem: apenas o dono pode cancelar', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.5,
+  });
+  const scope = uniqueGroup();
+  const owner = uniqueJid('5504');
+  const intruder = uniqueJid('5505');
+  repo.addCoins({ userJid: owner, scopeKey: scope, amount: 2000, reason: 'seed' });
+
+  const inv = marketRepo.addInventory({
+    userJid: owner,
+    scopeKey: scope,
+    itemId: 'gasolina',
+    acquiredPrice: 45,
+    usesLeft: 1,
+  });
+
+  const listed = market.listOnBazaar({
+    userJid: owner,
+    scopeKey: scope,
+    inventoryId: inv.id,
+    price: 100,
+  });
+  assert.equal(listed.ok, true);
+
+  const intruderCancel = market.cancelListing({
+    userJid: intruder,
+    scopeKey: scope,
+    listingId: listed.listing.id,
+  });
+  assert.equal(intruderCancel.ok, false);
+  assert.equal(intruderCancel.reason, 'not-owner');
+
+  // listing ainda aberta
+  const stillOpen = marketRepo.getListing(listed.listing.id);
+  assert.equal(stillOpen.status, 'open');
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('municao: caixa com 3 usos e consumo decrementa', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.5,
+  });
+  const scope = uniqueGroup();
+  const u = uniqueJid('5506');
+  repo.addCoins({ userJid: u, scopeKey: scope, amount: 5000, reason: 'seed' });
+  const cfg = resolveFunConfig({ marketEnabled: true });
+
+  // compra 1 caixa de munição: deve ter usesLeft = 3
+  const buy = market.buyFromShop({
+    userJid: u,
+    scopeKey: scope,
+    itemId: 'municao',
+    funConfig: cfg,
+    shop: 'utility',
+  });
+  assert.equal(buy.ok, true);
+  assert.equal(buy.inventory.usesLeft, 3, 'caixa de munição deve ter 3 usos');
+
+  // consome 1 tiro: usesLeft deve ir para 2
+  const consumed1 = market.consumeOneConsumable(u, scope, 'municao');
+  assert.equal(consumed1, true);
+  const after1 = marketRepo.getInventoryById(buy.inventory.id);
+  assert.equal(after1.usesLeft, 2);
+
+  // consome outro tiro: usesLeft → 1
+  const consumed2 = market.consumeOneConsumable(u, scope, 'municao');
+  assert.equal(consumed2, true);
+  const after2 = marketRepo.getInventoryById(buy.inventory.id);
+  assert.equal(after2.usesLeft, 1);
+
+  // consome o último tiro: item deve ser deletado
+  const consumed3 = market.consumeOneConsumable(u, scope, 'municao');
+  assert.equal(consumed3, true);
+  const after3 = marketRepo.getInventoryById(buy.inventory.id);
+  assert.equal(after3, null, 'caixa de munição esgotada deve ser removida');
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('heist banco: armas têm penalidade de chance', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.5,
+  });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5507');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 5000, reason: 'seed' });
+  effects.addCharges({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  const cfg = resolveFunConfig({
+    assaultCooldownMs: 0,
+    heistBankCooldownMs: 0,
+    heistBankBaseChance: 0.5,
+    heistBankWeaponPenalty: 0.10,
+  });
+
+  // faca tem assaultPower=22
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 10,
+  });
+
+  const result = market.assault({
+    attackerJid: atk,
+    heistToken: 'banco',
+    scopeKey: scope,
+    funConfig: cfg,
+  });
+  assert.equal(result.ok, true);
+  // faca: chance base 0.5 + 22/200 + lvl*0.006 - weaponPenalty 0.10
+  // = 0.5 + 0.11 + 0.03 - 0.10 = 0.54
+  assert.ok(result.chance < 0.60, `chance com arma em banco deve ter penalidade: ${result.chance}`);
+  assert.ok(result.chance > 0.40, `chance com arma em banco deve ser razoável: ${result.chance}`);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('heist lojinha: arma NÃO sofre penalidade de banco', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.5,
+  });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5508');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 5000, reason: 'seed' });
+  effects.addCharges({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  const cfg = resolveFunConfig({
+    assaultCooldownMs: 0,
+    heistBankCooldownMs: 0,
+    heistBankBaseChance: 0.5,
+    heistBankWeaponPenalty: 0.10,
+  });
+
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 10,
+  });
+
+  // lojinha: base 0.5 + 22/220 + lvl*0.006 = 0.5 + 0.1 + 0.03 = 0.63 (sem penalidade)
+  const shopResult = market.assault({
+    attackerJid: atk,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    funConfig: cfg,
+  });
+  assert.equal(shopResult.ok, true);
+  assert.ok(shopResult.chance > 0.55, `chance em lojinha NÃO deve ter penalidade: ${shopResult.chance}`);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});

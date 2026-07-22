@@ -115,6 +115,7 @@ export function createMarketService({
       heistBankMin: Math.max(1, Math.floor(numOr(funConfig.heistBankMin, 150))),
       heistBankMax: Math.max(1, Math.floor(numOr(funConfig.heistBankMax, 340))),
       heistBankBaseChance: Math.min(0.85, Math.max(0.1, numOr(funConfig.heistBankBaseChance, 0.34))),
+      heistBankWeaponPenalty: Math.min(0.5, Math.max(0, numOr(funConfig.heistBankWeaponPenalty, 0.10))),
       heistBankCooldownMs: Math.max(0, Math.floor(numOr(funConfig.heistBankCooldownMs, 12 * 60_000))),
     };
   }
@@ -1338,7 +1339,11 @@ export function createMarketService({
       (i) => i.itemId === itemId && i.condition === 'ok' && !i.listed
     );
     if (!unit) return false;
-    marketRepository.deleteInventory(unit.id);
+    if (unit.usesLeft > 1) {
+      marketRepository.setUsesLeft(unit.id, unit.usesLeft - 1);
+    } else {
+      marketRepository.deleteInventory(unit.id);
+    }
     return true;
   }
 
@@ -1432,6 +1437,7 @@ export function createMarketService({
 
     if (mode === 'bank') {
       baseChance = o.heistBankBaseChance + power / 200 + level * 0.006;
+      if (power > 0) baseChance -= o.heistBankWeaponPenalty;
       avgPayout = (o.heistBankMin + o.heistBankMax) / 2;
       avgPayout *= 1 + power / 220;
       note = 'NPC';
@@ -1577,6 +1583,10 @@ export function createMarketService({
     chance += (Number(wCol.assaultPower) || 0) / (heist.kind === 'bank' ? 200 : 220);
     chance += (Number(aStats.level) || 1) * 0.006;
     chance += vehicleBonus / 100;
+    // Armas são menos efetivas em assalto a banco — faca não derruba cofre
+    if (heist.kind === 'bank' && (Number(wCol.assaultPower) || 0) > 0) {
+      chance -= o.heistBankWeaponPenalty;
+    }
     chance = Math.min(0.82, Math.max(0.12, chance));
 
     consumeUse(weapon, now);
@@ -2232,6 +2242,7 @@ export function createMarketService({
     listOpenListings: (scopeKey) => marketRepository.listOpenListings(scopeKey),
     getListing: (id) => marketRepository.getListing(id),
     getCollectible,
+    consumeOneConsumable,
     listCollectibles,
     listCategories,
     listUtilityShop,
