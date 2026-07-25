@@ -41,5 +41,6 @@
   "ollamaWarmupOnBoot": true,
   "ollamaWarmupTimeoutMs": 120000,
   "ollamaKeepAliveRefreshMs": 600000,
-  "replyCommandsInPrivate": true
+  "replyCommandsInPrivate": true,`n  "adminJids": []
 }
+
