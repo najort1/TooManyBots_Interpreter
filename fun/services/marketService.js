@@ -3,6 +3,7 @@
  * C1 motor · C2 jornalista · C3 arquétipos · C4 regulador.
  */
 
+import { getDb } from '../../db/context.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
@@ -82,6 +83,7 @@ export function createMarketService({
   casinoRepository = null,
   stockService = null,
   propertyService = null,
+  achievementRepository = null,
   random = Math.random,
   getLogger = () => null,
   generateZen = openaiChatComplete,
@@ -106,9 +108,9 @@ export function createMarketService({
       assaultMinSteal: Math.max(1, Math.floor(numOr(funConfig.assaultMinSteal, 8))),
       assaultMaxStealRatio: Math.min(0.4, Math.max(0.05, numOr(funConfig.assaultMaxStealRatio, 0.12))),
       assaultBaseChance: Math.min(0.75, Math.max(0.1, numOr(funConfig.assaultBaseChance, 0.38))),
-      assaultFailFinePct: Math.min(0.1, Math.max(0, numOr(funConfig.assaultFailFinePct, 0.012))),
-      assaultFailFineMin: Math.max(0, Math.floor(numOr(funConfig.assaultFailFineMin, 5))),
-      assaultFailFineMax: Math.max(1, Math.floor(numOr(funConfig.assaultFailFineMax, 30))),
+      assaultFailFinePct: Math.min(0.15, Math.max(0, numOr(funConfig.assaultFailFinePct, 0.05))),
+      assaultFailFineMin: Math.max(0, Math.floor(numOr(funConfig.assaultFailFineMin, 10))),
+      assaultFailFineMax: Math.max(1, Math.floor(numOr(funConfig.assaultFailFineMax, 200))),
       heistShopMin: Math.max(1, Math.floor(numOr(funConfig.heistShopMin, 48))),
       heistShopMax: Math.max(1, Math.floor(numOr(funConfig.heistShopMax, 100))),
       heistShopBaseChance: Math.min(0.85, Math.max(0.1, numOr(funConfig.heistShopBaseChance, 0.5))),
@@ -1349,8 +1351,7 @@ export function createMarketService({
 
   function computeFailFine(coins, o) {
     const bal = Math.max(0, Math.floor(Number(coins) || 0));
-    const raw = Math.floor(bal * o.assaultFailFinePct);
-    return Math.min(bal, Math.min(o.assaultFailFineMax, Math.max(o.assaultFailFineMin, raw)));
+    return Math.min(bal, Math.min(o.assaultFailFineMax, Math.max(o.assaultFailFineMin, Math.floor(bal * o.assaultFailFinePct))));
   }
 
   function ammoUnitCost(scopeKey, funConfig = {}) {
@@ -1377,6 +1378,137 @@ export function createMarketService({
       }
     }
     return { vehicleBonus, usedGas, vehicle };
+  }
+
+  function hasLockpick(userJid, scopeKey) {
+    return Boolean(findReadyItem(userJid, scopeKey, (i) => i.itemId === 'lockpick'));
+  }
+
+  function consumeLockpick(userJid, scopeKey, now = Date.now()) {
+    const pick = findReadyItem(userJid, scopeKey, (i) => i.itemId === 'lockpick');
+    if (!pick) return false;
+    consumeUse(pick, now);
+    return true;
+  }
+
+  function countPaidWins24h(userJid, scopeKey, now = Date.now()) {
+    const ANALYTICS_SCHEMA = 'analytics';
+    const since = Number(now) - 24 * 60 * 60_000;
+    try {
+      const db = getDb();
+      const row = db
+        .prepare(
+          `SELECT COUNT(*) AS cnt FROM ${ANALYTICS_SCHEMA}.fun_coin_ledger
+           WHERE scope_key = ? AND to_jid = ?
+             AND (reason LIKE 'heist-win:%' OR reason = 'assault-win' OR reason = 'assault-win-property')
+             AND amount > 0 AND created_at >= ?`
+        )
+        .get(String(scopeKey || ''), String(userJid || ''), since);
+      return Number(row?.cnt) || 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  function manageAssaultWindow(userJid, scopeKey, now = Date.now()) {
+    const WINDOW_MS = 2 * 60 * 60_000;
+    const ANALYTICS_SCHEMA = 'analytics';
+    const KEY_WIN = 'assault_window_start';
+    const KEY_CNT = 'assault_window_count';
+    try {
+      const db = getDb();
+      const win = db
+        .prepare(
+          `SELECT last_at FROM ${ANALYTICS_SCHEMA}.fun_casino_cooldowns
+           WHERE user_jid = ? AND scope_key = ? AND game = ?`
+        )
+        .get(String(userJid || ''), String(scopeKey || ''), KEY_WIN);
+      const lastAt = Number(win?.last_at) || 0;
+      if (!lastAt || now - lastAt > WINDOW_MS) {
+        db.prepare(
+          `INSERT INTO ${ANALYTICS_SCHEMA}.fun_casino_cooldowns (user_jid, scope_key, game, last_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(user_jid, scope_key, game) DO UPDATE SET last_at = excluded.last_at`
+        ).run(String(userJid || ''), String(scopeKey || ''), KEY_WIN, Number(now) || Date.now());
+        db.prepare(
+          `INSERT INTO ${ANALYTICS_SCHEMA}.fun_casino_cooldowns (user_jid, scope_key, game, last_at)
+           VALUES (?, ?, ?, 1)
+           ON CONFLICT(user_jid, scope_key, game) DO UPDATE SET last_at = 1`
+        ).run(String(userJid || ''), String(scopeKey || ''), KEY_CNT);
+        return 1;
+      }
+      db.prepare(
+        `INSERT INTO ${ANALYTICS_SCHEMA}.fun_casino_cooldowns (user_jid, scope_key, game, last_at)
+         VALUES (?, ?, ?, 1)
+         ON CONFLICT(user_jid, scope_key, game) DO UPDATE SET last_at = last_at + 1`
+      ).run(String(userJid || ''), String(scopeKey || ''), KEY_CNT);
+      const cnt = db
+        .prepare(
+          `SELECT last_at FROM ${ANALYTICS_SCHEMA}.fun_casino_cooldowns
+           WHERE user_jid = ? AND scope_key = ? AND game = ?`
+        )
+        .get(String(userJid || ''), String(scopeKey || ''), KEY_CNT);
+      return Number(cnt?.last_at) || 1;
+    } catch {
+      return 1;
+    }
+  }
+
+  function getAssaultHeat(userJid, scopeKey, now = Date.now()) {
+    const ANALYTICS_SCHEMA = 'analytics';
+    const KEY_HEAT = 'assault_heat';
+    const KEY_DECAY = 'assault_heat_decay_at';
+    const DECAY_MS = 30 * 60_000;
+    try {
+      const db = getDb();
+      const heatRow = db
+        .prepare(
+          `SELECT last_at FROM ${ANALYTICS_SCHEMA}.fun_casino_cooldowns
+           WHERE user_jid = ? AND scope_key = ? AND game = ?`
+        )
+        .get(String(userJid || ''), String(scopeKey || ''), KEY_HEAT);
+      let heat = Number(heatRow?.last_at) || 0;
+      const decayRow = db
+        .prepare(
+          `SELECT last_at FROM ${ANALYTICS_SCHEMA}.fun_casino_cooldowns
+           WHERE user_jid = ? AND scope_key = ? AND game = ?`
+        )
+        .get(String(userJid || ''), String(scopeKey || ''), KEY_DECAY);
+      let lastDecay = Number(decayRow?.last_at) || 0;
+      if (lastDecay <= 0) lastDecay = Number(now) || Date.now();
+      const decay = Math.floor((now - lastDecay) / DECAY_MS);
+      if (decay > 0 && heat > 0) {
+        heat = Math.max(0, heat - decay);
+        db.prepare(
+          `INSERT INTO ${ANALYTICS_SCHEMA}.fun_casino_cooldowns (user_jid, scope_key, game, last_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(user_jid, scope_key, game) DO UPDATE SET last_at = excluded.last_at`
+        ).run(String(userJid || ''), String(scopeKey || ''), KEY_HEAT, heat);
+      }
+      db.prepare(
+        `INSERT INTO ${ANALYTICS_SCHEMA}.fun_casino_cooldowns (user_jid, scope_key, game, last_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_jid, scope_key, game) DO UPDATE SET last_at = excluded.last_at`
+      ).run(String(userJid || ''), String(scopeKey || ''), KEY_DECAY, Number(now) || Date.now());
+      return heat;
+    } catch {
+      return 0;
+    }
+  }
+
+  function setAssaultHeat(userJid, scopeKey, heat, now = Date.now()) {
+    const ANALYTICS_SCHEMA = 'analytics';
+    const KEY_HEAT = 'assault_heat';
+    try {
+      const db = getDb();
+      db.prepare(
+        `INSERT INTO ${ANALYTICS_SCHEMA}.fun_casino_cooldowns (user_jid, scope_key, game, last_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_jid, scope_key, game) DO UPDATE SET last_at = excluded.last_at`
+      ).run(String(userJid || ''), String(scopeKey || ''), KEY_HEAT, Math.max(0, Math.floor(Number(heat) || 0)));
+    } catch {
+      /* ignore */
+    }
   }
 
   function checkAssaultCooldown(userJid, scopeKey, cooldownMs, now) {
@@ -1429,7 +1561,8 @@ export function createMarketService({
     const power = Number(weaponCol?.assaultPower) || 0;
     const ammoCost =
       weaponCol?.requires === 'municao' ? ammoUnitCost(scopeKey, funConfig) : 0;
-    const failFineMid = Math.round((o.assaultFailFineMin + o.assaultFailFineMax) / 2);
+    const assumedBalance = 500;
+    const failFineMid = Math.min(o.assaultFailFineMax, Math.max(o.assaultFailFineMin, Math.floor(assumedBalance * o.assaultFailFinePct)));
 
     let baseChance;
     let avgPayout;
@@ -1530,16 +1663,25 @@ export function createMarketService({
       (userJid && repository.getUserStats(userJid, scopeKey)?.level) || 5;
     const o = opts(funConfig);
     const restock = maybeWeeklyRestock(scopeKey, funConfig);
+    const hasPick = userJid ? hasLockpick(userJid, scopeKey) : false;
+    const pickStatus = hasPick ? '✅ você tem' : '❌ você não tem';
     const lines = [
       '🔫 *Assalto*',
       '',
       '*Modos:*',
       `• \`/assaltar banco\` — *melhor grana* (${o.heistBankMin}–${o.heistBankMax}c)`,
+      `  🔧 Kit lockpick obrigatório (${pickStatus} — \`/adquirir lockpick\` \`/mercado\`)`,
       `• \`/assaltar lojinha\` — mais fácil (${o.heistShopMin}–${o.heistShopMax}c)`,
-      '• `/assaltar @pessoa` — for fun entre players (ganho menor, ainda real)',
+      '• `/assaltar @pessoa` — for fun entre players',
       '',
       'Precisa de *arma*. Pistola/rifle gastam *municao*. Carro/moto + *gasolina* ajudam.',
       `Reposição de estoque da loja: a cada *7 dias* (próxima em ~${formatRestockEta(Math.max(0, restock.nextAt - Date.now()))}).`,
+      '',
+      '⚠️ *Nerfs anti-farm:*',
+      '• Multa progressiva: 5% do saldo (piso 10 · teto 200)',
+      '• Janela 2h: 3º+ assalto reduz chance −10% e prêmio −20%; 5º+ −20% e −40%',
+      '• Calor (wanted): +1 por sucesso · −1 a cada 30min sem crime · −3% chance por nível',
+      '• Decaimento 24h: 4º+ assalto no dia paga 70%; 7º+ paga 50%; 11º+ paga 35%',
       '',
       formatEvTable(scopeKey, funConfig, level),
     ];
@@ -1549,6 +1691,19 @@ export function createMarketService({
   /**
    * Heist NPC (banco / lojinha) — fonte principal de coin do loop de armas.
    */
+  function applyDiminishingReturns(windowCount) {
+    if (windowCount <= 2) return { chancePenalty: 0, payoutMult: 1 };
+    if (windowCount <= 4) return { chancePenalty: 0.10, payoutMult: 0.80 };
+    return { chancePenalty: 0.20, payoutMult: 0.60 };
+  }
+
+  function payoutDecayMult(attempts24h) {
+    if (attempts24h <= 3) return 1;
+    if (attempts24h <= 6) return 0.70;
+    if (attempts24h <= 10) return 0.50;
+    return 0.35;
+  }
+
   function assaultHeist({
     attackerJid,
     scopeKey,
@@ -1564,6 +1719,14 @@ export function createMarketService({
     const cd = checkAssaultCooldown(a, scopeKey, cdMs, now);
     if (!cd.ok) return cd;
 
+    // Lockpick obrigatório para banco
+    if (heist.kind === 'bank') {
+      if (!hasLockpick(a, scopeKey)) {
+        return { ok: false, reason: 'no-lockpick' };
+      }
+      consumeLockpick(a, scopeKey, now);
+    }
+
     const weapon = findBestWeapon(a, scopeKey);
     if (!weapon) return { ok: false, reason: 'no-weapon' };
     const wCol = weapon.collectible;
@@ -1578,15 +1741,27 @@ export function createMarketService({
     const aStats =
       repository.getUserStats(a, scopeKey) || repository.ensureUserRow(a, scopeKey, now);
 
+    // Janela 2h — diminishing returns
+    const windowCount = manageAssaultWindow(a, scopeKey, now);
+    const { chancePenalty, payoutMult } = applyDiminishingReturns(windowCount);
+
+    // Calor (wanted) — aumenta com sucessos, decai 1 a cada 30min
+    const heat = getAssaultHeat(a, scopeKey, now);
+
+    // Wins pagos nas últimas 24h — decay de payout (não pune falha)
+    const paidWins24h = countPaidWins24h(a, scopeKey, now);
+    const decay24h = payoutDecayMult(paidWins24h);
+
     let chance =
       heist.kind === 'bank' ? o.heistBankBaseChance : o.heistShopBaseChance;
     chance += (Number(wCol.assaultPower) || 0) / (heist.kind === 'bank' ? 200 : 220);
     chance += (Number(aStats.level) || 1) * 0.006;
     chance += vehicleBonus / 100;
-    // Armas são menos efetivas em assalto a banco — faca não derruba cofre
     if (heist.kind === 'bank' && (Number(wCol.assaultPower) || 0) > 0) {
       chance -= o.heistBankWeaponPenalty;
     }
+    chance -= chancePenalty;
+    chance -= heat * 0.03;
     chance = Math.min(0.82, Math.max(0.12, chance));
 
     consumeUse(weapon, now);
@@ -1597,6 +1772,7 @@ export function createMarketService({
     const powerBoost = 1 + (Number(wCol.assaultPower) || 0) / (heist.kind === 'bank' ? 220 : 280);
 
     if (!success) {
+      setAssaultHeat(a, scopeKey, Math.max(0, heat - 1), now);
       const fine = computeFailFine(aStats.coins, o);
       if (fine > 0) {
         repository.addCoins({
@@ -1607,6 +1783,11 @@ export function createMarketService({
           reason: `heist-fail:${heist.kind}`,
         });
       }
+      const log = getLogger?.();
+      log?.info?.(
+        { event: 'assault_heist', kind: heist.kind, userJid: a, scopeKey, success: false, chance: Math.round(chance * 100), fine, weapon: wCol?.id, level: aStats.level, windowCount, heat: Math.max(0, heat - 1), paidWins24h, coinBalance: aStats.coins },
+        'fun assault heist'
+      );
       return {
         ok: true,
         success: false,
@@ -1619,15 +1800,31 @@ export function createMarketService({
         usedGas,
         vehicleBonus,
         coins: repository.getUserStats(a, scopeKey)?.coins || 0,
+        windowCount,
+        heat: Math.max(0, heat - 1),
+        paidWins24h,
+        chancePenalty,
+        payoutMult,
+        decay24h,
+        effectiveDecay: 1,
       };
     }
+
+    setAssaultHeat(a, scopeKey, heat + 1, now);
+    const log = getLogger?.();
+    log?.info?.(
+      { event: 'assault_heist', kind: heist.kind, userJid: a, scopeKey, success: true, chance: Math.round(chance * 100), payout, weapon: wCol?.id, level: aStats.level, windowCount, heat: heat + 1, paidWins24h, effectiveDecay, coinBalance: aStats.coins + payout },
+      'fun assault heist'
+    );
 
     const minP = heist.kind === 'bank' ? o.heistBankMin : o.heistShopMin;
     const maxP = heist.kind === 'bank' ? o.heistBankMax : o.heistShopMax;
     const lo = Math.min(minP, maxP);
     const hi = Math.max(minP, maxP);
     const base = lo + Math.floor(random() * Math.max(1, hi - lo + 1));
-    const payout = Math.max(lo, Math.floor(base * powerBoost));
+    let payout = Math.max(lo, Math.floor(base * powerBoost));
+    const effectiveDecay = Math.max(payoutMult, decay24h);
+    payout = Math.max(lo, Math.floor(payout * effectiveDecay));
 
     repository.addCoins({
       userJid: a,
@@ -1649,6 +1846,12 @@ export function createMarketService({
       usedGas,
       vehicleBonus,
       coins: repository.getUserStats(a, scopeKey)?.coins || 0,
+      windowCount,
+      heat: heat + 1,
+      paidWins24h,
+      chancePenalty,
+      payoutMult,
+      decay24h,
     };
   }
 
@@ -1702,6 +1905,13 @@ export function createMarketService({
       return { ok: false, reason: 'target-poor', coins: tCoins, propBuffer };
     }
 
+    // Janela 2h — diminishing returns
+    const windowCount = manageAssaultWindow(a, scopeKey, now);
+    const { chancePenalty, payoutMult } = applyDiminishingReturns(windowCount);
+
+    // Calor (wanted) — compartilhado com heist
+    const heat = getAssaultHeat(a, scopeKey, now);
+
     let chance = o.assaultBaseChance;
     chance += (Number(wCol.assaultPower) || 0) / 200;
     chance += (Number(aStats.level) || 1) * 0.008;
@@ -1712,6 +1922,8 @@ export function createMarketService({
     if (tCoins > 200) chance += 0.04;
     if (tCoins > 500) chance += 0.03;
     if (propBuffer > 40) chance += 0.03;
+    chance -= chancePenalty;
+    chance -= heat * 0.03;
     chance = Math.min(0.82, Math.max(0.12, chance));
 
     consumeUse(weapon, now);
@@ -1724,6 +1936,7 @@ export function createMarketService({
     const success = roll < chance;
 
     if (!success) {
+      setAssaultHeat(a, scopeKey, Math.max(0, heat - 1), now);
       const fine = computeFailFine(aStats.coins, o);
       if (fine > 0) {
         repository.addCoins({
@@ -1734,6 +1947,11 @@ export function createMarketService({
           reason: 'assault-fail',
         });
       }
+      const log = getLogger?.();
+      log?.info?.(
+        { event: 'assault_player', userJid: a, targetJid: t, scopeKey, success: false, chance: Math.round(chance * 100), fine, weapon: wCol?.id, level: aStats.level, windowCount, heat: Math.max(0, heat - 1), targetCoins: tCoins },
+        'fun assault player'
+      );
       return {
         ok: true,
         success: false,
@@ -1746,8 +1964,14 @@ export function createMarketService({
         vehicleBonus,
         coins: repository.getUserStats(a, scopeKey)?.coins || 0,
         targetCoins: tCoins,
+        windowCount,
+        heat: Math.max(0, heat - 1),
+        chancePenalty,
+        payoutMult,
       };
     }
+
+    setAssaultHeat(a, scopeKey, heat + 1, now);
 
     // 1) prioriza caixa do negócio (buffer); 2) residual na carteira
     let fromBuffer = 0;
@@ -1798,37 +2022,54 @@ export function createMarketService({
 
     const finalSteal = fromBuffer + fromWallet;
     if (finalSteal <= 0) {
+      setAssaultHeat(a, scopeKey, Math.max(0, heat), now);
       return { ok: false, reason: 'target-poor', coins: tCoins, propBuffer };
     }
 
-    if (fromBuffer > 0) {
+    const stealAfterDim = Math.max(1, Math.floor(finalSteal * payoutMult));
+
+    let adjustedFromBuffer = 0;
+    let adjustedFromWallet = 0;
+    if (stealAfterDim <= fromBuffer) {
+      adjustedFromBuffer = stealAfterDim;
+    } else {
+      adjustedFromBuffer = fromBuffer;
+      adjustedFromWallet = Math.min(fromWallet, stealAfterDim - fromBuffer);
+    }
+
+    if (adjustedFromBuffer > 0) {
       repository.addCoins({
         userJid: a,
         scopeKey,
-        amount: fromBuffer,
+        amount: adjustedFromBuffer,
         now,
         reason: 'assault-win-property',
       });
     }
-    if (fromWallet > 0) {
+    if (adjustedFromWallet > 0) {
       repository.addCoins({
         userJid: a,
         scopeKey,
-        amount: fromWallet,
+        amount: adjustedFromWallet,
         now,
         reason: 'assault-win',
       });
     }
 
+    const log = getLogger?.();
+    log?.info?.(
+      { event: 'assault_player', userJid: a, targetJid: t, scopeKey, success: true, chance: Math.round(chance * 100), stolen: stealAfterDim, weapon: wCol?.id, level: aStats.level, windowCount, heat: heat + 1, targetCoins: tCoins },
+      'fun assault player'
+    );
     return {
       ok: true,
       success: true,
       mode: 'player',
       chance,
       roll,
-      stolen: finalSteal,
-      stolenBuffer: fromBuffer,
-      stolenWallet: fromWallet,
+      stolen: stealAfterDim,
+      stolenBuffer: adjustedFromBuffer,
+      stolenWallet: adjustedFromWallet,
       propertyName: propertyDef?.name || null,
       propertyDamage,
       propertyHealth: propertyHit?.health ?? null,
@@ -1837,6 +2078,11 @@ export function createMarketService({
       vehicleBonus,
       coins: repository.getUserStats(a, scopeKey)?.coins || 0,
       targetCoins: repository.getUserStats(t, scopeKey)?.coins || 0,
+      windowCount,
+      heat: heat + 1,
+      chancePenalty,
+      payoutMult,
+      effectiveDecay: payoutMult,
     };
   }
 
@@ -2235,6 +2481,10 @@ export function createMarketService({
     formatAssaultHelp,
     formatEvTable,
     estimateWeaponEv,
+    hasLockpick,
+    manageAssaultWindow,
+    getAssaultHeat,
+    countPaidWins24h,
     findBestWeapon,
     factionArsenal,
     formatEventAnnouncement,

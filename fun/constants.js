@@ -83,6 +83,7 @@ export const FUN_COMMANDS = Object.freeze({
   // NSFW
   NSFW_ENABLE: 'nsfw_enable',
   NSFW_REJECT: 'nsfw_reject',
+  NSFW_FORCE: 'nsfw_force',
 });
 
 /**
@@ -412,6 +413,12 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   nsfw_r: FUN_COMMANDS.NSFW_REJECT,
   nsfw_reject: FUN_COMMANDS.NSFW_REJECT,
   rejeitarnsfw: FUN_COMMANDS.NSFW_REJECT,
+  // Forçar NSFW (qualquer usuário)
+  nsfw_force: FUN_COMMANDS.NSFW_FORCE,
+  forcarnsfw: FUN_COMMANDS.NSFW_FORCE,
+  forcar_nsfw: FUN_COMMANDS.NSFW_FORCE,
+  forcansfw: FUN_COMMANDS.NSFW_FORCE,
+  forcansf: FUN_COMMANDS.NSFW_FORCE,
 });
 
 export const ACTION_TYPE = Object.freeze({
@@ -657,10 +664,10 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   jobTokenSecret: '',
   jobLinkTtlMs: 15 * 60_000,
   dashboardUiPort: 3001,
-  /** Multa de falha: % do saldo, com piso e teto (não sangra whale) */
-  assaultFailFinePct: 0.012,
-  assaultFailFineMin: 5,
-  assaultFailFineMax: 30,
+  /** Multa de falha: % do saldo progressiva (5% · piso 10 · teto 200) */
+  assaultFailFinePct: 0.05,
+  assaultFailFineMin: 10,
+  assaultFailFineMax: 200,
   /** Heists NPC — fonte principal de coin do loop de armas */
   heistShopMin: 48,
   heistShopMax: 100,
@@ -811,3 +818,5 @@ export const ACHIEVEMENTS = Object.freeze({
     icon: '💵',
   },
 });
+
+

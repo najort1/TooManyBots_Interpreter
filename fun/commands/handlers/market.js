@@ -539,6 +539,10 @@ export async function handleAssaultCommand({
       await reply('Arma de fogo sem *municao*. Compre no `/mercado` ou no `/bazar`.');
       return { handled: true };
     }
+    if (result.reason === 'no-lockpick') {
+      await reply('Sem *lockpick* pra arrombar o cofre. Compre no `/mercado` (`/adquirir lockpick`) — 50c cada, 5 usos.');
+      return { handled: true };
+    }
     if (result.reason === 'target-poor') {
       await reply(
         'Alvo sem grana o bastante. Prefira `/assaltar banco` ou `/assaltar lojinha` pra farmar.'
@@ -589,7 +593,7 @@ export async function handleAssaultCommand({
         `Arma: ${result.weapon?.emoji || ''} ${result.weapon?.name || '?'}`,
         result.usedGas ? 'Usou gasolina na fuga (mesmo assim deu ruim).' : null,
         result.fine > 0
-          ? `Multa de fuga: *${result.fine}*c (teto baixo — não sangra conta cheia).`
+          ? `Multa: *${result.fine}*c de prejuízo (5% do bolso).`
           : null,
         `Saldo: *${result.coins}*`,
       ]
@@ -598,8 +602,9 @@ export async function handleAssaultCommand({
           `Levou *${result.stolen}* coins de *${heistLabel}*`,
           `Chance ~*${chancePct}%* · ${result.weapon?.emoji || ''} ${result.weapon?.name}`,
           result.usedGas ? 'Fuga com combustível ajudou.' : null,
+          result.heat >= 3 ? '🚔 A cidade tá quente — a polícia já desconfia de você.' : null,
+          result.effectiveDecay < 1 ? `💸 O loot rendeu menos que o esperado — os cofres tão vazios de tanto assalto hoje (${Math.round(result.effectiveDecay * 100)}% do normal).` : null,
           `Saldo: *${result.coins}*`,
-          '_Farm principal. Players (`/assaltar @user`) é for fun com grana menor._',
         ]
       : [
           `Tirou *${result.stolen}* coins de *${pvpName}*`,
