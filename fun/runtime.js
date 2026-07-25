@@ -17,7 +17,20 @@ import path from 'path';
 import { initDb, getContactDisplayName, upsertContactDisplayName } from '../db/index.js';
 import { useSqliteAuthState } from '../db/authState.js';
 import { parseMessage } from '../engine/messageParser.js';
-import { sendTextMessage, sendImageMessage, sendStickerMessage } from '../engine/sender.js';
+import { sendTextMessage as sendTextMessageOriginal, sendImageMessage as sendImageMessageOriginal, sendStickerMessage as sendStickerMessageOriginal } from '../engine/sender.js';
+
+// Wrappers que desabilitam o rate limit para o bot fun
+async function sendTextMessage(sock, jid, text, options = {}) {
+  return sendTextMessageOriginal(sock, jid, text, { ...options, skipGuard: true });
+}
+
+async function sendImageMessage(sock, jid, payload, options = {}) {
+  return sendImageMessageOriginal(sock, jid, payload, { ...options, skipGuard: true });
+}
+
+async function sendStickerMessage(sock, jid, buffer, options = {}) {
+  return sendStickerMessageOriginal(sock, jid, buffer, { ...options, skipGuard: true });
+}
 import { resolveIncomingActorJid } from '../runtime/contactUtils.js';
 import { createInstanceLock } from '../runtime/instanceLock.js';
 import { createReconnectController } from '../runtime/reconnectController.js';

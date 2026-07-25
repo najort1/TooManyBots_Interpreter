@@ -51,7 +51,20 @@ import { createProfileService } from './services/profileService.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
 import { nameOf } from './utils/userLabel.js';
 import { getDb } from '../db/context.js';
-import { sendTextMessage, sendImageMessage, sendStickerMessage } from '../engine/sender.js';
+import { sendTextMessage as sendTextMessageOriginal, sendImageMessage as sendImageMessageOriginal, sendStickerMessage as sendStickerMessageOriginal } from '../engine/sender.js';
+
+// Wrappers que desabilitam o rate limit para o bot fun
+async function sendTextMessage(sock, jid, text, options = {}) {
+  return sendTextMessageOriginal(sock, jid, text, { ...options, skipGuard: true });
+}
+
+async function sendImageMessage(sock, jid, payload, options = {}) {
+  return sendImageMessageOriginal(sock, jid, payload, { ...options, skipGuard: true });
+}
+
+async function sendStickerMessage(sock, jid, buffer, options = {}) {
+  return sendStickerMessageOriginal(sock, jid, buffer, { ...options, skipGuard: true });
+}
 import { getContactDisplayName, listContactDisplayNames } from '../db/index.js';
 import { createIdentityMap } from './utils/identity.js';
 import { isWorldQuietHours } from './utils/worldQuietHours.js';
@@ -183,6 +196,7 @@ export function createFunModule(deps = {}) {
       casinoRepository,
       stockService,
       propertyService,
+      achievementRepository,
       getLogger,
       generateZen: deps.openaiChatComplete,
       generateOllama: deps.ollamaGenerate,

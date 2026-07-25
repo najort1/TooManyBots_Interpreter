@@ -12,7 +12,8 @@ const ANALYTICS = 'analytics';
 const MAX_BODY = 3500;
 const MAX_TITLE = 80;
 const MAX_VERSION = 32;
-const INTER_GROUP_GAP_MS = 1200;
+// Rate limit removido - bot fun sem delay entre grupos
+const INTER_GROUP_GAP_MS = 0;
 
 function toText(v, fb = '') {
   const s = String(v ?? '').trim();
