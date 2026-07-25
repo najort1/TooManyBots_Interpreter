@@ -18,6 +18,8 @@ import {
   jaccard,
   tokenSet,
   keywordSignature,
+  inferSubjectIndicesFromSummary,
+  looseParseFacts,
 } from '../fun/services/groupMemoryService.js';
 import { parseFunCommand, resolveFunConfig } from '../fun/index.js';
 import { FUN_COMMANDS, DEFAULT_FUN_CONFIG } from '../fun/constants.js';
@@ -101,6 +103,154 @@ test('validateExtractedFact: schema rígido', () => {
   );
   assert.ok(v);
   assert.deepEqual(v.subjectIndices, [1, 0]);
+});
+
+test('parseFactsJson: tolera JSON malformado (subjects":, sem valor)', () => {
+  // caso típico do glm_5_2 no proxy 3300: ele emite "subjects":, sem valor.
+  // O parser tem que extrair via regex e ainda inferir o subject do summary.
+  const raw =
+    '{"facts":[{"kind":"running_gag","summary":"natasha jurou q ia voltar a treinar e n foi, marina confirmou q é sempre assim","subjects":,"keywords":["academia","treino"],"score":70}]}';
+  const batch = [
+    { idx: 0, name: 'Marina', text: 'vcs foram na academia?' },
+    { idx: 1, name: 'Lucas', text: 'fui' },
+    { idx: 2, name: 'Marina', text: 'kkk' },
+    { idx: 3, name: 'natasha🕷️', text: 'pior q eu falei q ia voltar a treinar e nada' },
+    { idx: 4, name: 'Marina', text: 'sempre assim natasha' },
+  ];
+  const facts = parseFactsJson(raw, { batchSize: 5, batch });
+  assert.equal(facts.length, 1, 'fato recuperado de JSON quebrado');
+  assert.equal(facts[0].kind, 'running_gag');
+  assert.match(facts[0].summary, /natasha|treinar/i);
+  // subject inferido do summary → natasha (idx 3)
+  assert.deepEqual(facts[0].subjectIndices, [3], 'subject inferido pelo nome no summary');
+  assert.equal(facts[0].subjectInferred, true);
+});
+
+test('parseFactsJson: tolera múltiplos facts com JSON quebrado (regex)', () => {
+  const raw =
+    '{"facts":[{"kind":"event","summary":"Paulo consegue desconto de estudante pra quem não tem carteira","subjects":,"keywords":["desconto"],"score":45},{"kind":"running_gag","summary":"natasha já avisando q o desconto vai acabar cmg","subjects":,"keywords":["desconto"],"score":45}]}';
+  const batch = [
+    { idx: 0, name: 'Paulo', text: 'melhor comprar online' },
+    { idx: 1, name: 'Paulo', text: '@all ve ai' },
+    { idx: 2, name: 'Paulo', text: 'ai agt compra' },
+    { idx: 3, name: 'Paulo', text: 'quem n tiver carteira de estudante eu consigo aquele desconto' },
+    { idx: 4, name: 'natasha🕷️', text: 'essa eu sei q vai acabar cmg tá' },
+  ];
+  const facts = parseFactsJson(raw, { batchSize: 5, batch });
+  assert.equal(facts.length, 2);
+  // Paulo = idx 0, natasha = idx 4 — inferidos do summary
+  const pauloFact = facts.find((f) => /desconto de estudante/i.test(f.summary));
+  const natashaFact = facts.find((f) => /acabar cmg/i.test(f.summary));
+  assert.ok(pauloFact, 'fato do Paulo recuperado');
+  assert.ok(natashaFact, 'fato da natasha recuperado');
+  assert.deepEqual(pauloFact.subjectIndices, [0], 'Paulo inferido do summary');
+  assert.deepEqual(natashaFact.subjectIndices, [4], 'natasha inferida do summary');
+  assert.equal(pauloFact.subjectInferred, true);
+  assert.equal(natashaFact.subjectInferred, true);
+});
+
+test('parseFactsJson: JSON válido continua funcionando como antes', () => {
+  const raw = JSON.stringify({
+    facts: [
+      {
+        kind: 'rivalry',
+        summary: 'Beto e Carla brigam por figurinha feia',
+        subjects: [0],
+        keywords: ['figurinha'],
+        score: 60,
+      },
+    ],
+  });
+  const facts = parseFactsJson(raw, { batchSize: 3 });
+  assert.equal(facts.length, 1);
+  assert.deepEqual(facts[0].subjectIndices, [0]);
+  assert.equal(facts[0].subjectInferred, false);
+});
+
+test('inferSubjectIndicesFromSummary: acha o nome do autor no summary', () => {
+  const batch = [
+    { name: 'Marina', text: 'foram?' },
+    { name: 'Lucas', text: 'fui' },
+    { name: 'natasha🕷️', text: 'essa eu sei q vai acabar cmg tá' },
+  ];
+  const inf = inferSubjectIndicesFromSummary(
+    'Natasha jurou que ia treinar mas já sabe que vai acabar com ela mesma',
+    batch
+  );
+  assert.ok(inf, 'inferencia retornou objeto');
+  assert.equal(inf.inferred, true);
+  assert.deepEqual(inf.indices, [2], 'idx 2 = natasha');
+});
+
+test('inferSubjectIndicesFromSummary: sem match → null (não inventa)', () => {
+  const batch = [
+    { name: 'Marina', text: 'foram?' },
+    { name: 'Lucas', text: 'fui' },
+  ];
+  const inf = inferSubjectIndicesFromSummary(
+    'alguem aleatorio falou algo sem nome proprio do batch',
+    batch
+  );
+  assert.equal(inf, null, 'sem match claro → null');
+});
+
+test('looseParseFacts: extrai mesmo com vírgula trailing e aspas escapadas', () => {
+  const raw =
+    '{"facts":[{"kind":"epic_fail","summary":"eduardo caiu no golpe do \\"link falso\\"","subjects":[0],"keywords":["golpe","link"],"score":55}]}';
+  const out = looseParseFacts(raw);
+  assert.equal(out.length, 1);
+  assert.equal(out[0].kind, 'epic_fail');
+  assert.match(out[0].summary, /link falso/);
+  assert.deepEqual(out[0].subjects, [0]);
+  assert.deepEqual(out[0].keywords, ['golpe', 'link']);
+  assert.equal(out[0].score, 55);
+});
+
+test('groupMemoryService: extrai fato de JSON quebrado do Zen (anti-perda)', async () => {
+  // antes da correção, glm_5_2 no proxy 3300 mandava "subjects":, e o parser descartava TUDO.
+  // Agora extrai via regex e infere subject.
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const repo = createFunMemoryRepository({ getDatabase: getDb });
+    const scope = uniqueGroup();
+    const u = uniqueJid('5533');
+    const mem = createGroupMemoryService({
+      memoryRepository: repo,
+      getContactDisplayName: () => 'Natasha',
+      generateZen: async () =>
+        '{"facts":[{"kind":"running_gag","summary":"Natasha jurou q ia treinar e n foi, sempre assim","subjects":,"keywords":["treino"],"score":70}]}',
+      generateOllama: async () => '{"facts":[]}',
+    });
+    const cfg = resolveFunConfig({ memoryMinScore: 30, zenEnabled: true });
+    mem._pushRaw(scope, {
+      userJid: u,
+      name: 'Natasha',
+      text: 'essa eu sei q vai acabar cmg tá',
+      at: Date.now(),
+    });
+    mem._pushRaw(scope, {
+      userJid: uniqueJid('5534'),
+      name: 'Marina',
+      text: 'kkk sempre assim natasha',
+      at: Date.now() + 1000,
+    });
+    mem._pushRaw(scope, {
+      userJid: uniqueJid('5535'),
+      name: 'Lucas',
+      text: 'vamo amanha de novo',
+      at: Date.now() + 2000,
+    });
+    const r = await mem.forceFlush(scope, cfg);
+    assert.equal(r.ok, true);
+    assert.ok(r.inserted >= 1 || r.reinforced >= 1, 'fato recuperado e gravado');
+    const facts = repo.listFacts(scope, { limit: 5 });
+    assert.equal(facts.length, 1, '1 fato no banco (recuperado de JSON quebrado)');
+    assert.match(facts[0].summary, /Natasha|treinar/i);
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
 });
 
 test('jaccard / keywordSignature dedup basico', () => {
@@ -753,8 +903,9 @@ test('anti-alucinação: flush com batch grande não grava subject errado nem fa
     assert.equal(r.ok, true);
     assert.ok(r.batchSize >= 40, `batch grande esperado, got ${r.batchSize}`);
     assert.ok(prompts.length >= 1, 'prompt enviado ao Zen');
-    // prompt deve carregar MUITAS linhas [n], não 8
-    const lineHits = (prompts[0].match(/^\[\d+\]/gm) || []).length;
+    // prompt deve carregar MUITAS linhas [n], não 8.
+    // Formato novo: cada linha é "[HH:MM] [N] Nome: ..." (com timestamp) ou "[N] Nome: ..." (sem).
+    const lineHits = (prompts[0].match(/(?:^\[?\d{1,2}:\d{2}\]? )?\[\d+\] /gm) || []).length;
     assert.ok(lineHits >= 40, `prompt com ≥40 msgs, got ${lineHits}`);
 
     const facts = repo.listFacts(scope, { limit: 10 });
