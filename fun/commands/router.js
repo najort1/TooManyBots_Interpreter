@@ -85,6 +85,7 @@ import {
 } from './handlers/property.js';
 import { handleAchievementsCommand } from './handlers/achievements.js';
 import { handleNsfwEnableCommand, handleNsfwRejectCommand } from './handlers/nsfwVote.js';
+import { handleNsfwForceCommand } from './handlers/nsfwForce.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -387,6 +388,8 @@ export async function routeFunCommand(ctx) {
       return handleNsfwEnableCommand(base);
     case FUN_COMMANDS.NSFW_REJECT:
       return handleNsfwRejectCommand(base);
+    case FUN_COMMANDS.NSFW_FORCE:
+      return handleNsfwForceCommand(base);
     default:
       return { handled: false };
   }
