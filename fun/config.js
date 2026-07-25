@@ -825,6 +825,16 @@ export function normalizeFunConfig(input) {
     chaosEventWeaponBaseChance: Number.isFinite(Number(raw.chaosEventWeaponBaseChance))
       ? Math.min(0.85, Math.max(0.1, Number(raw.chaosEventWeaponBaseChance)))
       : DEFAULT_FUN_CONFIG.chaosEventWeaponBaseChance,
+    chaosEventMaxStealAmount: normalizeInt(
+      raw.chaosEventMaxStealAmount,
+      DEFAULT_FUN_CONFIG.chaosEventMaxStealAmount,
+      { min: 1_000, max: 10_000_000, rounding: 'floor', clamp: true }
+    ),
+    chaosEventMaxDebt: normalizeInt(
+      raw.chaosEventMaxDebt,
+      DEFAULT_FUN_CONFIG.chaosEventMaxDebt,
+      { min: 0, max: 1_000_000, rounding: 'floor', clamp: true }
+    ),
   };
 }
 

@@ -666,19 +666,44 @@ export function createFunModule(deps = {}) {
           }
         }
 
-        if (chaosEventService?.tryStartEvent && worldEventsOn) {
+        if (chaosEventService?.tryStartEvent) {
           try {
-            const started = chaosEventService.tryStartEvent(scopeKey, funConfig, now);
-            if (started?.ok) {
-              const msg = chaosEventService.formatStartAnnouncement(started);
-              if (msg) {
-                await postWithMentions(scopeKey, msg, userFmt);
-                results.push({
-                  scopeKey,
-                  kind: 'chaos-event',
-                  ok: true,
-                  eventType: 'crime_chaos',
-                });
+            // aviso de 2 minutos (evento ativo)
+            if (chaosEventService.shouldSendWarning?.(scopeKey, now)) {
+              const rem = chaosEventService.getTimeRemaining(scopeKey, now);
+              const warn = chaosEventService.formatWarningAnnouncement(rem);
+              if (warn) {
+                await postWithMentions(scopeKey, warn, userFmt);
+                results.push({ scopeKey, kind: 'chaos-event-warning', ok: true });
+              }
+            }
+
+            // aviso de fim com leaderboard (evento expirou neste tick)
+            const active = chaosEventService.isEventActive(scopeKey, now);
+            const wasActive = chaosEventService.isEventActive(scopeKey, now - 120_000);
+            if (!active && wasActive && worldEventsOn) {
+              const endMsg = chaosEventService.formatEndAnnouncement(scopeKey, nameResolver);
+              if (endMsg) {
+                await postWithMentions(scopeKey, endMsg, userFmt);
+                chaosEventService.resetWarning(scopeKey);
+                results.push({ scopeKey, kind: 'chaos-event-end', ok: true });
+              }
+            }
+
+            // início do evento (agendado)
+            if (worldEventsOn) {
+              const started = chaosEventService.tryStartEvent(scopeKey, funConfig, now);
+              if (started?.ok) {
+                const msg = chaosEventService.formatStartAnnouncement(started);
+                if (msg) {
+                  await postWithMentions(scopeKey, msg, userFmt);
+                  results.push({
+                    scopeKey,
+                    kind: 'chaos-event',
+                    ok: true,
+                    eventType: 'crime_chaos',
+                  });
+                }
               }
             }
           } catch (err) {

@@ -1,7 +1,7 @@
 /**
- * Evento "10 Minutos de Crime" — referência ao filme Uma Noite de Crime.
- * Ativa 1x/dia por 10 minutos em horário configurável.
- * Durante o evento: assalto livre, sem arma = 50%, saldo negativo, heat desativado.
+ * Purga — evento diário de 10 minutos (referência ao filme Uma Noite de Crime).
+ * Ativa 1x/dia em horário configurável.
+ * Durante o evento: assalto livre, sem arma = 50%, saldo negativo limitado, heat desativado.
  */
 
 function numOr(v, fb) {
@@ -18,6 +18,9 @@ export function createChaosEventService({
   if (!repository) throw new Error('[fun/chaosEventService] repository required');
   if (!eventRepository) throw new Error('[fun/chaosEventService] eventRepository required');
 
+  /** @type {Map<string, { attackers: Map<string,number>, victims: Map<string,number>, startAt: number }>} */
+  const leaderboards = new Map();
+
   function opts(funConfig = {}) {
     return {
       enabled: funConfig.chaosEventEnabled !== false,
@@ -25,6 +28,8 @@ export function createChaosEventService({
       durationMs: Math.max(60_000, Math.floor(numOr(funConfig.chaosEventDurationMs, 10 * 60_000))),
       noWeaponSuccess: Math.min(0.75, Math.max(0.1, numOr(funConfig.chaosEventNoWeaponSuccess, 0.50))),
       weaponBaseChance: Math.min(0.85, Math.max(0.1, numOr(funConfig.chaosEventWeaponBaseChance, 0.60))),
+      maxStealAmount: Math.max(1, Math.floor(numOr(funConfig.chaosEventMaxStealAmount, 100_000))),
+      maxDebt: Math.max(0, Math.floor(numOr(funConfig.chaosEventMaxDebt, 10_000))),
     };
   }
 
@@ -68,7 +73,13 @@ export function createChaosEventService({
       startsAt: now,
       endsAt: now + duration,
       lastSpawnAt: now,
-      payload: { label: '10 MINUTOS DE CRIME' },
+      payload: { label: 'PURGA' },
+    });
+
+    leaderboards.set(scopeKey, {
+      attackers: new Map(),
+      victims: new Map(),
+      startAt: now,
     });
 
     return {
@@ -78,18 +89,49 @@ export function createChaosEventService({
       durationMs: duration,
       endsAt: now + duration,
       remainingMs: duration,
-      label: '10 MINUTOS DE CRIME',
+      label: 'PURGA',
     };
   }
 
-  /**
-   * Assalto durante o evento "10 Minutos de Crime".
-   * - Jogador escolhe quanto quer roubar (amount)
-   * - Sem arma: 50% de sucesso
-   * - Com arma: chance base maior, ajustada pelo poder da arma
-   * - Alvo pode ficar com saldo negativo
-   * - Heat não é alterado
-   */
+  function getTimeRemaining(scopeKey, now = Date.now()) {
+    const event = isEventActive(scopeKey, now);
+    if (!event) return 0;
+    return event.remainingMs;
+  }
+
+  function recordLeaderboardEntry(scopeKey, attackerJid, victimJid, stolen) {
+    let lb = leaderboards.get(scopeKey);
+    if (!lb) {
+      lb = { attackers: new Map(), victims: new Map(), startAt: Date.now() };
+      leaderboards.set(scopeKey, lb);
+    }
+    const atk = String(attackerJid || '');
+    const vic = String(victimJid || '');
+    lb.attackers.set(atk, (lb.attackers.get(atk) || 0) + stolen);
+    lb.victims.set(vic, (lb.victims.get(vic) || 0) + stolen);
+  }
+
+  function getEventLeaderboard(scopeKey) {
+    const lb = leaderboards.get(scopeKey);
+    if (!lb) return { attackers: [], victims: [] };
+
+    const attackers = [...lb.attackers.entries()]
+      .map(([jid, total]) => ({ jid, total }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
+    const victims = [...lb.victims.entries()]
+      .map(([jid, total]) => ({ jid, total }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 3);
+
+    return { attackers, victims };
+  }
+
+  function cleanupLeaderboard(scopeKey) {
+    leaderboards.delete(scopeKey);
+  }
+
   function doCrimeAssault({
     attackerJid,
     targetJid,
@@ -100,7 +142,6 @@ export function createChaosEventService({
   }) {
     const a = String(attackerJid || '');
     const t = String(targetJid || '');
-    const desired = Math.max(1, Math.floor(Number(amount) || 1));
     if (!a || !t || a === t) return { ok: false, reason: 'invalid-target' };
 
     const event = isEventActive(scopeKey, now);
@@ -108,12 +149,14 @@ export function createChaosEventService({
 
     const o = opts(funConfig);
 
+    const requested = Math.max(1, Math.floor(Number(amount) || 1));
+    const desired = Math.min(requested, o.maxStealAmount);
+
     const ms = typeof getMarketService === 'function' ? getMarketService() : null;
     const weapon = ms?.findBestWeapon ? ms.findBestWeapon(a, scopeKey) : null;
     const hasWeapon = Boolean(weapon);
     const wCol = weapon?.collectible;
 
-    const aStats = repository.getUserStats(a, scopeKey) || repository.ensureUserRow(a, scopeKey, now);
     const tStats = repository.getUserStats(t, scopeKey) || repository.ensureUserRow(t, scopeKey, now);
     const tCoins = Number(tStats.coins) || 0;
 
@@ -152,10 +195,14 @@ export function createChaosEventService({
       };
     }
 
-    const actualSteal = Math.min(desired, desired);
+    const taken = Math.min(desired, Math.max(0, tCoins));
+    let debt = desired - taken;
 
-    const taken = Math.min(actualSteal, Math.max(0, tCoins));
-    const debt = actualSteal - taken;
+    if (debt > 0) {
+      const currentNegative = Math.abs(Math.min(0, tCoins - taken));
+      const maxAdditionalDebt = Math.max(0, o.maxDebt - currentNegative);
+      debt = Math.min(debt, maxAdditionalDebt);
+    }
 
     if (taken > 0) {
       repository.addCoins({
@@ -186,6 +233,8 @@ export function createChaosEventService({
       reason: 'crime-win',
     });
 
+    recordLeaderboardEntry(scopeKey, a, t, totalStolen);
+
     return {
       ok: true,
       success: true,
@@ -206,28 +255,71 @@ export function createChaosEventService({
     if (!result?.ok) return '';
     const minutes = Math.max(1, Math.round((result.durationMs || 0) / 60000));
     return [
-      '🔪 *10 MINUTOS DE CRIME*',
+      '🚨🚨 *PURGA — ESTADO DE EMERGÊNCIA*',
       '',
-      'As regras normais foram suspensas.',
-      'Durante *10 minutos*, vale tudo:',
-      `• Assalte usando \`/crime @alvo quantia\``,
-      '• Sem arma: 50% de chance',
-      '• Com arma: mais chances, mais poder',
-      '• Saldo negativo permitido — vá até o fundo',
-      '• Polícia (heat) desligado — sem wanted',
+      'A cidade entrou em colapso.',
+      'A polícia abandonou as ruas.',
       '',
-      `⏱ *${minutes} minutos de caos. Aproveite.*`,
-      '_— Referência ao filme "Uma Noite de Crime"_',
+      `Durante *${minutes} minutos*:`,
+      '💰 Qualquer valor pode ser roubado',
+      '🔫 Assaltos ficaram mais fáceis',
+      '🔥 Heat foi desativado — sem wanted',
+      '💸 Saldo negativo permitido (limitado)',
+      '',
+      `\`/crime @alvo quantia\``,
+      '',
+      'Boa sorte...',
     ].join('\n');
   }
 
-  function formatEndAnnouncement() {
+  function formatWarningAnnouncement(remainingMs) {
+    const min = Math.ceil(remainingMs / 60000);
+    if (min <= 0) return '';
     return [
-      '🔪 *FIM DO EVENTO — 10 MINUTOS DE CRIME*',
+      '⚠️ *PURGA — AVISO*',
       '',
-      'O caos acabou. As regras voltaram ao normal.',
-      '_A polícia está de volta. Comportem-se._',
+      `Faltam apenas *${min} minuto${min !== 1 ? 's' : ''}* de caos.`,
+      'Preparem-se para o retorno da lei.',
     ].join('\n');
+  }
+
+  function formatEndAnnouncement(scopeKey, getContactDisplayName) {
+    const lb = getEventLeaderboard(scopeKey);
+    const lines = [
+      '🚓🚓 *FIM DA PURGA*',
+      '',
+      'As forças policiais retomaram o controle da cidade.',
+      'O evento terminou. O heat está de volta.',
+    ];
+
+    if (lb.attackers.length > 0) {
+      lines.push('', '🏆 *Maiores criminosos:*');
+      const medals = ['🥇', '🥈', '🥉'];
+      lb.attackers.forEach((entry, i) => {
+        const name = nameOr(entry.jid, getContactDisplayName);
+        lines.push(`${medals[i] || '▪'} ${name} — *${entry.total}* roubados`);
+      });
+    }
+
+    if (lb.victims.length > 0) {
+      lines.push('', '😭 *Maiores vítimas:*');
+      lb.victims.slice(0, 1).forEach((entry) => {
+        const name = nameOr(entry.jid, getContactDisplayName);
+        lines.push(`😭 ${name} perdeu *${entry.total}*`);
+      });
+    }
+
+    lines.push('', '_Até a próxima Purga._');
+    cleanupLeaderboard(scopeKey);
+    return lines.join('\n');
+  }
+
+  function nameOr(jid, getName) {
+    try {
+      return typeof getName === 'function' ? getName(jid) : jid.split('@')[0];
+    } catch {
+      return jid.split('@')[0];
+    }
   }
 
   function isHeatDisabled(scopeKey, now = Date.now()) {
@@ -241,13 +333,37 @@ export function createChaosEventService({
     return raw.endsAt - now;
   }
 
+  /** @type {Map<string, boolean>} */
+  const warningSent = new Map();
+
+  function shouldSendWarning(scopeKey, now = Date.now()) {
+    const event = isEventActive(scopeKey, now);
+    if (!event) return false;
+    const remaining = event.remainingMs;
+    const warningWindow = 140_000;
+    if (remaining > warningWindow || remaining < 10_000) return false;
+    const key = `${scopeKey}:2min`;
+    if (warningSent.get(key)) return false;
+    warningSent.set(key, true);
+    return true;
+  }
+
+  function resetWarning(scopeKey) {
+    warningSent.delete(`${scopeKey}:2min`);
+  }
+
   return {
     isEventActive,
     tryStartEvent,
+    getTimeRemaining,
     doCrimeAssault,
     formatStartAnnouncement,
+    formatWarningAnnouncement,
     formatEndAnnouncement,
+    getEventLeaderboard,
     isHeatDisabled,
     cooldownRemaining,
+    shouldSendWarning,
+    resetWarning,
   };
 }
