@@ -750,8 +750,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   chaosEventDurationMs: 10 * 60_000,
   chaosEventNoWeaponSuccess: 0.50,
   chaosEventWeaponBaseChance: 0.60,
-  chaosEventMaxStealAmount: 100_000,
-  chaosEventMaxDebt: 10_000,
+  chaosEventMaxStealAmount: 100,
+  chaosEventMaxDebt: 100,
 });
 
 /**

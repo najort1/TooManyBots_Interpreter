@@ -828,7 +828,7 @@ export function normalizeFunConfig(input) {
     chaosEventMaxStealAmount: normalizeInt(
       raw.chaosEventMaxStealAmount,
       DEFAULT_FUN_CONFIG.chaosEventMaxStealAmount,
-      { min: 1_000, max: 10_000_000, rounding: 'floor', clamp: true }
+      { min: 1, max: 10_000_000, rounding: 'floor', clamp: true }
     ),
     chaosEventMaxDebt: normalizeInt(
       raw.chaosEventMaxDebt,
