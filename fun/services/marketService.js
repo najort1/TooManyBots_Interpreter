@@ -1811,11 +1811,6 @@ export function createMarketService({
     }
 
     setAssaultHeat(a, scopeKey, heat + 1, now);
-    const log = getLogger?.();
-    log?.info?.(
-      { event: 'assault_heist', kind: heist.kind, userJid: a, scopeKey, success: true, chance: Math.round(chance * 100), payout, weapon: wCol?.id, level: aStats.level, windowCount, heat: heat + 1, paidWins24h, effectiveDecay, coinBalance: aStats.coins + payout },
-      'fun assault heist'
-    );
 
     const minP = heist.kind === 'bank' ? o.heistBankMin : o.heistShopMin;
     const maxP = heist.kind === 'bank' ? o.heistBankMax : o.heistShopMax;
@@ -1833,6 +1828,12 @@ export function createMarketService({
       now,
       reason: `heist-win:${heist.kind}`,
     });
+
+    const log = getLogger?.();
+    log?.info?.(
+      { event: 'assault_heist', kind: heist.kind, userJid: a, scopeKey, success: true, chance: Math.round(chance * 100), payout, weapon: wCol?.id, level: aStats.level, windowCount, heat: heat + 1, paidWins24h, effectiveDecay },
+      'fun assault heist'
+    );
 
     return {
       ok: true,
@@ -1852,6 +1853,7 @@ export function createMarketService({
       chancePenalty,
       payoutMult,
       decay24h,
+      effectiveDecay,
     };
   }
 
