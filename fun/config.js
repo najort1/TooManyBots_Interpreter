@@ -804,6 +804,27 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.profileExtractTimeoutMs,
       { min: 5_000, max: 90_000, rounding: 'floor', clamp: true }
     ),
+    chaosEventEnabled: normalizeBoolean(
+      raw.chaosEventEnabled,
+      DEFAULT_FUN_CONFIG.chaosEventEnabled
+    ),
+    chaosEventHour: normalizeInt(raw.chaosEventHour, DEFAULT_FUN_CONFIG.chaosEventHour, {
+      min: 0,
+      max: 23,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    chaosEventDurationMs: normalizeInt(
+      raw.chaosEventDurationMs,
+      DEFAULT_FUN_CONFIG.chaosEventDurationMs,
+      { min: 60_000, max: 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    chaosEventNoWeaponSuccess: Number.isFinite(Number(raw.chaosEventNoWeaponSuccess))
+      ? Math.min(0.75, Math.max(0.1, Number(raw.chaosEventNoWeaponSuccess)))
+      : DEFAULT_FUN_CONFIG.chaosEventNoWeaponSuccess,
+    chaosEventWeaponBaseChance: Number.isFinite(Number(raw.chaosEventWeaponBaseChance))
+      ? Math.min(0.85, Math.max(0.1, Number(raw.chaosEventWeaponBaseChance)))
+      : DEFAULT_FUN_CONFIG.chaosEventWeaponBaseChance,
   };
 }
 

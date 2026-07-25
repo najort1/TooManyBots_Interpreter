@@ -37,6 +37,7 @@ import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
 import { createReactionMediaService } from './services/reactionMediaService.js';
 import { createChaosService } from './services/chaosService.js';
+import { createChaosEventService } from './services/chaosEventService.js';
 import { createPropertyService } from './services/propertyService.js';
 import { createRoastService } from './services/roastService.js';
 import { createNewsService } from './services/newsService.js';
@@ -214,6 +215,14 @@ export function createFunModule(deps = {}) {
       jobRepository,
     });
   const eventService = createEventService({ eventRepository });
+  const chaosEventService =
+    deps.chaosEventService ||
+    createChaosEventService({
+      repository,
+      eventRepository,
+      getMarketService: () => marketService,
+      random: Math.random,
+    });
   const socialHooks = createSocialHooks({ bridgeService, missionService });
   const chaosService =
     deps.chaosService ||
@@ -338,7 +347,8 @@ export function createFunModule(deps = {}) {
         marketService,
         stockService,
         jobService,
-        chaosService,
+      chaosService,
+      chaosEventService,
         propertyService,
         roastService,
         newsService,
@@ -652,6 +662,31 @@ export function createFunModule(deps = {}) {
               kind: 'event',
               ok: false,
               reason: err?.message || 'event-error',
+            });
+          }
+        }
+
+        if (chaosEventService?.tryStartEvent && worldEventsOn) {
+          try {
+            const started = chaosEventService.tryStartEvent(scopeKey, funConfig, now);
+            if (started?.ok) {
+              const msg = chaosEventService.formatStartAnnouncement(started);
+              if (msg) {
+                await postWithMentions(scopeKey, msg, userFmt);
+                results.push({
+                  scopeKey,
+                  kind: 'chaos-event',
+                  ok: true,
+                  eventType: 'crime_chaos',
+                });
+              }
+            }
+          } catch (err) {
+            results.push({
+              scopeKey,
+              kind: 'chaos-event',
+              ok: false,
+              reason: err?.message || 'chaos-event-error',
             });
           }
         }

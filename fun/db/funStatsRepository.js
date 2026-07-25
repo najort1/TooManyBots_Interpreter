@@ -809,6 +809,47 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     return run();
   }
 
+  /**
+   * Igual addCoins, mas permite saldo negativo (sem floor a 0).
+   * Usado exclusivamente pelo evento "10 Minutos de Crime".
+   */
+  function addCoinsAllowNegative({ userJid, scopeKey, amount, now = Date.now(), reason = 'system' }) {
+    ensureFunSchema();
+    const db = getDatabase();
+    const u = String(userJid || '').trim();
+    const s = String(scopeKey || '').trim();
+    const value = Math.floor(Number(amount) || 0);
+    const ts = Number(now) || Date.now();
+    if (!u || !s || value === 0) {
+      return { ok: false, reason: 'invalid', coins: 0 };
+    }
+
+    const run = db.transaction(() => {
+      ensureUserRow(u, s, ts);
+      db.prepare(
+        `UPDATE ${ANALYTICS_SCHEMA}.fun_user_stats
+         SET coins = coins + ?, updated_at = ?
+         WHERE user_jid = ? AND scope_key = ?`
+      ).run(value, ts, u, s);
+
+      db.prepare(
+        `INSERT INTO ${ANALYTICS_SCHEMA}.fun_coin_ledger
+         (scope_key, from_jid, to_jid, amount, reason, created_at)
+         VALUES (?, NULL, ?, ?, ?, ?)`
+      ).run(s, u, value, String(reason || 'system'), ts);
+
+      const row = db
+        .prepare(
+          `SELECT coins FROM ${ANALYTICS_SCHEMA}.fun_user_stats
+           WHERE user_jid = ? AND scope_key = ?`
+        )
+        .get(u, s);
+      return { ok: true, coins: row ? Number(row.coins) : 0 };
+    });
+
+    return run();
+  }
+
   function addCoins({ userJid, scopeKey, amount, now = Date.now(), reason = 'system' }) {
     ensureFunSchema();
     const db = getDatabase();
@@ -935,6 +976,7 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     getUserMessagesRankPosition,
     transferCoins,
     addCoins,
+    addCoinsAllowNegative,
     applyGameCoinDelta,
     escrowBet,
     payoutBetWinner,

@@ -744,6 +744,12 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   profileBlocklist: [],
   profileAiExtract: true,
   profileExtractTimeoutMs: 22_000,
+  // 10 Minutos de Crime — evento diário de caos
+  chaosEventEnabled: true,
+  chaosEventHour: 20,
+  chaosEventDurationMs: 10 * 60_000,
+  chaosEventNoWeaponSuccess: 0.50,
+  chaosEventWeaponBaseChance: 0.60,
 });
 
 /**

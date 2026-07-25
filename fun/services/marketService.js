@@ -84,6 +84,7 @@ export function createMarketService({
   stockService = null,
   propertyService = null,
   achievementRepository = null,
+  chaosEventService = null,
   random = Math.random,
   getLogger = () => null,
   generateZen = openaiChatComplete,
@@ -1455,6 +1456,9 @@ export function createMarketService({
   }
 
   function getAssaultHeat(userJid, scopeKey, now = Date.now()) {
+    if (chaosEventService?.isHeatDisabled?.(scopeKey, now)) {
+      return 0;
+    }
     const ANALYTICS_SCHEMA = 'analytics';
     const KEY_HEAT = 'assault_heat';
     const KEY_DECAY = 'assault_heat_decay_at';
@@ -1497,6 +1501,9 @@ export function createMarketService({
   }
 
   function setAssaultHeat(userJid, scopeKey, heat, now = Date.now()) {
+    if (chaosEventService?.isHeatDisabled?.(scopeKey, now)) {
+      return;
+    }
     const ANALYTICS_SCHEMA = 'analytics';
     const KEY_HEAT = 'assault_heat';
     try {
@@ -2486,6 +2493,7 @@ export function createMarketService({
     hasLockpick,
     manageAssaultWindow,
     getAssaultHeat,
+    setAssaultHeat,
     countPaidWins24h,
     findBestWeapon,
     factionArsenal,
