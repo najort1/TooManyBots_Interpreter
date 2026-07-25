@@ -25,11 +25,13 @@ REGRAS OBRIGATÓRIAS:
 1. Responda SOMENTE com JSON válido (objeto ou array). Sem markdown, sem texto fora do JSON.
 2. Formato preferido: {"facts":[...]} ou array [...]. Cada fato:
    {"kind":"running_gag|rivalry|catchphrase|epic_fail|ship_lore|nickname|event","summary":"1 frase ≤150 chars","subjects":[0],"keywords":["kw1"],"score":35-95}
-3. "subjects" DEVE ser array de IDs NUMÉRICOS do batch (ex: 0, 1, 2). NUNCA nomes, NUNCA strings de pessoa.
-4. O ID em subjects é o índice da mensagem [N] que identifica o AUTOR/sujeito do fato (quem FEZ a ação ou é o foco real). Não confunda quem fala sobre quem.
+3. "subjects" DEVE ser array de IDs NUMÉRICOS do batch (ex: 0, 1, 2). NUNCA nomes, NUNCA strings de pessoa. subjects SEMPRE como array, mesmo que com 1 elemento: [4], NUNCA 4, nunca vazio se houver autor claro.
+4. O ID em subjects é o índice da mensagem [N] que contém o CONTEÚDO do fato (a fala engraçada/útil). Não confunda o autor do conteúdo com quem é o assunto da mensagem.
 5. Só salve engraçado, mico, rivalidade, bordão, apelido, lore social. Se nada valer: {"facts":[]}
 6. NÃO invente o que não está no trecho. NÃO salve: bom dia, ok, comando de bot, links, spam, dados sensíveis.
 7. summary em pt-BR, como alguém contaria no grupo depois (tom de zap), sem aspas externas.
+8. THREADS DISTINTOS: o batch pode misturar threads de conversa diferentes. Marcadores "--- [GAP: Xm] ---" entre mensagens mostram onde acabou um assunto e começou outro (gap >= 15min). Mensagens separadas por um GAP são de assuntos DIFERENTES — NÃO conecte uma resposta ao thread errado só porque está fisicamente perto. Se não dá pra saber com certeza a qual thread uma fala se refere, descarte o fato ({"facts":[]}).
+9. Em caso de dúvida, prefira descartar a inventar conexão entre threads.
 Só o JSON.`;
 
 const PERSONA_SYSTEM = `Resuma o clima de um grupo WhatsApp BR em 3 a 5 bullets curtos de lore cômica, com base nos fatos dados.
@@ -104,10 +106,81 @@ function parseSubjectIndex(raw) {
 }
 
 /**
+ * Extrai nome próprio (primeira palavra) do `name` de uma mensagem.
+ * Usado pra inferir subject do summary.
+ */
+function nameFirstToken(name) {
+  const raw = String(name || '').trim();
+  if (!raw) return '';
+  // ignora emojis/símbolos do começo (natasha🕷️, ⚡Lucas, etc)
+  const cleaned = raw.replace(/^[\W_]+/u, '').trim();
+  const first = cleaned.split(/\s+/)[0] || cleaned;
+  return normalizeKey(first); // lower + sem acento pra comparar
+}
+
+/**
+ * Tenta inferir subjectIndices a partir do summary quando a LLM mandou vazio.
+ * Estratégia (em ordem):
+ *   1) nome que aparece MAIS vezes no summary (>=2 ocorrências) → forte sinal
+ *   2) nome que aparece no INÍCIO do summary (primeiros 30 chars) → "X fez/disse/..."
+ *   3) nome que aparece em qualquer posição do summary
+ * batchEntry: { name, text, userJid, at }.
+ * Retorna { indices: number[], inferred: boolean, source: 'summary-name' } ou null.
+ */
+function inferSubjectIndicesFromSummary(summary, batch) {
+  if (!Array.isArray(batch) || !batch.length) return null;
+  const sumNorm = normalizeKey(summary || '');
+  if (!sumNorm || sumNorm.length < 8) return null;
+
+  // conta ocorrências de cada nome (primeiro token) no summary
+  // e também checa se o nome está no início do summary
+  const candidates = []; // { idx, name, count, isAtStart, token }
+  for (let i = 0; i < batch.length; i++) {
+    const tok = nameFirstToken(batch[i]?.name);
+    if (!tok || tok.length < 3) continue; // nomes curtos ("eu", "de") dão muito falso-positivo
+    // conta ocorrências inteiras (palavra completa, case-insensitive)
+    const reWord = new RegExp(`\\b${escapeRegex(tok)}\\b`, 'g');
+    const matches = sumNorm.match(reWord);
+    const count = matches ? matches.length : 0;
+    if (count === 0) continue;
+    const isAtStart = sumNorm.startsWith(tok + ' ') || sumNorm.startsWith(tok + ',');
+    candidates.push({ idx: i, name: batch[i].name, token: tok, count, isAtStart });
+  }
+  if (!candidates.length) return null;
+
+  // ranking: nome no início ganha +100, depois por count, depois por idx
+  candidates.sort((a, b) => {
+    if (a.isAtStart !== b.isAtStart) return a.isAtStart ? -1 : 1;
+    if (a.count !== b.count) return b.count - a.count;
+    return a.idx - b.idx;
+  });
+  const best = candidates[0];
+  // se há empate entre o melhor e o segundo, e nenhum tem count>=2 ou isAtStart, descarta (ambíguo)
+  if (candidates.length >= 2) {
+    const second = candidates[1];
+    const bestStrong = best.isAtStart || best.count >= 2;
+    const secondStrong = second.isAtStart || second.count >= 2;
+    // se o segundo é quase tão bom quanto o primeiro e o primeiro não é claramente forte → ambíguo
+    if (!bestStrong && (secondStrong || second.count === best.count)) {
+      return null;
+    }
+  }
+  return { indices: [best.idx], inferred: true, source: 'summary-name' };
+}
+
+/**
+ * Escapa caracteres especiais de regex para uso em string dinâmica.
+ */
+function escapeRegex(s) {
+  return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
  * Valida fato bruto pós-parse (antes do map de JID).
  * subjects ainda podem ser índices numéricos.
+ * Se batch for passado e LLM não mandou subjects válidos, tenta inferir do summary.
  */
-export function validateExtractedFact(fact, { batchSize = 0, summaryMax = 160 } = {}) {
+export function validateExtractedFact(fact, { batchSize = 0, summaryMax = 160, batch = null } = {}) {
   if (!fact || typeof fact !== 'object') return null;
   const kind = String(fact.kind || 'event')
     .trim()
@@ -129,8 +202,21 @@ export function validateExtractedFact(fact, { batchSize = 0, summaryMax = 160 } 
     if (batchSize > 0 && idx >= batchSize) continue;
     if (!indices.includes(idx)) indices.push(idx);
   }
-  // zero alucinação de autoria: sem subject ID válido → descarta
-  if (!indices.length) return null;
+  let subjectInferred = false;
+  // zero alucinação de autoria: sem subject ID válido → tenta inferir do summary
+  if (!indices.length) {
+    if (Array.isArray(batch) && batch.length) {
+      const inferred = inferSubjectIndicesFromSummary(summary, batch);
+      if (inferred && inferred.indices.length) {
+        for (const i of inferred.indices) {
+          if (batchSize > 0 && i >= batchSize) continue;
+          if (!indices.includes(i)) indices.push(i);
+        }
+        subjectInferred = !!inferred.source;
+      }
+    }
+    if (!indices.length) return null;
+  }
 
   const keywords = Array.isArray(fact.keywords)
     ? fact.keywords
@@ -148,17 +234,83 @@ export function validateExtractedFact(fact, { batchSize = 0, summaryMax = 160 } 
     keywords,
     score,
     signature: keywordSignature(keywords, summary),
+    subjectInferred,
   };
 }
 
 /**
- * Parse JSON de extract — aceita array, {facts:[]}, {items:[]}, ou objeto único.
+ * Extrai fatos via regex de JSON malformado (campos "naive": kind, summary, subjects, keywords, score).
+ * Tolera: subjects":, (vazio malformado), vírgulas trailing, aspas mal escapadas, content com } dentro, etc.
+ * Retorna array de objetos parciais (campos podem ser null).
  */
-export function parseFactsJson(raw, { batchSize = 0, summaryMax = 160 } = {}) {
+function looseParseFacts(text) {
+  const out = [];
+  // 1) encontra cada bloco "{" ... "}" no nível do array externo (heurística simples: split por '},{')
+  //    mas tolerante: cada occurrence de `{"kind"` ou `{` no começo de um item.
+  // Estratégia: achar cada objeto via match não-ganancioso de {kind":...summary":..."}
+  const cleaned = String(text || '');
+  // tenta primeiro: split por "},{" — heurística comum quando LLM lista vários facts
+  // depois pra cada parte, extrair os campos.
+  const reObject = /\{[^{}]*?"kind"\s*:\s*"([^"]+)"[^{}]*?"summary"\s*:\s*"((?:[^"\\]|\\.)*)"[^{}]*?\}/g;
+  let m;
+  while ((m = reObject.exec(cleaned)) != null) {
+    const obj = m[0];
+    const kind = m[1];
+    const summaryRaw = m[2];
+    // desescapar \" \\ \n etc
+    const summary = summaryRaw
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, '\\')
+      .replace(/\\n/g, '\n')
+      .replace(/\\t/g, '\t')
+      .replace(/^["'“”]+|["'“”]+$/g, '')
+      .trim();
+    // subjects: pode ser [0,1], [], ou ausente/"subjects":, — varredura tolerante
+    let subjects = [];
+    const subMatch = obj.match(/"subjects"\s*:\s*(\[[^\]]*\])/);
+    if (subMatch) {
+      const inner = subMatch[1].slice(1, -1).trim();
+      if (inner) {
+        subjects = inner
+          .split(',')
+          .map((x) => x.trim())
+          .filter((x) => x.length)
+          .map((x) => Number(x))
+          .filter((n) => Number.isInteger(n) && n >= 0);
+      }
+    }
+    // keywords
+    let keywords = [];
+    const kwMatch = obj.match(/"keywords"\s*:\s*\[([^\]]*)\]/);
+    if (kwMatch) {
+      const inner = kwMatch[1].trim();
+      if (inner) {
+        keywords = inner
+          .split(',')
+          .map((x) => x.trim().replace(/^["']+|["']+$/g, ''))
+          .filter((x) => x.length);
+      }
+    }
+    // score
+    let score = 50;
+    const scMatch = obj.match(/"score"\s*:\s*(-?\d+(?:\.\d+)?)/);
+    if (scMatch) score = Number(scMatch[1]);
+    out.push({ kind, summary, subjects, keywords, score });
+  }
+  return out;
+}
+
+/**
+ * Parse JSON de extract — aceita array, {facts:[]}, {items:[]}, ou objeto único.
+ * Resiliente: se JSON.parse falha E o bloco {...} tem sintaxe quebrada (e.g. "subjects":,)
+ * ainda extrai via regex para NÃO perder fato de modelo que manda JSON inválido.
+ */
+export function parseFactsJson(raw, { batchSize = 0, summaryMax = 160, batch = null } = {}) {
   const text = String(raw || '').trim();
   if (!text) return [];
 
   let parsed = null;
+  let loose = null;
   try {
     parsed = JSON.parse(text);
   } catch {
@@ -166,16 +318,22 @@ export function parseFactsJson(raw, { batchSize = 0, summaryMax = 160 } = {}) {
     const arr = text.match(/\[[\s\S]*\]/);
     const obj = text.match(/\{[\s\S]*\}/);
     const candidate = arr?.[0] || obj?.[0];
-    if (!candidate) return [];
-    try {
-      parsed = JSON.parse(candidate);
-    } catch {
-      return [];
+    if (candidate) {
+      try {
+        parsed = JSON.parse(candidate);
+      } catch {
+        // JSON sintaticamente inválido (ex.: glm_5_2 manda "subjects":, sem valor).
+        // Tenta extração por regex para não perder o fato.
+        loose = looseParseFacts(text);
+        if (!loose.length) return [];
+      }
     }
   }
 
   let list = [];
-  if (Array.isArray(parsed)) {
+  if (loose) {
+    list = loose;
+  } else if (Array.isArray(parsed)) {
     list = parsed;
   } else if (parsed && typeof parsed === 'object') {
     if (Array.isArray(parsed.facts)) list = parsed.facts;
@@ -185,7 +343,7 @@ export function parseFactsJson(raw, { batchSize = 0, summaryMax = 160 } = {}) {
   }
 
   return list
-    .map((x) => validateExtractedFact(x, { batchSize, summaryMax }))
+    .map((x) => validateExtractedFact(x, { batchSize, summaryMax, batch }))
     .filter(Boolean)
     .slice(0, 2);
 }
@@ -484,6 +642,80 @@ export function createGroupMemoryService({
     return null;
   }
 
+  /**
+   * Formata HH:MM (ou HH:MM:SS se houver segundo) de um timestamp ms.
+   */
+  function formatHm(at) {
+    if (!at || !Number.isFinite(Number(at))) return '';
+    const d = new Date(Number(at));
+    if (Number.isNaN(d.getTime())) return '';
+    const hh = String(d.getHours()).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    return `${hh}:${mm}`;
+  }
+
+  /**
+   * Formata gap em ms como string curta: "12m", "1h", "2h15m".
+   */
+  function formatGap(gapMs) {
+    if (!Number.isFinite(gapMs) || gapMs < 0) return '';
+    const min = Math.round(gapMs / 60_000);
+    if (min < 60) return `${min}m`;
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return m ? `${h}h${m}m` : `${h}h`;
+  }
+
+  /**
+   * Separa o batch em "blocos" de conversa contínua, com base em gap temporal.
+   * Default: gap >= 15min quebra o thread. Mensagens sem `at` ficam no bloco atual.
+   */
+  function splitBatchByGap(batch, gapMs = 15 * 60_000) {
+    const blocks = [];
+    let current = [];
+    let prevAt = null;
+    for (const m of batch) {
+      const at = Number(m?.at) || 0;
+      if (current.length && prevAt && at && at - prevAt >= gapMs) {
+        blocks.push(current);
+        current = [];
+      }
+      current.push(m);
+      if (at) prevAt = at;
+    }
+    if (current.length) blocks.push(current);
+    return blocks;
+  }
+
+  /**
+   * Render do batch com timestamp relativo e separadores de GAP explícitos.
+   * Cada linha: "[HH:MM] [N] Nome: texto" (sem HH:MM se msg não tem at).
+   * Entre blocos com gap >= 15min: insere linha "--- [GAP: 1h] ---".
+   * batch é reindexado 0..n-1 pra map de subjects.
+   */
+  function formatBatchLinesWithContext(batch) {
+    const lines = [];
+    let prevAt = null;
+    for (let i = 0; i < batch.length; i += 1) {
+      const m = batch[i];
+      const at = Number(m?.at) || 0;
+      if (at && prevAt && at - prevAt >= 15 * 60_000) {
+        lines.push(`--- [GAP: ${formatGap(at - prevAt)}] ---`);
+      }
+      const name = String(m.name || firstName(m.userJid) || '?').slice(0, 40);
+      const text = String(m.text || '').slice(0, 800);
+      const ts = formatHm(at);
+      const head = ts ? `[${ts}] [${i}] ${name}` : `[${i}] ${name}`;
+      lines.push(`${head}: ${text}`);
+      if (at) prevAt = at;
+    }
+    return lines.join('\n');
+  }
+
+  /**
+   * Versão legada (sem timestamp/gap). Mantida exportada pra retro-compat.
+   * Novas chamadas devem usar formatBatchLinesWithContext.
+   */
   function formatBatchLines(batch) {
     return batch
       .map((m, i) => {
@@ -534,7 +766,8 @@ export function createGroupMemoryService({
   }
 
   async function extractFacts(batch, existing, funConfig, o) {
-    const lines = formatBatchLines(batch);
+    // usa versão com timestamps + marcadores de GAP para a LLM detectar thread-breaks
+    const lines = formatBatchLinesWithContext(batch);
     const knownLimit = o.knownFactsInPrompt || 24;
     const known = existing
       .slice(0, knownLimit)
@@ -548,17 +781,23 @@ export function createGroupMemoryService({
       })
       .join('\n');
 
+    // header dinâmico: se o batch tem pelo menos um GAP, lembra a LLM da regra de não cruzar threads
+    const hasGap = /---\s*\[GAP:/i.test(lines);
+    const continuidadeLine = hasGap
+      ? 'O batch contém MÚLTIPLOS threads separados por marcadores "--- [GAP: Xm] ---". Mensagens em threads diferentes são de assuntos DIFERENTES. NÃO conecte uma resposta ao thread errado só porque está fisicamente perto.'
+      : 'Leia o trecho como conversa contínua (contexto importa — quem responde a quem).';
+
     const prompt = [
       `Analise as seguintes mensagens do grupo (${batch.length} msgs, IDs entre colchetes).`,
-      'Leia o trecho como conversa contínua (contexto importa — quem responde a quem).',
+      continuidadeLine,
       lines,
       '',
       'Regras:',
       '1. Extraia apenas fatos engraçados ou úteis (0 a 2).',
-      '2. Em subjects use OBRIGATORIAMENTE os IDs numéricos das mensagens (ex: 0, 2). Nunca nomes.',
-      '3. subjects = quem FEZ / é o foco do fato (não confunda falante com assunto).',
+      '2. Em subjects use OBRIGATORIAMENTE os IDs numéricos das mensagens (ex: 0, 2). Nunca nomes. SEMPRE como array: [4] — nunca 4, nunca [] quando há autor claro.',
+      '3. subjects = índice da mensagem que contém o CONTEÚDO do fato (a fala engraçada/útil), não o índice de quem é o assunto da mensagem.',
       '4. NÃO invente. Se não souber o sujeito com ID claro, não extraia o fato.',
-      '5. Use o contexto das mensagens vizinhas pra entender o fato (não isole 1 linha).',
+      '5. Use o contexto das mensagens vizinhas pra entender o fato, MAS não conecte mensagens separadas por [GAP: ...].',
       '6. Retorne JSON: {"facts":[...]}',
       '',
       known
@@ -577,6 +816,7 @@ export function createGroupMemoryService({
       const validated = parseFactsJson(raw, {
         batchSize: batch.length,
         summaryMax: o.summaryMax,
+        batch, // passado pra inferência de subject quando LLM mandou vazio
       });
       const out = [];
       for (const f of validated) {
@@ -589,6 +829,7 @@ export function createGroupMemoryService({
           keywords: f.keywords,
           score: f.score,
           signature: f.signature,
+          subjectInferred: f.subjectInferred === true,
         });
       }
       return out;
@@ -871,4 +1112,7 @@ export {
   tokenSet,
   keywordSignature,
   VALID_KINDS,
+  // helpers expostos pra testes/probes:
+  inferSubjectIndicesFromSummary,
+  looseParseFacts,
 };
