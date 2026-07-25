@@ -344,6 +344,13 @@ test('heist banco/lojinha: payout e EV table; multa com teto', () => {
     acquiredPrice: 38,
     usesLeft: 1,
   });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'lockpick',
+    acquiredPrice: 50,
+    usesLeft: 5,
+  });
 
   const cfg = resolveFunConfig({
     assaultCooldownMs: 0,
@@ -383,6 +390,13 @@ test('heist banco/lojinha: payout e EV table; multa com teto', () => {
     scopeKey: scope,
     itemId: 'faca',
     acquiredPrice: 90,
+    usesLeft: 5,
+  });
+  marketRepo.addInventory({
+    userJid: whale,
+    scopeKey: scope,
+    itemId: 'lockpick',
+    acquiredPrice: 50,
     usesLeft: 5,
   });
   const failMarket = createMarketService({
@@ -733,6 +747,13 @@ test('heist banco: armas têm penalidade de chance', () => {
     acquiredPrice: 90,
     usesLeft: 10,
   });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'lockpick',
+    acquiredPrice: 50,
+    usesLeft: 5,
+  });
 
   const result = market.assault({
     attackerJid: atk,
@@ -743,6 +764,7 @@ test('heist banco: armas têm penalidade de chance', () => {
   assert.equal(result.ok, true);
   // faca: chance base 0.5 + 22/200 + lvl*0.006 - weaponPenalty 0.10
   // = 0.5 + 0.11 + 0.03 - 0.10 = 0.54
+  // chancePenalty=0, heat=0
   assert.ok(result.chance < 0.60, `chance com arma em banco deve ter penalidade: ${result.chance}`);
   assert.ok(result.chance > 0.40, `chance com arma em banco deve ser razoável: ${result.chance}`);
 
