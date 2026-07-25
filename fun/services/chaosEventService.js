@@ -11,7 +11,7 @@ function numOr(v, fb) {
 }
 
 function generateMathChallenge(random) {
-  const terms = 2 + Math.floor(random() * 2);
+  const terms = 2;
   const nums = [];
   const ops = [];
   let expression = '';
