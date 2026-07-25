@@ -835,6 +835,15 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.chaosEventMaxDebt,
       { min: 0, max: 1_000_000, rounding: 'floor', clamp: true }
     ),
+    chaosEventDefenseEnabled: normalizeBoolean(
+      raw.chaosEventDefenseEnabled,
+      DEFAULT_FUN_CONFIG.chaosEventDefenseEnabled
+    ),
+    chaosEventDefenseTimeoutMs: normalizeInt(
+      raw.chaosEventDefenseTimeoutMs,
+      DEFAULT_FUN_CONFIG.chaosEventDefenseTimeoutMs,
+      { min: 1000, max: 30_000, rounding: 'floor', clamp: true }
+    ),
   };
 }
 

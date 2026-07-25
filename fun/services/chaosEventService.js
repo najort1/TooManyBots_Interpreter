@@ -2,11 +2,46 @@
  * Purga — evento diário de 10 minutos (referência ao filme Uma Noite de Crime).
  * Ativa 1x/dia em horário configurável.
  * Durante o evento: assalto livre, sem arma = 50%, saldo negativo limitado, heat desativado.
+ * Defesa: alvo resolve conta de matemática em 4s para bloquear o assalto.
  */
 
 function numOr(v, fb) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fb;
+}
+
+function generateMathChallenge(random) {
+  const terms = 2 + Math.floor(random() * 2);
+  const nums = [];
+  const ops = [];
+  let expression = '';
+  let total = 0;
+
+  for (let i = 0; i < terms; i++) {
+    const n = 1 + Math.floor(random() * 19);
+    nums.push(n);
+  }
+
+  for (let i = 0; i < terms - 1; i++) {
+    ops.push(random() < 0.5 ? '+' : '-');
+  }
+
+  total = nums[0];
+  expression = String(nums[0]);
+  for (let i = 0; i < ops.length; i++) {
+    expression += ` ${ops[i]} ${nums[i + 1]}`;
+    if (ops[i] === '+') {
+      total += nums[i + 1];
+    } else {
+      total -= nums[i + 1];
+    }
+  }
+
+  if (total < 0) {
+    return generateMathChallenge(random);
+  }
+
+  return { expression, answer: total };
 }
 
 export function createChaosEventService({
@@ -21,6 +56,9 @@ export function createChaosEventService({
   /** @type {Map<string, { attackers: Map<string,number>, victims: Map<string,number>, startAt: number }>} */
   const leaderboards = new Map();
 
+  /** @type {Map<string, Map<string, { attackerJid: string, amount: number, taken: number, debt: number, expression: string, answer: number, expiresAt: number, now: number }>>} */
+  const challenges = new Map();
+
   function opts(funConfig = {}) {
     return {
       enabled: funConfig.chaosEventEnabled !== false,
@@ -28,8 +66,10 @@ export function createChaosEventService({
       durationMs: Math.max(60_000, Math.floor(numOr(funConfig.chaosEventDurationMs, 10 * 60_000))),
       noWeaponSuccess: Math.min(0.75, Math.max(0.1, numOr(funConfig.chaosEventNoWeaponSuccess, 0.50))),
       weaponBaseChance: Math.min(0.85, Math.max(0.1, numOr(funConfig.chaosEventWeaponBaseChance, 0.60))),
-      maxStealAmount: Math.max(1, Math.floor(numOr(funConfig.chaosEventMaxStealAmount, 100_000))),
-      maxDebt: Math.max(0, Math.floor(numOr(funConfig.chaosEventMaxDebt, 10_000))),
+      maxStealAmount: Math.max(1, Math.floor(numOr(funConfig.chaosEventMaxStealAmount, 100))),
+      maxDebt: Math.max(0, Math.floor(numOr(funConfig.chaosEventMaxDebt, 100))),
+      defenseEnabled: funConfig.chaosEventDefenseEnabled !== false,
+      defenseTimeoutMs: Math.max(1000, Math.floor(numOr(funConfig.chaosEventDefenseTimeoutMs, 4000))),
     };
   }
 
@@ -99,7 +139,7 @@ export function createChaosEventService({
     return event.remainingMs;
   }
 
-  function recordLeaderboardEntry(scopeKey, attackerJid, victimJid, stolen) {
+  function recordLeaderboard(scopeKey, attackerJid, victimJid, stolen) {
     let lb = leaderboards.get(scopeKey);
     if (!lb) {
       lb = { attackers: new Map(), victims: new Map(), startAt: Date.now() };
@@ -114,22 +154,51 @@ export function createChaosEventService({
   function getEventLeaderboard(scopeKey) {
     const lb = leaderboards.get(scopeKey);
     if (!lb) return { attackers: [], victims: [] };
-
     const attackers = [...lb.attackers.entries()]
       .map(([jid, total]) => ({ jid, total }))
       .sort((a, b) => b.total - a.total)
       .slice(0, 5);
-
     const victims = [...lb.victims.entries()]
       .map(([jid, total]) => ({ jid, total }))
       .sort((a, b) => b.total - a.total)
       .slice(0, 3);
-
     return { attackers, victims };
   }
 
   function cleanupLeaderboard(scopeKey) {
     leaderboards.delete(scopeKey);
+  }
+
+  function executeAssaultTransfer(scopeKey, attackerJid, targetJid, taken, debt, desired, tCoins, now) {
+    const finalTaken = Math.min(desired, Math.max(0, tCoins));
+    let finalDebt = desired - finalTaken;
+
+    if (finalDebt > 0) {
+      const currentNegative = Math.abs(Math.min(0, tCoins - finalTaken));
+      const maxAdditionalDebt = Math.max(0, opts({}).maxDebt - currentNegative);
+      finalDebt = Math.min(finalDebt, maxAdditionalDebt);
+    }
+
+    if (finalTaken > 0) {
+      repository.addCoins({
+        userJid: targetJid, scopeKey, amount: -finalTaken, now, reason: 'crime-victim',
+      });
+    }
+
+    if (finalDebt > 0) {
+      repository.addCoinsAllowNegative({
+        userJid: targetJid, scopeKey, amount: -finalDebt, now, reason: 'crime-debt',
+      });
+    }
+
+    const totalStolen = finalTaken + finalDebt;
+    repository.addCoins({
+      userJid: attackerJid, scopeKey, amount: totalStolen, now, reason: 'crime-win',
+    });
+
+    recordLeaderboard(scopeKey, attackerJid, targetJid, totalStolen);
+
+    return { stolen: totalStolen, stolenFromWallet: finalTaken, stolenFromDebt: finalDebt };
   }
 
   function doCrimeAssault({
@@ -159,6 +228,7 @@ export function createChaosEventService({
 
     const tStats = repository.getUserStats(t, scopeKey) || repository.ensureUserRow(t, scopeKey, now);
     const tCoins = Number(tStats.coins) || 0;
+    const aStats = repository.getUserStats(a, scopeKey) || repository.ensureUserRow(a, scopeKey, now);
 
     let success = false;
     let chance = 0;
@@ -172,7 +242,6 @@ export function createChaosEventService({
       const power = Number(wCol.assaultPower) || 0;
       chance = Math.min(0.85, Math.max(0.12, o.weaponBaseChance + power / 200));
       if (ms?.consumeUse) ms.consumeUse(weapon, now);
-
       const roll = random();
       success = roll < chance;
     } else {
@@ -183,72 +252,149 @@ export function createChaosEventService({
 
     if (!success) {
       return {
-        ok: true,
-        success: false,
-        mode: 'crime_event',
-        event: true,
-        chance,
-        weapon: wCol || null,
-        stolen: 0,
-        reason: 'failed',
+        ok: true, success: false, mode: 'crime_event',
+        event: true, chance, weapon: wCol || null,
+        stolen: 0, reason: 'failed',
         coins: repository.getUserStats(a, scopeKey)?.coins || 0,
       };
     }
 
-    const taken = Math.min(desired, Math.max(0, tCoins));
-    let debt = desired - taken;
-
-    if (debt > 0) {
-      const currentNegative = Math.abs(Math.min(0, tCoins - taken));
-      const maxAdditionalDebt = Math.max(0, o.maxDebt - currentNegative);
-      debt = Math.min(debt, maxAdditionalDebt);
+    if (!o.defenseEnabled) {
+      const transfer = executeAssaultTransfer(scopeKey, a, t, 0, 0, desired, tCoins, now);
+      return {
+        ok: true, success: true, mode: 'crime_event',
+        event: true, chance, weapon: wCol || null,
+        stolen: transfer.stolen, stolenFromWallet: transfer.stolenFromWallet,
+        stolenFromDebt: transfer.stolenFromDebt, targetCoins: tCoins,
+        targetAfter: Number(repository.getUserStats(t, scopeKey)?.coins) || 0,
+        coins: repository.getUserStats(a, scopeKey)?.coins || 0,
+      };
     }
 
-    if (taken > 0) {
-      repository.addCoins({
-        userJid: t,
-        scopeKey,
-        amount: -taken,
-        now,
-        reason: 'crime-victim',
-      });
-    }
-
-    if (debt > 0) {
-      repository.addCoinsAllowNegative({
-        userJid: t,
-        scopeKey,
-        amount: -debt,
-        now,
-        reason: 'crime-debt',
-      });
-    }
-
-    const totalStolen = taken + debt;
-    repository.addCoins({
-      userJid: a,
-      scopeKey,
-      amount: totalStolen,
+    const challenge = generateMathChallenge(random);
+    const challengeData = {
+      attackerJid: a,
+      amount: desired,
+      tCoins,
+      expression: challenge.expression,
+      answer: challenge.answer,
+      expiresAt: now + o.defenseTimeoutMs,
       now,
-      reason: 'crime-win',
-    });
+    };
 
-    recordLeaderboardEntry(scopeKey, a, t, totalStolen);
+    let scopeChallenges = challenges.get(scopeKey);
+    if (!scopeChallenges) {
+      scopeChallenges = new Map();
+      challenges.set(scopeKey, scopeChallenges);
+    }
+    scopeChallenges.set(t, challengeData);
 
     return {
-      ok: true,
-      success: true,
-      mode: 'crime_event',
-      event: true,
-      chance,
-      weapon: wCol || null,
-      stolen: totalStolen,
-      stolenFromWallet: taken,
-      stolenFromDebt: debt,
-      targetCoins: tCoins,
-      targetAfter: Number(repository.getUserStats(t, scopeKey)?.coins) || 0,
+      ok: true, success: 'pending', mode: 'crime_event',
+      event: true, chance, weapon: wCol || null,
+      stolen: 0, reason: 'defense',
+      challenge: {
+        targetJid: t,
+        attackerJid: a,
+        expression: challenge.expression,
+        answer: challenge.answer,
+        expiresAt: challengeData.expiresAt,
+      },
       coins: repository.getUserStats(a, scopeKey)?.coins || 0,
     };
+  }
+
+  function getPendingChallenge(scopeKey, targetJid, now = Date.now()) {
+    const scopeChallenges = challenges.get(String(scopeKey || ''));
+    if (!scopeChallenges) return null;
+    const c = scopeChallenges.get(String(targetJid || ''));
+    if (!c) return null;
+    if (now > c.expiresAt) {
+      scopeChallenges.delete(String(targetJid || ''));
+      if (scopeChallenges.size === 0) challenges.delete(String(scopeKey || ''));
+      return { expired: true, ...c };
+    }
+    return { ...c };
+  }
+
+  function resolveChallenge({
+    scopeKey,
+    targetJid,
+    answer,
+    now = Date.now(),
+  }) {
+    const t = String(targetJid || '');
+    const s = String(scopeKey || '');
+    const scopeChallenges = challenges.get(s);
+    if (!scopeChallenges) return { ok: false, reason: 'no-challenge' };
+
+    const c = scopeChallenges.get(t);
+    if (!c) return { ok: false, reason: 'no-challenge' };
+    scopeChallenges.delete(t);
+    if (scopeChallenges.size === 0) challenges.delete(s);
+
+    if (now > c.expiresAt) {
+      const transfer = executeAssaultTransfer(s, c.attackerJid, t, 0, 0, c.amount, c.tCoins, now);
+      return {
+        ok: true, defended: false, timedOut: true,
+        attackerJid: c.attackerJid, expression: c.expression, correctAnswer: c.answer,
+        stolen: transfer.stolen,
+        stolenFromWallet: transfer.stolenFromWallet,
+        stolenFromDebt: transfer.stolenFromDebt,
+      };
+    }
+
+    const parsed = Math.floor(Number(answer));
+    if (!Number.isFinite(parsed)) {
+      const transfer = executeAssaultTransfer(s, c.attackerJid, t, 0, 0, c.amount, c.tCoins, now);
+      return {
+        ok: true, defended: false, invalid: true,
+        attackerJid: c.attackerJid, expression: c.expression, correctAnswer: c.answer,
+        stolen: transfer.stolen,
+        stolenFromWallet: transfer.stolenFromWallet,
+        stolenFromDebt: transfer.stolenFromDebt,
+      };
+    }
+
+    if (parsed === c.answer) {
+      return {
+        ok: true, defended: true,
+        attackerJid: c.attackerJid, expression: c.expression, correctAnswer: c.answer,
+        stolen: 0,
+      };
+    }
+
+    const transfer = executeAssaultTransfer(s, c.attackerJid, t, 0, 0, c.amount, c.tCoins, now);
+    return {
+      ok: true, defended: false,
+      attackerJid: c.attackerJid, expression: c.expression, correctAnswer: c.answer,
+      givenAnswer: parsed,
+      stolen: transfer.stolen,
+      stolenFromWallet: transfer.stolenFromWallet,
+      stolenFromDebt: transfer.stolenFromDebt,
+    };
+  }
+
+  function processExpiredChallenges(scopeKey, now = Date.now()) {
+    const scopeChallenges = challenges.get(String(scopeKey || ''));
+    if (!scopeChallenges) return [];
+    const results = [];
+    for (const [targetJid, c] of scopeChallenges) {
+      if (now > c.expiresAt) {
+        const t = String(targetJid);
+        scopeChallenges.delete(targetJid);
+        const transfer = executeAssaultTransfer(
+          String(scopeKey), c.attackerJid, t, 0, 0, c.amount, c.tCoins, now
+        );
+        results.push({
+          targetJid: t, attackerJid: c.attackerJid,
+          expression: c.expression, correctAnswer: c.answer,
+          stolen: transfer.stolen, timedOut: true,
+        });
+      }
+    }
+    if (scopeChallenges.size === 0) challenges.delete(String(scopeKey || ''));
+    return results;
   }
 
   function formatStartAnnouncement(result) {
@@ -263,10 +409,12 @@ export function createChaosEventService({
       `Durante *${minutes} minutos*:`,
       '💰 Qualquer valor pode ser roubado',
       '🔫 Assaltos ficaram mais fáceis',
+      '🧮 Defenda-se resolvendo a conta em 4s',
       '🔥 Heat foi desativado — sem wanted',
       '💸 Saldo negativo permitido (limitado)',
       '',
       `\`/crime @alvo quantia\``,
+      'Após ser atacado, resolva a conta com `/defender resposta`',
       '',
       'Boa sorte...',
     ].join('\n');
@@ -333,7 +481,6 @@ export function createChaosEventService({
     return raw.endsAt - now;
   }
 
-  /** @type {Map<string, boolean>} */
   const warningSent = new Map();
 
   function shouldSendWarning(scopeKey, now = Date.now()) {
@@ -357,6 +504,9 @@ export function createChaosEventService({
     tryStartEvent,
     getTimeRemaining,
     doCrimeAssault,
+    getPendingChallenge,
+    resolveChallenge,
+    processExpiredChallenges,
     formatStartAnnouncement,
     formatWarningAnnouncement,
     formatEndAnnouncement,
