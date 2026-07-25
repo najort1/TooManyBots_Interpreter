@@ -593,10 +593,14 @@ test('defesa: assaltos em alvos diferentes no mesmo escopo não interferem', () 
   assert.equal(p2.success, 'pending', `p2.success deveria ser pending, foi ${p2.success}, reason=${p2.reason || 'n/a'}`);
   assert.ok(p2.challenge.expiresAt > p1.challenge.expiresAt);
 
-  // vic1 acerta o desafio dele
-  const r1 = chaosEvent.resolveChallenge({ scopeKey: scope, targetJid: vic1, answer: p1.challenge.answer, now: now + 3000 });
-  assert.equal(r1.defended, true);
-  assert.equal(r1.stolen, 0);
+  // vic1 acerta o desafio dele — via checkMessageForChallenge (simula digitar o número)
+  const msgCheck = chaosEvent.checkMessageForChallenge(scope, vic1, String(p1.challenge.answer), now + 3000);
+  assert.equal(msgCheck.matched, true);
+  assert.equal(msgCheck.result.defended, true);
+  // o resolveChallenge direto agora falha (já foi consumido pelo check)
+  const r1 = chaosEvent.resolveChallenge({ scopeKey: scope, targetJid: vic1, answer: p1.challenge.answer, now: now + 3100 });
+  assert.equal(r1.ok, false);
+  assert.equal(r1.reason, 'no-challenge');
   assert.equal(repo.getUserStats(vic1, scope).coins, 100);
 
   // vic2 erra o dele
@@ -763,6 +767,98 @@ test('defesa: assalto sem arma com defesa ativa retorna pending e não coins', (
   assert.equal(result.stolen, 0);
   assert.equal(repo.getUserStats(atk, scope).coins, 100);
   assert.equal(repo.getUserStats(vic, scope).coins, 100);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('defesa: checkMessageForChallenge acerta sem comando especial', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.01 });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5547');
+  const vic = uniqueJid('5548');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
+  const now = atHour(TEST_HOUR);
+  chaosEvent.tryStartEvent(scope, cfg, now);
+
+  const pending = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 30, funConfig: cfg, now: now + 1000 });
+  assert.equal(pending.success, 'pending');
+
+  // vic digita o número certo — sem comando, sem marcação
+  const check = chaosEvent.checkMessageForChallenge(scope, vic, String(pending.challenge.answer), now + 2000);
+  assert.equal(check.matched, true);
+  assert.equal(check.result.defended, true);
+  assert.equal(check.result.stolen, 0);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('defesa: checkMessageForChallenge com resposta errada ignora', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.01 });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5549');
+  const vic = uniqueJid('5550');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
+  const now = atHour(TEST_HOUR);
+  chaosEvent.tryStartEvent(scope, cfg, now);
+
+  const pending = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 30, funConfig: cfg, now: now + 1000 });
+  assert.equal(pending.success, 'pending');
+
+  // vic digita um número errado — check retorna matched=false, desafio continua
+  const wrong = chaosEvent.checkMessageForChallenge(scope, vic, '999', now + 2000);
+  assert.equal(wrong.matched, false);
+
+  // desafio ainda está ativo
+  const challenge = chaosEvent.getPendingChallenge(scope, vic, now + 2500);
+  assert.notEqual(challenge, null);
+  assert.equal(challenge.expired, undefined);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('defesa: checkMessageForChallenge com texto não numérico ignora', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.01 });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5551');
+  const vic = uniqueJid('5552');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
+  const now = atHour(TEST_HOUR);
+  chaosEvent.tryStartEvent(scope, cfg, now);
+
+  const pending = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 30, funConfig: cfg, now: now + 1000 });
+  assert.equal(pending.success, 'pending');
+
+  // mensagens não numéricas são ignoradas
+  assert.equal(chaosEvent.checkMessageForChallenge(scope, vic, 'kkk', now + 2000).matched, false);
+  assert.equal(chaosEvent.checkMessageForChallenge(scope, vic, '/defender 2', now + 2100).matched, false);
+  assert.equal(chaosEvent.checkMessageForChallenge(scope, vic, 'dois', now + 2200).matched, false);
+
+  // desafio ainda ativo
+  assert.notEqual(chaosEvent.getPendingChallenge(scope, vic, now + 2500), null);
 
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });

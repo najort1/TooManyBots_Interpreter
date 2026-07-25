@@ -414,7 +414,7 @@ export function createChaosEventService({
       '💸 Saldo negativo permitido (limitado)',
       '',
       `\`/crime @alvo quantia\``,
-      'Após ser atacado, resolva a conta com `/defender resposta`',
+      '🧮 Se for atacado, DIGITE O NÚMERO da conta para se defender',
       '',
       'Boa sorte...',
     ].join('\n');
@@ -499,6 +499,25 @@ export function createChaosEventService({
     warningSent.delete(`${scopeKey}:2min`);
   }
 
+  function checkMessageForChallenge(scopeKey, senderJid, text, now = Date.now()) {
+    const t = String(senderJid || '');
+    const s = String(scopeKey || '');
+    if (!t || !s) return { matched: false };
+
+    const pending = getPendingChallenge(s, t, now);
+    if (!pending || pending.expired) return { matched: false };
+
+    const parsed = Math.floor(Number(String(text || '').trim()));
+    if (!Number.isFinite(parsed)) return { matched: false };
+
+    if (parsed === pending.answer) {
+      const result = resolveChallenge({ scopeKey: s, targetJid: t, answer: parsed, now });
+      return { matched: true, result };
+    }
+
+    return { matched: false };
+  }
+
   return {
     isEventActive,
     tryStartEvent,
@@ -507,6 +526,7 @@ export function createChaosEventService({
     getPendingChallenge,
     resolveChallenge,
     processExpiredChallenges,
+    checkMessageForChallenge,
     formatStartAnnouncement,
     formatWarningAnnouncement,
     formatEndAnnouncement,
