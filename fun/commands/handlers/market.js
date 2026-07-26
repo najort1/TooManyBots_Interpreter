@@ -540,7 +540,7 @@ export async function handleAssaultCommand({
       return { handled: true };
     }
     if (result.reason === 'no-lockpick') {
-      await reply('Sem *lockpick* pra arrombar o cofre. Compre no `/mercado` (`/adquirir lockpick`) — 50c cada, 5 usos.');
+      await reply('Sem *lockpick* pra arrombar o cofre. Compre no `/mercado` (`/adquirir lockpick`) — 50c cada, 1 uso.');
       return { handled: true };
     }
     if (result.reason === 'target-poor') {
