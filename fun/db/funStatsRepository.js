@@ -961,6 +961,94 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     return best;
   }
 
+  /**
+   * Agrega o ledger por reason (normalizado — prefix antes do ":") para um escopo/janela.
+   *
+   * amount positivo no ledger = moeda creditada ao user (mint / ganho);
+   * amount negativo = moeda debitada (sink / perda).
+   *
+   * @returns {Array<{ reason, gained, lost, net, count }>}
+   *   gained = soma de amount>0 (moeda que entrou em circulação p/ esse reason)
+   *   lost   = soma de |amount<0| (moeda retirada de circulação p/ esse reason)
+   *   net    = gained - lost
+   *   count  = nº de entradas
+   */
+  function sumLedgerByReason({ scopeKey, since = 0, until = Date.now() } = {}) {
+    ensureFunSchema();
+    const s = String(scopeKey || '');
+    if (!s) return [];
+    const sinceTs = Number(since) || 0;
+    const untilTs = Number(until) || Date.now();
+    const rows = getDatabase()
+      .prepare(
+        `SELECT reason, amount FROM ${ANALYTICS_SCHEMA}.fun_coin_ledger
+         WHERE scope_key = ? AND created_at >= ? AND created_at <= ?`
+      )
+      .all(s, sinceTs, untilTs);
+    const byReason = new Map();
+    for (const r of rows) {
+      // normaliza prefix dinâmico: "property-buy:padaria" → "property-buy"
+      const raw = String(r.reason || '');
+      const reason = raw.includes(':') ? raw.slice(0, raw.indexOf(':')) : raw;
+      const amount = Number(r.amount) || 0;
+      const entry = byReason.get(reason) || { reason, gained: 0, lost: 0, net: 0, count: 0 };
+      if (amount >= 0) entry.gained += amount;
+      else entry.lost += Math.abs(amount);
+      entry.net += amount;
+      entry.count += 1;
+      byReason.set(reason, entry);
+    }
+    return [...byReason.values()].sort((a, b) => b.gained + b.lost - (a.gained + a.lost));
+  }
+
+  /**
+   * Agrega o ledger por usuário (to_jid para créditos, from_jid para débitos) num escopo/janela.
+   * Útil para "quem mais ganhou/perdeu hoje" — alimentar rankings de crims/azarados.
+   *
+   * @param {object} opts
+   * @param {string[]} [opts.reasons] — filtra por reasons normalizados (prefix antes de ":")
+   * @param {string} [opts.direction] — 'credit' soma só amount>0, 'debit' só |amount<0|, default ambos
+   * @returns {Array<{ jid, gained, lost, net, count }>}
+   */
+  function sumLedgerByUser({ scopeKey, since = 0, until = Date.now(), reasons = null, direction = null } = {}) {
+    ensureFunSchema();
+    const s = String(scopeKey || '');
+    if (!s) return [];
+    const sinceTs = Number(since) || 0;
+    const untilTs = Number(until) || Date.now();
+    let sql = `
+      SELECT to_jid, from_jid, reason, amount FROM ${ANALYTICS_SCHEMA}.fun_coin_ledger
+      WHERE scope_key = ? AND created_at >= ? AND created_at <= ?
+    `;
+    const params = [s, sinceTs, untilTs];
+    if (Array.isArray(reasons) && reasons.length) {
+      sql += ` AND reason IN (${reasons.map(() => '?').join(',')})`;
+      params.push(...reasons.map(String));
+    }
+    const rows = getDatabase().prepare(sql).all(...params);
+    const byUser = new Map();
+    const bump = (jid, amount, reason) => {
+      const j = String(jid || '');
+      if (!j) return;
+      const entry = byUser.get(j) || { jid: j, gained: 0, lost: 0, net: 0, count: 0 };
+      if (amount >= 0) entry.gained += amount;
+      else entry.lost += Math.abs(amount);
+      entry.net += amount;
+      entry.count += 1;
+      byUser.set(j, entry);
+    };
+    for (const r of rows) {
+      const amount = Number(r.amount) || 0;
+      // to_jid recebe (ganho/mint); from_jid paga (perda/sink). Em débitos sem from_jid, só to_jid como perdedor.
+      if (amount >= 0) {
+        if (direction !== 'debit') bump(r.to_jid, amount, r.reason);
+      } else {
+        if (direction !== 'credit') bump(r.from_jid || r.to_jid, amount, r.reason);
+      }
+    }
+    return [...byUser.values()];
+  }
+
   return {
     ensureFunSchema,
     getUserStats,
@@ -985,6 +1073,8 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     countUsersInScope,
     sumLedgerForUser,
     biggestLossSince,
+    sumLedgerByReason,
+    sumLedgerByUser,
     _resetSchemaFlag,
   };
 }

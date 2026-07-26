@@ -539,9 +539,22 @@ export function buildFunSchemaSql() {
 
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_group_news_meta (
       scope_key              TEXT PRIMARY KEY,
-      last_daily_news_day    TEXT    NOT NULL DEFAULT '',
+      last_daily_news_day    TEXT NOT NULL DEFAULT '',
       updated_at             INTEGER NOT NULL
     );
+
+    -- Snapshot diário do jornal: 1 linha/dia/grupo.
+    -- Populado em newsService.tryPublish para alimentar memória histórica (30+ dias).
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_daily_snapshot (
+      scope_key    TEXT    NOT NULL,
+      day_key      TEXT    NOT NULL,
+      payload_json TEXT    NOT NULL DEFAULT '{}',
+      created_at   INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, day_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_daily_snapshot_scope
+      ON fun_daily_snapshot(scope_key, created_at DESC);
 
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_achievements (
       user_jid         TEXT    NOT NULL,

@@ -355,6 +355,7 @@ export function createGroupMemoryService({
   getLogger = () => null,
   generateZen = openaiChatComplete,
   generateOllama = ollamaGenerate,
+  getNewsService = null,
 } = {}) {
   if (!memoryRepository) throw new Error('[fun/groupMemoryService] memoryRepository required');
 
@@ -517,12 +518,10 @@ export function createGroupMemoryService({
 
       for (const fact of extracted.slice(0, 2)) {
         if (fact.score < o.minScore) continue;
-        // subjects já são JIDs (pós map de IDs)
         if (!fact.subjects?.length) continue;
 
         const hit = findSimilar(existing, fact);
         if (hit) {
-          // overwrite summary + last_seen (relógio reseta) em vez de só hits
           memoryRepository.reinforceFact(hit.id, {
             summary: fact.summary.slice(0, o.summaryMax),
             score: fact.score,
@@ -531,7 +530,6 @@ export function createGroupMemoryService({
             now,
           });
           reinforced += 1;
-          // atualiza mirror local p/ dedup no mesmo flush
           const idx = existing.findIndex((e) => e.id === hit.id);
           if (idx >= 0) {
             existing[idx] = {
@@ -560,6 +558,25 @@ export function createGroupMemoryService({
             existing.push(rec);
             inserted += 1;
           }
+        }
+      }
+
+      // Loga quotes notáveis no fun_daily_events para o jornal
+      const ns = typeof getNewsService === 'function' ? getNewsService() : null;
+      if (ns && typeof ns.log === 'function') {
+        for (const fact of extracted) {
+          if (!['catchphrase', 'running_gag', 'epic_fail'].includes(fact.kind)) continue;
+          if (fact.score < Math.max(o.minScore, 50)) continue;
+          const jid = fact.subjects?.[0];
+          if (!jid) continue;
+          ns.log(scopeKey, 'notable_quote', {
+            userJid: jid,
+            payload: {
+              quote: fact.summary.slice(0, 200),
+              kind: fact.kind,
+            },
+            now,
+          });
         }
       }
 

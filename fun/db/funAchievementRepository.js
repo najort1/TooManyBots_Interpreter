@@ -23,6 +23,29 @@ export function createFunAchievementRepository({ getDatabase = getDb } = {}) {
     }));
   }
 
+  /**
+   * Conquistas desbloqueadas no escopo desde um timestamp (ms).
+   * Útil para o jornal: "conquistas raras de hoje".
+   * @returns {Array<{ userJid, achievementId, unlockedAt }>}
+   */
+  function listUnlockedSince(scopeKey, sinceMs, limit = 50) {
+    ensureSchema();
+    const lim = Math.max(1, Math.min(200, Math.floor(Number(limit) || 50)));
+    const rows = getDatabase()
+      .prepare(
+        `SELECT user_jid, achievement_id, unlocked_at FROM ${ANALYTICS_SCHEMA}.fun_achievements
+         WHERE scope_key = ? AND unlocked_at >= ?
+         ORDER BY unlocked_at DESC
+         LIMIT ?`
+      )
+      .all(String(scopeKey || ''), Number(sinceMs) || 0, lim);
+    return rows.map((r) => ({
+      userJid: String(r.user_jid || ''),
+      achievementId: String(r.achievement_id || ''),
+      unlockedAt: Number(r.unlocked_at) || 0,
+    }));
+  }
+
   function has(scopeKey, userJid, achievementId) {
     ensureSchema();
     const row = getDatabase()
@@ -106,6 +129,7 @@ export function createFunAchievementRepository({ getDatabase = getDb } = {}) {
 
   return {
     listUnlocked,
+    listUnlockedSince,
     has,
     unlock,
     getProgress,

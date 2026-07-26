@@ -127,10 +127,16 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
     const s = String(scopeKey || '');
     const ts = Number(now) || Date.now();
     const db = getDatabase();
-    const insert = db.prepare(
-      `INSERT OR IGNORE INTO ${ANALYTICS_SCHEMA}.fun_market_prices
+    const upsert = db.prepare(
+      `INSERT INTO ${ANALYTICS_SCHEMA}.fun_market_prices
        (scope_key, item_id, price, previous_price, trend, last_event_id, updated_at)
-       VALUES (?, ?, ?, ?, 'flat', '', ?)`
+       VALUES (?, ?, ?, ?, 'flat', '', ?)
+       ON CONFLICT(scope_key, item_id) DO UPDATE SET
+         price = excluded.price,
+         previous_price = CASE WHEN ${ANALYTICS_SCHEMA}.fun_market_prices.price = excluded.price
+           THEN ${ANALYTICS_SCHEMA}.fun_market_prices.previous_price
+           ELSE ${ANALYTICS_SCHEMA}.fun_market_prices.price END,
+         updated_at = excluded.updated_at`
     );
     const stockIns = db.prepare(
       `INSERT OR IGNORE INTO ${ANALYTICS_SCHEMA}.fun_market_stock
@@ -138,7 +144,7 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
        VALUES (?, ?, ?, ?)`
     );
     for (const item of COLLECTIBLES) {
-      insert.run(s, item.id, item.basePrice, item.basePrice, ts);
+      upsert.run(s, item.id, item.basePrice, item.basePrice, ts);
       stockIns.run(s, item.id, Math.max(0, Math.floor(Number(item.stockMax) || 0)), ts);
     }
   }
@@ -694,6 +700,22 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
   }
 
   /**
+   * Conta eventos de mercado do escopo desde um timestamp (ms).
+   * Diferente de listRecentEvents, não trunca em 20 — faz COUNT(*) direto.
+   * Útil para o jornal: "eventos de mercado nas últimas 24h".
+   */
+  function countEventsSince(scopeKey, sinceMs) {
+    ensureSchema();
+    const row = getDatabase()
+      .prepare(
+        `SELECT COUNT(*) AS total FROM ${ANALYTICS_SCHEMA}.fun_market_events
+         WHERE scope_key = ? AND created_at >= ?`
+      )
+      .get(String(scopeKey || ''), Number(sinceMs) || 0);
+    return Number(row?.total) || 0;
+  }
+
+  /**
    * Paginação de notícias/eventos de mercado (DESC por data).
    * @returns {{ events: object[], total: number, page: number, limit: number, totalPages: number }}
    */
@@ -743,6 +765,7 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
     getEvent,
     latestEvent,
     listRecentEvents,
+    countEventsSince,
     listEventsPage,
     listHistory,
     addInventory,

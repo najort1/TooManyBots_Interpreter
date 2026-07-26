@@ -32,6 +32,7 @@ import { createFunUserPrefsRepository } from './db/funUserPrefsRepository.js';
 import { createFunPropertyRepository } from './db/funPropertyRepository.js';
 import { createFunNewsRepository } from './db/funNewsRepository.js';
 import { createFunAchievementRepository } from './db/funAchievementRepository.js';
+import { createFunSnapshotRepository } from './db/funSnapshotRepository.js';
 import { createGroupMembershipService } from './utils/groupMembership.js';
 import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
@@ -129,6 +130,8 @@ export function createFunModule(deps = {}) {
     deps.newsRepository || createFunNewsRepository({ getDatabase });
   const achievementRepository =
     deps.achievementRepository || createFunAchievementRepository({ getDatabase });
+  const snapshotRepository =
+    deps.snapshotRepository || createFunSnapshotRepository({ getDatabase });
   const relationshipService = createRelationshipService({
     relationshipRepository,
     actionRepository,
@@ -222,6 +225,7 @@ export function createFunModule(deps = {}) {
       eventRepository,
       getMarketService: () => marketService,
       random: Math.random,
+      getNewsService: () => newsService,
     });
   const socialHooks = createSocialHooks({ bridgeService, missionService });
   const chaosService =
@@ -240,6 +244,7 @@ export function createFunModule(deps = {}) {
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
       generateOllama: deps.ollamaGenerate || deps.generate,
+      getNewsService: () => newsService,
     });
   const flavorService =
     deps.flavorService ||
@@ -278,7 +283,17 @@ export function createFunModule(deps = {}) {
     deps.newsService ||
     createNewsService({
       newsRepository,
+      snapshotRepository,
+      statsRepository: repository,
+      achievementRepository,
+      relationshipRepository,
+      casinoRepository,
+      marketRepository,
+      stockRepository,
+      rouletteHistory: casinoRepository?.rouletteHistory || null,
+      marketService,
       flavorService,
+      getContactDisplayName: resolveContactName,
     });
   const nsfwVoteRepository =
     deps.nsfwVoteRepository || createFunNsfwVoteRepository({ getDatabase });
@@ -799,6 +814,7 @@ export function createFunModule(deps = {}) {
       propertyService,
       roastService,
       newsService,
+      snapshotRepository,
       changelogService,
       achievementService,
       casinoRepository,

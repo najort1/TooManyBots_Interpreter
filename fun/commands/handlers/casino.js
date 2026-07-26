@@ -428,6 +428,12 @@ export async function handleCashoutCommand({
       if (unlocked.length) {
         await reply(unlocked.map((u) => `🏆 *${u.icon} ${u.name}*`).join('\n'));
       }
+      if ((result.payout || 0) > 0) {
+        newsService?.log?.(scopeKey, 'casino_win', {
+          userJid,
+          payload: { amount: result.payout },
+        });
+      }
     } catch {
       /* ignore */
     }

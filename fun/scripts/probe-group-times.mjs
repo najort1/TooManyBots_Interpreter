@@ -124,9 +124,9 @@ for (const g of groups) {
     (g.label === 'probe-group-1' && /Alice|BombaTech|120c|crash/i.test(text)) ||
     (g.label === 'probe-group-2' && /\b77\b|\b57\b/.test(text));
 
-  const hasHeader = /Group Times|MANCHETE|Manchete/i.test(text);
+  const hasHeader = /Group Times|Group Times|Edição|THE GROUP TIMES|EDIÇÃO/i.test(text);
   const provider = String(edition?.provider || '');
-  const isLlm = provider === 'zen' || provider === 'ollama';
+  const isLlm = ['zen', 'ollama', 'llm-enhanced'].includes(provider);
   const notEmpty = text.length > 60;
   // se LLM, deve refletir pelo menos um fato do seed
   const reflectsSeed =
@@ -164,7 +164,7 @@ for (const g of groups) {
 console.log('\n========== RESUMO ==========');
 console.log(JSON.stringify(results, null, 2));
 const pass = results.filter((r) => r.ok).length;
-const llm = results.filter((r) => r.provider === 'zen' || r.provider === 'ollama').length;
+const llm = results.filter((r) => ['zen', 'ollama', 'llm-enhanced'].includes(r.provider)).length;
 console.log(`PASS ${pass}/${results.length} · LLM real ${llm}/${results.length}`);
 if (llm === 0) {
   console.warn('AVISO: nenhum grupo saiu com provider zen/ollama — caiu em template.');

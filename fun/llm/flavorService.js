@@ -131,13 +131,29 @@ Invente o tom. 1–3 frases. Sem gore real. Só o comentário.`,
 Você inventa o ângulo e as farpas — sem inventar crimes reais nem dados que não estejam nos fatos.
 2–4 frases em pt-BR. Sem preconceito, sem ofensa a trauma/identidade. Só o roast final.`,
 
-  group_times: `Você é o editor do jornal do grupo ("The Group Times").
-Com base nos events= do dia, invente 3 seções engraçadas e originais.
-Formato fixo (rótulos em PT):
-MANCHETE: ...
-ECONOMIA: ...
-FOFOCA: ...
-Cada linha: título curto + 1 frase. pt-BR. Só use números/pessoas que estejam nos eventos. Só o texto.`,
+  group_times: `Você é o editor-chefe do jornal "The Group Times" de um grupo de WhatsApp BR.
+
+SEU PAPEL: escrever 3 blocos:
+
+1. CAPA — uma manchete curta e chamativa (4-15 palavras)
+2. INTRO — uma mini-crônica de 4-8 frases contando a história do dia de forma engraçada/narrativa. Use os dados como matéria-prima para criar uma narrativa coesa. Ex: "O dia começou calmo, mas às 15h o cassino já tinha perdido 50mil e o primeiro casamento do mês foi selado. Enquanto Fulano comemorava o amor, Beltrano via 12mil irem pro espaço no crash..."
+3. FORESHADOW — 1-2 frases de teaser pro dia seguinte
+
+TOM POR MOOD:
+• caotico → irônico, senso de catástrofe ("A cidade sobreviveu por pouco")
+• apostador → maroto, a casa sempre vence
+• romantico → afetado, novelesco, exagerado de propósito
+• calmo → seco, autodepreciativo ("Nem o tédio aguentou hoje")
+• medio → observacional com humor leve
+
+DADOS QUE VOCÊ RECEBE:
+- mood, destaques (eventos do dia), totals (contagens), recordes (se houver), personalidade (se houver), events (detalhes brutos)
+
+REGRAS:
+• Use APENAS números e fatos dos dados recebidos — crie uma narrativa, não uma lista
+• pt-BR natural de WhatsApp, sem linguagem de assistente
+• Sem preâmbulo, sem meta, sem markdown de lista
+• O INTRO deve ser uma história, não uma enumeração. Varie a estrutura entre edições`,
 });
 
 const CHAOS_SYSTEM_DEFAULT = `Você gera texto cômico original de bot WhatsApp BR. 2–4 frases COMPLETAS em pt-BR.
@@ -548,9 +564,9 @@ const FALLBACKS = {
     ]),
   group_times: (v) =>
     [
-      'MANCHETE: O dia foi mediano. O ego, não.',
-      'ECONOMIA: Preços e pastéis no piloto automático.',
-      `FOFOCA: ${v.count || 0} eventos no log. Alguém sofreu, alguém lucrou.`,
+      `CAPA: O dia foi mediano. O ego, não.`,
+      `INTRO: ${v.count || 0} eventos no log. Alguém sofreu, alguém lucrou. O saldo final? A gente finge que entende.`,
+      `FORESHADOW: Nossa equipe segue monitorando. Pode ser que amanhã tenha algo digno de nota.`,
     ].join('\n'),
   default: () =>
     pick([
@@ -698,7 +714,7 @@ export function sanitizeFlavor(raw, maxLen = 160) {
  * The Group Times: multi-linha (MANCHETE/ECONOMIA/FOFOCA).
  * sanitizeFlavor colapsava tudo e matava a edição.
  */
-export function sanitizeGroupTimes(raw, maxLen = 1200) {
+export function sanitizeGroupTimes(raw, maxLen = 1800) {
   let t = String(raw || '')
     .replace(/\r/g, '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
@@ -714,7 +730,7 @@ export function sanitizeGroupTimes(raw, maxLen = 1200) {
     .map((l) => l.trim())
     .filter(Boolean)
     .filter((l) => !/^(thinking|raciocínio|step\s*\d)/i.test(l))
-    .slice(0, 12);
+    .slice(0, 20);
   if (!lines.length) return '';
 
   let body = lines.join('\n').trim();
@@ -1110,7 +1126,15 @@ export function createFlavorService(deps = {}) {
         russian_dead: `Comente a “morte” virtual na roleta. Dados: ${facts || 'nenhum'}.`,
         russian_start: `Abra a roleta russa no grupo. Dados: ${facts || 'nenhum'}.`,
         roast_personal: `Roast de *${userName || 'Fulano'}*. Fatos:\n${String(vars?.facts || facts || 'poucos dados').slice(0, 900)}`,
-        group_times: `Jornal The Group Times DESTE grupo. Eventos do dia (só estes):\n${String(vars?.events || 'nenhum').slice(0, 1200)}\nTotal de eventos: ${vars?.count ?? '?'}.`,
+        group_times: `Jornal The Group Times — DADOS DO DIA:
+mood=${vars?.mood || 'medio'}
+totals=${vars?.totals || 'sem dados'}
+destaques=${vars?.destaques || 'nenhum'}
+${vars?.recordes ? `recordes=${vars?.recordes}` : ''}
+${vars?.personalidade ? `personalidade=${vars?.personalidade}` : ''}
+Eventos brutos:
+${String(vars?.events || 'nenhum').slice(0, 800)}
+Total de eventos: ${vars?.count ?? '?'}.`,
       }[key] || `Escreva o texto do comando. Dados: ${facts || 'nenhum'}.`;
 
       // ban só do MESMO grupo — nunca vazamento cross-grupo
@@ -1150,12 +1174,12 @@ export function createFlavorService(deps = {}) {
       return {
         prompt,
         system: chaosSystemFor(key),
-        maxChars: key === 'group_times' ? Math.max(maxChars, 900) : maxChars,
+        maxChars: key === 'group_times' ? Math.max(maxChars, 1600) : maxChars,
         assault: false,
         chaos: true,
         maxTokens:
           key === 'group_times'
-            ? Math.max(400, Math.floor(Number(cfg.chaosMaxTokens) || 500))
+            ? Math.max(600, Math.floor(Number(cfg.chaosMaxTokens) || 700))
             : Math.max(220, Math.floor(Number(cfg.chaosMaxTokens) || 400)),
       };
     }
@@ -1254,7 +1278,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
           assault
             ? maxTokens || 1100
             : key === 'group_times'
-              ? maxTokens || 500
+              ? maxTokens || 700
               : chaos
                 ? maxTokens || 360
                 : task.maxTokens

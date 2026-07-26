@@ -81,9 +81,45 @@ export function createFunRelationshipRepository({ getDatabase = getDb } = {}) {
     return run();
   }
 
+  /**
+   * Lista casamentos ativos do escopo (1 linha por casal — dedupe user_jid < partner_jid).
+   * Ordenado por married_at ASC (casal há mais tempo primeiro).
+   * @returns {Array<{ a, b, marriedAt }>}
+   */
+  function listActiveMarriages(scopeKey) {
+    ensureSchema();
+    const rows = getDatabase()
+      .prepare(
+        `SELECT user_jid, partner_jid, married_at FROM ${ANALYTICS_SCHEMA}.fun_marriages
+         WHERE scope_key = ?
+         ORDER BY married_at ASC`
+      )
+      .all(String(scopeKey || ''));
+    const seen = new Set();
+    const out = [];
+    for (const r of rows) {
+      const a = String(r.user_jid || '');
+      const b = String(r.partner_jid || '');
+      if (!a || !b) continue;
+      // cada casal gera 2 rows simétricas; dedupe ordenando o par
+      const key = a < b ? `${a}|${b}` : `${b}|${a}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ a, b, marriedAt: Number(r.married_at) || 0 });
+    }
+    return out;
+  }
+
+  /** Conta casais ativos (cada casal = 2 rows simétricas na tabela). */
+  function countActiveMarriages(scopeKey) {
+    return listActiveMarriages(scopeKey).length;
+  }
+
   return {
     getMarriage,
     marry,
     divorce,
+    listActiveMarriages,
+    countActiveMarriages,
   };
 }

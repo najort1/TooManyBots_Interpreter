@@ -43,8 +43,8 @@ test('news: log, compose template, publish dedup', async () => {
   });
 
   const edition = await newsService.composeEdition(scope, {}, Date.now());
-  assert.ok(edition.text.includes('The Group Times'));
-  assert.equal(edition.provider, 'template');
+  assert.ok(edition.text.includes('THE GROUP TIMES'));
+  assert.equal(edition.provider, 'deterministic');
   assert.ok(edition.eventCount >= 2);
 
   // force publish by faking window via direct set + try with stubbed window
