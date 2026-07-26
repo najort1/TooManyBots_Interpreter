@@ -706,9 +706,7 @@ export function createFunModule(deps = {}) {
               }
             }
 
-            const active = chaosEventService.isEventActive(scopeKey, chaosNow);
-            const wasActive = chaosEventService.isEventActive(scopeKey, chaosNow - 120_000);
-            if (!active && wasActive) {
+            if (chaosEventService.shouldSendEnd?.(scopeKey, chaosNow)) {
               const endMsg = chaosEventService.formatEndAnnouncement(scopeKey, nameResolver);
               if (endMsg) {
                 await postWithMentions(scopeKey, endMsg, userFmt);
@@ -736,6 +734,35 @@ export function createFunModule(deps = {}) {
               kind: 'chaos-event',
               ok: false,
               reason: err?.message || 'chaos-event-error',
+            });
+          }
+        }
+
+        // Limpa desafios expirados do /crime (executa transferências pendentes)
+        if (chaosEventService?.processExpiredChallenges) {
+          try {
+            const expired = chaosEventService.processExpiredChallenges(scopeKey, now);
+            for (const exp of expired) {
+              const vTag = nameOf(nameResolver, exp.targetJid);
+              const aTag = nameOf(nameResolver, exp.attackerJid);
+              const msg = [
+                `⏰ *Tempo esgotou!* ${vTag} não respondeu ao desafio.`,
+                `${aTag} levou *${exp.stolen}* coins. (Conta: ${exp.expression} = ${exp.correctAnswer})`,
+              ].join('\n');
+              await postWithMentions(scopeKey, msg, userFmt);
+              results.push({
+                scopeKey,
+                kind: 'challenge-expired',
+                ok: true,
+                stolen: exp.stolen,
+              });
+            }
+          } catch (err) {
+            results.push({
+              scopeKey,
+              kind: 'challenge-expired',
+              ok: false,
+              reason: err?.message || 'challenge-timeout-error',
             });
           }
         }

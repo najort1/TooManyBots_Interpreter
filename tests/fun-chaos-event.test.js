@@ -982,3 +982,348 @@ test('estresse: múltiplos crimes e defesas simultâneas durante Purga', () => {
 
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
+
+// ─── Filtro de Atividade ────────────────────────────────────────────────────
+
+function setupActivityTest(extraCfg = {}) {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.01 });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5561');
+  const vic = uniqueJid('5562');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 1000, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 1000, reason: 'seed' });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 1.0, chaosEventMaxStealAmount: 500, ...NO_DEFENSE, ...extraCfg });
+  const now = atHour(TEST_HOUR);
+  chaosEvent.tryStartEvent(scope, cfg, now);
+  return { repo, eventRepo, marketRepo, market, chaosEvent, scope, atk, vic, cfg, now };
+}
+
+function insertConversationEvent(jid, flowPath, occurredAt) {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO analytics.conversation_events (occurred_at, event_type, direction, jid, flow_path, message_text, metadata)
+    VALUES (?, 'message', 'incoming', ?, ?, '', '{}')
+  `).run(Number(occurredAt), String(jid), String(flowPath || ''));
+}
+
+test('getLastPlayerActivity — retorna o evento mais recente do JID alvo', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
+  insertConversationEvent(vic, scope, now - 60_000);
+  insertConversationEvent(vic, scope, now - 30_000);
+  const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(result.ok, true, 'alvo com evento recente deve passar');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('getLastPlayerActivity — não mistura jogadores', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
+  const outro = uniqueJid('5563');
+  insertConversationEvent(outro, scope, now - 5_000);
+  insertConversationEvent(vic, scope, now - 20 * 60_000);
+  const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'inactive-target');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('getLastPlayerActivity — sem eventos retorna 0 (fail-open)', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
+  const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(result.ok, true, 'sem dados não deve bloquear');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('getLastPlayerActivity — leitura não altera dados', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
+  insertConversationEvent(vic, scope, now - 30_000);
+  const db = getDb();
+  const before = db.prepare('SELECT COUNT(*) AS total FROM analytics.conversation_events WHERE jid = ?').get(String(vic));
+  chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  const after = db.prepare('SELECT COUNT(*) AS total FROM analytics.conversation_events WHERE jid = ?').get(String(vic));
+  assert.equal(Number(before.total), Number(after.total));
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('janela de atividade — dentro da janela permite seguir', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
+  insertConversationEvent(vic, scope, now - 60_000);
+  const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(result.ok, true);
+  assert.equal(result.success, true);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('janela de atividade — exatamente no limite permite seguir', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
+  insertConversationEvent(vic, scope, now - 600_000);
+  const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(result.ok, true, 'exatamente no limite não deve bloquear');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('janela de atividade — 1ms além do limite bloqueia', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
+  insertConversationEvent(vic, scope, now - 600_001);
+  const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'inactive-target');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('janela de atividade — muito antigo bloqueia', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
+  insertConversationEvent(vic, scope, now - 3_600_000);
+  const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'inactive-target');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('janela de atividade — evento futuro não bloqueia', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
+  insertConversationEvent(vic, scope, now + 60_000);
+  const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(result.ok, true, 'evento futuro deve ser considerado ativo');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('precedência — event-inactive antes de inactive-target', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: createFunMarketRepository({ getDatabase: getDb }) });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market });
+  const scope = uniqueGroup();
+  const cfg = chaosConfig({});
+  // Sem evento ativo — must retornar event-inactive independente de atividade do alvo
+  const result = chaosEvent.doCrimeAssault({ attackerJid: uniqueJid('5564'), targetJid: uniqueJid('5565'), scopeKey: scope, amount: 50, funConfig: cfg });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'event-inactive');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('precedência — invalid-target antes de inactive-target', () => {
+  const { chaosEvent, scope, cfg, now } = setupActivityTest();
+  // auto-ataque
+  const result = chaosEvent.doCrimeAssault({ attackerJid: scope, targetJid: scope, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'invalid-target');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('inatividade bloqueia antes de arma/lockpick', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now, marketRepo } = setupActivityTest();
+  marketRepo.addInventory({ userJid: atk, scopeKey: scope, itemId: 'lockpick', acquiredPrice: 50, usesLeft: 3 });
+  insertConversationEvent(vic, scope, now - 20 * 60_000);
+  const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'inactive-target');
+  // lockpick não foi consumido
+  const inv = marketRepo.listInventory(atk, scope);
+  const lp = inv.find(i => i.itemId === 'lockpick');
+  assert.equal(lp.usesLeft, 3);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('inatividade não altera saldos', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now, repo } = setupActivityTest();
+  insertConversationEvent(vic, scope, now - 20 * 60_000);
+  const atkBefore = repo.getUserStats(atk, scope).coins;
+  const vicBefore = repo.getUserStats(vic, scope).coins;
+  chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(repo.getUserStats(atk, scope).coins, atkBefore);
+  assert.equal(repo.getUserStats(vic, scope).coins, vicBefore);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('inatividade não registra leaderboard', () => {
+  const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
+  insertConversationEvent(vic, scope, now - 20 * 60_000);
+  chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  const lb = chaosEvent.getEventLeaderboard(scope);
+  assert.equal(lb.attackers.length, 0);
+  assert.equal(lb.victims.length, 0);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('isolamento entre alvos — ativo passa, inativo bloqueia no mesmo evento', () => {
+  const { chaosEvent, scope, atk, cfg, now, repo } = setupActivityTest();
+  const vicAtivo = uniqueJid('5566');
+  const vicInativo = uniqueJid('5567');
+  repo.addCoins({ userJid: vicAtivo, scopeKey: scope, amount: 500, reason: 'seed' });
+  repo.addCoins({ userJid: vicInativo, scopeKey: scope, amount: 500, reason: 'seed' });
+  insertConversationEvent(vicAtivo, scope, now - 30_000);
+  insertConversationEvent(vicInativo, scope, now - 20 * 60_000);
+
+  const r1 = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vicAtivo, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(r1.ok, true, 'alvo ativo deve passar');
+
+  const r2 = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vicInativo, scopeKey: scope, amount: 50, funConfig: cfg, now });
+  assert.equal(r2.ok, false);
+  assert.equal(r2.reason, 'inactive-target');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+// ─── Testes de Configuração ─────────────────────────────────────────────────
+
+test('config — default de 10 minutos', () => {
+  const cfg = resolveFunConfig({});
+  assert.equal(cfg.chaosEventActivityWindowMs, 10 * 60_000);
+});
+
+test('config — aceita mínimo de 1 minuto', () => {
+  const cfg = resolveFunConfig({ chaosEventActivityWindowMs: 60_000 });
+  assert.equal(cfg.chaosEventActivityWindowMs, 60_000);
+});
+
+test('config — aceita máximo de 60 minutos', () => {
+  const cfg = resolveFunConfig({ chaosEventActivityWindowMs: 60 * 60_000 });
+  assert.equal(cfg.chaosEventActivityWindowMs, 60 * 60_000);
+});
+
+test('config — clamp abaixo do mínimo', () => {
+  for (const val of [0, -1, 1, 59_999]) {
+    const cfg = resolveFunConfig({ chaosEventActivityWindowMs: val });
+    assert.equal(cfg.chaosEventActivityWindowMs, 60_000, `valor ${val} deve subir para 60_000`);
+  }
+});
+
+test('config — clamp acima do máximo', () => {
+  for (const val of [3_600_001, 7_200_000, 99_999_999]) {
+    const cfg = resolveFunConfig({ chaosEventActivityWindowMs: val });
+    assert.equal(cfg.chaosEventActivityWindowMs, 60 * 60_000, `valor ${val} deve descer para ${60 * 60_000}`);
+  }
+});
+
+test('config — valor intermediário preservado', () => {
+  const cfg = resolveFunConfig({ chaosEventActivityWindowMs: 5 * 60_000 });
+  assert.equal(cfg.chaosEventActivityWindowMs, 5 * 60_000);
+});
+
+test('config — entradas inválidas caem no default ou mínimo', () => {
+  // undefined / ausente → default (600_000)
+  assert.equal(resolveFunConfig({}).chaosEventActivityWindowMs, 10 * 60_000);
+  assert.equal(resolveFunConfig({ chaosEventActivityWindowMs: undefined }).chaosEventActivityWindowMs, 10 * 60_000);
+  // string com texto, NaN, Infinity → normalizeInt retorna default
+  for (const val of ['abc', NaN, Infinity]) {
+    const cfg = resolveFunConfig({ chaosEventActivityWindowMs: val });
+    assert.equal(cfg.chaosEventActivityWindowMs, 10 * 60_000, `valor ${val} deve usar default 600_000`);
+  }
+  // string vazia e null → normalizeInt converte para 0 → clamp ao mínimo (60_000)
+  for (const val of ['', null]) {
+    const cfg = resolveFunConfig({ chaosEventActivityWindowMs: val });
+    assert.equal(cfg.chaosEventActivityWindowMs, 60_000, `valor ${JSON.stringify(val)} deve ser clampado ao mínimo 60_000`);
+  }
+});
+
+test('config — fracionário é truncado por normalizeInt', () => {
+  const cfg = resolveFunConfig({ chaosEventActivityWindowMs: 90_500.9 });
+  assert.equal(cfg.chaosEventActivityWindowMs, 90_500);
+});
+
+test('config — isolamento: alterar activity não afeta outros parâmetros', () => {
+  const base = resolveFunConfig({});
+  const modified = resolveFunConfig({ chaosEventActivityWindowMs: 5 * 60_000 });
+  assert.equal(modified.chaosEventActivityWindowMs, 5 * 60_000);
+  assert.equal(modified.chaosEventHour, base.chaosEventHour);
+  assert.equal(modified.chaosEventDurationMs, base.chaosEventDurationMs);
+  assert.equal(modified.chaosEventEnabled, base.chaosEventEnabled);
+});
+
+// ─── Teste do Handler ───────────────────────────────────────────────────────
+
+import { handleAssaultCommand } from '../fun/commands/handlers/market.js';
+
+test('handler — inactive-target exibe mensagem amigável', async () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.01 });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5568');
+  const vic = uniqueJid('5569');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 500, reason: 'seed' });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 1.0, ...NO_DEFENSE });
+  const now = Date.now();
+  // Força início do evento via upsert direto — evita dependência de horário para isEventActive
+  eventRepo.upsert(scope, {
+    eventType: 'crime_chaos', multiplier: 1,
+    startsAt: now, endsAt: now + 10 * 60_000, lastSpawnAt: now,
+    payload: { label: 'PURGA' },
+  });
+
+  // Marca alvo como inativo (20min antes = fora da janela de 10min)
+  insertConversationEvent(vic, scope, now - 20 * 60_000);
+
+  let replyMsg = '';
+  const reply = (msg) => { replyMsg = msg; };
+  const nameOf = (j) => j.split('@')[0];
+
+  const result = await handleAssaultCommand({
+    userJid: atk,
+    scopeKey: scope,
+    marketService: market,
+    funConfig: cfg,
+    getContactDisplayName: nameOf,
+    listContacts: () => [],
+    reply,
+    chaosEventService: chaosEvent,
+    args: [`@${vic.split('@')[0]}`, '50'],
+    mentionedJids: [vic],
+    quotedParticipant: '',
+    sock: null,
+    identityMap: null,
+    msgTimeMs: now,
+  });
+
+  assert.equal(result.handled, true);
+  assert.ok(replyMsg.includes('inativo'), `mensagem deve mencionar inatividade: "${replyMsg}"`);
+  assert.ok(!replyMsg.includes('inactive-target'), 'não deve expor código interno');
+  assert.ok(!replyMsg.includes('coins'), 'não deve mencionar moedas');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('handler — invalid-target mantém mensagem existente', async () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const chaosEvent = {
+    isEventActive: () => ({ active: true, eventType: 'crime_chaos', startsAt: 0, endsAt: Date.now() + 60_000, remainingMs: 60_000 }),
+    doCrimeAssault: () => ({ ok: false, reason: 'invalid-target' }),
+  };
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5570');
+  const vic = uniqueJid('5571');
+
+  let replyMsg = '';
+  const reply = (msg) => { replyMsg = msg; };
+
+  const result = await handleAssaultCommand({
+    userJid: atk,
+    scopeKey: scope,
+    marketService: null,
+    funConfig: chaosConfig({}),
+    getContactDisplayName: (j) => j.split('@')[0],
+    listContacts: () => [],
+    reply,
+    chaosEventService: chaosEvent,
+    args: ['@alvo', '50'],
+    mentionedJids: [vic],
+    quotedParticipant: '',
+    sock: null,
+    identityMap: null,
+    msgTimeMs: Date.now(),
+  });
+  assert.equal(result.handled, true);
+  assert.ok(replyMsg.includes('Alvo inválido'), `mensagem deve ser 'Alvo inválido': "${replyMsg}"`);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});

@@ -180,6 +180,7 @@ export async function routeFunCommand(ctx) {
     getLogger,
     nsfwVoteRepository,
     nsfwService,
+    msgTimeMs,
   } = ctx;
 
   const parsed = parseFunCommand(text, funConfig.prefix);
@@ -245,6 +246,7 @@ export async function routeFunCommand(ctx) {
     getLogger,
     nsfwVoteRepository,
     nsfwService,
+    msgTimeMs,
   };
 
   switch (parsed.command) {

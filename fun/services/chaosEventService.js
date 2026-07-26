@@ -3,7 +3,12 @@
  * Ativa 1x/dia em horário configurável.
  * Durante o evento: assalto livre, sem arma = 50%, saldo negativo limitado, heat desativado.
  * Defesa: alvo resolve conta de matemática em 4s para bloquear o assalto.
+ *
+ * Critério de atividade: apenas jogadores com interação nos últimos N minutos
+ * podem ser vítimas (activityWindowMs, padrão 10 min).
  */
+
+import { getDb } from '../../db/context.js';
 
 function numOr(v, fb) {
   const n = Number(v);
@@ -72,6 +77,7 @@ export function createChaosEventService({
       maxDebt: Math.max(0, Math.floor(numOr(funConfig.chaosEventMaxDebt, 100))),
       defenseEnabled: funConfig.chaosEventDefenseEnabled !== false,
       defenseTimeoutMs: Math.max(1000, Math.floor(numOr(funConfig.chaosEventDefenseTimeoutMs, 8000))),
+      activityWindowMs: Math.max(60_000, Math.floor(numOr(funConfig.chaosEventActivityWindowMs, 10 * 60_000))),
     };
   }
 
@@ -233,6 +239,22 @@ export function createChaosEventService({
     return { stolen: totalStolen, stolenFromWallet: finalTaken, stolenFromDebt: finalDebt };
   }
 
+  function getLastPlayerActivity(jid, scopeKey, now = Date.now()) {
+    try {
+      const db = getDb();
+      const row = db.prepare(`
+        SELECT occurred_at
+        FROM analytics.conversation_events
+        WHERE jid = ?
+        ORDER BY occurred_at DESC
+        LIMIT 1
+      `).get(String(jid || ''));
+      return row ? Number(row.occurred_at) || 0 : 0;
+    } catch {
+      return 0;
+    }
+  }
+
   function doCrimeAssault({
     attackerJid,
     targetJid,
@@ -249,6 +271,10 @@ export function createChaosEventService({
     if (!event) return { ok: false, reason: 'event-inactive' };
 
     const o = opts(funConfig);
+    const lastActivity = getLastPlayerActivity(t, scopeKey, now);
+    if (lastActivity > 0 && now - lastActivity > o.activityWindowMs) {
+      return { ok: false, reason: 'inactive-target' };
+    }
 
     const requested = Math.max(1, Math.floor(Number(amount) || 1));
     const desired = Math.min(requested, o.maxStealAmount);
@@ -334,6 +360,7 @@ export function createChaosEventService({
         expression: challenge.expression,
         answer: challenge.answer,
         expiresAt: challengeData.expiresAt,
+        defenseTimeoutMs: o.defenseTimeoutMs,
       },
       coins: repository.getUserStats(a, scopeKey)?.coins || 0,
     };
@@ -524,6 +551,7 @@ export function createChaosEventService({
   }
 
   const warningSent = new Map();
+  const endSent = new Map();
 
   function shouldSendWarning(scopeKey, now = Date.now()) {
     const event = isEventActive(scopeKey, now);
@@ -539,6 +567,20 @@ export function createChaosEventService({
 
   function resetWarning(scopeKey) {
     warningSent.delete(`${scopeKey}:2min`);
+  }
+
+  function shouldSendEnd(scopeKey, now = Date.now()) {
+    const raw = eventRepository.get(scopeKey);
+    if (raw.eventType !== 'crime_chaos') return false;
+    if (raw.endsAt > now) return false;
+    // Evita re-anúncio ao reiniciar o bot — se já passou mais de uma duração
+    // de evento desde o fim, o evento é considerado estaleiro.
+    const eventDuration = raw.endsAt - raw.startsAt;
+    if (now - raw.endsAt > eventDuration) return false;
+    const key = `${scopeKey}:${raw.endsAt}`;
+    if (endSent.get(key)) return false;
+    endSent.set(key, true);
+    return true;
   }
 
   function checkMessageForChallenge(scopeKey, senderJid, text, now = Date.now()) {
@@ -589,5 +631,6 @@ export function createChaosEventService({
     cooldownRemaining,
     shouldSendWarning,
     resetWarning,
+    shouldSendEnd,
   };
 }

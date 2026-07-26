@@ -758,6 +758,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   chaosEventMaxDebt: 100,
   chaosEventDefenseEnabled: true,
   chaosEventDefenseTimeoutMs: 4000,
+  chaosEventActivityWindowMs: 10 * 60_000,
   // Filas de processamento (command queue + output queue)
   commandMaxConcurrency: 8,
   commandFastConcurrency: 4,

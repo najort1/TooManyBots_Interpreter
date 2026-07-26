@@ -143,6 +143,12 @@ export async function handleFunIncomingMessage(deps, ctx) {
     rawMessage = null,
   } = ctx;
 
+  // Timestamp real da mensagem (enviada pelo usuário, não processada pelo bot)
+  const rawTs = rawMessage?.messageTimestamp;
+  const msgTimeMs = rawTs
+    ? (typeof rawTs === 'number' ? rawTs : Number(rawTs)) * 1000
+    : Date.now();
+
   if (!funConfig?.enabled) {
     return { handled: false, skipFlows: false };
   }
@@ -511,6 +517,10 @@ export async function handleFunIncomingMessage(deps, ctx) {
     );
     if (challengeResult?.matched) {
       const r = challengeResult.result;
+      // Track attacker so both victim and attacker are notified
+      if (r?.attackerJid && r.attackerJid !== userJid) {
+        userFmt.trackMention(r.attackerJid);
+      }
       if (r?.defended) {
         await reply('🧮 *Conta certa!* Você se defendeu e o assalto foi bloqueado.');
       } else if (r?.timedOut) {
@@ -602,6 +612,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           messageType,
           mediaMimeType: mediaMimeType || ctx.mediaMimeType || '',
           getLogger,
+          msgTimeMs,
         });
 
         // evento surpresa + mercado de arte só em grupo

@@ -862,6 +862,11 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.chaosEventDefenseTimeoutMs,
       { min: 1000, max: 30_000, rounding: 'floor', clamp: true }
     ),
+    chaosEventActivityWindowMs: normalizeInt(
+      raw.chaosEventActivityWindowMs,
+      DEFAULT_FUN_CONFIG.chaosEventActivityWindowMs,
+      { min: 60_000, max: 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
     // Filas de processamento
     commandMaxConcurrency: normalizeInt(
       raw.commandMaxConcurrency,
