@@ -32,9 +32,9 @@ function uniqueGroup() {
 
 const TEST_HOUR = 20;
 
-function atHour(hour = TEST_HOUR, { base = Date.now() } = {}) {
+function atHour(hour = TEST_HOUR, minute = 30, { base = Date.now() } = {}) {
   const d = new Date(base);
-  d.setHours(hour, 1, 0, 0);
+  d.setHours(hour, minute, 0, 0);
   return d.getTime();
 }
 
@@ -60,7 +60,7 @@ test('ativação única por dia na hora configurada', () => {
   const withinWindow = chaosEvent.tryStartEvent(scope, cfg, now + 2000);
   assert.equal(withinWindow.reason, 'already-active');
   const nextDay = new Date(now + 24 * 60 * 60_000);
-  const nextAt = atHour(TEST_HOUR, { base: nextDay.getTime() });
+  const nextAt = atHour(TEST_HOUR, 30, { base: nextDay.getTime() });
   assert.equal(chaosEvent.tryStartEvent(scope, cfg, nextAt).ok, true);
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
@@ -227,7 +227,7 @@ test('duração correta de 10 minutos e transição', () => {
   assert.equal(chaosEvent.isEventActive(scope, now + 5 * 60_000).active, true);
   assert.equal(chaosEvent.isEventActive(scope, now + 10 * 60_000 + 1000), false);
   const nextDay = new Date(now + 24 * 60 * 60_000);
-  assert.equal(chaosEvent.tryStartEvent(scope, cfg, atHour(TEST_HOUR, { base: nextDay.getTime() })).ok, true);
+  assert.equal(chaosEvent.tryStartEvent(scope, cfg, atHour(TEST_HOUR, 30, { base: nextDay.getTime() })).ok, true);
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
 

@@ -82,6 +82,8 @@ import {
   toJidString,
 } from './runtime/contactUtils.js';
 import { createIngestionQueue } from './runtime/ingestionQueue.js';
+import { createCommandQueueManager } from './runtime/commandQueue.js';
+import { createOutputQueue } from './runtime/outputQueue.js';
 import { createReconnectController } from './runtime/reconnectController.js';
 import { createTaskScheduler } from './runtime/taskScheduler.js';
 import {
@@ -134,6 +136,8 @@ let whatsappRuntimeStartPromise = null;
 let socketGeneration = 0;
 let dashboardAutoOpenAttempted = false;
 let ingestionQueue = null;
+let commandQueue = null;
+let outputQueue = null;
 let dispatchScheduler = null;
 let postProcessQueue = null;
 let mediaPipelineQueue = null;
@@ -313,6 +317,8 @@ const container = initRuntimeContainer({
   authStorageCache,
 
   getIngestionQueue: () => ingestionQueue,
+  getCommandQueue: () => commandQueue,
+  getOutputQueue: () => outputQueue,
   getDispatchScheduler: () => dispatchScheduler,
   getPostProcessQueue: () => postProcessQueue,
   getMediaPipelineQueue: () => mediaPipelineQueue,
@@ -704,21 +710,41 @@ function getIngestionSnapshot() {
 }
 
 function initializeRuntimeSchedulers(currentConfig) {
+  const queueLogWarn = (queueName) => (snapshot) => {
+    logger?.warn?.(
+      {
+        queue: queueName,
+        queued: snapshot?.queued ?? 0,
+        running: snapshot?.running ?? 0,
+        maxQueueSize: snapshot?.maxQueueSize ?? 0,
+        rejected: snapshot?.rejected ?? 0,
+      },
+      `Queue backlog reached warn threshold: ${queueName}`
+    );
+  };
+
   ingestionQueue = createIngestionQueue({
     concurrency: Number(currentConfig?.ingestionConcurrency ?? 8),
     maxQueueSize: Number(currentConfig?.ingestionQueueMax ?? 5000),
     warnThreshold: Number(currentConfig?.ingestionQueueWarnThreshold ?? 1000),
-    onWarn: (snapshot) => {
-      logger?.warn?.(
-        {
-          queued: snapshot?.queued ?? 0,
-          running: snapshot?.running ?? 0,
-          maxQueueSize: snapshot?.maxQueueSize ?? 0,
-          rejected: snapshot?.rejected ?? 0,
-        },
-        'Ingestion queue backlog reached warn threshold'
-      );
-    },
+    onWarn: queueLogWarn('ingestion'),
+  });
+
+  commandQueue = createCommandQueueManager({
+    maxConcurrency: Number(currentConfig?.commandMaxConcurrency ?? 8),
+    fastConcurrency: Number(currentConfig?.commandFastConcurrency ?? 4),
+    stateConcurrency: Number(currentConfig?.commandStateConcurrency ?? 2),
+    heavyConcurrency: Number(currentConfig?.commandHeavyConcurrency ?? 1),
+    maxQueueSize: Number(currentConfig?.ingestionQueueMax ?? 5000),
+    warnThreshold: Number(currentConfig?.ingestionQueueWarnThreshold ?? 1000),
+    onWarn: (klass) => queueLogWarn(`command-${klass}`),
+  });
+
+  outputQueue = createOutputQueue({
+    globalConcurrency: Number(currentConfig?.outputConcurrency ?? 4),
+    jidGapMs: Number(currentConfig?.outputJidGapMs ?? 600),
+    maxCoalesceDelayMs: Number(currentConfig?.outputCoalesceDelayMs ?? 2000),
+    maxQueueSize: Number(currentConfig?.outputQueueMax ?? 2000),
   });
 
   dispatchScheduler = createTaskScheduler({

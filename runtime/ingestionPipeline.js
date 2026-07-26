@@ -31,7 +31,29 @@ export function createIngestionPipelineController({
   handleIncoming,
   formatError,
   bumpMinuteCounter,
+  getCommandQueue = null,
+  getOutputQueue = null,
 }) {
+  const dedupCache = new Map();
+  const DEDUP_TTL_MS = 4000;
+  const DEDUP_MAX_SIZE = 5000;
+
+  function isDuplicateMessage(messageId, remoteJid) {
+    const key = `${remoteJid}:${messageId}`;
+    const now = Date.now();
+    if (dedupCache.has(key)) {
+      return true;
+    }
+    dedupCache.set(key, now);
+    if (dedupCache.size > DEDUP_MAX_SIZE) {
+      const cutoff = now - DEDUP_TTL_MS;
+      for (const [k, ts] of dedupCache) {
+        if (ts < cutoff) dedupCache.delete(k);
+      }
+    }
+    return false;
+  }
+
   function resolveQueueJidFromIncomingMessage(msg) {
     const messageKey = msg?.key && typeof msg.key === 'object' ? msg.key : {};
     const remoteJid = String(messageKey.remoteJid ?? messageKey.remote_jid ?? '').trim();
@@ -41,6 +63,29 @@ export function createIngestionPipelineController({
       return senderPn;
     }
     return remoteJid;
+  }
+
+  function getMessageId(msg) {
+    const key = msg?.key && typeof msg.key === 'object' ? msg.key : {};
+    return String(key.id ?? key.Id ?? '').trim();
+  }
+
+  function getMessageText(msg) {
+    const quick = msg?.message && typeof msg.message === 'object' ? msg.message : {};
+    const conv = quick.conversationMessage || quick.conversation || '';
+    const ext = quick.extendedTextMessage?.text || '';
+    const btn = quick.buttonsResponseMessage?.selectedButtonId || '';
+    const list = quick.listResponseMessage?.singleSelectReply?.selectedRowId || '';
+    return String(conv || ext || btn || list || '').trim();
+  }
+
+  function getMessageType(msg) {
+    const quick = msg?.message && typeof msg.message === 'object' ? msg.message : {};
+    if (quick.imageMessage) return 'image';
+    if (quick.videoMessage) return 'video';
+    if (quick.documentMessage) return 'document';
+    if (quick.audioMessage) return 'audio';
+    return 'text';
   }
 
   function enqueuePostProcessTask({ key = 'post', taskName = 'post-task', task }) {
@@ -494,6 +539,69 @@ export function createIngestionPipelineController({
     bumpMinuteCounter(getWhatsappHealthState().minuteCounters.incoming, Date.now());
     maybeLogThroughputPressure();
 
+    const messageId = getMessageId(msg);
+    const queueKey = resolveQueueJidFromIncomingMessage(msg);
+
+    if (messageId && queueKey) {
+      if (isDuplicateMessage(messageId, queueKey)) {
+        ingestionRuntimeCounters.duplicateDropped += 1;
+        return;
+      }
+    }
+
+    const commandQueue = typeof getCommandQueue === 'function' ? getCommandQueue() : null;
+    const commandText = getMessageText(msg);
+    const messageType = getMessageType(msg);
+
+    if (commandQueue) {
+      const enqueueResult = commandQueue.enqueue({
+        key: queueKey || 'unknown',
+        commandText,
+        messageType,
+        priority: (messageType === 'image' || messageType === 'video' || messageType === 'document') ? 'low' : 'high',
+        payload: { sock, msg, type, receivedAt: Date.now() },
+        handler: async (payload) => {
+          try {
+            noteQueueLag(Math.max(0, Date.now() - Number(payload?.receivedAt || Date.now())));
+            await processIncomingUpsertMessage(payload);
+          } catch (error) {
+            getLogger()?.error?.(
+              {
+                queueKey: queueKey || 'unknown',
+                queueClass: enqueueResult.queueClass || 'unknown',
+                err: {
+                  name: error?.name || 'Error',
+                  message: error?.message || 'ingestion-queue-task-failed',
+                  stack: error?.stack || '',
+                },
+              },
+              'Command queue task failed'
+            );
+            throw error;
+          }
+        },
+      });
+
+      if (!enqueueResult?.accepted) {
+        ingestionRuntimeCounters.queueOverflowDropped += 1;
+        if (ingestionRuntimeCounters.queueOverflowDropped === 1 ||
+            ingestionRuntimeCounters.queueOverflowDropped % 100 === 0) {
+          getLogger()?.warn?.(
+            {
+              queueKey: queueKey || 'unknown',
+              queueClass: enqueueResult.queueClass || 'unknown',
+              reason: enqueueResult.reason || 'unknown',
+              dropped: ingestionRuntimeCounters.queueOverflowDropped,
+            },
+            'Message dropped by command queue'
+          );
+        }
+      }
+
+      evaluateRuntimeGuardState();
+      return;
+    }
+
     const ingestionQueue = getIngestionQueue();
     if (!ingestionQueue) {
       noteQueueLag(0);
@@ -501,7 +609,6 @@ export function createIngestionPipelineController({
       return;
     }
 
-    const queueKey = resolveQueueJidFromIncomingMessage(msg);
     const quickMessage = msg?.message && typeof msg.message === 'object' ? msg.message : {};
     const isLikelyMedia = Boolean(
       quickMessage.imageMessage ||
@@ -556,5 +663,6 @@ export function createIngestionPipelineController({
   return {
     logConversationEventAsync,
     enqueueIncomingUpsertMessage,
+    _dedupCache: dedupCache,
   };
 }

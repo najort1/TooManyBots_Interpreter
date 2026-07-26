@@ -107,6 +107,8 @@ export function initRuntimeContainer(deps) {
     
     // Schedulers / Controllers that are re-initialized
     getIngestionQueue,
+    getCommandQueue,
+    getOutputQueue,
     getDispatchScheduler,
     getPostProcessQueue,
     getMediaPipelineQueue,
@@ -210,6 +212,8 @@ export function initRuntimeContainer(deps) {
     getMediaPipelineQueue,
     getDispatchScheduler,
     getIngestionQueue,
+    getCommandQueue: () => (typeof getCommandQueue === 'function' ? getCommandQueue() : null),
+    getOutputQueue: () => (typeof getOutputQueue === 'function' ? getOutputQueue() : null),
     getContactCache: () => contactCache,
     getWhatsappHealthState: () => whatsappHealthState,
     getWarnedMissingTestTargets: () => getWarnedMissingTestTargets(),

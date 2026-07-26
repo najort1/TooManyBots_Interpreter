@@ -1462,7 +1462,7 @@ export function createMarketService({
     const ANALYTICS_SCHEMA = 'analytics';
     const KEY_HEAT = 'assault_heat';
     const KEY_DECAY = 'assault_heat_decay_at';
-    const DECAY_MS = 30 * 60_000;
+    const DECAY_MS = 24 * 60 * 60_000;
     try {
       const db = getDb();
       const heatRow = db

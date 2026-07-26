@@ -36,6 +36,14 @@ export const config = {
   ingestionConcurrency: 8,
   ingestionQueueMax: 5000,
   ingestionQueueWarnThreshold: 1000,
+  commandMaxConcurrency: 8,
+  commandFastConcurrency: 4,
+  commandStateConcurrency: 2,
+  commandHeavyConcurrency: 1,
+  outputConcurrency: 4,
+  outputJidGapMs: 600,
+  outputCoalesceDelayMs: 2000,
+  outputQueueMax: 2000,
   schedulerGlobalConcurrency: 16,
   schedulerPerJidConcurrency: 1,
   schedulerPerFlowPathConcurrency: 4,
@@ -233,6 +241,46 @@ function normalizeConfigShape(input) {
     normalized.ingestionQueueWarnThreshold,
     warnThresholdFallback,
     { min: 1, max: normalized.ingestionQueueMax }
+  );
+  normalized.commandMaxConcurrency = toIntInRange(
+    normalized.commandMaxConcurrency,
+    config.commandMaxConcurrency,
+    { min: 1, max: 64 }
+  );
+  normalized.commandFastConcurrency = toIntInRange(
+    normalized.commandFastConcurrency,
+    config.commandFastConcurrency,
+    { min: 1, max: 32 }
+  );
+  normalized.commandStateConcurrency = toIntInRange(
+    normalized.commandStateConcurrency,
+    config.commandStateConcurrency,
+    { min: 1, max: 16 }
+  );
+  normalized.commandHeavyConcurrency = toIntInRange(
+    normalized.commandHeavyConcurrency,
+    config.commandHeavyConcurrency,
+    { min: 1, max: 8 }
+  );
+  normalized.outputConcurrency = toIntInRange(
+    normalized.outputConcurrency,
+    config.outputConcurrency,
+    { min: 1, max: 32 }
+  );
+  normalized.outputJidGapMs = toIntInRange(
+    normalized.outputJidGapMs,
+    config.outputJidGapMs,
+    { min: 0, max: 10000 }
+  );
+  normalized.outputCoalesceDelayMs = toIntInRange(
+    normalized.outputCoalesceDelayMs,
+    config.outputCoalesceDelayMs,
+    { min: 0, max: 30000 }
+  );
+  normalized.outputQueueMax = toIntInRange(
+    normalized.outputQueueMax,
+    config.outputQueueMax,
+    { min: 100, max: 50000 }
   );
   normalized.schedulerGlobalConcurrency = toIntInRange(
     normalized.schedulerGlobalConcurrency,
@@ -432,6 +480,14 @@ function sanitizeConfigForSave(input) {
     ingestionConcurrency: normalized.ingestionConcurrency,
     ingestionQueueMax: normalized.ingestionQueueMax,
     ingestionQueueWarnThreshold: normalized.ingestionQueueWarnThreshold,
+    commandMaxConcurrency: normalized.commandMaxConcurrency,
+    commandFastConcurrency: normalized.commandFastConcurrency,
+    commandStateConcurrency: normalized.commandStateConcurrency,
+    commandHeavyConcurrency: normalized.commandHeavyConcurrency,
+    outputConcurrency: normalized.outputConcurrency,
+    outputJidGapMs: normalized.outputJidGapMs,
+    outputCoalesceDelayMs: normalized.outputCoalesceDelayMs,
+    outputQueueMax: normalized.outputQueueMax,
     schedulerGlobalConcurrency: normalized.schedulerGlobalConcurrency,
     schedulerPerJidConcurrency: normalized.schedulerPerJidConcurrency,
     schedulerPerFlowPathConcurrency: normalized.schedulerPerFlowPathConcurrency,

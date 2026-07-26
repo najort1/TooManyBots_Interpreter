@@ -62,7 +62,8 @@ export function createChaosEventService({
   function opts(funConfig = {}) {
     return {
       enabled: funConfig.chaosEventEnabled !== false,
-      hour: Math.max(0, Math.min(23, Math.floor(numOr(funConfig.chaosEventHour, 20)))),
+      hour: Math.max(0, Math.min(23, Math.floor(numOr(funConfig.chaosEventHour, 23)))),
+      minute: Math.max(0, Math.min(59, Math.floor(numOr(funConfig.chaosEventMinute, 30)))),
       durationMs: Math.max(60_000, Math.floor(numOr(funConfig.chaosEventDurationMs, 10 * 60_000))),
       noWeaponSuccess: Math.min(0.75, Math.max(0.1, numOr(funConfig.chaosEventNoWeaponSuccess, 0.50))),
       weaponBaseChance: Math.min(0.85, Math.max(0.1, numOr(funConfig.chaosEventWeaponBaseChance, 0.60))),
@@ -93,9 +94,13 @@ export function createChaosEventService({
     const already = isEventActive(scopeKey, now);
     if (already) return { ok: false, reason: 'already-active', status: already };
 
-    const hour = numOr(funConfig.chaosEventHour, 20);
-    const currentHour = new Date(now).getHours();
-    if (currentHour !== hour) return { ok: false, reason: 'wrong-hour' };
+    const h = numOr(funConfig.chaosEventHour, 23);
+    const m = numOr(funConfig.chaosEventMinute, 30);
+    const d = new Date(now);
+    const currentHour = d.getHours();
+    const currentMinute = d.getMinutes();
+    const windowOk = currentHour === h && currentMinute >= m && currentMinute < m + 1;
+    if (!windowOk) return { ok: false, reason: 'wrong-hour' };
 
     const raw = eventRepository.get(scopeKey);
     const todayStart = new Date(now);

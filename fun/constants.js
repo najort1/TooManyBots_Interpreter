@@ -746,7 +746,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   profileExtractTimeoutMs: 22_000,
   // 10 Minutos de Crime — evento diário de caos
   chaosEventEnabled: true,
-  chaosEventHour: 20,
+  chaosEventHour: 23,
+  chaosEventMinute: 30,
   chaosEventDurationMs: 10 * 60_000,
   chaosEventNoWeaponSuccess: 0.50,
   chaosEventWeaponBaseChance: 0.60,
@@ -754,6 +755,17 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   chaosEventMaxDebt: 100,
   chaosEventDefenseEnabled: true,
   chaosEventDefenseTimeoutMs: 4000,
+  // Filas de processamento (command queue + output queue)
+  commandMaxConcurrency: 8,
+  commandFastConcurrency: 4,
+  commandStateConcurrency: 2,
+  commandHeavyConcurrency: 1,
+  commandQueueMax: 5000,
+  commandQueueWarnThreshold: 1000,
+  outputConcurrency: 4,
+  outputJidGapMs: 600,
+  outputCoalesceDelayMs: 2000,
+  outputQueueMax: 2000,
 });
 
 /**

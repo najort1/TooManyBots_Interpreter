@@ -18,18 +18,77 @@ import { initDb, getContactDisplayName, upsertContactDisplayName } from '../db/i
 import { useSqliteAuthState } from '../db/authState.js';
 import { parseMessage } from '../engine/messageParser.js';
 import { sendTextMessage as sendTextMessageOriginal, sendImageMessage as sendImageMessageOriginal, sendStickerMessage as sendStickerMessageOriginal } from '../engine/sender.js';
+import { createCommandQueueManager } from '../runtime/commandQueue.js';
+import { createOutputQueue } from '../runtime/outputQueue.js';
 
-// Wrappers que desabilitam o rate limit para o bot fun
+let _outputQueueInstance = null;
+
+export function setOutputQueue(q) { _outputQueueInstance = q; }
+
 async function sendTextMessage(sock, jid, text, options = {}) {
-  return sendTextMessageOriginal(sock, jid, text, { ...options, skipGuard: true });
+  const opts = options && typeof options === 'object' ? { ...options } : {};
+  if (_outputQueueInstance) {
+    return new Promise((resolve) => {
+      _outputQueueInstance.enqueue({
+        jid,
+        priority: opts.priority || 'reply',
+        coalesceKey: opts.coalesceKey || '',
+        send: async () => {
+          try {
+            const result = await sendTextMessageOriginal(sock, jid, text, { ...opts, skipGuard: true });
+            resolve(result);
+          } catch (err) {
+            resolve({ skipped: true, reason: String(err?.message || err) });
+          }
+        },
+      });
+    });
+  }
+  return sendTextMessageOriginal(sock, jid, text, { ...opts, skipGuard: true });
 }
 
 async function sendImageMessage(sock, jid, payload, options = {}) {
-  return sendImageMessageOriginal(sock, jid, payload, { ...options, skipGuard: true });
+  const opts = options && typeof options === 'object' ? { ...options } : {};
+  if (_outputQueueInstance) {
+    return new Promise((resolve) => {
+      _outputQueueInstance.enqueue({
+        jid,
+        priority: opts.priority || 'reply',
+        coalesceKey: opts.coalesceKey || '',
+        send: async () => {
+          try {
+            const result = await sendImageMessageOriginal(sock, jid, payload, { ...opts, skipGuard: true });
+            resolve(result);
+          } catch (err) {
+            resolve({ skipped: true, reason: String(err?.message || err) });
+          }
+        },
+      });
+    });
+  }
+  return sendImageMessageOriginal(sock, jid, payload, { ...opts, skipGuard: true });
 }
 
 async function sendStickerMessage(sock, jid, buffer, options = {}) {
-  return sendStickerMessageOriginal(sock, jid, buffer, { ...options, skipGuard: true });
+  const opts = options && typeof options === 'object' ? { ...options } : {};
+  if (_outputQueueInstance) {
+    return new Promise((resolve) => {
+      _outputQueueInstance.enqueue({
+        jid,
+        priority: opts.priority || 'reply',
+        coalesceKey: opts.coalesceKey || '',
+        send: async () => {
+          try {
+            const result = await sendStickerMessageOriginal(sock, jid, buffer, { ...opts, skipGuard: true });
+            resolve(result);
+          } catch (err) {
+            resolve({ skipped: true, reason: String(err?.message || err) });
+          }
+        },
+      });
+    });
+  }
+  return sendStickerMessageOriginal(sock, jid, buffer, { ...opts, skipGuard: true });
 }
 import { resolveIncomingActorJid } from '../runtime/contactUtils.js';
 import { createInstanceLock } from '../runtime/instanceLock.js';
@@ -166,6 +225,23 @@ export async function startFunBot(options = {}) {
 
   let socketGeneration = 0;
   let currentSocket = null;
+
+  const commandQueue = createCommandQueueManager({
+    maxConcurrency: Number(config.commandMaxConcurrency ?? 8),
+    fastConcurrency: Number(config.commandFastConcurrency ?? 4),
+    stateConcurrency: Number(config.commandStateConcurrency ?? 2),
+    heavyConcurrency: Number(config.commandHeavyConcurrency ?? 1),
+    maxQueueSize: Number(config.commandQueueMax ?? 5000),
+    warnThreshold: Number(config.commandQueueWarnThreshold ?? 1000),
+  });
+
+  const outputQueue = createOutputQueue({
+    globalConcurrency: Number(config.outputConcurrency ?? 4),
+    jidGapMs: Number(config.outputJidGapMs ?? 600),
+    maxCoalesceDelayMs: Number(config.outputCoalesceDelayMs ?? 2000),
+    maxQueueSize: Number(config.outputQueueMax ?? 2000),
+  });
+  setOutputQueue(outputQueue);
 
   const funModule = createFunModule({
     getConfig,
@@ -329,6 +405,52 @@ export async function startFunBot(options = {}) {
     cooldownMs: 2 * 60 * 1000,
   });
 
+  const dedupCache = new Map();
+  const DEDUP_TTL_MS = 4000;
+  const DEDUP_MAX_SIZE = 2000;
+
+  function isDuplicateMessage(messageId, remoteJid) {
+    const key = `${remoteJid}:${messageId}`;
+    const now = Date.now();
+    if (dedupCache.has(key)) return true;
+    dedupCache.set(key, now);
+    if (dedupCache.size > DEDUP_MAX_SIZE) {
+      const cutoff = now - DEDUP_TTL_MS;
+      for (const [k, ts] of dedupCache) {
+        if (ts < cutoff) dedupCache.delete(k);
+      }
+    }
+    return false;
+  }
+
+  function extractMessageId(msg) {
+    const key = msg?.key && typeof msg.key === 'object' ? msg.key : {};
+    return String(key.id ?? key.Id ?? '').trim();
+  }
+
+  function extractQueueJid(msg) {
+    const key = msg?.key && typeof msg.key === 'object' ? msg.key : {};
+    return String(key.remoteJid ?? key.remote_jid ?? '').trim();
+  }
+
+  function extractCommandText(msg) {
+    const quick = msg?.message && typeof msg.message === 'object' ? msg.message : {};
+    const conv = quick.conversationMessage || quick.conversation || '';
+    const ext = quick.extendedTextMessage?.text || '';
+    const btn = quick.buttonsResponseMessage?.selectedButtonId || '';
+    const list = quick.listResponseMessage?.singleSelectReply?.selectedRowId || '';
+    return String(conv || ext || btn || list || '').trim();
+  }
+
+  function extractMessageType(msg) {
+    const quick = msg?.message && typeof msg.message === 'object' ? msg.message : {};
+    if (quick.imageMessage) return 'image';
+    if (quick.videoMessage) return 'video';
+    if (quick.documentMessage) return 'document';
+    if (quick.audioMessage) return 'audio';
+    return 'text';
+  }
+
   async function processIncoming({ sock, msg, type }) {
     if (!messagesEnabled) return;
     if (type !== 'notify') return;
@@ -482,15 +604,37 @@ export async function startFunBot(options = {}) {
       }
     });
 
-    sock.ev.on('messages.upsert', ({ messages, type }) => {
+    sock.ev.on('messages.upsert', ({ messages, type: upsertType }) => {
       if (currentGeneration !== socketGeneration) return;
-      if (type !== 'notify') return;
+      if (upsertType !== 'notify') return;
       if (!Array.isArray(messages) || messages.length === 0) return;
 
       for (const msg of messages) {
-        void processIncoming({ sock, msg, type }).catch(err => {
-          console.error('[fun] Erro ao processar mensagem:', String(err?.message || err));
+        const msgId = extractMessageId(msg);
+        const qJid = extractQueueJid(msg);
+        if (msgId && qJid && isDuplicateMessage(msgId, qJid)) continue;
+
+        const cmdText = extractCommandText(msg);
+        const msgType = extractMessageType(msg);
+
+        const enqResult = commandQueue.enqueue({
+          key: qJid || 'unknown',
+          commandText: cmdText,
+          messageType: msgType,
+          priority: msgType === 'image' || msgType === 'video' || msgType === 'document' ? 'low' : 'high',
+          payload: { sock, msg, type: upsertType },
+          handler: async () => {
+            try {
+              await processIncoming({ sock, msg, type: upsertType });
+            } catch (err) {
+              console.error('[fun] Command queue task falhou:', String(err?.message || err));
+            }
+          },
         });
+
+        if (!enqResult.accepted && config.debugMode) {
+          console.warn('[fun] Mensagem rejeitada pela fila:', enqResult.reason, enqResult.queueClass);
+        }
       }
     });
 

@@ -814,6 +814,12 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    chaosEventMinute: normalizeInt(raw.chaosEventMinute, DEFAULT_FUN_CONFIG.chaosEventMinute, {
+      min: 0,
+      max: 59,
+      rounding: 'floor',
+      clamp: true,
+    }),
     chaosEventDurationMs: normalizeInt(
       raw.chaosEventDurationMs,
       DEFAULT_FUN_CONFIG.chaosEventDurationMs,
@@ -843,6 +849,57 @@ export function normalizeFunConfig(input) {
       raw.chaosEventDefenseTimeoutMs,
       DEFAULT_FUN_CONFIG.chaosEventDefenseTimeoutMs,
       { min: 1000, max: 30_000, rounding: 'floor', clamp: true }
+    ),
+    // Filas de processamento
+    commandMaxConcurrency: normalizeInt(
+      raw.commandMaxConcurrency,
+      DEFAULT_FUN_CONFIG.commandMaxConcurrency,
+      { min: 1, max: 64, rounding: 'floor', clamp: true }
+    ),
+    commandFastConcurrency: normalizeInt(
+      raw.commandFastConcurrency,
+      DEFAULT_FUN_CONFIG.commandFastConcurrency,
+      { min: 1, max: 32, rounding: 'floor', clamp: true }
+    ),
+    commandStateConcurrency: normalizeInt(
+      raw.commandStateConcurrency,
+      DEFAULT_FUN_CONFIG.commandStateConcurrency,
+      { min: 1, max: 16, rounding: 'floor', clamp: true }
+    ),
+    commandHeavyConcurrency: normalizeInt(
+      raw.commandHeavyConcurrency,
+      DEFAULT_FUN_CONFIG.commandHeavyConcurrency,
+      { min: 1, max: 8, rounding: 'floor', clamp: true }
+    ),
+    commandQueueMax: normalizeInt(
+      raw.commandQueueMax,
+      DEFAULT_FUN_CONFIG.commandQueueMax,
+      { min: 100, max: 50000, rounding: 'floor', clamp: true }
+    ),
+    commandQueueWarnThreshold: normalizeInt(
+      raw.commandQueueWarnThreshold,
+      DEFAULT_FUN_CONFIG.commandQueueWarnThreshold,
+      { min: 10, max: 50000, rounding: 'floor', clamp: true }
+    ),
+    outputConcurrency: normalizeInt(
+      raw.outputConcurrency,
+      DEFAULT_FUN_CONFIG.outputConcurrency,
+      { min: 1, max: 32, rounding: 'floor', clamp: true }
+    ),
+    outputJidGapMs: normalizeInt(
+      raw.outputJidGapMs,
+      DEFAULT_FUN_CONFIG.outputJidGapMs,
+      { min: 0, max: 10000, rounding: 'floor', clamp: true }
+    ),
+    outputCoalesceDelayMs: normalizeInt(
+      raw.outputCoalesceDelayMs,
+      DEFAULT_FUN_CONFIG.outputCoalesceDelayMs,
+      { min: 0, max: 30000, rounding: 'floor', clamp: true }
+    ),
+    outputQueueMax: normalizeInt(
+      raw.outputQueueMax,
+      DEFAULT_FUN_CONFIG.outputQueueMax,
+      { min: 100, max: 50000, rounding: 'floor', clamp: true }
     ),
   };
 }
