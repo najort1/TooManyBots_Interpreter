@@ -58,6 +58,7 @@ import {
   getArchetype,
 } from '../economy/index.js';
 import { nameOf } from '../utils/userLabel.js';
+import { createPoliceService } from './policeService.js';
 
 function numOr(v, fb) {
   const n = Number(v);
@@ -85,6 +86,7 @@ export function createMarketService({
   propertyService = null,
   achievementRepository = null,
   chaosEventService = null,
+  policeService = null,
   random = Math.random,
   getLogger = () => null,
   generateZen = openaiChatComplete,
@@ -92,6 +94,15 @@ export function createMarketService({
 } = {}) {
   if (!repository) throw new Error('[fun/marketService] repository required');
   if (!marketRepository) throw new Error('[fun/marketService] marketRepository required');
+
+  const police =
+    policeService ||
+    createPoliceService({
+      repository,
+      effectsRepository,
+      chaosEventService,
+      random,
+    });
 
   function opts(funConfig = {}) {
     return {
@@ -1687,8 +1698,11 @@ export function createMarketService({
       '⚠️ *Nerfs anti-farm:*',
       '• Multa progressiva: 5% do saldo (piso 10 · teto 200)',
       '• Janela 2h: 3º+ assalto reduz chance −10% e prêmio −20%; 5º+ −20% e −40%',
-      '• Calor (wanted): +1 por sucesso · −1 a cada 30min sem crime · −3% chance por nível',
+      '• Heat (curto prazo): +1 por sucesso · decai com o tempo · −3% chance por nível',
+      '• Wanted (reputação): sobe devagar com crimes · polícia fica mais agressiva (⭐1–⭐5)',
+      '• Suspicion: Heat + histórico + riqueza criminal + eventos policiais',
       '• Decaimento 24h: 4º+ assalto no dia paga 70%; 7º+ paga 50%; 11º+ paga 35%',
+      '• 🕶️ *Crime Immunity Pass* (`/loja`): 3 dias ou 20 crimes sem bloqueio policial (Wanted ainda sobe)',
       '',
       formatEvTable(scopeKey, funConfig, level),
     ];
@@ -1752,8 +1766,17 @@ export function createMarketService({
     const windowCount = manageAssaultWindow(a, scopeKey, now);
     const { chancePenalty, payoutMult } = applyDiminishingReturns(windowCount);
 
-    // Calor (wanted) — aumenta com sucessos, decai 1 a cada 30min
+    // Heat (curto prazo) — preservado; Wanted/Suspicion via policeService
     const heat = getAssaultHeat(a, scopeKey, now);
+    const policeEval = police.evaluate({
+      userJid: a,
+      scopeKey,
+      heat,
+      mode: heist.kind,
+      windowCount,
+      now,
+    });
+    const immune = Boolean(policeEval.immune);
 
     // Wins pagos nas últimas 24h — decay de payout (não pune falha)
     const paidWins24h = countPaidWins24h(a, scopeKey, now);
@@ -1769,17 +1792,92 @@ export function createMarketService({
     }
     chance -= chancePenalty;
     chance -= heat * 0.03;
+    // Wanted/Suspicion endurecem o crime (imunidade zera esta parte)
+    chance -= Number(policeEval.chancePenalty) || 0;
     chance = Math.min(0.82, Math.max(0.12, chance));
 
     consumeUse(weapon, now);
     touchAssaultCooldown(a, scopeKey, now);
+
+    // Intervenção policial (bloqueio) — imunidade ignora
+    if (!immune && policeEval.intervention?.intervene) {
+      const bustHeat = Math.min(15, heat + 2);
+      setAssaultHeat(a, scopeKey, bustHeat, now);
+      const fineBase = computeFailFine(aStats.coins, o);
+      const fine = Math.min(
+        aStats.coins,
+        Math.max(fineBase, Math.floor(fineBase * (1 + policeEval.wantedLevel * 0.15)))
+      );
+      if (fine > 0) {
+        repository.addCoins({
+          userJid: a,
+          scopeKey,
+          amount: -fine,
+          now,
+          reason: 'police-bust',
+        });
+      }
+      const after = police.afterCrime({
+        userJid: a,
+        scopeKey,
+        mode: heist.kind,
+        success: false,
+        immune: false,
+        policeBust: true,
+        now,
+      });
+      const log = getLogger?.();
+      log?.info?.(
+        {
+          event: 'assault_heist',
+          kind: heist.kind,
+          userJid: a,
+          scopeKey,
+          success: false,
+          policeBust: true,
+          chance: Math.round(chance * 100),
+          fine,
+          heat: bustHeat,
+          wantedLevel: after.wantedLevel,
+          suspicion: policeEval.suspicion,
+        },
+        'fun assault heist police bust'
+      );
+      return {
+        ok: true,
+        success: false,
+        policeBust: true,
+        mode: heist.kind,
+        heistLabel: heist.label,
+        chance,
+        roll: policeEval.intervention.roll,
+        fine,
+        weapon: wCol,
+        usedGas,
+        vehicleBonus,
+        coins: repository.getUserStats(a, scopeKey)?.coins || 0,
+        windowCount,
+        heat: bustHeat,
+        wantedLevel: after.wantedLevel,
+        wantedPoints: after.wantedPoints,
+        suspicion: policeEval.suspicion,
+        immune: false,
+        paidWins24h,
+        chancePenalty,
+        payoutMult,
+        decay24h,
+        effectiveDecay: 1,
+      };
+    }
 
     const roll = random();
     const success = roll < chance;
     const powerBoost = 1 + (Number(wCol.assaultPower) || 0) / (heist.kind === 'bank' ? 220 : 280);
 
     if (!success) {
-      setAssaultHeat(a, scopeKey, Math.max(0, heat - 1), now);
+      // Imunidade: Heat freeze (geração zero); senão −1 como hoje
+      const nextHeat = immune ? heat : Math.max(0, heat - 1);
+      if (!immune) setAssaultHeat(a, scopeKey, nextHeat, now);
       const fine = computeFailFine(aStats.coins, o);
       if (fine > 0) {
         repository.addCoins({
@@ -1790,9 +1888,35 @@ export function createMarketService({
           reason: `heist-fail:${heist.kind}`,
         });
       }
+      const after = police.afterCrime({
+        userJid: a,
+        scopeKey,
+        mode: heist.kind,
+        success: false,
+        immune,
+        policeBust: false,
+        now,
+      });
       const log = getLogger?.();
       log?.info?.(
-        { event: 'assault_heist', kind: heist.kind, userJid: a, scopeKey, success: false, chance: Math.round(chance * 100), fine, weapon: wCol?.id, level: aStats.level, windowCount, heat: Math.max(0, heat - 1), paidWins24h, coinBalance: aStats.coins },
+        {
+          event: 'assault_heist',
+          kind: heist.kind,
+          userJid: a,
+          scopeKey,
+          success: false,
+          chance: Math.round(chance * 100),
+          fine,
+          weapon: wCol?.id,
+          level: aStats.level,
+          windowCount,
+          heat: nextHeat,
+          wantedLevel: after.wantedLevel,
+          suspicion: policeEval.suspicion,
+          immune,
+          paidWins24h,
+          coinBalance: aStats.coins,
+        },
         'fun assault heist'
       );
       return {
@@ -1808,7 +1932,12 @@ export function createMarketService({
         vehicleBonus,
         coins: repository.getUserStats(a, scopeKey)?.coins || 0,
         windowCount,
-        heat: Math.max(0, heat - 1),
+        heat: nextHeat,
+        wantedLevel: after.wantedLevel,
+        wantedPoints: after.wantedPoints,
+        suspicion: policeEval.suspicion,
+        immune,
+        immunityUsesLeft: after.immunity?.remainingUses ?? 0,
         paidWins24h,
         chancePenalty,
         payoutMult,
@@ -1817,7 +1946,9 @@ export function createMarketService({
       };
     }
 
-    setAssaultHeat(a, scopeKey, heat + 1, now);
+    // Sucesso: Heat +1 só sem imunidade
+    const nextHeat = immune ? heat : heat + 1;
+    if (!immune) setAssaultHeat(a, scopeKey, nextHeat, now);
 
     const minP = heist.kind === 'bank' ? o.heistBankMin : o.heistShopMin;
     const maxP = heist.kind === 'bank' ? o.heistBankMax : o.heistShopMax;
@@ -1836,9 +1967,36 @@ export function createMarketService({
       reason: `heist-win:${heist.kind}`,
     });
 
+    const after = police.afterCrime({
+      userJid: a,
+      scopeKey,
+      mode: heist.kind,
+      success: true,
+      immune,
+      policeBust: false,
+      now,
+    });
+
     const log = getLogger?.();
     log?.info?.(
-      { event: 'assault_heist', kind: heist.kind, userJid: a, scopeKey, success: true, chance: Math.round(chance * 100), payout, weapon: wCol?.id, level: aStats.level, windowCount, heat: heat + 1, paidWins24h, effectiveDecay },
+      {
+        event: 'assault_heist',
+        kind: heist.kind,
+        userJid: a,
+        scopeKey,
+        success: true,
+        chance: Math.round(chance * 100),
+        payout,
+        weapon: wCol?.id,
+        level: aStats.level,
+        windowCount,
+        heat: nextHeat,
+        wantedLevel: after.wantedLevel,
+        suspicion: policeEval.suspicion,
+        immune,
+        paidWins24h,
+        effectiveDecay,
+      },
       'fun assault heist'
     );
 
@@ -1855,7 +2013,12 @@ export function createMarketService({
       vehicleBonus,
       coins: repository.getUserStats(a, scopeKey)?.coins || 0,
       windowCount,
-      heat: heat + 1,
+      heat: nextHeat,
+      wantedLevel: after.wantedLevel,
+      wantedPoints: after.wantedPoints,
+      suspicion: policeEval.suspicion,
+      immune,
+      immunityUsesLeft: after.immunity?.remainingUses ?? 0,
       paidWins24h,
       chancePenalty,
       payoutMult,
@@ -1918,8 +2081,17 @@ export function createMarketService({
     const windowCount = manageAssaultWindow(a, scopeKey, now);
     const { chancePenalty, payoutMult } = applyDiminishingReturns(windowCount);
 
-    // Calor (wanted) — compartilhado com heist
+    // Heat (curto prazo) + Wanted/Suspicion (longo prazo)
     const heat = getAssaultHeat(a, scopeKey, now);
+    const policeEval = police.evaluate({
+      userJid: a,
+      scopeKey,
+      heat,
+      mode: 'player',
+      windowCount,
+      now,
+    });
+    const immune = Boolean(policeEval.immune);
 
     let chance = o.assaultBaseChance;
     chance += (Number(wCol.assaultPower) || 0) / 200;
@@ -1933,6 +2105,7 @@ export function createMarketService({
     if (propBuffer > 40) chance += 0.03;
     chance -= chancePenalty;
     chance -= heat * 0.03;
+    chance -= Number(policeEval.chancePenalty) || 0;
     chance = Math.min(0.82, Math.max(0.12, chance));
 
     consumeUse(weapon, now);
@@ -1941,11 +2114,80 @@ export function createMarketService({
     }
     touchAssaultCooldown(a, scopeKey, now);
 
+    // Intervenção policial PvP
+    if (!immune && policeEval.intervention?.intervene) {
+      const bustHeat = Math.min(15, heat + 2);
+      setAssaultHeat(a, scopeKey, bustHeat, now);
+      const fineBase = computeFailFine(aStats.coins, o);
+      const fine = Math.min(
+        aStats.coins,
+        Math.max(fineBase, Math.floor(fineBase * (1 + policeEval.wantedLevel * 0.15)))
+      );
+      if (fine > 0) {
+        repository.addCoins({
+          userJid: a,
+          scopeKey,
+          amount: -fine,
+          now,
+          reason: 'police-bust',
+        });
+      }
+      const after = police.afterCrime({
+        userJid: a,
+        scopeKey,
+        mode: 'player',
+        success: false,
+        immune: false,
+        policeBust: true,
+        now,
+      });
+      const log = getLogger?.();
+      log?.info?.(
+        {
+          event: 'assault_player',
+          userJid: a,
+          targetJid: t,
+          scopeKey,
+          success: false,
+          policeBust: true,
+          chance: Math.round(chance * 100),
+          fine,
+          heat: bustHeat,
+          wantedLevel: after.wantedLevel,
+          suspicion: policeEval.suspicion,
+        },
+        'fun assault player police bust'
+      );
+      return {
+        ok: true,
+        success: false,
+        policeBust: true,
+        mode: 'player',
+        chance,
+        roll: policeEval.intervention.roll,
+        fine,
+        weapon: wCol,
+        usedGas,
+        vehicleBonus,
+        coins: repository.getUserStats(a, scopeKey)?.coins || 0,
+        targetCoins: tCoins,
+        windowCount,
+        heat: bustHeat,
+        wantedLevel: after.wantedLevel,
+        wantedPoints: after.wantedPoints,
+        suspicion: policeEval.suspicion,
+        immune: false,
+        chancePenalty,
+        payoutMult,
+      };
+    }
+
     const roll = random();
     const success = roll < chance;
 
     if (!success) {
-      setAssaultHeat(a, scopeKey, Math.max(0, heat - 1), now);
+      const nextHeat = immune ? heat : Math.max(0, heat - 1);
+      if (!immune) setAssaultHeat(a, scopeKey, nextHeat, now);
       const fine = computeFailFine(aStats.coins, o);
       if (fine > 0) {
         repository.addCoins({
@@ -1956,9 +2198,34 @@ export function createMarketService({
           reason: 'assault-fail',
         });
       }
+      const after = police.afterCrime({
+        userJid: a,
+        scopeKey,
+        mode: 'player',
+        success: false,
+        immune,
+        policeBust: false,
+        now,
+      });
       const log = getLogger?.();
       log?.info?.(
-        { event: 'assault_player', userJid: a, targetJid: t, scopeKey, success: false, chance: Math.round(chance * 100), fine, weapon: wCol?.id, level: aStats.level, windowCount, heat: Math.max(0, heat - 1), targetCoins: tCoins },
+        {
+          event: 'assault_player',
+          userJid: a,
+          targetJid: t,
+          scopeKey,
+          success: false,
+          chance: Math.round(chance * 100),
+          fine,
+          weapon: wCol?.id,
+          level: aStats.level,
+          windowCount,
+          heat: nextHeat,
+          wantedLevel: after.wantedLevel,
+          suspicion: policeEval.suspicion,
+          immune,
+          targetCoins: tCoins,
+        },
         'fun assault player'
       );
       return {
@@ -1974,13 +2241,19 @@ export function createMarketService({
         coins: repository.getUserStats(a, scopeKey)?.coins || 0,
         targetCoins: tCoins,
         windowCount,
-        heat: Math.max(0, heat - 1),
+        heat: nextHeat,
+        wantedLevel: after.wantedLevel,
+        wantedPoints: after.wantedPoints,
+        suspicion: policeEval.suspicion,
+        immune,
+        immunityUsesLeft: after.immunity?.remainingUses ?? 0,
         chancePenalty,
         payoutMult,
       };
     }
 
-    setAssaultHeat(a, scopeKey, heat + 1, now);
+    const nextHeat = immune ? heat : heat + 1;
+    if (!immune) setAssaultHeat(a, scopeKey, nextHeat, now);
 
     // 1) prioriza caixa do negócio (buffer); 2) residual na carteira
     let fromBuffer = 0;
@@ -2031,7 +2304,7 @@ export function createMarketService({
 
     const finalSteal = fromBuffer + fromWallet;
     if (finalSteal <= 0) {
-      setAssaultHeat(a, scopeKey, Math.max(0, heat), now);
+      if (!immune) setAssaultHeat(a, scopeKey, Math.max(0, heat), now);
       return { ok: false, reason: 'target-poor', coins: tCoins, propBuffer };
     }
 
@@ -2065,9 +2338,35 @@ export function createMarketService({
       });
     }
 
+    const after = police.afterCrime({
+      userJid: a,
+      scopeKey,
+      mode: 'player',
+      success: true,
+      immune,
+      policeBust: false,
+      now,
+    });
+
     const log = getLogger?.();
     log?.info?.(
-      { event: 'assault_player', userJid: a, targetJid: t, scopeKey, success: true, chance: Math.round(chance * 100), stolen: stealAfterDim, weapon: wCol?.id, level: aStats.level, windowCount, heat: heat + 1, targetCoins: tCoins },
+      {
+        event: 'assault_player',
+        userJid: a,
+        targetJid: t,
+        scopeKey,
+        success: true,
+        chance: Math.round(chance * 100),
+        stolen: stealAfterDim,
+        weapon: wCol?.id,
+        level: aStats.level,
+        windowCount,
+        heat: nextHeat,
+        wantedLevel: after.wantedLevel,
+        suspicion: policeEval.suspicion,
+        immune,
+        targetCoins: tCoins,
+      },
       'fun assault player'
     );
     return {
@@ -2088,7 +2387,12 @@ export function createMarketService({
       coins: repository.getUserStats(a, scopeKey)?.coins || 0,
       targetCoins: repository.getUserStats(t, scopeKey)?.coins || 0,
       windowCount,
-      heat: heat + 1,
+      heat: nextHeat,
+      wantedLevel: after.wantedLevel,
+      wantedPoints: after.wantedPoints,
+      suspicion: policeEval.suspicion,
+      immune,
+      immunityUsesLeft: after.immunity?.remainingUses ?? 0,
       chancePenalty,
       payoutMult,
       effectiveDecay: payoutMult,
@@ -2495,6 +2799,14 @@ export function createMarketService({
     getAssaultHeat,
     setAssaultHeat,
     countPaidWins24h,
+    policeService: police,
+    evaluatePolice: (args) => police.evaluate(args),
+    getWantedLevel: (userJid, scopeKey, now) => police.getWantedLevel(userJid, scopeKey, now),
+    getWantedPoints: (userJid, scopeKey, now) => police.getWantedPoints(userJid, scopeKey, now),
+    setWantedPoints: (userJid, scopeKey, points, now) =>
+      police.setWantedPoints(userJid, scopeKey, points, now),
+    computeSuspicionScore: (input) => police.computeSuspicionScore(input),
+    getPoliceImmunity: (userJid, scopeKey, now) => police.getImmunity(userJid, scopeKey, now),
     findBestWeapon,
     factionArsenal,
     formatEventAnnouncement,

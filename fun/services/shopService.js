@@ -3,17 +3,39 @@
  */
 
 import { getShopItem, listShopItems } from '../shop/catalog.js';
+import {
+  createPoliceService,
+  POLICE_IMMUNITY_DURATION_MS,
+  POLICE_IMMUNITY_MAX_USES,
+} from './policeService.js';
 
 export function createShopService({
   repository,
   effectsRepository,
   profileService = null,
+  policeService = null,
 } = {}) {
   if (!repository) throw new Error('[fun/shopService] repository required');
   if (!effectsRepository) throw new Error('[fun/shopService] effectsRepository required');
 
-  function list() {
-    return listShopItems();
+  const police =
+    policeService ||
+    createPoliceService({
+      repository,
+      effectsRepository,
+    });
+
+  function list(now = Date.now()) {
+    const items = listShopItems();
+    return items.map((item) => {
+      if (item.id !== 'crime_immunity_pass') return item;
+      const available = police.isImmunityPassAvailable(now);
+      return {
+        ...item,
+        available,
+        stockLabel: available ? '1 disponível esta semana' : 'esgotado (volta na próxima semana)',
+      };
+    });
   }
 
   function purchase({
@@ -44,6 +66,18 @@ export function createShopService({
       }
     }
 
+    // Estoque semanal global do Crime Immunity Pass
+    if (item.kind === 'timed_charges' && item.weeklyGlobalStock) {
+      if (!police.isImmunityPassAvailable(now)) {
+        return {
+          ok: false,
+          reason: 'weekly-sold-out',
+          item,
+          retryInMs: police.msUntilImmunityRestock(now),
+        };
+      }
+    }
+
     const stats = repository.ensureUserRow(u, s, now);
     if ((Number(stats.coins) || 0) < item.price) {
       return {
@@ -59,6 +93,14 @@ export function createShopService({
       const owned = effectsRepository.getEffect(u, s, item.effectKey, now);
       if (owned) {
         return { ok: false, reason: 'already-owned', item };
+      }
+    }
+
+    // Passe de imunidade: não empilha — recompra substitui duração/usos
+    if (item.kind === 'timed_charges' && !item.replaceOnRepurchase) {
+      const active = effectsRepository.getEffect(u, s, item.effectKey, now);
+      if (active) {
+        return { ok: false, reason: 'already-active', item };
       }
     }
 
@@ -82,6 +124,20 @@ export function createShopService({
         payload: item.payload || {},
         now,
       });
+    } else if (item.kind === 'timed_charges') {
+      effectsRepository.setTimedChargesEffect({
+        userJid: u,
+        scopeKey: s,
+        effectKey: item.effectKey,
+        durationMs: item.durationMs || POLICE_IMMUNITY_DURATION_MS,
+        charges: item.charges || POLICE_IMMUNITY_MAX_USES,
+        payload: item.payload || {},
+        now,
+        replace: item.replaceOnRepurchase !== false,
+      });
+      if (item.weeklyGlobalStock) {
+        police.markImmunityPassSold(now);
+      }
     } else if (item.kind === 'permanent' || item.payload?.permanent) {
       // 1 charge permanente por userJid+scope — nunca consumida; só esse usuário beneficia
       effectsRepository.addCharges({
@@ -130,16 +186,22 @@ export function createShopService({
     }
 
     const coins = repository.getUserStats(u, s)?.coins || 0;
+    const immunity =
+      item.kind === 'timed_charges'
+        ? police.getImmunity(u, s, now)
+        : null;
     return {
       ok: true,
       item,
       coins,
       title: cleanTitle || null,
+      immunity,
     };
   }
 
   return {
     list,
     buy: purchase,
+    policeService: police,
   };
 }

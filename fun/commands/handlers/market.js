@@ -466,6 +466,7 @@ export async function handleAssaultCommand({
   sock,
   identityMap,
   chaosEventService,
+  msgTimeMs,
 }) {
   // Purga ativa: rota alternativa sem arma/heat
   if (chaosEventService?.isEventActive?.(scopeKey)) {
@@ -482,24 +483,28 @@ export async function handleAssaultCommand({
     }
     const amount = parseAmountFromArgs(args) || 50;
 
+    const crimeNow = Date.now();
     const result = chaosEventService.doCrimeAssault({
       attackerJid: userJid, targetJid: target,
-      scopeKey, amount, funConfig,
+      scopeKey, amount, funConfig, now: crimeNow,
     });
 
     if (!result.ok) {
       await reply(result.reason === 'invalid-target'
         ? 'Alvo inválido.'
-        : `Assalto falhou: ${result.reason}`);
+        : result.reason === 'inactive-target'
+          ? 'Este jogador está inativo. Só é possível atacar quem esteve ativo nos últimos minutos.'
+          : `Assalto falhou: ${result.reason}`);
       return { handled: true };
     }
 
     const tName = nameOf(getContactDisplayName, target);
     if (result.success === 'pending') {
+      const timeoutSec = Math.round((result.challenge.defenseTimeoutMs || 8000) / 1000);
       await reply(
         `🔪 *Tentativa de crime contra ${tName}*\n\n` +
         `🧮 Defenda-se! Resolva: *${result.challenge.expression}*\n` +
-        `⏱️ Você tem 8s para digitar o número.`
+        `⏱️ Você tem ${timeoutSec}s para digitar o número.`
       );
       return { handled: true };
     }
@@ -633,46 +638,75 @@ export async function handleAssaultCommand({
     gas: result.usedGas ? 'sim' : 'nao',
   });
 
-  const header = !result.success
-    ? isNpc
-      ? '🚨 *Heist falhou*'
-      : '🚨 *Assalto falhou*'
-    : result.mode === 'bank'
-      ? '🏦 *Banco arrombado*'
-      : result.mode === 'shop'
-        ? '🏪 *Lojinha arrombada*'
-        : '💀 *Assalto em player*';
+  const wantedStars =
+    result.wantedLevel > 0
+      ? `Wanted ${'⭐'.repeat(Math.min(5, result.wantedLevel))}`
+      : null;
+  const immuneNote = result.immune
+    ? `🕶️ Imunidade ativa${result.immunityUsesLeft != null ? ` (${result.immunityUsesLeft} usos)` : ''}`
+    : null;
 
-  const stats = !result.success
+  const header = result.policeBust
+    ? '🚔 *Polícia interceptou*'
+    : !result.success
+      ? isNpc
+        ? '🚨 *Heist falhou*'
+        : '🚨 *Assalto falhou*'
+      : result.mode === 'bank'
+        ? '🏦 *Banco arrombado*'
+        : result.mode === 'shop'
+          ? '🏪 *Lojinha arrombada*'
+          : '💀 *Assalto em player*';
+
+  const stats = result.policeBust
     ? [
-        `Alvo: *${isNpc ? heistLabel : pvpName}* · chance ~*${chancePct}%*`,
-        `Arma: ${result.weapon?.emoji || ''} ${result.weapon?.name || '?'}`,
-        result.usedGas ? 'Usou gasolina na fuga (mesmo assim deu ruim).' : null,
-        result.fine > 0
-          ? `Multa: *${result.fine}*c de prejuízo (5% do bolso).`
+        `A polícia te pegou em *${isNpc ? heistLabel : pvpName}*.`,
+        result.fine > 0 ? `Multa policial: *${result.fine}*c` : null,
+        result.heat != null ? `Heat: *${result.heat}*` : null,
+        wantedStars,
+        result.suspicion != null
+          ? `Suspicion: ~*${Math.round(result.suspicion * 100)}%*`
           : null,
         `Saldo: *${result.coins}*`,
       ]
-    : isNpc
+    : !result.success
       ? [
-          `Levou *${result.stolen}* coins de *${heistLabel}*`,
-          `Chance ~*${chancePct}%* · ${result.weapon?.emoji || ''} ${result.weapon?.name}`,
-          result.usedGas ? 'Fuga com combustível ajudou.' : null,
-          result.heat >= 3 ? '🚔 A cidade tá quente — a polícia já desconfia de você.' : null,
-          result.effectiveDecay < 1 ? `💸 O loot rendeu menos que o esperado — os cofres tão vazios de tanto assalto hoje (${Math.round(result.effectiveDecay * 100)}% do normal).` : null,
+          `Alvo: *${isNpc ? heistLabel : pvpName}* · chance ~*${chancePct}%*`,
+          `Arma: ${result.weapon?.emoji || ''} ${result.weapon?.name || '?'}`,
+          result.usedGas ? 'Usou gasolina na fuga (mesmo assim deu ruim).' : null,
+          result.fine > 0
+            ? `Multa: *${result.fine}*c de prejuízo (5% do bolso).`
+            : null,
+          immuneNote,
+          wantedStars,
           `Saldo: *${result.coins}*`,
         ]
-      : [
-          `Tirou *${result.stolen}* coins de *${pvpName}*`,
-          result.stolenBuffer > 0
-            ? `· Caixa do negócio (*${result.propertyName || 'propriedade'}*): *${result.stolenBuffer}*c${result.propertyDamage ? ` · dano ${result.propertyDamage}` : ''}`
-            : null,
-          result.stolenWallet > 0 ? `· Bolso: *${result.stolenWallet}*c` : null,
-          `Chance ~*${chancePct}%* · ${result.weapon?.emoji || ''} ${result.weapon?.name}`,
-          result.usedGas ? 'Fuga com combustível ajudou.' : null,
-          `Seu saldo: *${result.coins}* · alvo: *${result.targetCoins}*`,
-          '_Quer grana de verdade?_ `/assaltar banco`',
-        ];
+      : isNpc
+        ? [
+            `Levou *${result.stolen}* coins de *${heistLabel}*`,
+            `Chance ~*${chancePct}%* · ${result.weapon?.emoji || ''} ${result.weapon?.name}`,
+            result.usedGas ? 'Fuga com combustível ajudou.' : null,
+            result.heat >= 3 ? '🚔 A cidade tá quente — a polícia já desconfia de você.' : null,
+            wantedStars,
+            immuneNote,
+            result.effectiveDecay < 1
+              ? `💸 O loot rendeu menos que o esperado — os cofres tão vazios de tanto assalto hoje (${Math.round(result.effectiveDecay * 100)}% do normal).`
+              : null,
+            `Saldo: *${result.coins}*`,
+          ]
+        : [
+            `Tirou *${result.stolen}* coins de *${pvpName}*`,
+            result.stolenBuffer > 0
+              ? `· Caixa do negócio (*${result.propertyName || 'propriedade'}*): *${result.stolenBuffer}*c${result.propertyDamage ? ` · dano ${result.propertyDamage}` : ''}`
+              : null,
+            result.stolenWallet > 0 ? `· Bolso: *${result.stolenWallet}*c` : null,
+            `Chance ~*${chancePct}%* · ${result.weapon?.emoji || ''} ${result.weapon?.name}`,
+            result.usedGas ? 'Fuga com combustível ajudou.' : null,
+            wantedStars,
+            immuneNote,
+            `Seu saldo: *${result.coins}* · alvo: *${result.targetCoins}*`,
+            '_Quer grana de verdade?_ `/assaltar banco`',
+          ];
 
   await reply(
     [header, '', story || null, story ? '────────' : null, ...stats]

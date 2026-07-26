@@ -69,6 +69,22 @@ export const SHOP_ITEMS = Object.freeze([
     effectKey: 'title',
     payload: {},
   },
+  {
+    id: 'crime_immunity_pass',
+    name: 'Crime Immunity Pass',
+    emoji: '🕶️',
+    // Comparável aos colecionáveis caros (rifle/carro); 1 por semana no servidor
+    price: 900,
+    description:
+      '3 dias ou 20 crimes: polícia não bloqueia, Heat zera geração. Wanted ainda sobe devagar. Estoque: 1/semana.',
+    kind: 'timed_charges',
+    effectKey: 'police_immunity',
+    durationMs: 3 * 24 * 60 * 60 * 1000,
+    charges: 20,
+    weeklyGlobalStock: 1,
+    replaceOnRepurchase: true,
+    payload: { useCharges: true, policeImmunity: true },
+  },
 ]);
 
 export function getShopItem(id) {

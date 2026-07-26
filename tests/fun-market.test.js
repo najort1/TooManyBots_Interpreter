@@ -11,6 +11,17 @@ import { createFunMarketRepository } from '../fun/db/funMarketRepository.js';
 import { createFunEffectsRepository } from '../fun/db/funEffectsRepository.js';
 import { createFunCasinoRepository } from '../fun/db/funCasinoRepository.js';
 import { createMarketService } from '../fun/services/marketService.js';
+import {
+  computeSuspicionScore,
+  wantedLevelFromPoints,
+  createPoliceService,
+  POLICE_IMMUNITY_DURATION_MS,
+  POLICE_IMMUNITY_MAX_USES,
+  POLICE_IMMUNITY_WEEK_MS,
+  WANTED_DECAY_MS,
+} from '../fun/services/policeService.js';
+import { createShopService } from '../fun/services/shopService.js';
+import { getShopItem } from '../fun/shop/catalog.js';
 import { getCollectible, listWeaponShop, listUtilityShop } from '../fun/shop/collectibles.js';
 import { parseFunCommand, resolveFunConfig } from '../fun/index.js';
 import { FUN_COMMANDS } from '../fun/constants.js';
@@ -820,5 +831,423 @@ test('heist lojinha: arma NÃO sofre penalidade de banco', () => {
   assert.equal(shopResult.ok, true);
   assert.ok(shopResult.chance > 0.55, `chance em lojinha NÃO deve ter penalidade: ${shopResult.chance}`);
 
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+// ─── Police / Wanted / Immunity ─────────────────────────────────────────────
+
+test('suspicion score: weights e riqueza sozinha não maximiza', () => {
+  const richHonest = computeSuspicionScore({
+    heat: 0,
+    crimes7d: 0,
+    wealth: 50_000,
+    reportsScore: 0,
+    wantedLevel: 0,
+  });
+  assert.ok(richHonest < 0.15, `rico honesto deve ser baixo: ${richHonest}`);
+
+  const richCriminal = computeSuspicionScore({
+    heat: 8,
+    crimes7d: 15,
+    wealth: 50_000,
+    reportsScore: 0.5,
+    wantedLevel: 4,
+  });
+  assert.ok(richCriminal > 0.55, `rico criminoso deve ser alto: ${richCriminal}`);
+  assert.ok(richCriminal > richHonest * 3);
+
+  const activePoor = computeSuspicionScore({
+    heat: 6,
+    crimes7d: 12,
+    wealth: 50,
+    reportsScore: 0.2,
+    wantedLevel: 2,
+  });
+  assert.ok(activePoor > 0.35, `histórico criminal eleva suspicion: ${activePoor}`);
+  assert.ok(activePoor > richHonest);
+});
+
+test('wanted level thresholds e decay lento vs heat', () => {
+  assert.equal(wantedLevelFromPoints(0), 0);
+  assert.equal(wantedLevelFromPoints(8), 1);
+  assert.equal(wantedLevelFromPoints(20), 2);
+  assert.equal(wantedLevelFromPoints(40), 3);
+  assert.equal(wantedLevelFromPoints(70), 4);
+  assert.equal(wantedLevelFromPoints(110), 5);
+  assert.equal(wantedLevelFromPoints(999), 5);
+
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.01,
+  });
+
+  const scope = uniqueGroup();
+  const atk = uniqueJid('55110');
+  const t0 = Date.now();
+  market.setWantedPoints(atk, scope, 25, t0);
+  assert.equal(market.getWantedLevel(atk, scope, t0), 2);
+  assert.equal(market.getWantedPoints(atk, scope, t0), 25);
+
+  // Heat decai com o relógio próprio; Wanted ainda presente após "decay de heat"
+  market.setAssaultHeat(atk, scope, 5, t0);
+  assert.equal(market.getAssaultHeat(atk, scope, t0), 5);
+  // Wanted não some com o tempo de heat: só após WANTED_DECAY_MS
+  const afterHeatish = t0 + 60 * 60_000;
+  assert.equal(market.getWantedPoints(atk, scope, afterHeatish), 25);
+  // Após um passo de decay de Wanted (−1)
+  const afterWantedDecay = t0 + WANTED_DECAY_MS + 1000;
+  assert.equal(market.getWantedPoints(atk, scope, afterWantedDecay), 24);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('wanted sobe com heist e escalona chance; heat ainda funciona', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const police = createPoliceService({
+    repository: repo,
+    effectsRepository: effects,
+    random: () => 0.99, // nunca bust
+  });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    policeService: police,
+    random: () => 0.01, // sempre sucesso
+  });
+
+  const scope = uniqueGroup();
+  const atk = uniqueJid('55111');
+  const t0 = Date.now();
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 5000, reason: 'seed' });
+  effects.addCharges({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 30,
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'lockpick',
+    acquiredPrice: 50,
+    usesLeft: 20,
+  });
+
+  const cfg = resolveFunConfig({
+    assaultCooldownMs: 0,
+    heistBankCooldownMs: 0,
+  });
+
+  const beforeWanted = market.getWantedPoints(atk, scope, t0);
+  assert.equal(beforeWanted, 0);
+
+  const r1 = market.assault({
+    attackerJid: atk,
+    heistToken: 'banco',
+    scopeKey: scope,
+    funConfig: cfg,
+    now: t0,
+  });
+  assert.equal(r1.ok, true, `assault failed: ${r1.reason || r1.policeBust}`);
+  assert.equal(r1.success, true, `expected success got policeBust=${r1.policeBust} chance=${r1.chance}`);
+  assert.equal(r1.heat, 1);
+  assert.ok(r1.wantedPoints > beforeWanted);
+  assert.ok(r1.wantedLevel >= 0);
+
+  // Wanted alto endurece chance vs baseline
+  market.setWantedPoints(atk, scope, 110, t0 + 1000);
+  market.setAssaultHeat(atk, scope, 0, t0 + 1000);
+  const hot = market.assault({
+    attackerJid: atk,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    funConfig: cfg,
+    now: t0 + 1000,
+  });
+  assert.equal(hot.ok, true);
+  assert.ok(hot.wantedLevel >= 5);
+  // chancePenalty policial reduz chance abaixo do baseline de lojinha sem wanted
+  assert.ok(hot.chance < 0.7, `wanted max deve pressionar chance: ${hot.chance}`);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('crime immunity pass: zero heat, wanted sobe, usos e expiração', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  // polícia: nunca bust (0.99); crime: sempre sucesso (0.01) — randoms separados
+  const police = createPoliceService({
+    repository: repo,
+    effectsRepository: effects,
+    random: () => 0.99,
+  });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    policeService: police,
+    random: () => 0.01,
+  });
+  const shop = createShopService({
+    repository: repo,
+    effectsRepository: effects,
+    policeService: police,
+  });
+
+  const scope = uniqueGroup();
+  const atk = uniqueJid('55112');
+  // semana isolada (DB de teste persiste entre runs) — offset aleatório grande
+  const t0 =
+    Date.now() +
+    (200 + Math.floor(Math.random() * 500_000)) * POLICE_IMMUNITY_WEEK_MS;
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 20_000, reason: 'seed' });
+  effects.addCharges({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 40,
+  });
+
+  const pass = getShopItem('crime_immunity_pass');
+  assert.ok(pass);
+  assert.equal(pass.price, 900);
+  assert.equal(pass.charges, POLICE_IMMUNITY_MAX_USES);
+
+  assert.equal(police.isImmunityPassAvailable(t0), true);
+  const buy = shop.buy({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'crime_immunity_pass',
+    now: t0,
+  });
+  assert.equal(buy.ok, true);
+  assert.equal(buy.immunity?.active, true);
+  assert.equal(buy.immunity?.remainingUses, 20);
+  assert.equal(police.isImmunityPassAvailable(t0), false);
+
+  // segunda compra na mesma semana: esgotado
+  const buy2 = shop.buy({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'crime_immunity_pass',
+    now: t0 + 1000,
+  });
+  assert.equal(buy2.ok, false);
+  assert.equal(buy2.reason, 'weekly-sold-out');
+
+  // reaparece na próxima semana
+  assert.equal(police.isImmunityPassAvailable(t0 + POLICE_IMMUNITY_WEEK_MS + 1000), true);
+
+  market.setAssaultHeat(atk, scope, 4, t0);
+  const heatBefore = market.getAssaultHeat(atk, scope, t0);
+  const wantedBefore = market.getWantedPoints(atk, scope, t0);
+
+  const cfg = resolveFunConfig({ assaultCooldownMs: 0, heistBankCooldownMs: 0 });
+  const r = market.assault({
+    attackerJid: atk,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    funConfig: cfg,
+    now: t0 + 2000,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.success, true);
+  assert.equal(r.immune, true);
+  assert.notEqual(r.policeBust, true);
+  // Heat congelado (geração zero)
+  assert.equal(r.heat, heatBefore);
+  // Wanted sobe mesmo com imunidade
+  assert.ok(r.wantedPoints > wantedBefore, 'wanted deve subir sob imunidade');
+  assert.ok(r.immunityUsesLeft < 20);
+
+  // consome usos restantes via API (19 left após o 1º crime)
+  let uses = police.getImmunity(atk, scope, t0 + 3000).remainingUses;
+  assert.ok(uses < 20 && uses > 0);
+  while (uses > 0) {
+    police.consumeImmunityUse(atk, scope, t0 + 4000);
+    uses = police.getImmunity(atk, scope, t0 + 4000).remainingUses;
+  }
+  assert.equal(police.getImmunity(atk, scope, t0 + 5000).active, false, 'passe esgota por usos');
+
+  // Expiração por tempo (novo passe via effect direto, sem weekly gate)
+  effects.setTimedChargesEffect({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'police_immunity',
+    durationMs: POLICE_IMMUNITY_DURATION_MS,
+    charges: 20,
+    payload: { useCharges: true },
+    now: t0 + 20_000,
+    replace: true,
+  });
+  assert.equal(police.getImmunity(atk, scope, t0 + 20_000).active, true);
+  const expired = police.getImmunity(
+    atk,
+    scope,
+    t0 + 20_000 + POLICE_IMMUNITY_DURATION_MS + 1000
+  );
+  assert.equal(expired.active, false, 'passe expira em 3 dias');
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('polícia: intervenção por wanted alto; imunidade ignora bust', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+
+  // random sempre 0 → sempre intervém se p > 0
+  const policeHot = createPoliceService({
+    repository: repo,
+    effectsRepository: effects,
+    random: () => 0,
+  });
+  const marketHot = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    policeService: policeHot,
+    random: () => 0,
+  });
+
+  const scope = uniqueGroup();
+  const atk = uniqueJid('55113');
+  const t0 = Date.now();
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 3000, reason: 'seed' });
+  effects.addCharges({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 10,
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'lockpick',
+    acquiredPrice: 50,
+    usesLeft: 5,
+  });
+
+  marketHot.setWantedPoints(atk, scope, 110, t0);
+  marketHot.setAssaultHeat(atk, scope, 8, t0);
+
+  const cfg = resolveFunConfig({ assaultCooldownMs: 0, heistBankCooldownMs: 0 });
+  const bust = marketHot.assault({
+    attackerJid: atk,
+    heistToken: 'banco',
+    scopeKey: scope,
+    funConfig: cfg,
+    now: t0,
+  });
+  assert.equal(bust.ok, true);
+  assert.equal(bust.success, false);
+  assert.equal(bust.policeBust, true);
+  assert.ok(bust.fine > 0);
+
+  // Com imunidade: nunca bust
+  effects.setTimedChargesEffect({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'police_immunity',
+    durationMs: POLICE_IMMUNITY_DURATION_MS,
+    charges: 5,
+    now: t0 + 1000,
+    replace: true,
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 10,
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'lockpick',
+    acquiredPrice: 50,
+    usesLeft: 5,
+  });
+  // sucesso: intervention skip + roll 0 < chance
+  const safe = marketHot.assault({
+    attackerJid: atk,
+    heistToken: 'banco',
+    scopeKey: scope,
+    funConfig: cfg,
+    now: t0 + 1000,
+  });
+  assert.equal(safe.ok, true);
+  assert.equal(safe.immune, true);
+  assert.notEqual(safe.policeBust, true);
+  assert.equal(safe.success, true);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('help assalto menciona Heat, Wanted e Immunity Pass', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    random: () => 0.5,
+  });
+  const help = market.formatAssaultHelp(uniqueGroup(), resolveFunConfig({}), uniqueJid('55114'));
+  assert.match(help, /Heat/i);
+  assert.match(help, /Wanted/i);
+  assert.match(help, /Immunity Pass|imunidade/i);
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });

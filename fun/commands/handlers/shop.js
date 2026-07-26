@@ -8,8 +8,15 @@ function formatDuration(ms) {
   return rm ? `${h}h ${rm}min` : `${h}h`;
 }
 
-export async function handleShopCommand({ reply, effectsRepository, userJid, scopeKey }) {
-  const items = listShopItems();
+export async function handleShopCommand({
+  reply,
+  effectsRepository,
+  userJid,
+  scopeKey,
+  shopService = null,
+}) {
+  const items =
+    typeof shopService?.list === 'function' ? shopService.list() : listShopItems();
   const lines = [
     '🛒 *Loja Fun*',
     'Coins servem pra isso — gaste e ganhe vantagem.',
@@ -17,17 +24,22 @@ export async function handleShopCommand({ reply, effectsRepository, userJid, sco
   ];
 
   for (const item of items) {
+    const stock =
+      item.id === 'crime_immunity_pass' && item.stockLabel
+        ? ` · ${item.stockLabel}`
+        : '';
     lines.push(
-      `${item.emoji} *${item.id}* — ${item.price} coins`,
+      `${item.emoji} *${item.id}* — ${item.price} coins${stock}`,
       `   ${item.name}: ${item.description}`,
       ''
     );
   }
 
-  lines.push('Comprar: `/comprar chave_armas` · `/comprar boost_xp`');
+  lines.push('Comprar: `/comprar chave_armas` · `/comprar boost_xp` · `/comprar crime_immunity_pass`');
   lines.push('Título: `/titulo MeuNick`');
   lines.push('');
   lines.push('_Chave de armas é *só sua* — não libera o grupo._');
+  lines.push('_Crime Immunity Pass: 1 por semana no servidor (3 dias ou 20 crimes)._');
   lines.push('_Rua (estoque finito + preço vivo):_ `/mercado` · `/armas`');
   lines.push('_Players:_ `/bazar` · farm: `/assaltar banco` · for fun: `/assaltar @user`');
 
@@ -36,7 +48,12 @@ export async function handleShopCommand({ reply, effectsRepository, userJid, sco
     if (active.length) {
       lines.push('', '*Seus buffs ativos:*');
       for (const e of active) {
-        if (e.expiresAt > 0) {
+        if (e.expiresAt > 0 && e.charges > 0 && e.payload?.useCharges) {
+          const left = e.expiresAt - Date.now();
+          lines.push(
+            `• ${e.effectKey} · ~${formatDuration(Math.max(0, left))} · ${e.charges} usos`
+          );
+        } else if (e.expiresAt > 0) {
           const left = e.expiresAt - Date.now();
           lines.push(`• ${e.effectKey} · ~${formatDuration(Math.max(0, left))}`);
         } else if (e.charges > 0) {
@@ -134,6 +151,18 @@ async function replyBuyResult(reply, result) {
       await reply(`Informe o título (até ${result.maxLen} caracteres).`);
       return { handled: true };
     }
+    if (result?.reason === 'weekly-sold-out') {
+      const h = Math.ceil((Number(result.retryInMs) || 0) / 3_600_000);
+      await reply(
+        `🕶️ *Crime Immunity Pass* esgotado esta semana (só 1 no servidor).` +
+          (h > 0 ? ` Volta em ~${h}h.` : '')
+      );
+      return { handled: true };
+    }
+    if (result?.reason === 'already-active') {
+      await reply('Você já tem esse efeito ativo.');
+      return { handled: true };
+    }
     await reply('Não foi possível comprar.');
     return { handled: true };
   }
@@ -147,6 +176,11 @@ async function replyBuyResult(reply, result) {
   ];
   if (item.id === 'chave_armas') {
     lines.push('_Só *você* acessa `/armas` com isso. O grupo continua na corrida._');
+  }
+  if (item.id === 'crime_immunity_pass' && result.immunity?.active) {
+    lines.push(
+      `Imunidade: *${result.immunity.remainingUses}* crimes ou até o prazo — Wanted ainda sobe devagar.`
+    );
   }
   if (result.title) lines.push(`Título: *${result.title}*`);
   await reply(lines.join('\n'));
