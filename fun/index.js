@@ -696,8 +696,9 @@ export function createFunModule(deps = {}) {
         // Chaos/PURGA: só se chaosAutoEnabled
         if (granularEvents.chaosAutoEnabled && chaosEventService?.tryStartEvent) {
           try {
-            if (chaosEventService.shouldSendWarning?.(scopeKey, now)) {
-              const rem = chaosEventService.getTimeRemaining(scopeKey, now);
+            const chaosNow = Date.now();
+            if (chaosEventService.shouldSendWarning?.(scopeKey, chaosNow)) {
+              const rem = chaosEventService.getTimeRemaining(scopeKey, chaosNow);
               const warn = chaosEventService.formatWarningAnnouncement(rem);
               if (warn) {
                 await postWithMentions(scopeKey, warn, userFmt);
@@ -705,8 +706,8 @@ export function createFunModule(deps = {}) {
               }
             }
 
-            const active = chaosEventService.isEventActive(scopeKey, now);
-            const wasActive = chaosEventService.isEventActive(scopeKey, now - 120_000);
+            const active = chaosEventService.isEventActive(scopeKey, chaosNow);
+            const wasActive = chaosEventService.isEventActive(scopeKey, chaosNow - 120_000);
             if (!active && wasActive) {
               const endMsg = chaosEventService.formatEndAnnouncement(scopeKey, nameResolver);
               if (endMsg) {
@@ -716,7 +717,7 @@ export function createFunModule(deps = {}) {
               }
             }
 
-            const started = chaosEventService.tryStartEvent(scopeKey, funConfig, now);
+            const started = chaosEventService.tryStartEvent(scopeKey, funConfig, chaosNow);
             if (started?.ok) {
               const msg = chaosEventService.formatStartAnnouncement(started);
               if (msg) {
@@ -832,6 +833,7 @@ export function createFunModule(deps = {}) {
       jobRepository,
       casinoRepository,
       chaosService,
+      chaosEventService,
       groupMemoryService,
       memoryRepository,
       profileService,

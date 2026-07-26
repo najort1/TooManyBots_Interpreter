@@ -242,6 +242,40 @@ export function GroupSettingsForm({ groupJid }: Props) {
           onChange={(v) => field("weeklyRestockAutoEnabled", v)}
         />
       </div>
+      <hr className="my-4 border-zinc-100 dark:border-zinc-800" />
+
+      <div className="space-y-1.5">
+        <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+          Ações Manuais
+        </h3>
+        <p className="mb-3 text-[11px] leading-snug text-zinc-400 dark:text-zinc-500">
+          Forçar disparo de eventos (bloqueia o disparo automático no resto do dia).
+        </p>
+        
+        <div>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={async () => {
+              if (!confirm("Tem certeza que deseja iniciar a PURGA neste grupo agora? Isso ignorará o horário configurado.")) return;
+              try {
+                setStatus("Disparando PURGA...");
+                const res = await funApi.triggerChaosEvent(groupJid);
+                if (res.ok) {
+                  setStatus("PURGA disparada com sucesso!");
+                } else {
+                  setStatus("Falha ao disparar PURGA.");
+                }
+              } catch (err) {
+                setStatus(err instanceof Error ? err.message : "Erro ao disparar");
+              }
+            }}
+            disabled={loading || !groupJid}
+          >
+            Disparar PURGA Manualmente
+          </Button>
+        </div>
+      </div>
 
       <div className="mt-4 flex items-center gap-3">
         <Button onClick={() => void save()} disabled={loading || !groupJid}>

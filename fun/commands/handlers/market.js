@@ -465,7 +465,63 @@ export async function handleAssaultCommand({
   quotedParticipant = '',
   sock,
   identityMap,
+  chaosEventService,
 }) {
+  // Purga ativa: rota alternativa sem arma/heat
+  if (chaosEventService?.isEventActive?.(scopeKey)) {
+    const contacts = typeof listContacts === 'function' ? listContacts() : [];
+    const resolved = await resolveUserTarget({
+      args, mentionedJids, quotedParticipant,
+      excludeJid: userJid, identityMap, sock,
+      groupJid: scopeKey, contacts,
+    });
+    const target = resolved?.jid;
+    if (!target || !isCanonicalUserJid(target)) {
+      await reply('Marque quem quer assaltar: `/crime @alvo quantia`');
+      return { handled: true };
+    }
+    const amount = parseAmountFromArgs(args) || 50;
+
+    const result = chaosEventService.doCrimeAssault({
+      attackerJid: userJid, targetJid: target,
+      scopeKey, amount, funConfig,
+    });
+
+    if (!result.ok) {
+      await reply(result.reason === 'invalid-target'
+        ? 'Alvo inválido.'
+        : `Assalto falhou: ${result.reason}`);
+      return { handled: true };
+    }
+
+    const tName = nameOf(getContactDisplayName, target);
+    if (result.success === 'pending') {
+      await reply(
+        `🔪 *Tentativa de crime contra ${tName}*\n\n` +
+        `🧮 Defenda-se! Resolva: *${result.challenge.expression}*\n` +
+        `⏱️ Você tem 8s para digitar o número.`
+      );
+      return { handled: true };
+    }
+
+    if (!result.success) {
+      await reply(
+        `🔪 *Crime falhou contra ${tName}* (chance ~${Math.round((result.chance || 0) * 100)}%)\n` +
+        `💨 O alvo escapou.\n` +
+        `Saldo: *${result.coins}*`
+      );
+      return { handled: true };
+    }
+
+    await reply(
+      `💀 *Crime bem-sucedido contra ${tName}*\n` +
+      `💰 Levou *${result.stolen}* coins` +
+      (result.stolenFromDebt > 0 ? ` (${result.stolenFromDebt} em dívida)` : '') +
+      `\nSaldo: *${result.coins}*`
+    );
+    return { handled: true };
+  }
+
   if (!marketService?.assault) {
     await reply('Assalto indisponível.');
     return { handled: true };

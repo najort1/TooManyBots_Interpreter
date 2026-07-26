@@ -914,13 +914,71 @@ test('defesa: checkMessageForChallenge com texto não numérico ignora', () => {
   const pending = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 30, funConfig: cfg, now: now + 1000 });
   assert.equal(pending.success, 'pending');
 
-  // mensagens não numéricas são ignoradas
+  // mensagens sem número ou com número diferente são ignoradas
   assert.equal(chaosEvent.checkMessageForChallenge(scope, vic, 'kkk', now + 2000).matched, false);
-  assert.equal(chaosEvent.checkMessageForChallenge(scope, vic, '/defender 2', now + 2100).matched, false);
+  assert.equal(chaosEvent.checkMessageForChallenge(scope, vic, '/defender 9', now + 2100).matched, false);
   assert.equal(chaosEvent.checkMessageForChallenge(scope, vic, 'dois', now + 2200).matched, false);
 
   // desafio ainda ativo
   assert.notEqual(chaosEvent.getPendingChallenge(scope, vic, now + 2500), null);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('estresse: múltiplos crimes e defesas simultâneas durante Purga', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.01 });
+  const scope = uniqueGroup();
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 1.0, chaosEventDefenseTimeoutMs: 60000 });
+  const now = atHour(TEST_HOUR);
+  chaosEvent.tryStartEvent(scope, cfg, now);
+
+  // 10 pares atacante/alvo
+  const pairs = [];
+  for (let i = 0; i < 10; i++) {
+    const atk = uniqueJid('5511');
+    const vic = uniqueJid('5522');
+    repo.addCoins({ userJid: atk, scopeKey: scope, amount: 1000, reason: 'seed' });
+    repo.addCoins({ userJid: vic, scopeKey: scope, amount: 500, reason: 'seed' });
+    pairs.push({ atk, vic });
+  }
+
+  // Todos atacam simultaneamente
+  const crimes = pairs.map((p, i) => {
+    const t = now + 1000 + i * 50;
+    const r = chaosEvent.doCrimeAssault({ attackerJid: p.atk, targetJid: p.vic, scopeKey: scope, amount: 50, funConfig: cfg, now: t });
+    return r;
+  });
+
+  for (const c of crimes) {
+    assert.equal(c.ok, true);
+    assert.equal(c.success, 'pending');
+  }
+
+  // Cada alvo descobre a resposta e responde
+  for (let i = 0; i < pairs.length; i++) {
+    const p = pairs[i];
+    const t = now + 2000 + i * 50;
+    const challenge = chaosEvent.getPendingChallenge(scope, p.vic, t);
+    if (challenge) {
+      p.answer = challenge.answer;
+      const d = chaosEvent.checkMessageForChallenge(scope, p.vic, String(challenge.answer), t + 25);
+      assert.equal(d.matched, true);
+      assert.equal(d.result.defended, true);
+      // saldo do atacante não mudou (defesa bloqueou)
+      const atkStats = repo.getUserStats(p.atk, scope);
+      assert.equal(atkStats.coins, 1000);
+    }
+  }
+
+  // Tenta atacar de novo — event ainda ativo (random 0.01 = 100% sucesso no noWeaponSuccess)
+  const retry = chaosEvent.doCrimeAssault({ attackerJid: pairs[0].atk, targetJid: pairs[0].vic, scopeKey: scope, amount: 30, funConfig: cfg, now: now + 5000 });
+  assert.equal(retry.ok, true);
 
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });

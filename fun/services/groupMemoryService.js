@@ -507,16 +507,18 @@ export function createGroupMemoryService({
     buf.msgs = [];
     buf.lastFlushAt = now;
 
+    const maxExtract = Math.max(2, Math.min(8, Math.round(batch.length / 12.5)));
+
     try {
       const existing = memoryRepository.listFacts(scopeKey, {
         limit: o.maxFacts,
         minScore: 0,
       });
-      const extracted = await extractFacts(batch, existing, funConfig, o);
+      const extracted = await extractFacts(batch, existing, funConfig, o, maxExtract);
       let inserted = 0;
       let reinforced = 0;
 
-      for (const fact of extracted.slice(0, 2)) {
+      for (const fact of extracted.slice(0, maxExtract)) {
         if (fact.score < o.minScore) continue;
         if (!fact.subjects?.length) continue;
 
@@ -782,10 +784,11 @@ export function createGroupMemoryService({
     return selected;
   }
 
-  async function extractFacts(batch, existing, funConfig, o) {
+  async function extractFacts(batch, existing, funConfig, o, maxExtract = 2) {
     // usa versão com timestamps + marcadores de GAP para a LLM detectar thread-breaks
     const lines = formatBatchLinesWithContext(batch);
     const knownLimit = o.knownFactsInPrompt || 24;
+    const maxFactsPrompt = `0 a ${maxExtract}`;
     const known = existing
       .slice(0, knownLimit)
       .map((f) => {
@@ -810,7 +813,7 @@ export function createGroupMemoryService({
       lines,
       '',
       'Regras:',
-      '1. Extraia apenas fatos engraçados ou úteis (0 a 2).',
+      `1. Extraia apenas fatos engraçados ou úteis (${maxFactsPrompt}).`,
       '2. Em subjects use OBRIGATORIAMENTE os IDs numéricos das mensagens (ex: 0, 2). Nunca nomes. SEMPRE como array: [4] — nunca 4, nunca [] quando há autor claro.',
       '3. subjects = índice da mensagem que contém o CONTEÚDO do fato (a fala engraçada/útil), não o índice de quem é o assunto da mensagem.',
       '4. NÃO invente. Se não souber o sujeito com ID claro, não extraia o fato.',

@@ -104,6 +104,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     stockService,
     jobService,
     chaosService,
+    chaosEventService,
     propertyService,
     roastService,
     newsService,
@@ -502,6 +503,25 @@ export async function handleFunIncomingMessage(deps, ctx) {
     }
   }
 
+  // Purga: verifica antes de qualquer comando se o texto é resposta a desafio matemático
+  if (chaosEventService?.checkMessageForChallenge) {
+    const challengeText = String(text || '').replace(/^[/\\]/, '').trim();
+    const challengeResult = chaosEventService.checkMessageForChallenge(
+      scope.scopeKey, userJid, challengeText, Date.now()
+    );
+    if (challengeResult?.matched) {
+      const r = challengeResult.result;
+      if (r?.defended) {
+        await reply('🧮 *Conta certa!* Você se defendeu e o assalto foi bloqueado.');
+      } else if (r?.timedOut) {
+        await reply(`⏰ *Tempo esgotou!* Perdeu *${r.stolen}* coins. (A conta era: ${r.expression} = ${r.correctAnswer})`);
+      } else if (r?.defended === false) {
+        await reply(`❌ *Conta errada.* Perdeu *${r.stolen}* coins. (A conta era: ${r.expression} = ${r.correctAnswer})`);
+      }
+      return { handled: true, skipFlows: true, reason: 'challenge-answered' };
+    }
+  }
+
   if (isCommand) {
     try {
       return await runWithUserLabels(userFmt, async () => {
@@ -547,6 +567,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           stockService,
           jobService,
           chaosService,
+          chaosEventService,
           propertyService,
           roastService,
           newsService,

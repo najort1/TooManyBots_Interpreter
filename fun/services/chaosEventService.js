@@ -71,7 +71,7 @@ export function createChaosEventService({
       maxStealAmount: Math.max(1, Math.floor(numOr(funConfig.chaosEventMaxStealAmount, 100))),
       maxDebt: Math.max(0, Math.floor(numOr(funConfig.chaosEventMaxDebt, 100))),
       defenseEnabled: funConfig.chaosEventDefenseEnabled !== false,
-      defenseTimeoutMs: Math.max(1000, Math.floor(numOr(funConfig.chaosEventDefenseTimeoutMs, 4000))),
+      defenseTimeoutMs: Math.max(1000, Math.floor(numOr(funConfig.chaosEventDefenseTimeoutMs, 8000))),
     };
   }
 
@@ -88,9 +88,9 @@ export function createChaosEventService({
     };
   }
 
-  function tryStartEvent(scopeKey, funConfig = {}, now = Date.now()) {
+  function tryStartEvent(scopeKey, funConfig = {}, now = Date.now(), options = {}) {
     const o = opts(funConfig);
-    if (!o.enabled) return { ok: false, reason: 'disabled' };
+    if (!o.enabled && !options.force) return { ok: false, reason: 'disabled' };
 
     const already = isEventActive(scopeKey, now);
     if (already) return { ok: false, reason: 'already-active', status: already };
@@ -108,13 +108,13 @@ export function createChaosEventService({
     const dow = (parts.find((p) => p.type === 'weekday') || {}).value;
     const isWeekend = dow === 'Sat' || dow === 'Sun';
     const h = isWeekend
-      ? numOr(funConfig.chaosEventWeekendHour, 15)
+      ? numOr(funConfig.chaosEventWeekendHour, 22)
       : numOr(funConfig.chaosEventHour, 23);
     const m = isWeekend
-      ? numOr(funConfig.chaosEventWeekendMinute, 33)
+      ? numOr(funConfig.chaosEventWeekendMinute, 0)
       : numOr(funConfig.chaosEventMinute, 30);
-    const windowOk = currentHour === h && currentMinute >= m && currentMinute < m + 1;
-    if (!windowOk) return { ok: false, reason: 'wrong-hour' };
+    const windowOk = currentHour === h && currentMinute >= m && currentMinute < m + 5;
+    if (!windowOk && !options.force) return { ok: false, reason: 'wrong-hour' };
 
     const raw = eventRepository.get(scopeKey);
     const fmtDate = new Intl.DateTimeFormat('en-CA', {
@@ -127,7 +127,7 @@ export function createChaosEventService({
     const todayDate = fmtDate.format(new Date(now));
     const lastDate = fmtDate.format(new Date(raw.lastSpawnAt));
 
-    if (lastDate === todayDate && raw.lastSpawnAt > 0) {
+    if (lastDate === todayDate && raw.lastSpawnAt > 0 && !options.force) {
       return { ok: false, reason: 'already-today' };
     }
 
@@ -255,7 +255,7 @@ export function createChaosEventService({
 
     const ms = typeof getMarketService === 'function' ? getMarketService() : null;
     const weapon = ms?.findBestWeapon ? ms.findBestWeapon(a, scopeKey) : null;
-    const hasWeapon = Boolean(weapon);
+    let hasWeapon = Boolean(weapon);
     const wCol = weapon?.collectible;
 
     const tStats = repository.getUserStats(t, scopeKey) || repository.ensureUserRow(t, scopeKey, now);
@@ -268,15 +268,18 @@ export function createChaosEventService({
     if (hasWeapon && wCol) {
       if (wCol.requires === 'municao') {
         if (!ms?.consumeOneConsumable(a, scopeKey, 'municao')) {
-          return { ok: false, reason: 'no-ammo' };
+          hasWeapon = false;
         }
       }
-      const power = Number(wCol.assaultPower) || 0;
-      chance = Math.min(0.85, Math.max(0.12, o.weaponBaseChance + power / 200));
-      if (ms?.consumeUse) ms.consumeUse(weapon, now);
-      const roll = random();
-      success = roll < chance;
-    } else {
+      if (hasWeapon) {
+        const power = Number(wCol.assaultPower) || 0;
+        chance = Math.min(0.85, Math.max(0.12, o.weaponBaseChance + power / 200));
+        if (ms?.consumeUse) ms.consumeUse(weapon, now);
+        const roll = random();
+        success = roll < chance;
+      }
+    }
+    if (!hasWeapon) {
       chance = o.noWeaponSuccess;
       const roll = random();
       success = roll < chance;
@@ -543,13 +546,25 @@ export function createChaosEventService({
     const s = String(scopeKey || '');
     if (!t || !s) return { matched: false };
 
-    const pending = getPendingChallenge(s, t, now);
-    if (!pending || pending.expired) return { matched: false };
+    // Acessa o Map diretamente — getPendingChallenge deleta desafios expirados
+    // e impediria resolveChallenge de processar a transferência
+    const scopeChallenges = challenges.get(s);
+    if (!scopeChallenges) return { matched: false };
+    const c = scopeChallenges.get(t);
+    if (!c) return { matched: false };
 
-    const parsed = Math.floor(Number(String(text || '').trim()));
+    // Desafio expirado: resolve para executar a transferência (timeout)
+    if (now > c.expiresAt) {
+      const result = resolveChallenge({ scopeKey: s, targetJid: t, answer: 'timeout', now });
+      return { matched: true, result };
+    }
+
+    // Extrai o primeiro número do texto — aceita "18", "é 18", "18 resposta", etc.
+    const numMatch = String(text || '').match(/-?\d+/);
+    const parsed = numMatch ? Math.floor(Number(numMatch[0])) : NaN;
     if (!Number.isFinite(parsed)) return { matched: false };
 
-    if (parsed === pending.answer) {
+    if (parsed === c.answer) {
       const result = resolveChallenge({ scopeKey: s, targetJid: t, answer: parsed, now });
       return { matched: true, result };
     }

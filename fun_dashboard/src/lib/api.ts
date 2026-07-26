@@ -10,7 +10,6 @@ import type {
   FunConfig,
   FunGroup,
   GroupSettings,
-  NsfwVoteStatus,
   Overview,
   RankEntry,
 } from "./types";
@@ -88,6 +87,12 @@ export const funApi = {
         body: JSON.stringify(body),
       }
     ),
+
+  triggerChaosEvent: (scope: string) =>
+    request<{ ok: boolean; eventType?: string }>("/api/fun/chaos/trigger", {
+      method: "POST",
+      body: JSON.stringify({ scope }),
+    }),
 
   outbound: () =>
     request<{

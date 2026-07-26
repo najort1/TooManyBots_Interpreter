@@ -384,6 +384,39 @@ export function startFunDashboardServer(deps = {}) {
         return;
       }
 
+      if (req.method === 'POST' && path === '/api/fun/chaos/trigger') {
+        const body = await readBody(req);
+        const scope = String(body.scope || '').trim();
+        if (!scope) {
+          sendJson(res, 400, { error: 'scope obrigatorio' });
+          return;
+        }
+        const cfg = getConfig();
+        if (!funModule?._services?.chaosEventService?.tryStartEvent) {
+          sendJson(res, 503, { error: 'servico-indisponivel' });
+          return;
+        }
+        
+        const started = funModule._services.chaosEventService.tryStartEvent(scope, cfg, Date.now(), { force: true });
+        if (!started?.ok) {
+          sendJson(res, 400, { error: started?.reason || 'nao-iniciado' });
+          return;
+        }
+        
+        // Disparar anúncio de início (opcionalmente) se houver sendText / WhatsApp conectado
+        const msg = funModule._services.chaosEventService.formatStartAnnouncement(started);
+        if (msg && getSock?.()) {
+          try {
+             await sendText(getSock(), scope, msg);
+          } catch (e) {
+             getLogger?.()?.warn?.({ err: e }, 'falha ao enviar aviso de PURGA manual');
+          }
+        }
+        
+        sendJson(res, 200, { ok: true, eventType: 'crime_chaos' });
+        return;
+      }
+
       // --- Bolsa (read-only · público) — sem compra/venda ---
       if (req.method === 'GET' && path === '/api/fun/bolsa') {
         const scope = resolveScopeKey(url.searchParams.get('scope') || '');
