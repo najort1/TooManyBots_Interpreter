@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '20';
+export const FUN_SCHEMA_VERSION = '21';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -748,6 +748,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   chaosEventEnabled: true,
   chaosEventHour: 23,
   chaosEventMinute: 30,
+  chaosEventWeekendHour: 15,
+  chaosEventWeekendMinute: 33,
   chaosEventDurationMs: 10 * 60_000,
   chaosEventNoWeaponSuccess: 0.50,
   chaosEventWeaponBaseChance: 0.60,

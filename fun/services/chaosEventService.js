@@ -49,6 +49,7 @@ export function createChaosEventService({
   eventRepository,
   getMarketService = null,
   random = Math.random,
+  getNewsService = null,
 } = {}) {
   if (!repository) throw new Error('[fun/chaosEventService] repository required');
   if (!eventRepository) throw new Error('[fun/chaosEventService] eventRepository required');
@@ -94,20 +95,39 @@ export function createChaosEventService({
     const already = isEventActive(scopeKey, now);
     if (already) return { ok: false, reason: 'already-active', status: already };
 
-    const h = numOr(funConfig.chaosEventHour, 23);
-    const m = numOr(funConfig.chaosEventMinute, 30);
-    const d = new Date(now);
-    const currentHour = d.getHours();
-    const currentMinute = d.getMinutes();
+    const tz = String(funConfig.worldTimezone || 'America/Sao_Paulo');
+    const parts = new Intl.DateTimeFormat('en-GB', {
+      timeZone: tz,
+      hour: '2-digit',
+      minute: '2-digit',
+      weekday: 'short',
+      hourCycle: 'h23',
+    }).formatToParts(new Date(now));
+    const currentHour = Number((parts.find((p) => p.type === 'hour') || {}).value);
+    const currentMinute = Number((parts.find((p) => p.type === 'minute') || {}).value);
+    const dow = (parts.find((p) => p.type === 'weekday') || {}).value;
+    const isWeekend = dow === 'Sat' || dow === 'Sun';
+    const h = isWeekend
+      ? numOr(funConfig.chaosEventWeekendHour, 15)
+      : numOr(funConfig.chaosEventHour, 23);
+    const m = isWeekend
+      ? numOr(funConfig.chaosEventWeekendMinute, 33)
+      : numOr(funConfig.chaosEventMinute, 30);
     const windowOk = currentHour === h && currentMinute >= m && currentMinute < m + 1;
     if (!windowOk) return { ok: false, reason: 'wrong-hour' };
 
     const raw = eventRepository.get(scopeKey);
-    const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = todayStart.getTime() + 24 * 60 * 60_000;
+    const fmtDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: tz,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    });
 
-    if (raw.lastSpawnAt >= todayStart.getTime() && raw.lastSpawnAt < todayEnd) {
+    const todayDate = fmtDate.format(new Date(now));
+    const lastDate = fmtDate.format(new Date(raw.lastSpawnAt));
+
+    if (lastDate === todayDate && raw.lastSpawnAt > 0) {
       return { ok: false, reason: 'already-today' };
     }
 
@@ -126,6 +146,13 @@ export function createChaosEventService({
       victims: new Map(),
       startAt: now,
     });
+
+    try {
+      const ns = typeof getNewsService === 'function' ? getNewsService() : null;
+      ns?.log?.(scopeKey, 'purga_start', {
+        payload: { duration, endsAt: now + duration },
+      });
+    } catch {}
 
     return {
       ok: true,
@@ -463,7 +490,14 @@ export function createChaosEventService({
     }
 
     lines.push('', '_Até a próxima Purga._');
+    const finalLb = { attackers: [...lb.attackers], victims: [...lb.victims] };
     cleanupLeaderboard(scopeKey);
+    try {
+      const ns = typeof getNewsService === 'function' ? getNewsService() : null;
+      ns?.log?.(scopeKey, 'purga_end', {
+        payload: { attackers: finalLb.attackers.slice(0, 5), victims: finalLb.victims.slice(0, 3) },
+      });
+    } catch {}
     return lines.join('\n');
   }
 

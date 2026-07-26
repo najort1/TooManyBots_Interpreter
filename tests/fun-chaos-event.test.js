@@ -40,6 +40,17 @@ function atHour(hour = TEST_HOUR, minute = 30, { base = Date.now() } = {}) {
 
 const NO_DEFENSE = { chaosEventDefenseEnabled: false };
 
+/** Garante que horário de fim de semana bate com o configurado, para testes rodarem qualquer dia. */
+function chaosConfig(extra = {}) {
+  const h = extra.chaosEventHour ?? TEST_HOUR;
+  const m = extra.chaosEventMinute ?? 30;
+  return resolveFunConfig({
+    ...extra,
+    chaosEventWeekendHour: extra.chaosEventWeekendHour ?? h,
+    chaosEventWeekendMinute: extra.chaosEventWeekendMinute ?? m,
+  });
+}
+
 test('ativação única por dia na hora configurada', () => {
   process.env.FUN_DISABLE_LIVE_LLM = '1';
   const repo = createFunStatsRepository({ getDatabase: getDb });
@@ -49,7 +60,7 @@ test('ativação única por dia na hora configurada', () => {
   const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
   const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.5 });
   const scope = uniqueGroup();
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventDurationMs: 10 * 60_000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventDurationMs: 10 * 60_000 });
   const now = atHour(TEST_HOUR);
   const result = chaosEvent.tryStartEvent(scope, cfg, now);
   assert.equal(result.ok, true);
@@ -65,6 +76,57 @@ test('ativação única por dia na hora configurada', () => {
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
 
+test('ativação em dias consecutivos com horário que cruza meia-noite UTC', () => {
+  // Cenário real: PURGA às 23:30 BRT = 02:30 UTC dia seguinte.
+  // O bug anterior usava Date.UTC(y,mo-1,dd) que calculava meia-noite UTC,
+  // fazendo o lastSpawnAt cair na janela errada e bloqueando o dia seguinte.
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.5 });
+  const scope = uniqueGroup();
+  const cfg = chaosConfig({
+    chaosEventEnabled: true,
+    chaosEventHour: 23,
+    chaosEventMinute: 30,
+    chaosEventDurationMs: 10 * 60_000,
+  });
+
+  // Dia 1: 23:30 — deve disparar
+  const day1 = atHour(23, 30);
+  const r1 = chaosEvent.tryStartEvent(scope, cfg, day1);
+  assert.equal(r1.ok, true, 'Dia 1 deve disparar');
+
+  // Dentro do mesmo evento: rejeita (already-active)
+  assert.equal(chaosEvent.tryStartEvent(scope, cfg, day1 + 5000).ok, false);
+
+  // Simula que o evento terminou (endsAt já passou)
+  const afterEvent1 = day1 + 11 * 60_000;
+
+  // Dia 2: 23:30 (+24h) — NÃO pode ser bloqueado por already-today
+  const day2 = day1 + 24 * 60 * 60_000;
+  const day2Time = atHour(23, 30, { base: day2 });
+
+  // Confirma que o evento anterior não está mais ativo
+  assert.equal(chaosEvent.isEventActive(scope, day2Time), false, 'Evento anterior deve ter expirado');
+
+  const r2 = chaosEvent.tryStartEvent(scope, cfg, day2Time);
+  assert.equal(r2.ok, true, 'Dia 2 deve disparar — já foi um dia diferente no fuso');
+  assert.equal(r2.label, 'PURGA');
+
+  // Dia 3: +48h — também deve funcionar
+  const day3 = day1 + 48 * 60 * 60_000;
+  const day3Time = atHour(23, 30, { base: day3 });
+  const r3 = chaosEvent.tryStartEvent(scope, cfg, day3Time);
+  assert.equal(r3.ok, true, 'Dia 3 deve disparar');
+  assert.equal(r3.label, 'PURGA');
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
 test('não ativa fora da hora configurada', () => {
   process.env.FUN_DISABLE_LIVE_LLM = '1';
   const repo = createFunStatsRepository({ getDatabase: getDb });
@@ -73,7 +135,7 @@ test('não ativa fora da hora configurada', () => {
   const market = createMarketService({ repository: repo, marketRepository: createFunMarketRepository({ getDatabase: getDb }), random: () => 0.5 });
   const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.5 });
   const scope = uniqueGroup();
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR });
   assert.equal(chaosEvent.tryStartEvent(scope, cfg, atHour(19)).ok, false);
   assert.equal(chaosEvent.tryStartEvent(scope, cfg, atHour(21)).ok, false);
   assert.equal(chaosEvent.tryStartEvent(scope, cfg, atHour(TEST_HOUR)).ok, true);
@@ -93,7 +155,7 @@ test('assalto sem arma com 50% de sucesso', () => {
   const vic = uniqueJid('5592');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 200, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, ...NO_DEFENSE });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, ...NO_DEFENSE });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
   const win = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now: now + 1000 });
@@ -123,7 +185,7 @@ test('assalto com arma usa chance base maior', () => {
   const vic = uniqueJid('5594');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 500, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 300, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventWeaponBaseChance: 0.60, ...NO_DEFENSE });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventWeaponBaseChance: 0.60, ...NO_DEFENSE });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
   effects.addCharges({ userJid: atk, scopeKey: scope, effectKey: 'weapons_license', charges: 1, payload: { permanent: true } });
@@ -149,7 +211,7 @@ test('saldo negativo limitado pelo maxDebt', () => {
   const vic = uniqueJid('5596');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 10, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventMaxDebt: 100, chaosEventMaxStealAmount: 500, chaosEventNoWeaponSuccess: 0.50, ...NO_DEFENSE });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventMaxDebt: 100, chaosEventMaxStealAmount: 500, chaosEventNoWeaponSuccess: 0.50, ...NO_DEFENSE });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
   const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 1000, funConfig: cfg, now: now + 1000 });
@@ -175,7 +237,7 @@ test('valor de assalto limitado pelo maxStealAmount', () => {
   const vic = uniqueJid('5598');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 500_000, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventMaxStealAmount: 100, chaosEventNoWeaponSuccess: 0.50, ...NO_DEFENSE });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventMaxStealAmount: 100, chaosEventNoWeaponSuccess: 0.50, ...NO_DEFENSE });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
   const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 999_999, funConfig: cfg, now: now + 1000 });
@@ -198,7 +260,7 @@ test('heat desativado durante o evento', () => {
   const market = createMarketService({ repository: repo, marketRepository: marketRepo, effectsRepository: effects, casinoRepository: casinoRepo, chaosEventService: chaosEvent, random: () => 0.5 });
   const scope = uniqueGroup();
   const atk = uniqueJid('5599');
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR });
   const now = atHour(TEST_HOUR);
   market.setAssaultHeat(atk, scope, 5, now);
   assert.equal(market.getAssaultHeat(atk, scope, now), 5);
@@ -220,7 +282,7 @@ test('duração correta de 10 minutos e transição', () => {
   const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
   const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.5 });
   const scope = uniqueGroup();
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventDurationMs: 10 * 60_000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventDurationMs: 10 * 60_000 });
   const now = atHour(TEST_HOUR);
   const started = chaosEvent.tryStartEvent(scope, cfg, now);
   assert.equal(started.durationMs, 10 * 60_000);
@@ -239,7 +301,7 @@ test('assalto bloqueado fora do evento', () => {
   const market = createMarketService({ repository: repo, marketRepository: createFunMarketRepository({ getDatabase: getDb }) });
   const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market });
   const scope = uniqueGroup();
-  const result = chaosEvent.doCrimeAssault({ attackerJid: uniqueJid('5598'), targetJid: uniqueJid('5599'), scopeKey: scope, amount: 50, funConfig: resolveFunConfig({}) });
+  const result = chaosEvent.doCrimeAssault({ attackerJid: uniqueJid('5598'), targetJid: uniqueJid('5599'), scopeKey: scope, amount: 50, funConfig: chaosConfig({}) });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'event-inactive');
   delete process.env.FUN_DISABLE_LIVE_LLM;
@@ -262,7 +324,7 @@ test('leaderboard registra maiores criminosos e vítimas', () => {
   repo.addCoins({ userJid: a2, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic1, scopeKey: scope, amount: 1000, reason: 'seed' });
   repo.addCoins({ userJid: vic2, scopeKey: scope, amount: 2000, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventMaxStealAmount: 500, ...NO_DEFENSE });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventMaxStealAmount: 500, ...NO_DEFENSE });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
   chaosEvent.doCrimeAssault({ attackerJid: a1, targetJid: vic1, scopeKey: scope, amount: 100, funConfig: cfg, now: now + 1000 });
@@ -286,7 +348,7 @@ test('anúncios: início e warning com tempo restante', () => {
   const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
   const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.5 });
   const scope = uniqueGroup();
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventDurationMs: 10 * 60_000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventDurationMs: 10 * 60_000 });
   const now = atHour(TEST_HOUR);
   const started = chaosEvent.tryStartEvent(scope, cfg, now);
   const startMsg = chaosEvent.formatStartAnnouncement(started);
@@ -332,7 +394,7 @@ test('defesa: assalto retorna pending com desafio matemático', () => {
   const vic = uniqueJid('5521');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 200, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseEnabled: true, chaosEventDefenseTimeoutMs: 4000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseEnabled: true, chaosEventDefenseTimeoutMs: 4000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -361,7 +423,7 @@ test('defesa: acertar a conta bloqueia o assalto', () => {
   const vic = uniqueJid('5523');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 200, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -398,7 +460,7 @@ test('defesa: errar a conta executa o assalto', () => {
   const vic = uniqueJid('5525');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 200, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -431,7 +493,7 @@ test('defesa: timeout executa o assalto automaticamente', () => {
   const vic = uniqueJid('5527');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 200, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -470,7 +532,7 @@ test('defesa: resposta inválida (NaN) executa assalto', () => {
   const vic = uniqueJid('5529');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 50, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -498,7 +560,7 @@ test('defesa: responder vazio ou null executa assalto', () => {
   const vic = uniqueJid('5531');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 50, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -538,7 +600,7 @@ test('defesa: múltiplos assaltos no mesmo alvo sobrescrevem desafio anterior', 
   repo.addCoins({ userJid: a1, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: a2, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 500, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -583,7 +645,7 @@ test('defesa: assaltos em alvos diferentes no mesmo escopo não interferem', () 
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic1, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic2, scopeKey: scope, amount: 100, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -628,7 +690,7 @@ test('defesa: escopos diferentes têm desafios isolados', () => {
   repo.addCoins({ userJid: vic, scopeKey: scopeA, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: atk, scopeKey: scopeB, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scopeB, amount: 100, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scopeA, cfg, now);
   chaosEvent.tryStartEvent(scopeB, cfg, now);
@@ -676,7 +738,7 @@ test('defesa: responder o mesmo desafio duas vezes (segunda falha)', () => {
   const vic = uniqueJid('5542');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 50, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -703,7 +765,7 @@ test('defesa: generateMathChallenge nunca produz total negativo', () => {
   const eventRepo = createFunEventRepository({ getDatabase: getDb });
   const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => null, random: () => 0.49 });
   const scope = uniqueGroup();
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -730,7 +792,7 @@ test('defesa: resolveChallenge com tempo exato no limiar funciona', () => {
   const vic = uniqueJid('5544');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 50, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -758,7 +820,7 @@ test('defesa: assalto sem arma com defesa ativa retorna pending e não coins', (
   const vic = uniqueJid('5546');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 4000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -784,7 +846,7 @@ test('defesa: checkMessageForChallenge acerta sem comando especial', () => {
   const vic = uniqueJid('5548');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -813,7 +875,7 @@ test('defesa: checkMessageForChallenge com resposta errada ignora', () => {
   const vic = uniqueJid('5550');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 
@@ -845,7 +907,7 @@ test('defesa: checkMessageForChallenge com texto não numérico ignora', () => {
   const vic = uniqueJid('5552');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
-  const cfg = resolveFunConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventNoWeaponSuccess: 0.50, chaosEventDefenseTimeoutMs: 60000 });
   const now = atHour(TEST_HOUR);
   chaosEvent.tryStartEvent(scope, cfg, now);
 

@@ -820,6 +820,18 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    chaosEventWeekendHour: normalizeInt(raw.chaosEventWeekendHour, DEFAULT_FUN_CONFIG.chaosEventWeekendHour, {
+      min: 0,
+      max: 23,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    chaosEventWeekendMinute: normalizeInt(raw.chaosEventWeekendMinute, DEFAULT_FUN_CONFIG.chaosEventWeekendMinute, {
+      min: 0,
+      max: 59,
+      rounding: 'floor',
+      clamp: true,
+    }),
     chaosEventDurationMs: normalizeInt(
       raw.chaosEventDurationMs,
       DEFAULT_FUN_CONFIG.chaosEventDurationMs,
