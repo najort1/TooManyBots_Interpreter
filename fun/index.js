@@ -468,6 +468,14 @@ export function createFunModule(deps = {}) {
     if (newsService?.tryPublish && funConfig.groupNewsEnabled !== false) {
       const newsScopes = groups.filter((s) => s && String(s).endsWith('@g.us'));
       const newsJobs = newsScopes.map(async (scopeKey) => {
+        // Verifica flag granular por grupo
+        const journalOn =
+          typeof groupRepository?.isGranularEventEnabled === 'function'
+            ? groupRepository.isGranularEventEnabled(scopeKey, 'journal', funConfig)
+            : true;
+        if (!journalOn) {
+          return { scopeKey, kind: 'group-news', ok: false, reason: 'journal-auto-disabled' };
+        }
         try {
           const edition = await newsService.tryPublish(scopeKey, funConfig, now);
           if (edition?.ok && edition.text) {
@@ -574,11 +582,16 @@ export function createFunModule(deps = {}) {
           }
         }
 
-        const worldEventsOn =
-          typeof groupRepository?.isWorldEventsEnabled === 'function'
-            ? groupRepository.isWorldEventsEnabled(scopeKey, funConfig)
-            : groupRepository?.resolveEffectiveRates?.(scopeKey, funConfig)
-                ?.worldEventsEnabled !== false;
+        const granularEvents =
+          typeof groupRepository?.getGranularWorldEvents === 'function'
+            ? groupRepository.getGranularWorldEvents(scopeKey, funConfig)
+            : {
+                journalAutoEnabled: true,
+                marketAutoEnabled: true,
+                happyHourAutoEnabled: true,
+                chaosAutoEnabled: true,
+                weeklyRestockAutoEnabled: true,
+              };
 
         // tick de preços / regulador (silencioso) — independente de anúncios
         if (marketService?.tickEconomy && funConfig.economyEnabled !== false) {
@@ -589,9 +602,8 @@ export function createFunModule(deps = {}) {
           }
         }
 
-        // Mercado auto + trégua: só se world events ON
-        // Happy hour: sempre pode anunciar (mesmo com world events off)
-        if (worldEventsOn && marketService?.tryAutoMarketEvent) {
+        // Mercado auto + trégua: só se marketAutoEnabled
+        if (granularEvents.marketAutoEnabled && marketService?.tryAutoMarketEvent) {
           try {
             const hit = await marketService.tryAutoMarketEvent({
               scopeKey,
@@ -615,7 +627,6 @@ export function createFunModule(deps = {}) {
                   source: hit.source || hit.event?.source || null,
                 });
               } else {
-                // bug clássico: contava "1 anúncio" sem mandar nada no zap
                 console.warn(
                   `[fun/market] evento ok em ${scopeKey} mas anúncio vazio (source=${hit.source || hit.event?.source || '?'}) — não enviou`
                 );
@@ -638,18 +649,19 @@ export function createFunModule(deps = {}) {
               reason: err?.message || 'market-error',
             });
           }
-        } else if (!worldEventsOn) {
-          results.push({ scopeKey, kind: 'market', ok: false, reason: 'world-events-off' });
+        } else if (!granularEvents.marketAutoEnabled) {
+          results.push({ scopeKey, kind: 'market', ok: false, reason: 'market-auto-disabled' });
         }
 
-        if (eventService?.tryAutoSpawn) {
+        // Happy hour: só se happyHourAutoEnabled
+        if (granularEvents.happyHourAutoEnabled && eventService?.tryAutoSpawn) {
           try {
             const spawned = eventService.tryAutoSpawn({
               scopeKey,
               funConfig,
               now,
               tick: true,
-              happyOnly: !worldEventsOn,
+              happyOnly: !granularEvents.marketAutoEnabled,
             });
             if (spawned?.ok) {
               const msg =
@@ -681,9 +693,9 @@ export function createFunModule(deps = {}) {
           }
         }
 
-        if (chaosEventService?.tryStartEvent) {
+        // Chaos/PURGA: só se chaosAutoEnabled
+        if (granularEvents.chaosAutoEnabled && chaosEventService?.tryStartEvent) {
           try {
-            // aviso de 2 minutos (evento ativo)
             if (chaosEventService.shouldSendWarning?.(scopeKey, now)) {
               const rem = chaosEventService.getTimeRemaining(scopeKey, now);
               const warn = chaosEventService.formatWarningAnnouncement(rem);
@@ -693,10 +705,9 @@ export function createFunModule(deps = {}) {
               }
             }
 
-            // aviso de fim com leaderboard (evento expirou neste tick)
             const active = chaosEventService.isEventActive(scopeKey, now);
             const wasActive = chaosEventService.isEventActive(scopeKey, now - 120_000);
-            if (!active && wasActive && worldEventsOn) {
+            if (!active && wasActive) {
               const endMsg = chaosEventService.formatEndAnnouncement(scopeKey, nameResolver);
               if (endMsg) {
                 await postWithMentions(scopeKey, endMsg, userFmt);
@@ -705,20 +716,17 @@ export function createFunModule(deps = {}) {
               }
             }
 
-            // início do evento (agendado)
-            if (worldEventsOn) {
-              const started = chaosEventService.tryStartEvent(scopeKey, funConfig, now);
-              if (started?.ok) {
-                const msg = chaosEventService.formatStartAnnouncement(started);
-                if (msg) {
-                  await postWithMentions(scopeKey, msg, userFmt);
-                  results.push({
-                    scopeKey,
-                    kind: 'chaos-event',
-                    ok: true,
-                    eventType: 'crime_chaos',
-                  });
-                }
+            const started = chaosEventService.tryStartEvent(scopeKey, funConfig, now);
+            if (started?.ok) {
+              const msg = chaosEventService.formatStartAnnouncement(started);
+              if (msg) {
+                await postWithMentions(scopeKey, msg, userFmt);
+                results.push({
+                  scopeKey,
+                  kind: 'chaos-event',
+                  ok: true,
+                  eventType: 'crime_chaos',
+                });
               }
             }
           } catch (err) {
@@ -731,7 +739,8 @@ export function createFunModule(deps = {}) {
           }
         }
 
-        if (marketService?.maybeWeeklyRestock) {
+        // Restock semanal: só se weeklyRestockAutoEnabled
+        if (granularEvents.weeklyRestockAutoEnabled && marketService?.maybeWeeklyRestock) {
           try {
             const restock = marketService.maybeWeeklyRestock(scopeKey, funConfig, now);
             if (restock?.restocked) {

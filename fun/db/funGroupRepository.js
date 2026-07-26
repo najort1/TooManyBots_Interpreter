@@ -3,9 +3,25 @@ import { ensureFunSchema as applyFunSchema } from '../schema.js';
 
 const ANALYTICS_SCHEMA = 'analytics';
 
+const GRANULAR_EVENTS = [
+  'journal_auto_enabled',
+  'market_auto_enabled',
+  'happy_hour_auto_enabled',
+  'chaos_auto_enabled',
+  'weekly_restock_auto_enabled',
+];
+
+function resolveGranular(value, fallback) {
+  return value === undefined || value === null ? fallback : Number(value) !== 0;
+}
+
 function mapGroupRow(row) {
   if (!row) return null;
-  return {
+  const worldEventsEnabled =
+    row.world_events_enabled === undefined || row.world_events_enabled === null
+      ? true
+      : Number(row.world_events_enabled) !== 0;
+  const base = {
     groupJid: String(row.group_jid || ''),
     enabled: Number(row.enabled) !== 0,
     xpMin: Number(row.xp_min) || 15,
@@ -15,14 +31,15 @@ function mapGroupRow(row) {
     dailyXp: Number(row.daily_xp) || 150,
     dailyCoins: Number(row.daily_coins) || 50,
     rankLimit: Number(row.rank_limit) || 10,
-    /** Eventos aleatórios do mundo (mercado auto + trégua). Happy hour continua. Default: ligado. */
-    worldEventsEnabled:
-      row.world_events_enabled === undefined || row.world_events_enabled === null
-        ? true
-        : Number(row.world_events_enabled) !== 0,
+    worldEventsEnabled,
     permitirNsfw: Number(row.permitir_nsfw ?? 0) !== 0,
     updatedAt: Number(row.updated_at) || 0,
   };
+  for (const col of GRANULAR_EVENTS) {
+    const key = col.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+    base[key] = resolveGranular(row[col], worldEventsEnabled);
+  }
+  return base;
 }
 
 export function createFunGroupRepository({ getDatabase = getDb } = {}) {
@@ -125,25 +142,39 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       permitirNsfw = existing.permitirNsfw ? 1 : 0;
     }
 
+    const granularCols = {};
+    for (const col of GRANULAR_EVENTS) {
+      const key = col.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
+      let val = 1;
+      if (input[key] === false || input[key] === 0) {
+        val = 0;
+      } else if (input[key] === true || input[key] === 1) {
+        val = 1;
+      } else if (existing && existing[key] !== undefined) {
+        val = existing[key] ? 1 : 0;
+      } else {
+        val = worldEventsEnabled;
+      }
+      granularCols[col] = val;
+    }
+
     const updatedAt = Date.now();
+
+    const columns = [
+      'group_jid', 'enabled', 'xp_min', 'xp_max', 'cooldown_ms', 'level_up_announce',
+      'daily_xp', 'daily_coins', 'rank_limit', 'world_events_enabled', 'permitir_nsfw',
+      ...GRANULAR_EVENTS,
+      'updated_at',
+    ];
+    const placeholders = columns.map(() => '?').join(', ');
+    const setClauses = columns.map((c) => `${c} = excluded.${c}`).join(',\n        ');
 
     db.prepare(
       `INSERT INTO ${ANALYTICS_SCHEMA}.fun_group_settings (
-        group_jid, enabled, xp_min, xp_max, cooldown_ms, level_up_announce,
-        daily_xp, daily_coins, rank_limit, world_events_enabled, permitir_nsfw, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ${columns.join(', ')}
+      ) VALUES (${placeholders})
       ON CONFLICT(group_jid) DO UPDATE SET
-        enabled = excluded.enabled,
-        xp_min = excluded.xp_min,
-        xp_max = excluded.xp_max,
-        cooldown_ms = excluded.cooldown_ms,
-        level_up_announce = excluded.level_up_announce,
-        daily_xp = excluded.daily_xp,
-        daily_coins = excluded.daily_coins,
-        rank_limit = excluded.rank_limit,
-        world_events_enabled = excluded.world_events_enabled,
-        permitir_nsfw = excluded.permitir_nsfw,
-        updated_at = excluded.updated_at`
+        ${setClauses}`
     ).run(
       groupJid,
       enabled,
@@ -156,6 +187,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       rankLimit,
       worldEventsEnabled,
       permitirNsfw,
+      ...GRANULAR_EVENTS.map((col) => granularCols[col]),
       updatedAt
     );
 
@@ -187,6 +219,11 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
         rankLimit: funConfig.rankLimit ?? 10,
         worldEventsEnabled: true,
         permitirNsfw: false,
+        journalAutoEnabled: true,
+        marketAutoEnabled: true,
+        happyHourAutoEnabled: true,
+        chaosAutoEnabled: true,
+        weeklyRestockAutoEnabled: true,
         source: 'global',
       };
     }
@@ -201,6 +238,11 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       rankLimit: saved.rankLimit,
       worldEventsEnabled: saved.worldEventsEnabled !== false,
       permitirNsfw: saved.permitirNsfw === true,
+      journalAutoEnabled: saved.journalAutoEnabled !== false,
+      marketAutoEnabled: saved.marketAutoEnabled !== false,
+      happyHourAutoEnabled: saved.happyHourAutoEnabled !== false,
+      chaosAutoEnabled: saved.chaosAutoEnabled !== false,
+      weeklyRestockAutoEnabled: saved.weeklyRestockAutoEnabled !== false,
       source: 'group',
     };
   }
@@ -211,6 +253,42 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
     return rates.worldEventsEnabled !== false;
   }
 
+  /**
+   * Retorna o estado de cada evento autônomo granular para o grupo.
+   * @returns {{ journalAutoEnabled, marketAutoEnabled, happyHourAutoEnabled, chaosAutoEnabled, weeklyRestockAutoEnabled }}
+   */
+  function getGranularWorldEvents(groupJid, funConfig = {}) {
+    const rates = resolveEffectiveRates(groupJid, funConfig);
+    return {
+      journalAutoEnabled: rates.journalAutoEnabled !== false,
+      marketAutoEnabled: rates.marketAutoEnabled !== false,
+      happyHourAutoEnabled: rates.happyHourAutoEnabled !== false,
+      chaosAutoEnabled: rates.chaosAutoEnabled !== false,
+      weeklyRestockAutoEnabled: rates.weeklyRestockAutoEnabled !== false,
+    };
+  }
+
+  /**
+   * Verifica se um tipo específico de evento autônomo está habilitado no grupo.
+   * @param {string} groupJid
+   * @param {'journal'|'market'|'happyHour'|'chaos'|'weeklyRestock'} eventType
+   * @param {object} [funConfig={}]
+   * @returns {boolean}
+   */
+  function isGranularEventEnabled(groupJid, eventType, funConfig = {}) {
+    const granular = getGranularWorldEvents(groupJid, funConfig);
+    const keyMap = {
+      journal: 'journalAutoEnabled',
+      market: 'marketAutoEnabled',
+      happyHour: 'happyHourAutoEnabled',
+      chaos: 'chaosAutoEnabled',
+      weeklyRestock: 'weeklyRestockAutoEnabled',
+    };
+    const key = keyMap[eventType];
+    if (!key) return true;
+    return granular[key] !== false;
+  }
+
   return {
     getGroupSettings,
     listGroupSettings,
@@ -218,5 +296,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
     deleteGroupSettings,
     resolveEffectiveRates,
     isWorldEventsEnabled,
+    getGranularWorldEvents,
+    isGranularEventEnabled,
   };
 }

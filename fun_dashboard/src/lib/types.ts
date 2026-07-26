@@ -143,6 +143,16 @@ export type GroupSettings = {
   levelUpAnnounce?: boolean;
   /** Eventos aleatórios do mundo (mercado auto + trégua). Happy hour segue anunciando. Default true. */
   worldEventsEnabled?: boolean;
+  /** Jornal diário automático (~23:59). Default true. */
+  journalAutoEnabled?: boolean;
+  /** Mercado de rua automático. Default true. */
+  marketAutoEnabled?: boolean;
+  /** Happy hour automático do cassino. Default true. */
+  happyHourAutoEnabled?: boolean;
+  /** PURGA / evento de caos automático. Default true. */
+  chaosAutoEnabled?: boolean;
+  /** Reposição semanal de estoque. Default true. */
+  weeklyRestockAutoEnabled?: boolean;
 };
 
 export type CasinoPayload = {

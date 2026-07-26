@@ -884,6 +884,26 @@ export function ensureFunSchema(db) {
     // ignore
   }
 
+  // Migra colunas granulares de eventos autônomos (controle por tipo de evento)
+  const GRANULAR_COLUMNS = [
+    { name: 'journal_auto_enabled', defaultVal: 1 },
+    { name: 'market_auto_enabled', defaultVal: 1 },
+    { name: 'happy_hour_auto_enabled', defaultVal: 1 },
+    { name: 'chaos_auto_enabled', defaultVal: 1 },
+    { name: 'weekly_restock_auto_enabled', defaultVal: 1 },
+  ];
+  try {
+    const gsCols2 = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_group_settings)`).all();
+    const gsNames2 = new Set(gsCols2.map(c => String(c.name || '')));
+    for (const col of GRANULAR_COLUMNS) {
+      if (!gsNames2.has(col.name)) {
+        db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_settings ADD COLUMN ${col.name} INTEGER NOT NULL DEFAULT ${col.defaultVal}`);
+      }
+    }
+  } catch {
+    // ignore
+  }
+
   try {
     const voteCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_nsfw_votes)`).all();
     const voteNames = new Set(voteCols.map(c => String(c.name || '')));

@@ -16,6 +16,7 @@ import { createMarketService } from '../fun/services/marketService.js';
 import { createEventService } from '../fun/services/eventService.js';
 import { createFunModule, resolveFunConfig } from '../fun/index.js';
 import { DEFAULT_FUN_CONFIG } from '../fun/constants.js';
+import { createFunGroupRepository } from '../fun/db/funGroupRepository.js';
 import { isWorldQuietHours, getLocalHour } from '../fun/utils/worldQuietHours.js';
 
 await initDb();
@@ -197,7 +198,7 @@ test('tickWorldEvents respeita worldAutonomous=false', async () => {
   assert.equal(r.reason, 'world-autonomous-off');
 });
 
-test('tickWorldEvents: worldEventsEnabled=false bloqueia mercado; happy hour ainda anuncia', async () => {
+test('tickWorldEvents: worldEventsEnabled=false bloqueia tudo; happyHourAutoEnabled=true reativa happy hour', async () => {
   process.env.FUN_DISABLE_LIVE_LLM = '1';
   const scope = uniqueGroup();
   const posts = [];
@@ -222,9 +223,11 @@ test('tickWorldEvents: worldEventsEnabled=false bloqueia mercado; happy hour ain
   });
   mod.init();
 
+  // worldEventsEnabled=false com happyHourAutoEnabled=true — happy hour deve funcionar
   mod._services.groupRepository.upsertGroupSettings({
     groupJid: scope,
     worldEventsEnabled: false,
+    happyHourAutoEnabled: true,
   });
 
   const marketRepo = mod._services.marketRepository;
@@ -248,7 +251,7 @@ test('tickWorldEvents: worldEventsEnabled=false bloqueia mercado; happy hour ain
   assert.equal(result.ok, true);
   assert.ok(
     result.results.some(
-      (r) => r.scopeKey === scope && r.kind === 'market' && r.reason === 'world-events-off'
+      (r) => r.scopeKey === scope && r.kind === 'market' && r.reason === 'market-auto-disabled'
     ),
     'mercado auto bloqueado'
   );
@@ -256,7 +259,7 @@ test('tickWorldEvents: worldEventsEnabled=false bloqueia mercado; happy hour ain
     result.results.some(
       (r) => r.scopeKey === scope && r.kind === 'event' && r.ok && r.eventType === 'casino_happy'
     ),
-    'happy hour deve disparar com world events off'
+    'happy hour deve disparar com happyHourAutoEnabled=true'
   );
   assert.ok(
     posts.some((p) => p.jid === scope && /HAPPY HOUR/i.test(p.text)),
@@ -312,8 +315,289 @@ test('tickWorldEvents bloqueia na madrugada (1h–6h)', async () => {
     },
     now: night,
   });
-  assert.equal(r.ok, false);
+  // Jornal pode ter publicado (ok=true) mas reason=quiet-hours bloqueia o resto
   assert.equal(r.reason, 'quiet-hours');
-  assert.equal(posts.length, 0);
+  assert.ok(
+    !r.results.some((rr) => rr.kind === 'market'),
+    'mercado bloqueado na madrugada'
+  );
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('getGranularWorldEvents retorna objeto com 5 flags (default true)', () => {
+  const scope = uniqueGroup();
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const groupRepo = createFunGroupRepository({ getDatabase: getDb });
+
+  // Sem settings salvas, deve usar defaults
+  const g = groupRepo.getGranularWorldEvents(scope);
+  assert.equal(g.journalAutoEnabled, true);
+  assert.equal(g.marketAutoEnabled, true);
+  assert.equal(g.happyHourAutoEnabled, true);
+  assert.equal(g.chaosAutoEnabled, true);
+  assert.equal(g.weeklyRestockAutoEnabled, true);
+});
+
+test('getGranularWorldEvents respeita worldEventsEnabled como fallback', () => {
+  const scope = uniqueGroup();
+  const groupRepo = createFunGroupRepository({ getDatabase: getDb });
+
+  // worldEventsEnabled=false sem colunas granulares explícitas → tudo false
+  groupRepo.upsertGroupSettings({ groupJid: scope, worldEventsEnabled: false });
+  const g = groupRepo.getGranularWorldEvents(scope);
+  assert.equal(g.marketAutoEnabled, false);
+  assert.equal(g.journalAutoEnabled, false);
+  assert.equal(g.happyHourAutoEnabled, false);
+  assert.equal(g.chaosAutoEnabled, false);
+  assert.equal(g.weeklyRestockAutoEnabled, false);
+});
+
+test('controle granular: marketAutoEnabled=true mesmo com worldEventsEnabled=false', () => {
+  const scope = uniqueGroup();
+  const groupRepo = createFunGroupRepository({ getDatabase: getDb });
+
+  groupRepo.upsertGroupSettings({
+    groupJid: scope,
+    worldEventsEnabled: false,
+    marketAutoEnabled: true,
+  });
+  const g = groupRepo.getGranularWorldEvents(scope);
+  assert.equal(g.marketAutoEnabled, true, 'mercado deve estar ligado');
+  assert.equal(g.journalAutoEnabled, false, 'jornal deve continuar desligado');
+  assert.equal(g.happyHourAutoEnabled, false, 'happy hour deve continuar desligado');
+});
+
+test('controle granular: cada flag opera independentemente', () => {
+  const scope = uniqueGroup();
+  const groupRepo = createFunGroupRepository({ getDatabase: getDb });
+
+  groupRepo.upsertGroupSettings({
+    groupJid: scope,
+    worldEventsEnabled: false,
+    marketAutoEnabled: true,
+    happyHourAutoEnabled: true,
+    chaosAutoEnabled: false,
+    journalAutoEnabled: true,
+    weeklyRestockAutoEnabled: false,
+  });
+  const g = groupRepo.getGranularWorldEvents(scope);
+  assert.equal(g.marketAutoEnabled, true);
+  assert.equal(g.happyHourAutoEnabled, true);
+  assert.equal(g.journalAutoEnabled, true);
+  assert.equal(g.chaosAutoEnabled, false);
+  assert.equal(g.weeklyRestockAutoEnabled, false);
+});
+
+test('isGranularEventEnabled verifica tipo específico', () => {
+  const scope = uniqueGroup();
+  const groupRepo = createFunGroupRepository({ getDatabase: getDb });
+
+  groupRepo.upsertGroupSettings({
+    groupJid: scope,
+    worldEventsEnabled: false,
+    marketAutoEnabled: false,
+    chaosAutoEnabled: true,
+  });
+  assert.equal(groupRepo.isGranularEventEnabled(scope, 'market'), false);
+  assert.equal(groupRepo.isGranularEventEnabled(scope, 'chaos'), true);
+  assert.equal(groupRepo.isGranularEventEnabled(scope, 'happyHour'), false);
+  assert.equal(groupRepo.isGranularEventEnabled(scope, 'unknown_type'), true, 'tipo desconhecido = true');
+});
+
+test('tickWorldEvents: marketAutoEnabled=false bloqueia mercado; happyHourAutoEnabled=true libera happy hour', async () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const scope = uniqueGroup();
+  const posts = [];
+
+  const mod = createFunModule({
+    getConfig: () =>
+      resolveFunConfig({
+        enabled: true,
+        worldAutonomous: true,
+        worldQuietHoursEnabled: false,
+        groupWhitelistJids: [scope],
+        requireGroupWhitelist: true,
+        marketEnabled: true,
+        eventAutoSpawn: true,
+        eventTickChance: 1,
+        eventAutoSpawnChance: 1,
+        eventCooldownMs: 0,
+      }),
+    sendText: async (sock, jid, text) => {
+      posts.push({ jid, text: String(text) });
+    },
+  });
+  mod.init();
+
+  // market off, happy hour on
+  mod._services.groupRepository.upsertGroupSettings({
+    groupJid: scope,
+    worldEventsEnabled: false,
+    marketAutoEnabled: false,
+    happyHourAutoEnabled: true,
+  });
+
+  const marketRepo = mod._services.marketRepository;
+  const now = Date.now();
+  marketRepo.ensurePrices(scope, now);
+  marketRepo.setMeta(scope, {
+    lastEventAt: now - 90_000,
+    nextEventAt: now - 500,
+    lastRestockAt: now,
+    now,
+  });
+
+  const result = await mod.tickWorldEvents({
+    sock: {},
+    sendText: async (sock, jid, text) => {
+      posts.push({ jid, text: String(text) });
+    },
+    now: now + 1000,
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(
+    result.results.some(
+      (r) => r.scopeKey === scope && r.kind === 'market' && r.reason === 'market-auto-disabled'
+    ),
+    'mercado bloqueado por marketAutoEnabled=false'
+  );
+  assert.ok(
+    result.results.some(
+      (r) => r.scopeKey === scope && r.kind === 'event' && r.ok && r.eventType === 'casino_happy'
+    ),
+    'happy hour deve disparar com happyHourAutoEnabled=true'
+  );
+  assert.ok(
+    posts.some((p) => p.jid === scope && /HAPPY HOUR/i.test(p.text)),
+    'anúncio de happy hour no chat'
+  );
+});
+
+test('tickWorldEvents: happyHourAutoEnabled=false bloqueia happy hour', async () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const scope = uniqueGroup();
+  const posts = [];
+
+  const mod = createFunModule({
+    getConfig: () =>
+      resolveFunConfig({
+        enabled: true,
+        worldAutonomous: true,
+        worldQuietHoursEnabled: false,
+        groupWhitelistJids: [scope],
+        requireGroupWhitelist: true,
+        marketEnabled: true,
+        eventAutoSpawn: true,
+        eventTickChance: 1,
+        eventAutoSpawnChance: 1,
+        eventCooldownMs: 0,
+      }),
+    sendText: async (sock, jid, text) => {
+      posts.push({ jid, text: String(text) });
+    },
+  });
+  mod.init();
+
+  mod._services.groupRepository.upsertGroupSettings({
+    groupJid: scope,
+    worldEventsEnabled: true,
+    marketAutoEnabled: false,
+    happyHourAutoEnabled: false,
+  });
+
+  const marketRepo = mod._services.marketRepository;
+  const now = Date.now();
+  marketRepo.ensurePrices(scope, now);
+  marketRepo.setMeta(scope, {
+    lastEventAt: now - 90_000,
+    nextEventAt: now - 500,
+    lastRestockAt: now,
+    now,
+  });
+
+  const result = await mod.tickWorldEvents({
+    sock: {},
+    sendText: async (sock, jid, text) => {
+      posts.push({ jid, text: String(text) });
+    },
+    now: now + 1000,
+  });
+
+  assert.equal(result.ok, true);
+  assert.ok(
+    !posts.some((p) => p.jid === scope && /HAPPY HOUR/i.test(p.text)),
+    'sem anúncio de happy hour'
+  );
+});
+
+test('isWorldEventsEnabled legado continua funcional', () => {
+  const scope = uniqueGroup();
+  const groupRepo = createFunGroupRepository({ getDatabase: getDb });
+
+  assert.equal(groupRepo.isWorldEventsEnabled(scope), true, 'default true');
+  groupRepo.upsertGroupSettings({ groupJid: scope, worldEventsEnabled: false });
+  assert.equal(groupRepo.isWorldEventsEnabled(scope), false, 'false quando desligado');
+  groupRepo.upsertGroupSettings({ groupJid: scope, worldEventsEnabled: true });
+  assert.equal(groupRepo.isWorldEventsEnabled(scope), true, 'true quando ligado');
+});
+
+test('quiet hours continuam funcionando com controle granular ativo', async () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const scope = uniqueGroup();
+  const posts = [];
+
+  const mod = createFunModule({
+    getConfig: () =>
+      resolveFunConfig({
+        enabled: true,
+        worldAutonomous: true,
+        worldQuietHoursEnabled: true,
+        worldQuietHourStart: 1,
+        worldQuietHourEnd: 6,
+        worldTimezone: 'America/Sao_Paulo',
+        groupWhitelistJids: [scope],
+        requireGroupWhitelist: true,
+        marketEnabled: true,
+        eventAutoSpawn: true,
+        eventTickChance: 1,
+        eventAutoSpawnChance: 1,
+        eventCooldownMs: 0,
+      }),
+    sendText: async (sock, jid, text) => {
+      posts.push({ jid, text: String(text) });
+    },
+  });
+  mod.init();
+
+  mod._services.groupRepository.upsertGroupSettings({
+    groupJid: scope,
+    marketAutoEnabled: true,
+    happyHourAutoEnabled: true,
+    chaosAutoEnabled: true,
+  });
+
+  const marketRepo = mod._services.marketRepository;
+  const night = atSaoPauloHour(3);
+  marketRepo.ensurePrices(scope, night);
+  marketRepo.setMeta(scope, {
+    lastEventAt: night - 90_000,
+    nextEventAt: night - 500,
+    lastRestockAt: night,
+    now: night,
+  });
+
+  const r = await mod.tickWorldEvents({
+    sock: {},
+    sendText: async (sock, jid, text) => { posts.push({ jid, text: String(text) }); },
+    now: night,
+  });
+  // Jornal pode ter publicado, mas quiet hours bloqueia mercado/eventos
+  assert.equal(r.reason, 'quiet-hours');
+  assert.ok(
+    !r.results.some((rr) => rr.kind === 'market'),
+    'mercado bloqueado na madrugada mesmo com eventos granulares ativos'
+  );
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });

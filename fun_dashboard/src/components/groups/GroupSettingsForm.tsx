@@ -22,6 +22,11 @@ export function GroupSettingsForm({ groupJid }: Props) {
     dailyCoins: 50,
     levelUpAnnounce: true,
     worldEventsEnabled: true,
+    journalAutoEnabled: true,
+    marketAutoEnabled: true,
+    happyHourAutoEnabled: true,
+    chaosAutoEnabled: true,
+    weeklyRestockAutoEnabled: true,
   });
   const [source, setSource] = useState<"override" | "defaults">("defaults");
   const [status, setStatus] = useState("");
@@ -47,6 +52,11 @@ export function GroupSettingsForm({ groupJid }: Props) {
           dailyCoins: Number(base.dailyCoins ?? 50),
           levelUpAnnounce: base.levelUpAnnounce !== false,
           worldEventsEnabled: base.worldEventsEnabled !== false,
+          journalAutoEnabled: base.journalAutoEnabled !== false,
+          marketAutoEnabled: base.marketAutoEnabled !== false,
+          happyHourAutoEnabled: base.happyHourAutoEnabled !== false,
+          chaosAutoEnabled: base.chaosAutoEnabled !== false,
+          weeklyRestockAutoEnabled: base.weeklyRestockAutoEnabled !== false,
         });
         setSource(data.settings ? "override" : "defaults");
         setStatus(data.settings ? "Override do grupo" : "Defaults (sem override)");
@@ -70,6 +80,11 @@ export function GroupSettingsForm({ groupJid }: Props) {
         ...form,
         levelUpAnnounce: form.levelUpAnnounce !== false,
         worldEventsEnabled: form.worldEventsEnabled !== false,
+        journalAutoEnabled: form.journalAutoEnabled !== false,
+        marketAutoEnabled: form.marketAutoEnabled !== false,
+        happyHourAutoEnabled: form.happyHourAutoEnabled !== false,
+        chaosAutoEnabled: form.chaosAutoEnabled !== false,
+        weeklyRestockAutoEnabled: form.weeklyRestockAutoEnabled !== false,
       });
       setSource("override");
       setStatus("Salvo.");
@@ -121,7 +136,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
             <option value="0">Desligado</option>
           </Select>
           <span className="mt-1 block text-[11px] leading-snug text-zinc-400 dark:text-zinc-500">
-            Desliga mercado automático e trégua. Happy hour do cassino continua no chat.
+            Fallback global para eventos. Controle granular abaixo.
           </span>
         </label>
         <label className="block text-xs text-zinc-500 dark:text-zinc-400">
@@ -186,6 +201,48 @@ export function GroupSettingsForm({ groupJid }: Props) {
         </label>
       </div>
 
+      <hr className="my-4 border-zinc-100 dark:border-zinc-800" />
+
+      <div className="space-y-1.5">
+        <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
+          Eventos autônomos
+        </h3>
+        <p className="mb-2 text-[11px] leading-snug text-zinc-400 dark:text-zinc-500">
+          Controle granular de cada tipo de evento automático do relógio do mundo.
+        </p>
+
+        <CheckboxField
+          label="Jornal diário (~23:59)"
+          checked={form.journalAutoEnabled !== false}
+          disabled={loading}
+          onChange={(v) => field("journalAutoEnabled", v)}
+        />
+        <CheckboxField
+          label="Mercado de rua"
+          checked={form.marketAutoEnabled !== false}
+          disabled={loading}
+          onChange={(v) => field("marketAutoEnabled", v)}
+        />
+        <CheckboxField
+          label="Happy hour do cassino"
+          checked={form.happyHourAutoEnabled !== false}
+          disabled={loading}
+          onChange={(v) => field("happyHourAutoEnabled", v)}
+        />
+        <CheckboxField
+          label="PURGA / caos"
+          checked={form.chaosAutoEnabled !== false}
+          disabled={loading}
+          onChange={(v) => field("chaosAutoEnabled", v)}
+        />
+        <CheckboxField
+          label="Reposição semanal de estoque"
+          checked={form.weeklyRestockAutoEnabled !== false}
+          disabled={loading}
+          onChange={(v) => field("weeklyRestockAutoEnabled", v)}
+        />
+      </div>
+
       <div className="mt-4 flex items-center gap-3">
         <Button onClick={() => void save()} disabled={loading || !groupJid}>
           Salvar
@@ -193,5 +250,30 @@ export function GroupSettingsForm({ groupJid }: Props) {
         <span className="text-xs text-zinc-500 dark:text-zinc-400">{status}</span>
       </div>
     </div>
+  );
+}
+
+function CheckboxField({
+  label,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  disabled: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2.5 rounded px-1 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-800/40">
+      <input
+        type="checkbox"
+        className="h-4 w-4 rounded border-zinc-300 text-zinc-900 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-100 dark:focus:ring-zinc-500"
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      <span className="text-sm text-zinc-900 dark:text-zinc-50">{label}</span>
+    </label>
   );
 }
