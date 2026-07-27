@@ -180,7 +180,14 @@ export function extractJsonBlob(text) {
               if (values.every((v) => !v || v === '...' || /^\.+$/.test(v))) continue;
               if (values.some((v) => /\|/.test(v) && /combustivel|municao|arma/.test(v))) continue;
               const keys = Object.keys(obj);
-              if (keys.some((k) => /^(title|body|archetype|category|companyId)$/i.test(k))) {
+              // extract/memory: {"facts":[...]} — single-key wrapper é o shape preferido
+              if (
+                keys.some((k) => /^(facts|items|data)$/i.test(k)) &&
+                Array.isArray(obj.facts || obj.items || obj.data)
+              ) {
+                best = slice;
+                // facts wrapper vence inner objects; pode parar cedo se for o root
+              } else if (keys.some((k) => /^(title|body|archetype|category|companyId)$/i.test(k))) {
                 const title = String(obj.title || '');
                 if (title && !/DEVE|one of|listados|omit/i.test(title)) {
                   best = slice;

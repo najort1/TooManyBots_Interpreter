@@ -457,6 +457,35 @@ export function createFunModule(deps = {}) {
     const results = [];
     const quiet = isWorldQuietHours(funConfig, now);
 
+    // Memória seletiva: flush por timer do mundo (não depende de “bater 40 msgs”
+    // no mesmo processo). Roda mesmo em quiet hours — só extrai buffer em RAM.
+    if (groupMemoryService?.flushDueScopes) {
+      try {
+        const mem = await groupMemoryService.flushDueScopes(funConfig, now);
+        if (mem?.results?.length) {
+          for (const r of mem.results) results.push(r);
+          if (mem.flushed > 0) {
+            console.log(
+              `[fun/memory] extract tick: ${mem.flushed} grupo(s) · ` +
+                mem.results
+                  .filter((r) => r.ok)
+                  .map(
+                    (r) =>
+                      `${String(r.scopeKey).slice(0, 18)} +${r.inserted || 0}/~${r.reinforced || 0} (n=${r.batchSize || 0})`
+                  )
+                  .join(' · ')
+            );
+          }
+        }
+      } catch (err) {
+        results.push({
+          kind: 'memory-extract',
+          ok: false,
+          reason: err?.message || 'memory-tick-error',
+        });
+      }
+    }
+
     const postWithMentions = async (toJid, msg, userFmt) => {
       if (!msg || !post || !sock) return;
       const mentions = userFmt?.takeMentions?.() || [];

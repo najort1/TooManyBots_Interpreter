@@ -83,14 +83,14 @@ test('validateExtractedFact: schema rígido', () => {
     validateExtractedFact({ kind: 'event', summary: 'curto', subjects: [0] }),
     null
   );
-  assert.equal(
-    validateExtractedFact({
-      kind: 'nope',
-      summary: 'Fato longo o suficiente para passar no min length',
-      subjects: [0],
-    }),
-    null
-  );
+  // kind desconhecido → event (não descarta)
+  const mappedNope = validateExtractedFact({
+    kind: 'nope',
+    summary: 'Fato longo o suficiente para passar no min length',
+    subjects: [0],
+  });
+  assert.ok(mappedNope);
+  assert.equal(mappedNope.kind, 'event');
   const v = validateExtractedFact(
     {
       kind: 'epic_fail',
@@ -301,6 +301,91 @@ test('memoryRepository: insert, reinforce overwrite summary, prune, forget', () 
   const n = repo.deleteByScope(scope);
   assert.ok(n >= 1);
   assert.equal(repo.countFacts(scope), 0);
+});
+
+test('shouldFlushBuffer / flushDueScopes: dispara extract sem esperar 40 msgs (timer)', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const repo = createFunMemoryRepository({ getDatabase: getDb });
+    const scope = uniqueGroup();
+    const jid = uniqueJid('5599');
+    let zenCalls = 0;
+
+    const mem = createGroupMemoryService({
+      memoryRepository: repo,
+      getContactDisplayName: () => 'Gabriel',
+      generateZen: async () => {
+        zenCalls += 1;
+        return JSON.stringify({
+          facts: [
+            {
+              kind: 'epic_fail',
+              summary: 'Gabriel jurou que ia treinar e sumiu por tres semanas',
+              subjects: [0],
+              keywords: ['treino'],
+              score: 70,
+            },
+          ],
+        });
+      },
+      generateOllama: async () => {
+        throw new Error('ollama-off');
+      },
+      random: () => 0,
+    });
+
+    const cfg = resolveFunConfig({
+      memoryEnabled: true,
+      memoryFlushMinMessages: 40,
+      memoryFlushIntervalMs: 60_000,
+      memoryBufferSize: 50,
+      memoryMinMsgChars: 8,
+      memoryMinScore: 20,
+      zenEnabled: true,
+      ollamaEnabled: false,
+    });
+
+    const t0 = Date.now() - 15 * 60_000; // msgs “antigas” (15 min) — due por idade
+    for (let i = 0; i < 5; i += 1) {
+      mem.observeMessage({
+        scopeKey: scope,
+        userJid: jid,
+        text: `conversa engraçada numero ${i} com conteudo suficiente`,
+        funConfig: cfg,
+        now: t0 + i * 1000,
+        isGroup: true,
+      });
+    }
+
+    // com flushMin=40, 5 msgs NÃO agendam no observe — mas devem estar due por idade
+    const stats = mem.getBufferStats().find((s) => s.scopeKey === scope);
+    assert.ok(stats);
+    assert.equal(stats.size, 5);
+    assert.equal(zenCalls, 0, 'observe com <40 msgs e lastFlushAt=0 não chama LLM no mesmo tick síncrono se due por idade... ');
+
+    // se observe já agendou por dueByAge, zenCalls pode ser >0 assíncrono — espera um pouco
+    await new Promise((r) => setTimeout(r, 50));
+
+    // força o caminho do world tick
+    const due = await mem.flushDueScopes(cfg, Date.now());
+    // se observe já flusou, buffer vazio e due.flushed=0 — mas zenCalls >= 1
+    assert.ok(zenCalls >= 1, `esperava ≥1 chamada extract, got ${zenCalls}`);
+    if (due.flushed === 0) {
+      // flush já tinha acontecido no observe (due por idade) — ok
+      assert.ok(zenCalls >= 1);
+    } else {
+      assert.equal(due.flushed, 1);
+      assert.equal(due.results[0].ok, true);
+    }
+
+    const facts = repo.listFacts(scope, { limit: 10, minScore: 0 });
+    assert.ok(facts.length >= 1, 'fato deve ter sido gravado');
+    assert.match(facts[0].summary, /Gabriel|treinar|sumiu/i);
+  } finally {
+    if (prev === undefined) delete process.env.FUN_DISABLE_LIVE_LLM;
+    else process.env.FUN_DISABLE_LIVE_LLM = prev;
+  }
 });
 
 test('groupMemoryService: observe ignora comando/curto; flush com mock Zen + IDs', async () => {
@@ -691,6 +776,79 @@ test('anti-alucinação: defaults de contexto grande (≤40k chars)', () => {
   assert.equal(capped.memoryExtractMaxChars, 40_000);
 });
 
+test('parseFactsJson: resgata JSON GLM quebrado (fact + subject vazio)', () => {
+  // caso real em produção (2026-07-26): modelo manda schema inventado + JSON inválido
+  const broken =
+    '{"facts":[{"subject":,"fact":"Gabriel se considera adulto e \'arrombado\', só faltando ser rico — e ainda por cima sem carro"}]}';
+  const batch = [
+    { name: 'Gabriel', text: 'adulto e arrombado', userJid: '5511g@s.whatsapp.net' },
+    { name: 'Eduardo', text: 'kk', userJid: '5511e@s.whatsapp.net' },
+  ];
+  const got = parseFactsJson(broken, { batchSize: 2, batch, maxFacts: 4 });
+  assert.equal(got.length, 1);
+  assert.match(got[0].summary, /Gabriel|adulto|arrombado/i);
+  assert.deepEqual(got[0].subjectIndices, [0]);
+  assert.equal(got[0].kind, 'event');
+  assert.equal(got[0].subjectInferred, true);
+});
+
+test('parseFactsJson: kind humor + subjects vazio + score 0-1 (GLM live)', () => {
+  // segundo caso real: kind inventado, subjects":,, score fracional
+  const broken =
+    '{"facts":[{"kind":"humor","summary":"Gabriel se declara adulto e \'arrombado\', dizendo que só falta ser rico, e ainda por cima sem carro","subjects":,"keywords":["adulto","arrombado","rico","sem carro"],"score":0.8}]}';
+  const batch = [
+    { name: 'Gabriel', text: 'adulto', userJid: 'g@s.whatsapp.net' },
+    { name: 'Eduardo', text: 'kk', userJid: 'e@s.whatsapp.net' },
+  ];
+  const got = parseFactsJson(broken, { batchSize: 2, batch });
+  assert.equal(got.length, 1);
+  assert.equal(got[0].kind, 'running_gag');
+  assert.equal(got[0].score, 80);
+  assert.deepEqual(got[0].subjectIndices, [0]);
+  assert.ok(got[0].keywords.includes('adulto'));
+});
+
+test('parseFactsJson: subjects escalar + aliases de summary', () => {
+  const batch = [
+    { name: 'Marina', text: 'academia', userJid: 'm@s.whatsapp.net' },
+    { name: 'Lucas', text: 'ok', userJid: 'l@s.whatsapp.net' },
+  ];
+  // subjects como número (não array)
+  const scalar = parseFactsJson(
+    JSON.stringify({
+      facts: [
+        {
+          kind: 'epic_fail',
+          summary: 'Marina faltou na academia de novo depois de jurar que ia',
+          subjects: 0,
+          score: 70,
+        },
+      ],
+    }),
+    { batchSize: 2, batch }
+  );
+  assert.equal(scalar.length, 1);
+  assert.deepEqual(scalar[0].subjectIndices, [0]);
+  assert.equal(scalar[0].subjectInferred, false);
+
+  // alias "fact" em JSON válido
+  const alias = parseFactsJson(
+    JSON.stringify({
+      facts: [
+        {
+          fact: 'Lucas disse que ia voltar a treinar e sumiu por 3 semanas',
+          subject: 1,
+          score: 65,
+        },
+      ],
+    }),
+    { batchSize: 2, batch }
+  );
+  assert.equal(alias.length, 1);
+  assert.match(alias[0].summary, /Lucas|treinar/i);
+  assert.deepEqual(alias[0].subjectIndices, [1]);
+});
+
 test('anti-alucinação: descarta índice fora do batch / CPF / kind inventado', () => {
   // subject [99] com batch de 5 → null
   assert.equal(
@@ -717,16 +875,26 @@ test('anti-alucinação: descarta índice fora do batch / CPF / kind inventado',
     null
   );
 
-  // kind alucinado
-  assert.equal(
-    validateExtractedFact({
-      kind: 'conspiracy_theory',
-      summary: 'Algo bem longo o suficiente mas kind inventado',
-      subjects: [0],
-      score: 80,
-    }),
-    null
-  );
+  // kind alucinado → mapeia para event (não descarta o fato)
+  const kindMapped = validateExtractedFact({
+    kind: 'conspiracy_theory',
+    summary: 'Algo bem longo o suficiente mas kind inventado',
+    subjects: [0],
+    score: 80,
+  });
+  assert.ok(kindMapped);
+  assert.equal(kindMapped.kind, 'event');
+
+  // kind "humor" (GLM) → running_gag; score 0.8 → 80
+  const humor = validateExtractedFact({
+    kind: 'humor',
+    summary: 'Gabriel se declara adulto e arrombado so falta ser rico',
+    subjects: [0],
+    score: 0.8,
+  });
+  assert.ok(humor);
+  assert.equal(humor.kind, 'running_gag');
+  assert.equal(humor.score, 80);
 
   // subjects mistos: nome + ID válido → fica só o ID
   const mixed = validateExtractedFact(

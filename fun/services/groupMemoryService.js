@@ -176,25 +176,118 @@ function escapeRegex(s) {
 }
 
 /**
+ * Normaliza campo subjects da LLM: array, número solto, "[0]", ou subject singular.
+ * GLM costuma mandar subjects: 0 (escalar) ou subject: 0 apesar do prompt pedir array.
+ */
+export function normalizeSubjectsField(fact) {
+  if (!fact || typeof fact !== 'object') return [];
+  const raw =
+    fact.subjects !== undefined && fact.subjects !== null
+      ? fact.subjects
+      : fact.subject !== undefined && fact.subject !== null
+        ? fact.subject
+        : [];
+  if (Array.isArray(raw)) return raw;
+  // escalar: 0, 4, "0", "[1]"
+  if (typeof raw === 'number' || typeof raw === 'string') return [raw];
+  return [];
+}
+
+/** Summary com aliases que o modelo inventa (fact/text/description/quote). */
+export function pickFactSummary(fact) {
+  if (!fact || typeof fact !== 'object') return '';
+  const raw =
+    fact.summary ?? fact.fact ?? fact.text ?? fact.description ?? fact.quote ?? fact.content ?? '';
+  return String(raw || '')
+    .trim()
+    .replace(/^["'“”]+|["'“”]+$/g, '');
+}
+
+function unescapeJsonString(s) {
+  return String(s || '')
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, '\\')
+    .replace(/\\n/g, '\n')
+    .replace(/\\t/g, '\t')
+    .replace(/^["'“”]+|["'“”]+$/g, '')
+    .trim();
+}
+
+function parseSubjectsFromWindow(window) {
+  const subjects = [];
+  // "subjects":[0,1] ou "subject":[0]
+  const subArr = window.match(/"subjects?"\s*:\s*(\[[^\]]*\])/i);
+  if (subArr) {
+    const inner = subArr[1].slice(1, -1).trim();
+    if (inner) {
+      for (const part of inner.split(',')) {
+        const n = Number(String(part).trim());
+        if (Number.isInteger(n) && n >= 0 && !subjects.includes(n)) subjects.push(n);
+      }
+    }
+    return subjects;
+  }
+  // "subjects": 0  / "subject": 4  (escalar; ignora "subject":, malformado)
+  const subNum = window.match(/"subjects?"\s*:\s*(\d+)/i);
+  if (subNum) {
+    const n = Number(subNum[1]);
+    if (Number.isInteger(n) && n >= 0) subjects.push(n);
+  }
+  return subjects;
+}
+
+function parseKeywordsFromWindow(window) {
+  const kwMatch = window.match(/"keywords"\s*:\s*\[([^\]]*)\]/i);
+  if (!kwMatch) return [];
+  const inner = kwMatch[1].trim();
+  if (!inner) return [];
+  return inner
+    .split(',')
+    .map((x) => x.trim().replace(/^["']+|["']+$/g, ''))
+    .filter((x) => x.length);
+}
+
+/**
  * Valida fato bruto pós-parse (antes do map de JID).
  * subjects ainda podem ser índices numéricos.
  * Se batch for passado e LLM não mandou subjects válidos, tenta inferir do summary.
  */
+/** kind inventado pelo modelo (humor, joke, meme…) → bucket válido mais próximo. */
+export function normalizeFactKind(raw) {
+  const k = String(raw || 'event')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, '_');
+  if (VALID_KINDS.has(k)) return k;
+  // aliases comuns do GLM / outros modelos
+  if (/^(humou?r|joke|meme|funny|gag|piada|zoaç|zoacao|comedia)$/i.test(k)) return 'running_gag';
+  if (/^(fail|mico|vergonha|blunder|fail_epic)$/i.test(k)) return 'epic_fail';
+  if (/^(rival|beef|briga|fight|versus|vs)$/i.test(k)) return 'rivalry';
+  if (/^(ship|crush|casal|romance|pairing)$/i.test(k)) return 'ship_lore';
+  if (/^(nick|apelido|alias|handle)$/i.test(k)) return 'nickname';
+  if (/^(phrase|bordao|catch|slogan|quote)$/i.test(k)) return 'catchphrase';
+  // não descarta o fato por kind inventado — vira event
+  return 'event';
+}
+
+/** score 0–1 (ex. 0.8) → 0–100; NaN → 50. */
+export function normalizeFactScore(raw) {
+  let score = Number(raw);
+  if (!Number.isFinite(score)) return 50;
+  if (score > 0 && score <= 1) score = score * 100;
+  return Math.max(0, Math.min(100, Math.round(score)));
+}
+
 export function validateExtractedFact(fact, { batchSize = 0, summaryMax = 160, batch = null } = {}) {
   if (!fact || typeof fact !== 'object') return null;
-  const kind = String(fact.kind || 'event')
-    .trim()
-    .toLowerCase();
-  if (!VALID_KINDS.has(kind)) return null;
+  const kind = normalizeFactKind(fact.kind);
 
-  let summary = String(fact.summary || '')
-    .trim()
-    .replace(/^["'“”]+|["'“”]+$/g, '');
+  let summary = pickFactSummary(fact);
   if (summary.length < 12) return null;
   if (looksSensitive(summary)) return null;
   summary = summary.slice(0, Math.max(80, Math.min(200, summaryMax)));
 
-  const rawSubjects = Array.isArray(fact.subjects) ? fact.subjects : [];
+  const rawSubjects = normalizeSubjectsField(fact);
   const indices = [];
   for (const s of rawSubjects) {
     const idx = parseSubjectIndex(s);
@@ -225,7 +318,7 @@ export function validateExtractedFact(fact, { batchSize = 0, summaryMax = 160, b
         .slice(0, 10)
     : [];
 
-  const score = Math.max(0, Math.min(100, Math.round(Number(fact.score) || 50)));
+  const score = normalizeFactScore(fact.score);
 
   return {
     kind,
@@ -239,64 +332,73 @@ export function validateExtractedFact(fact, { batchSize = 0, summaryMax = 160, b
 }
 
 /**
- * Extrai fatos via regex de JSON malformado (campos "naive": kind, summary, subjects, keywords, score).
- * Tolera: subjects":, (vazio malformado), vírgulas trailing, aspas mal escapadas, content com } dentro, etc.
- * Retorna array de objetos parciais (campos podem ser null).
+ * Extrai fatos via regex de JSON malformado / schema inventado pelo modelo.
+ * Tolera: "subjects":, · "subject":, · fact em vez de summary · sem kind · vírgulas trailing.
+ * Retorna array de objetos parciais para validateExtractedFact.
  */
 function looseParseFacts(text) {
-  const out = [];
-  // 1) encontra cada bloco "{" ... "}" no nível do array externo (heurística simples: split por '},{')
-  //    mas tolerante: cada occurrence de `{"kind"` ou `{` no começo de um item.
-  // Estratégia: achar cada objeto via match não-ganancioso de {kind":...summary":..."}
   const cleaned = String(text || '');
-  // tenta primeiro: split por "},{" — heurística comum quando LLM lista vários facts
-  // depois pra cada parte, extrair os campos.
-  const reObject = /\{[^{}]*?"kind"\s*:\s*"([^"]+)"[^{}]*?"summary"\s*:\s*"((?:[^"\\]|\\.)*)"[^{}]*?\}/g;
+  if (!cleaned.trim()) return [];
+  const out = [];
+  const seen = new Set();
+
+  const pushFact = ({ kind, summary, subjects, keywords, score }) => {
+    const sum = unescapeJsonString(summary);
+    if (sum.length < 12) return;
+    const key = normalizeKey(sum).slice(0, 80);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    out.push({
+      kind: kind || 'event',
+      summary: sum,
+      subjects: subjects || [],
+      keywords: keywords || [],
+      score: score ?? 50,
+    });
+  };
+
+  // 1) shape canônico: kind + summary no mesmo objeto (mesmo se subjects estiver quebrado)
+  const reCanonical =
+    /\{[^{}]*?"kind"\s*:\s*"([^"]+)"[^{}]*?"summary"\s*:\s*"((?:[^"\\]|\\.)*)"[^{}]*?\}/g;
   let m;
-  while ((m = reObject.exec(cleaned)) != null) {
-    const obj = m[0];
-    const kind = m[1];
-    const summaryRaw = m[2];
-    // desescapar \" \\ \n etc
-    const summary = summaryRaw
-      .replace(/\\"/g, '"')
-      .replace(/\\\\/g, '\\')
-      .replace(/\\n/g, '\n')
-      .replace(/\\t/g, '\t')
-      .replace(/^["'“”]+|["'“”]+$/g, '')
-      .trim();
-    // subjects: pode ser [0,1], [], ou ausente/"subjects":, — varredura tolerante
-    let subjects = [];
-    const subMatch = obj.match(/"subjects"\s*:\s*(\[[^\]]*\])/);
-    if (subMatch) {
-      const inner = subMatch[1].slice(1, -1).trim();
-      if (inner) {
-        subjects = inner
-          .split(',')
-          .map((x) => x.trim())
-          .filter((x) => x.length)
-          .map((x) => Number(x))
-          .filter((n) => Number.isInteger(n) && n >= 0);
-      }
-    }
-    // keywords
-    let keywords = [];
-    const kwMatch = obj.match(/"keywords"\s*:\s*\[([^\]]*)\]/);
-    if (kwMatch) {
-      const inner = kwMatch[1].trim();
-      if (inner) {
-        keywords = inner
-          .split(',')
-          .map((x) => x.trim().replace(/^["']+|["']+$/g, ''))
-          .filter((x) => x.length);
-      }
-    }
-    // score
-    let score = 50;
-    const scMatch = obj.match(/"score"\s*:\s*(-?\d+(?:\.\d+)?)/);
-    if (scMatch) score = Number(scMatch[1]);
-    out.push({ kind, summary, subjects, keywords, score });
+  while ((m = reCanonical.exec(cleaned)) != null) {
+    const window = m[0];
+    pushFact({
+      kind: m[1],
+      summary: m[2],
+      subjects: parseSubjectsFromWindow(window),
+      keywords: parseKeywordsFromWindow(window),
+      score: (() => {
+        const sc = window.match(/"score"\s*:\s*(-?\d+(?:\.\d+)?)/);
+        return sc ? Number(sc[1]) : 50;
+      })(),
+    });
   }
+
+  // 2) aliases de summary que o GLM inventa: fact / text / description / quote
+  //    Ex. real: {"facts":[{"subject":,"fact":"Gabriel se considera adulto..."}]}
+  const reAlias =
+    /"(?:summary|fact|text|description|quote|content)"\s*:\s*"((?:[^"\\]|\\.)*)"/gi;
+  while ((m = reAlias.exec(cleaned)) != null) {
+    const sum = m[1];
+    const start = Math.max(0, m.index - 220);
+    const end = Math.min(cleaned.length, m.index + m[0].length + 220);
+    const window = cleaned.slice(start, end);
+    let kind = 'event';
+    const kindM = window.match(/"kind"\s*:\s*"([^"]+)"/i);
+    if (kindM) kind = kindM[1];
+    let score = 50;
+    const sc = window.match(/"score"\s*:\s*(-?\d+(?:\.\d+)?)/);
+    if (sc) score = Number(sc[1]);
+    pushFact({
+      kind,
+      summary: sum,
+      subjects: parseSubjectsFromWindow(window),
+      keywords: parseKeywordsFromWindow(window),
+      score,
+    });
+  }
+
   return out;
 }
 
@@ -304,10 +406,15 @@ function looseParseFacts(text) {
  * Parse JSON de extract — aceita array, {facts:[]}, {items:[]}, ou objeto único.
  * Resiliente: se JSON.parse falha E o bloco {...} tem sintaxe quebrada (e.g. "subjects":,)
  * ainda extrai via regex para NÃO perder fato de modelo que manda JSON inválido.
+ * maxFacts: teto pós-validação (default 8; extract passa maxExtract).
  */
-export function parseFactsJson(raw, { batchSize = 0, summaryMax = 160, batch = null } = {}) {
+export function parseFactsJson(
+  raw,
+  { batchSize = 0, summaryMax = 160, batch = null, maxFacts = 8 } = {}
+) {
   const text = String(raw || '').trim();
   if (!text) return [];
+  const cap = Math.max(1, Math.min(12, Math.floor(Number(maxFacts) || 8)));
 
   let parsed = null;
   let loose = null;
@@ -322,16 +429,17 @@ export function parseFactsJson(raw, { batchSize = 0, summaryMax = 160, batch = n
       try {
         parsed = JSON.parse(candidate);
       } catch {
-        // JSON sintaticamente inválido (ex.: glm_5_2 manda "subjects":, sem valor).
-        // Tenta extração por regex para não perder o fato.
+        // JSON sintaticamente inválido (ex.: glm_5_2 manda "subject":, sem valor).
         loose = looseParseFacts(text);
-        if (!loose.length) return [];
       }
+    } else {
+      loose = looseParseFacts(text);
     }
   }
 
+  // parse ok mas schema inventado / vazio útil → tenta loose como salvage
   let list = [];
-  if (loose) {
+  if (loose?.length) {
     list = loose;
   } else if (Array.isArray(parsed)) {
     list = parsed;
@@ -339,13 +447,23 @@ export function parseFactsJson(raw, { batchSize = 0, summaryMax = 160, batch = n
     if (Array.isArray(parsed.facts)) list = parsed.facts;
     else if (Array.isArray(parsed.items)) list = parsed.items;
     else if (Array.isArray(parsed.data)) list = parsed.data;
-    else if (parsed.summary || parsed.kind) list = [parsed];
+    else if (pickFactSummary(parsed) || parsed.kind) list = [parsed];
   }
 
-  return list
+  let validated = list
     .map((x) => validateExtractedFact(x, { batchSize, summaryMax, batch }))
-    .filter(Boolean)
-    .slice(0, 2);
+    .filter(Boolean);
+
+  // salvage: JSON.parse passou em wrapper mas items falharam validação (aliases/subjects)
+  // OU parse falhou e loose canônico não pegou — tenta regex amplo
+  if (!validated.length) {
+    const salvaged = looseParseFacts(text)
+      .map((x) => validateExtractedFact(x, { batchSize, summaryMax, batch }))
+      .filter(Boolean);
+    if (salvaged.length) validated = salvaged;
+  }
+
+  return validated.slice(0, cap);
 }
 
 export function createGroupMemoryService({
@@ -478,20 +596,33 @@ export function createGroupMemoryService({
       buf.msgs = buf.msgs.slice(-o.bufferSize);
     }
 
-    const dueByCount = buf.msgs.length >= o.flushMin;
-    const dueByTime = buf.lastFlushAt > 0 && now - buf.lastFlushAt >= o.flushMs;
-    const firstFill = buf.lastFlushAt === 0 && buf.msgs.length >= o.flushMin;
-
-    if ((dueByCount || dueByTime || firstFill) && !buf.flushing) {
+    if (shouldFlushBuffer(buf, o, now) && !buf.flushing) {
       void flushScope(scopeKey, funConfig, now).catch((err) => {
-        getLogger?.()?.debug?.(
-          { err: { message: err?.message || 'memory-flush' } },
+        getLogger?.()?.warn?.(
+          { err: { message: err?.message || 'memory-flush' }, scopeKey },
           'Fun memory flush failed'
         );
       });
       return { observed: true, flushScheduled: true };
     }
     return { observed: true, flushScheduled: false };
+  }
+
+  /**
+   * Critério de flush — o extract SÓ chama a LLM daqui / flushDueScopes.
+   * Antes: após restart lastFlushAt=0 e só contava ≥40 msgs → horas sem nenhuma chamada
+   * se o processo subia/descia ou o chat misturava muitos comandos.
+   */
+  function shouldFlushBuffer(buf, o, now = Date.now()) {
+    if (!buf || buf.flushing) return false;
+    if (buf.msgs.length < 3) return false;
+    if (buf.msgs.length >= o.flushMin) return true;
+    // tempo desde o último flush neste processo
+    if (buf.lastFlushAt > 0 && now - buf.lastFlushAt >= o.flushMs) return true;
+    // idade da msg mais antiga no buffer (funciona logo após restart, sem lastFlushAt)
+    const oldestAt = Number(buf.msgs[0]?.at) || 0;
+    if (oldestAt > 0 && now - oldestAt >= o.flushMs) return true;
+    return false;
   }
 
   async function flushScope(scopeKey, funConfig = {}, now = Date.now()) {
@@ -837,6 +968,7 @@ export function createGroupMemoryService({
         batchSize: batch.length,
         summaryMax: o.summaryMax,
         batch, // passado pra inferência de subject quando LLM mandou vazio
+        maxFacts: maxExtract,
       });
       const out = [];
       for (const f of validated) {
@@ -855,6 +987,8 @@ export function createGroupMemoryService({
       return out;
     };
 
+    let lastRawPreview = '';
+
     // Zen + jsonMode
     if (funConfig.zenEnabled !== false) {
       try {
@@ -872,10 +1006,17 @@ export function createGroupMemoryService({
           jsonOnly: true,
           sendSamplingParams: funConfig.zenSendSamplingParams === true,
         });
+        if (raw) lastRawPreview = String(raw).slice(0, 240);
         const mapped = mapParsed(raw);
         if (mapped.length) {
           recordLlmHit('memory', 'zen', { n: mapped.length });
           return mapped;
+        }
+        if (raw) {
+          getLogger?.()?.debug?.(
+            { preview: lastRawPreview, batchSize: batch.length },
+            'Fun memory Zen extract empty after parse'
+          );
         }
       } catch (err) {
         getLogger?.()?.warn?.(
@@ -900,7 +1041,12 @@ export function createGroupMemoryService({
           temperature: 0.45,
           format: 'json',
         });
-        return mapParsed(raw);
+        if (raw) lastRawPreview = String(raw).slice(0, 240);
+        const mapped = mapParsed(raw);
+        if (mapped.length) {
+          recordLlmHit('memory', 'ollama', { n: mapped.length });
+          return mapped;
+        }
       } catch (err) {
         getLogger?.()?.warn?.(
           { err: { message: err?.message || 'ollama-memory' } },
@@ -909,6 +1055,12 @@ export function createGroupMemoryService({
       }
     }
 
+    if (lastRawPreview) {
+      getLogger?.()?.warn?.(
+        { preview: lastRawPreview, batchSize: batch.length },
+        'Fun memory extract: LLM respondeu mas nenhum fato válido'
+      );
+    }
     return [];
   }
 
@@ -1100,6 +1252,61 @@ export function createGroupMemoryService({
     return flushScope(scopeKey, funConfig, Date.now());
   }
 
+  /**
+   * Varre todos os buffers e faz flush dos que estão due.
+   * Pensado para o world tick (~45s): extrai mesmo sem a “40ª mensagem”
+   * cair no processo (restart, quiet hours, chat esparso).
+   */
+  async function flushDueScopes(funConfig = {}, now = Date.now()) {
+    const o = opts(funConfig);
+    if (!o.enabled) return { ok: false, reason: 'disabled', flushed: 0, results: [] };
+
+    const results = [];
+    let flushed = 0;
+    // snapshot das keys — flushScope muta o map
+    const keys = [...buffers.keys()];
+    for (const scopeKey of keys) {
+      if (!String(scopeKey || '').endsWith('@g.us')) continue;
+      const buf = buffers.get(scopeKey);
+      if (!buf || !shouldFlushBuffer(buf, o, now)) continue;
+      try {
+        const r = await flushScope(scopeKey, funConfig, now);
+        results.push({
+          scopeKey,
+          kind: 'memory-extract',
+          ok: Boolean(r?.ok),
+          reason: r?.reason || null,
+          inserted: r?.inserted ?? 0,
+          reinforced: r?.reinforced ?? 0,
+          batchSize: r?.batchSize ?? 0,
+        });
+        if (r?.ok) flushed += 1;
+      } catch (err) {
+        results.push({
+          scopeKey,
+          kind: 'memory-extract',
+          ok: false,
+          reason: err?.message || 'memory-flush-error',
+        });
+      }
+    }
+    return { ok: true, flushed, results };
+  }
+
+  function getBufferStats() {
+    const out = [];
+    for (const [scopeKey, buf] of buffers.entries()) {
+      out.push({
+        scopeKey,
+        size: buf.msgs.length,
+        flushing: buf.flushing,
+        lastFlushAt: buf.lastFlushAt,
+        oldestAt: buf.msgs[0]?.at || 0,
+      });
+    }
+    return out;
+  }
+
   function _pushRaw(scopeKey, msg) {
     const buf = getBuf(scopeKey);
     buf.msgs.push(msg);
@@ -1109,6 +1316,9 @@ export function createGroupMemoryService({
     observeMessage,
     flushScope,
     forceFlush,
+    flushDueScopes,
+    shouldFlushBuffer,
+    getBufferStats,
     buildLoreContext,
     formatLoreList,
     forgetAll,
