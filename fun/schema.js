@@ -620,6 +620,100 @@ export function buildFunSchemaSql() {
 
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_changelog_created
       ON fun_changelog_broadcasts(created_at DESC);
+
+    -- Cartas colecionáveis (packs / inventário / bazar / favoritos)
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_user_cards (
+      id              TEXT PRIMARY KEY,
+      user_jid        TEXT    NOT NULL,
+      scope_key       TEXT    NOT NULL,
+      card_key        TEXT    NOT NULL,
+      card_name       TEXT    NOT NULL,
+      species         TEXT    NOT NULL DEFAULT '',
+      variant         TEXT    NOT NULL DEFAULT '',
+      tier            INTEGER NOT NULL DEFAULT 1,
+      image_file      TEXT    NOT NULL DEFAULT '',
+      bought_price    INTEGER,
+      listed          INTEGER NOT NULL DEFAULT 0,
+      created_at      INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_user_cards_user
+      ON fun_user_cards(scope_key, user_jid, tier DESC, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_user_cards_key
+      ON fun_user_cards(card_key);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_favorite_cards (
+      user_jid        TEXT    NOT NULL,
+      scope_key       TEXT    NOT NULL,
+      card_id         TEXT    NOT NULL,
+      updated_at      INTEGER NOT NULL,
+      PRIMARY KEY (user_jid, scope_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_favorite_cards_card
+      ON fun_favorite_cards(card_id);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_card_listings (
+      id              TEXT PRIMARY KEY,
+      scope_key       TEXT    NOT NULL,
+      seller_jid      TEXT    NOT NULL,
+      card_id         TEXT    NOT NULL,
+      price           INTEGER NOT NULL,
+      created_at      INTEGER NOT NULL,
+      status          TEXT    NOT NULL DEFAULT 'open'
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_card_listings_scope
+      ON fun_card_listings(scope_key, status, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_card_listings_card
+      ON fun_card_listings(card_id, status);
+
+    -- Quem é Mais Provável? (QMP)
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_qmp_questions (
+      id              TEXT PRIMARY KEY,
+      scope_key       TEXT    NOT NULL,
+      prompt          TEXT    NOT NULL,
+      source          TEXT    NOT NULL DEFAULT 'llm',
+      tone            TEXT    NOT NULL DEFAULT 'normal',
+      created_by      TEXT    NOT NULL DEFAULT '',
+      status          TEXT    NOT NULL DEFAULT 'active',
+      week_key        TEXT    NOT NULL,
+      created_at      INTEGER NOT NULL,
+      expires_at      INTEGER NOT NULL,
+      closed_at       INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_qmp_questions_scope
+      ON fun_qmp_questions(scope_key, status, expires_at);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_qmp_questions_week
+      ON fun_qmp_questions(scope_key, week_key, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_qmp_votes (
+      id              TEXT PRIMARY KEY,
+      question_id     TEXT    NOT NULL,
+      scope_key       TEXT    NOT NULL,
+      voter_jid       TEXT    NOT NULL,
+      target_jid      TEXT    NOT NULL,
+      week_key        TEXT    NOT NULL,
+      created_at      INTEGER NOT NULL,
+      UNIQUE(question_id, voter_jid)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_qmp_votes_question
+      ON fun_qmp_votes(question_id, created_at);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_qmp_votes_week
+      ON fun_qmp_votes(scope_key, week_key, target_jid);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_qmp_meta (
+      scope_key         TEXT PRIMARY KEY,
+      last_auto_at      INTEGER NOT NULL DEFAULT 0,
+      last_question_at  INTEGER NOT NULL DEFAULT 0,
+      updated_at        INTEGER NOT NULL DEFAULT 0
+    );
   `;
 }
 
@@ -909,6 +1003,19 @@ export function ensureFunSchema(db) {
     const voteNames = new Set(voteCols.map(c => String(c.name || '')));
     if (!voteNames.has('total_membros')) {
       db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_nsfw_votes ADD COLUMN total_membros INTEGER NOT NULL DEFAULT 0`);
+    }
+  } catch {
+    // ignore
+  }
+
+  // QMP: tom normal | heavy (modo "Amigos de Merda")
+  try {
+    const qmpCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_qmp_questions)`).all();
+    const qmpNames = new Set(qmpCols.map((c) => String(c.name || '')));
+    if (qmpNames.size && !qmpNames.has('tone')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_qmp_questions ADD COLUMN tone TEXT NOT NULL DEFAULT 'normal'`
+      );
     }
   } catch {
     // ignore

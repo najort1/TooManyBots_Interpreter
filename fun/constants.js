@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '21';
+export const FUN_SCHEMA_VERSION = '23';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -47,6 +47,10 @@ export const FUN_COMMANDS = Object.freeze({
   RANK_CASINO: 'rankcasino',
   BINGO: 'bingo',
   TAROT: 'tarot',
+  // Cartas colecionáveis
+  CARTAS: 'cartas',
+  // Quem é Mais Provável?
+  QMP: 'qmp',
   // Chaos / zoeira social
   RUSSIAN: 'russian',
   PULL: 'pull',
@@ -126,8 +130,11 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     FUN_COMMANDS.ASSAULT,
     FUN_COMMANDS.WEAPONS,
     FUN_COMMANDS.BAZAAR,
+    FUN_COMMANDS.CARTAS,
     FUN_COMMANDS.ROAST,
     FUN_COMMANDS.ACHIEVEMENTS,
+    // QMP: votação social no grupo
+    FUN_COMMANDS.QMP,
     // emprego: anúncio curto no grupo no start
     FUN_COMMANDS.EMPLOYMENT,
     FUN_COMMANDS.REACTION,
@@ -217,7 +224,6 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   blackjack: FUN_COMMANDS.BLACKJACK,
   21: FUN_COMMANDS.BLACKJACK,
   hit: FUN_COMMANDS.HIT,
-  carta: FUN_COMMANDS.HIT,
   stand: FUN_COMMANDS.STAND,
   parar: FUN_COMMANDS.STAND,
   torneio: FUN_COMMANDS.TOURNAMENT,
@@ -228,8 +234,16 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   tarot: FUN_COMMANDS.TAROT,
   taro: FUN_COMMANDS.TAROT,
   tarô: FUN_COMMANDS.TAROT,
-  cartas: FUN_COMMANDS.TAROT,
   vidente: FUN_COMMANDS.TAROT,
+  // cartas colecionáveis (não é tarô)
+  cartas: FUN_COMMANDS.CARTAS,
+  carta: FUN_COMMANDS.CARTAS,
+  cards: FUN_COMMANDS.CARTAS,
+  // Quem é Mais Provável?
+  qmp: FUN_COMMANDS.QMP,
+  quememaisprovavel: FUN_COMMANDS.QMP,
+  maisprovavel: FUN_COMMANDS.QMP,
+  mostlikely: FUN_COMMANDS.QMP,
   // oráculo maluco (não é tarô)
   oraculo: FUN_COMMANDS.ORACLE,
   oráculo: FUN_COMMANDS.ORACLE,
@@ -426,6 +440,7 @@ export const ACTION_TYPE = Object.freeze({
   MARRY: 'marry',
   BET_COINFLIP: 'bet_coinflip',
   BET_DICE: 'bet_dice',
+  CARD_TRADE: 'card_trade',
 });
 
 export const DAY_MS = 24 * 60 * 60 * 1000;
@@ -472,6 +487,11 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   debugMode: false,
   logLevel: 'info',
   rankCardImage: true,
+  // Cartas colecionáveis
+  cardsEnabled: true,
+  cardPackCost: 30,
+  cardMaxPacksPerOpen: 4,
+  cardTradeTtlMs: 5 * 60_000,
   dashboardEnabled: true,
   dashboardHost: '127.0.0.1',
   dashboardPort: 8790,
@@ -687,6 +707,39 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   tarotTimeoutMs: 25_000,
   tarotMaxTokens: 900,
   tarotTemperature: 0.9,
+  // Quem é Mais Provável? (QMP)
+  qmpEnabled: true,
+  /** Chance por mensagem normal do grupo de disparar pergunta automática (~2%). */
+  qmpAutoTriggerChance: 0.02,
+  /** Cooldown entre autos por grupo (evita spam). */
+  qmpAutoTriggerCooldownMs: 30 * 60_000,
+  /** Duração da rodada de votação. */
+  qmpRoundDurationMs: 10 * 60_000,
+  /** Cooldown por usuário entre criar perguntas manuais. */
+  qmpCooldownMs: 45_000,
+  qmpMaxPromptLen: 300,
+  qmpRankLimit: 10,
+  /** Quantas rodadas no `/qmp historico`. */
+  qmpHistoryLimit: 8,
+  /**
+   * 1 pergunta pesada a cada N rodadas (5 = 4 normais + 1 pesada).
+   * Estilo "Amigos de Merda" intercalado.
+   */
+  qmpHeavyEvery: 5,
+  qmpHeavyEnabled: true,
+  /** Quantas perguntas recentes entram no anti-eco do LLM. */
+  qmpAntiEchoLimit: 12,
+  qmpAntiEchoMaxOverlap: 0.42,
+  /** Tentativas de regenerar se ecoar histórico. */
+  qmpInventRetries: 2,
+  qmpTimeoutMs: 18_000,
+  qmpMaxTokens: 220,
+  qmpTemperature: 0.95,
+  /**
+   * Modelo Zen só pro QMP (mais humano nos probes).
+   * Vazio = cai no zenModel global do bot.
+   */
+  qmpZenModel: 'grok45medium',
   happyHourDurationMs: 45 * 60_000,
   happyHourPayoutMult: 1.12,
   happyHourCooldownMs: 4 * 60 * 60_000,
