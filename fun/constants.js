@@ -815,7 +815,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   chaosEventDefenseDeliveryGraceMs: 25_000,
   /** Cooldown entre assaltos do mesmo user no mesmo grupo durante a PURGA */
   chaosEventAssaultCooldownMs: 30_000,
-  chaosEventActivityWindowMs: 10 * 60_000,
+  /** Só pode ser vítima da Purga se mandou msg nos últimos N ms (padrão 3 min). */
+  chaosEventActivityWindowMs: 3 * 60_000,
   // Filas de processamento (command queue + output queue)
   commandMaxConcurrency: 8,
   commandFastConcurrency: 4,

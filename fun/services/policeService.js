@@ -16,11 +16,18 @@ import { getDb } from '../../db/context.js';
 
 const ANALYTICS_SCHEMA = 'analytics';
 
-/** Decay de Wanted: −1 ponto a cada 12h (muito mais lento que Heat). */
-export const WANTED_DECAY_MS = 12 * 60 * 60_000;
+/**
+ * Decay de Wanted: −1 ponto a cada 24h **sem crime**.
+ * Crime ativo reinicia o relógio (farmador não esfria no meio da rotina).
+ */
+export const WANTED_DECAY_MS = 24 * 60 * 60_000;
 
-/** Thresholds de pontos → nível 0–5. */
-export const WANTED_LEVEL_THRESHOLDS = Object.freeze([0, 8, 20, 40, 70, 110]);
+/**
+ * Thresholds de pontos → nível 0–5.
+ * ⭐1 ~ 2 bancos com sucesso · ⭐2 farm diário · ⭐5 prioridade máxima.
+ * Falha comum NÃO deve dar estrela sozinha.
+ */
+export const WANTED_LEVEL_THRESHOLDS = Object.freeze([0, 6, 14, 28, 48, 80]);
 
 export const POLICE_IMMUNITY_EFFECT = 'police_immunity';
 export const POLICE_IMMUNITY_DURATION_MS = 3 * 24 * 60 * 60_000;
@@ -198,31 +205,43 @@ export function createPoliceService({
   function getWantedPoints(userJid, scopeKey, now = Date.now()) {
     let points = cdGet(userJid, scopeKey, KEY_WANTED);
     let lastDecay = cdGet(userJid, scopeKey, KEY_WANTED_DECAY);
-    if (lastDecay <= 0) lastDecay = Number(now) || Date.now();
-    const steps = Math.floor((Number(now) - lastDecay) / WANTED_DECAY_MS);
+    const ts = Number(now) || Date.now();
+    if (lastDecay <= 0) {
+      // relógio de ociosidade começa agora — sem apagar pontos
+      cdSet(userJid, scopeKey, KEY_WANTED_DECAY, ts);
+      return points;
+    }
+    // Decay só conta tempo ocioso (sem crime). Crime recente reinicia lastDecay.
+    const steps = Math.floor((ts - lastDecay) / WANTED_DECAY_MS);
     if (steps > 0 && points > 0) {
       points = Math.max(0, points - steps);
       cdSet(userJid, scopeKey, KEY_WANTED, points);
-      // avança o relógio de decay em múltiplos inteiros
       cdSet(userJid, scopeKey, KEY_WANTED_DECAY, lastDecay + steps * WANTED_DECAY_MS);
-    } else if (cdGet(userJid, scopeKey, KEY_WANTED_DECAY) <= 0) {
-      cdSet(userJid, scopeKey, KEY_WANTED_DECAY, Number(now) || Date.now());
     }
     return points;
   }
 
   function setWantedPoints(userJid, scopeKey, points, now = Date.now()) {
     const p = Math.max(0, Math.floor(Number(points) || 0));
+    const ts = Number(now) || Date.now();
     cdSet(userJid, scopeKey, KEY_WANTED, p);
     if (cdGet(userJid, scopeKey, KEY_WANTED_DECAY) <= 0) {
-      cdSet(userJid, scopeKey, KEY_WANTED_DECAY, Number(now) || Date.now());
+      cdSet(userJid, scopeKey, KEY_WANTED_DECAY, ts);
     }
     return p;
   }
 
+  /**
+   * Soma Wanted e **reinicia o relógio de decay** (crime ativo = não esfria).
+   */
   function addWantedPoints(userJid, scopeKey, delta, now = Date.now()) {
-    const cur = getWantedPoints(userJid, scopeKey, now);
-    return setWantedPoints(userJid, scopeKey, cur + Math.max(0, Math.floor(Number(delta) || 0)), now);
+    const ts = Number(now) || Date.now();
+    const cur = getWantedPoints(userJid, scopeKey, ts);
+    const next = cur + Math.max(0, Math.floor(Number(delta) || 0));
+    cdSet(userJid, scopeKey, KEY_WANTED, next);
+    // idle clock: só decai depois de 24h sem novo crime
+    cdSet(userJid, scopeKey, KEY_WANTED_DECAY, ts);
+    return next;
   }
 
   function getWantedLevel(userJid, scopeKey, now = Date.now()) {
@@ -301,20 +320,41 @@ export function createPoliceService({
   }
 
   /**
-   * Ganha de Wanted por crime. Imunidade reduz (não zera) o ganho.
+   * Ganha de Wanted por crime (tentativa conta — sucesso ou falha).
+   *
+   * Filosofia:
+   * - Sucesso (sobretudo banco) marca mais a ficha.
+   * - Falha também sobe Wanted (a polícia registra a tentativa), mas menos que o sucesso.
+   * - Bust policial é a falha que mais pesa.
+   * - Imunidade reduz (não zera) o ganho.
    */
-  function wantedGainForCrime({ mode = 'player', success = true, immune = false } = {}) {
-    let base = 1;
-    if (success) {
-      if (mode === 'bank') base = 3;
-      else if (mode === 'shop') base = 1;
-      else base = 2;
-    } else {
-      base = mode === 'bank' ? 2 : 1;
+  function wantedGainForCrime({
+    mode = 'player',
+    success = true,
+    immune = false,
+    policeBust = false,
+  } = {}) {
+    if (policeBust) {
+      // pegou em flagrante — ficha sobe de verdade
+      const bust = mode === 'bank' ? 4 : 3;
+      return immune ? Math.max(1, Math.ceil(bust * 0.5)) : bust;
     }
+
+    let base;
+    if (success) {
+      // sucesso: banco 5 · PvP 3 · lojinha 2  (2 bancos ≈ ⭐1)
+      if (mode === 'bank') base = 5;
+      else if (mode === 'shop') base = 2;
+      else base = 3;
+    } else {
+      // falha: ainda gera ficha, mas menos que o sucesso
+      if (mode === 'bank') base = 2;
+      else if (mode === 'shop') base = 1;
+      else base = 1; // PvP
+    }
+
     if (immune) {
-      // polícia perde o rastro imediato, mas a reputação continua subindo devagar
-      if (!success) return 0;
+      // rastro curto some; reputação sobe devagar
       return Math.max(1, Math.ceil(base * 0.5));
     }
     return base;
@@ -446,12 +486,12 @@ export function createPoliceService({
     if (immune) {
       immunityAfter = consumeImmunityUse(u, s, now);
     }
-    const gain = policeBust
-      ? immune
-        ? 1
-        : 2 + (mode === 'bank' ? 1 : 0)
-      : wantedGainForCrime({ mode, success, immune });
-    const wantedPoints = gain > 0 ? addWantedPoints(u, s, gain, now) : getWantedPoints(u, s, now);
+    const gain = wantedGainForCrime({ mode, success, immune, policeBust });
+    // qualquer tentativa com ganho (sucesso, falha ou bust) sobe ficha e reinicia decay
+    const wantedPoints =
+      gain > 0
+        ? addWantedPoints(u, s, gain, now)
+        : getWantedPoints(u, s, now);
     if (policeBust) markPoliceEvent(u, s, now);
     return {
       wantedPoints,
