@@ -509,26 +509,39 @@ export async function handleFunIncomingMessage(deps, ctx) {
     }
   }
 
-  // Purga: verifica antes de qualquer comando se o texto é resposta a desafio matemático
+  // Purga: resposta de defesa — usa msgTimeMs (hora enviada no WhatsApp), não Date.now().
+  // Baileys pode entregar com atraso; o prazo é justo com o timestamp da mensagem.
   if (chaosEventService?.checkMessageForChallenge) {
-    const challengeText = String(text || '').replace(/^[/\\]/, '').trim();
-    const challengeResult = chaosEventService.checkMessageForChallenge(
-      scope.scopeKey, userJid, challengeText, Date.now()
-    );
-    if (challengeResult?.matched) {
-      const r = challengeResult.result;
-      // Track attacker so both victim and attacker are notified
-      if (r?.attackerJid && r.attackerJid !== userJid) {
-        userFmt.trackMention(r.attackerJid);
+    try {
+      const challengeText = String(text || '').replace(/^[/\\]/, '').trim();
+      const challengeResult = chaosEventService.checkMessageForChallenge(
+        scope.scopeKey,
+        userJid,
+        challengeText,
+        msgTimeMs || Date.now()
+      );
+      if (challengeResult?.matched) {
+        const r = challengeResult.result;
+        if (r?.attackerJid && r.attackerJid !== userJid) {
+          userFmt.trackMention(r.attackerJid);
+        }
+        if (r?.defended) {
+          await reply('🧮 *Conta certa!* Você se defendeu e o assalto foi bloqueado.');
+        } else if (r?.timedOut) {
+          await reply(
+            `⏰ *Tempo esgotou!* Perdeu *${r.stolen ?? 0}* coins.` +
+            (r.expression != null ? ` (A conta era: ${r.expression} = ${r.correctAnswer})` : '')
+          );
+        } else if (r?.defended === false) {
+          await reply(
+            `❌ *Conta errada.* Perdeu *${r.stolen ?? 0}* coins.` +
+            (r.expression != null ? ` (A conta era: ${r.expression} = ${r.correctAnswer})` : '')
+          );
+        }
+        return { handled: true, skipFlows: true, reason: 'challenge-answered' };
       }
-      if (r?.defended) {
-        await reply('🧮 *Conta certa!* Você se defendeu e o assalto foi bloqueado.');
-      } else if (r?.timedOut) {
-        await reply(`⏰ *Tempo esgotou!* Perdeu *${r.stolen}* coins. (A conta era: ${r.expression} = ${r.correctAnswer})`);
-      } else if (r?.defended === false) {
-        await reply(`❌ *Conta errada.* Perdeu *${r.stolen}* coins. (A conta era: ${r.expression} = ${r.correctAnswer})`);
-      }
-      return { handled: true, skipFlows: true, reason: 'challenge-answered' };
+    } catch {
+      // Defesa nunca pode derrubar o pipeline sob carga
     }
   }
 

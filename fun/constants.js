@@ -757,7 +757,11 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   chaosEventMaxStealAmount: 100,
   chaosEventMaxDebt: 100,
   chaosEventDefenseEnabled: true,
-  chaosEventDefenseTimeoutMs: 4000,
+  chaosEventDefenseTimeoutMs: 8000,
+  /** Grace wall-clock extra p/ Baileys atrasar a entrega da resposta de defesa */
+  chaosEventDefenseDeliveryGraceMs: 25_000,
+  /** Cooldown entre assaltos do mesmo user no mesmo grupo durante a PURGA */
+  chaosEventAssaultCooldownMs: 30_000,
   chaosEventActivityWindowMs: 10 * 60_000,
   // Filas de processamento (command queue + output queue)
   commandMaxConcurrency: 8,

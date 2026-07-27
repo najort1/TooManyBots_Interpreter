@@ -746,7 +746,7 @@ export function createFunModule(deps = {}) {
 
             const started = chaosEventService.tryStartEvent(scopeKey, funConfig, chaosNow);
             if (started?.ok) {
-              const msg = chaosEventService.formatStartAnnouncement(started);
+              const msg = chaosEventService.formatStartAnnouncement(started, funConfig);
               if (msg) {
                 await postWithMentions(scopeKey, msg, userFmt);
                 results.push({

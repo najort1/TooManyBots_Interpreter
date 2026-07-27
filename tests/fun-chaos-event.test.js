@@ -22,12 +22,17 @@ import { resolveFunConfig } from '../fun/index.js';
 await initDb();
 _resetDefaultFunStatsRepository();
 
+let _jidSeq = 0;
 function uniqueJid(prefix = '5511') {
-  return `${prefix}${String(Date.now()).slice(-7)}${Math.floor(Math.random() * 90 + 10)}@s.whatsapp.net`;
+  _jidSeq += 1;
+  // Sequência monotônica evita colisão em loops apertados (Date.now() repete no mesmo ms)
+  return `${prefix}${String(Date.now()).slice(-5)}${_jidSeq}${Math.floor(Math.random() * 900 + 100)}@s.whatsapp.net`;
 }
 
+let _groupSeq = 0;
 function uniqueGroup() {
-  return `120363${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 90 + 10)}@g.us`;
+  _groupSeq += 1;
+  return `120363${String(Date.now()).slice(-8)}${_groupSeq}${Math.floor(Math.random() * 90 + 10)}@g.us`;
 }
 
 const TEST_HOUR = 20;
@@ -39,12 +44,25 @@ function atHour(hour = TEST_HOUR, minute = 30, { base = Date.now() } = {}) {
 }
 
 const NO_DEFENSE = { chaosEventDefenseEnabled: false };
+/** Sem cooldown entre assaltos (testes de sequência no mesmo atacante). */
+const NO_COOLDOWN = { chaosEventAssaultCooldownMs: 0 };
+/** Grace Baileys zero — processExpired liquida logo após o timeout fair. */
+const NO_GRACE = { chaosEventDefenseDeliveryGraceMs: 0 };
+/** Defesa rápida + sem grace (timeouts unitários). */
+const FAST_DEFENSE = {
+  chaosEventDefenseEnabled: true,
+  chaosEventDefenseTimeoutMs: 4000,
+  ...NO_GRACE,
+};
 
 /** Garante que horário de fim de semana bate com o configurado, para testes rodarem qualquer dia. */
 function chaosConfig(extra = {}) {
   const h = extra.chaosEventHour ?? TEST_HOUR;
   const m = extra.chaosEventMinute ?? 30;
   return resolveFunConfig({
+    // defaults de teste: sem cooldown/grace para não quebrar assaltos em sequência
+    chaosEventAssaultCooldownMs: 0,
+    chaosEventDefenseDeliveryGraceMs: 0,
     ...extra,
     chaosEventWeekendHour: extra.chaosEventWeekendHour ?? h,
     chaosEventWeekendMinute: extra.chaosEventWeekendMinute ?? m,
@@ -351,7 +369,7 @@ test('anúncios: início e warning com tempo restante', () => {
   const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventDurationMs: 10 * 60_000 });
   const now = atHour(TEST_HOUR);
   const started = chaosEvent.tryStartEvent(scope, cfg, now);
-  const startMsg = chaosEvent.formatStartAnnouncement(started);
+  const startMsg = chaosEvent.formatStartAnnouncement(started, cfg);
   assert.match(startMsg, /PURGA/);
   assert.match(startMsg, /ESTADO DE EMERGÊNCIA/);
   assert.match(startMsg, /10 minutos/);
@@ -585,7 +603,7 @@ test('defesa: responder vazio ou null executa assalto', () => {
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
 
-test('defesa: múltiplos assaltos no mesmo alvo sobrescrevem desafio anterior', () => {
+test('defesa: múltiplos assaltos no mesmo alvo — segundo recebe target-busy', () => {
   process.env.FUN_DISABLE_LIVE_LLM = '1';
   const repo = createFunStatsRepository({ getDatabase: getDb });
   repo.ensureFunSchema();
@@ -607,25 +625,22 @@ test('defesa: múltiplos assaltos no mesmo alvo sobrescrevem desafio anterior', 
   // a1 ataca vic primeiro
   const first = chaosEvent.doCrimeAssault({ attackerJid: a1, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now: now + 1000 });
   assert.equal(first.success, 'pending');
-  const firstChallenge = first.challenge;
-  assert.equal(firstChallenge.attackerJid, a1);
+  assert.equal(first.challenge.attackerJid, a1);
 
-  // a2 ataca vic logo em seguida — sobrescreve
+  // a2 ataca vic — não sobrescreve (evita roubo silencioso do 1º)
   const second = chaosEvent.doCrimeAssault({ attackerJid: a2, targetJid: vic, scopeKey: scope, amount: 30, funConfig: cfg, now: now + 2000 });
-  assert.equal(second.success, 'pending');
-  const secondChallenge = second.challenge;
-  assert.equal(secondChallenge.attackerJid, a2);
+  assert.equal(second.ok, false);
+  assert.equal(second.reason, 'target-busy');
 
-  // o desafio foi sobrescrito: attacker mudou de a1 para a2
-  assert.equal(secondChallenge.attackerJid, a2);
-
-  // resolve com a resposta correta do desafio ATIVO (segundo)
-  const resolved = chaosEvent.resolveChallenge({ scopeKey: scope, targetJid: vic, answer: secondChallenge.answer, now: now + 3000 });
+  // resolve o desafio do a1
+  const resolved = chaosEvent.resolveChallenge({
+    scopeKey: scope, targetJid: vic, answer: first.challenge.answer, now: now + 3000,
+  });
   assert.equal(resolved.defended, true);
   assert.equal(resolved.stolen, 0);
-  // a1 nunca atacou de fato (foi sobrescrito), a2 perdeu o ataque (defendido)
   assert.equal(repo.getUserStats(a1, scope).coins, 100);
   assert.equal(repo.getUserStats(a2, scope).coins, 100);
+  assert.equal(repo.getUserStats(vic, scope).coins, 500);
 
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
@@ -1325,5 +1340,1036 @@ test('handler — invalid-target mantém mensagem existente', async () => {
   });
   assert.equal(result.handled, true);
   assert.ok(replyMsg.includes('Alvo inválido'), `mensagem deve ser 'Alvo inválido': "${replyMsg}"`);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+// ─── Estresse extremo / edge cases / regressões ──────────────────────────────
+
+function setupPurga({
+  defense = false,
+  maxDebt = 100,
+  maxSteal = 100,
+  noWeapon = 1.0,
+  durationMs = 10 * 60_000,
+  cooldownMs = 0,
+  graceMs = 0,
+  random = () => 0.01,
+} = {}) {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
+  const chaosEvent = createChaosEventService({
+    repository: repo,
+    eventRepository: eventRepo,
+    getMarketService: () => market,
+    random,
+  });
+  const scope = uniqueGroup();
+  const cfg = chaosConfig({
+    chaosEventEnabled: true,
+    chaosEventHour: TEST_HOUR,
+    chaosEventNoWeaponSuccess: noWeapon,
+    chaosEventMaxDebt: maxDebt,
+    chaosEventMaxStealAmount: maxSteal,
+    chaosEventDurationMs: durationMs,
+    chaosEventAssaultCooldownMs: cooldownMs,
+    chaosEventDefenseDeliveryGraceMs: graceMs,
+    ...(defense
+      ? { chaosEventDefenseEnabled: true, chaosEventDefenseTimeoutMs: 4000 }
+      : NO_DEFENSE),
+  });
+  const now = atHour(TEST_HOUR);
+  const started = chaosEvent.tryStartEvent(scope, cfg, now);
+  return { repo, eventRepo, marketRepo, market, chaosEvent, scope, cfg, now, started };
+}
+
+test('edge: force ignora disabled, wrong-hour e already-today', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => null });
+  const scope = uniqueGroup();
+  const disabled = chaosConfig({ chaosEventEnabled: false, chaosEventHour: TEST_HOUR });
+  const now = atHour(TEST_HOUR);
+
+  assert.equal(chaosEvent.tryStartEvent(scope, disabled, now).reason, 'disabled');
+  const forced = chaosEvent.tryStartEvent(scope, disabled, now, { force: true });
+  assert.equal(forced.ok, true, 'force deve iniciar mesmo disabled');
+  assert.equal(forced.label, 'PURGA');
+
+  // already-active ainda bloqueia force
+  assert.equal(chaosEvent.tryStartEvent(scope, disabled, now + 1000, { force: true }).reason, 'already-active');
+
+  // após expirar: force ignora already-today e wrong-hour
+  const after = now + 11 * 60_000;
+  const wrongHour = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR });
+  assert.equal(chaosEvent.tryStartEvent(scope, wrongHour, after).ok, false);
+  const forced2 = chaosEvent.tryStartEvent(scope, wrongHour, after, { force: true });
+  assert.equal(forced2.ok, true, 'force pós-expiração deve reiniciar');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: janela de ativação m..m+4 ok, m+5 rejeita', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => null });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventMinute: 30 });
+
+  const at30 = chaosEvent.tryStartEvent(uniqueGroup(), cfg, atHour(TEST_HOUR, 30));
+  assert.equal(at30.ok, true);
+
+  const at34 = chaosEvent.tryStartEvent(uniqueGroup(), cfg, atHour(TEST_HOUR, 34));
+  assert.equal(at34.ok, true);
+
+  const at35 = chaosEvent.tryStartEvent(uniqueGroup(), cfg, atHour(TEST_HOUR, 35));
+  assert.equal(at35.ok, false);
+  assert.equal(at35.reason, 'wrong-hour');
+
+  const at29 = chaosEvent.tryStartEvent(uniqueGroup(), cfg, atHour(TEST_HOUR, 29));
+  assert.equal(at29.ok, false);
+  assert.equal(at29.reason, 'wrong-hour');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: amount 0/negativo/NaN/string vira mínimo 1 (cap maxSteal)', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ maxSteal: 100 });
+  const atk = uniqueJid('5601');
+  const vic = uniqueJid('5602');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 500, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 500, reason: 'seed' });
+
+  for (const amount of [0, -10, NaN, 'abc', null, undefined, '']) {
+    const r = chaosEvent.doCrimeAssault({
+      attackerJid: atk, targetJid: vic, scopeKey: scope, amount, funConfig: cfg, now: now + 1000,
+    });
+    assert.equal(r.ok, true, `amount=${amount} deve processar`);
+    assert.equal(r.success, true);
+    assert.equal(r.stolen, 1, `amount=${amount} deve roubar mínimo 1`);
+  }
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: auto-ataque e jids vazios', () => {
+  const { chaosEvent, scope, cfg, now } = setupPurga();
+  const u = uniqueJid('5603');
+  assert.equal(chaosEvent.doCrimeAssault({
+    attackerJid: u, targetJid: u, scopeKey: scope, amount: 10, funConfig: cfg, now: now + 1,
+  }).reason, 'invalid-target');
+  assert.equal(chaosEvent.doCrimeAssault({
+    attackerJid: '', targetJid: u, scopeKey: scope, amount: 10, funConfig: cfg, now: now + 1,
+  }).reason, 'invalid-target');
+  assert.equal(chaosEvent.doCrimeAssault({
+    attackerJid: u, targetJid: '', scopeKey: scope, amount: 10, funConfig: cfg, now: now + 1,
+  }).reason, 'invalid-target');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('BUGFIX: maxDebt customizado é respeitado (não só default 100)', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ maxDebt: 25, maxSteal: 500 });
+  const atk = uniqueJid('5604');
+  const vic = uniqueJid('5605');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 10, reason: 'seed' });
+
+  const r = chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 500, funConfig: cfg, now: now + 1000,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.stolenFromWallet, 10);
+  assert.equal(r.stolenFromDebt, 25, 'maxDebt=25 deve limitar dívida');
+  assert.equal(r.stolen, 35);
+  assert.equal(repo.getUserStats(vic, scope).coins, -25);
+  assert.equal(repo.getUserStats(atk, scope).coins, 135);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('BUGFIX: maxDebt customizado também no timeout da defesa', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ defense: true, maxDebt: 40, maxSteal: 200 });
+  const atk = uniqueJid('5606');
+  const vic = uniqueJid('5607');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 50, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 5, reason: 'seed' });
+
+  chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 200, funConfig: cfg, now: now + 1000,
+  });
+  const expired = chaosEvent.processExpiredChallenges(scope, now + 6000);
+  assert.equal(expired.length, 1);
+  assert.equal(expired[0].stolen, 45); // 5 wallet + 40 debt
+  assert.equal(repo.getUserStats(vic, scope).coins, -40);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: vítima já no teto de dívida não gera mais steal', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ maxDebt: 100, maxSteal: 100 });
+  const atk = uniqueJid('5608');
+  const vic = uniqueJid('5609');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 50, reason: 'seed' });
+  // força vítima a -100
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 10, reason: 'seed' });
+  repo.addCoinsAllowNegative({ userJid: vic, scopeKey: scope, amount: -110, reason: 'seed-debt' });
+  assert.equal(repo.getUserStats(vic, scope).coins, -100);
+
+  const r = chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 100, funConfig: cfg, now: now + 1000,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.success, true);
+  assert.equal(r.stolen, 0, 'já no teto: nada a roubar');
+  assert.equal(repo.getUserStats(vic, scope).coins, -100);
+  assert.equal(repo.getUserStats(atk, scope).coins, 50);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: conservação de coins (sem dívida) — soma zero-sum', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ maxDebt: 0, maxSteal: 80 });
+  const atk = uniqueJid('5610');
+  const vic = uniqueJid('5611');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 200, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 200, reason: 'seed' });
+  const totalBefore = 400;
+
+  chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 80, funConfig: cfg, now: now + 1000,
+  });
+  const totalAfter =
+    (repo.getUserStats(atk, scope).coins || 0) + (repo.getUserStats(vic, scope).coins || 0);
+  assert.equal(totalAfter, totalBefore, 'sem dívida deve ser zero-sum');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: processExpiredChallenges duas vezes não double-steal', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ defense: true, maxSteal: 50 });
+  const atk = uniqueJid('5612');
+  const vic = uniqueJid('5613');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+
+  chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now: now + 1000,
+  });
+  const first = chaosEvent.processExpiredChallenges(scope, now + 6000);
+  assert.equal(first.length, 1);
+  assert.equal(first[0].stolen, 50);
+  const atkAfter1 = repo.getUserStats(atk, scope).coins;
+
+  const second = chaosEvent.processExpiredChallenges(scope, now + 7000);
+  assert.equal(second.length, 0);
+  assert.equal(repo.getUserStats(atk, scope).coins, atkAfter1);
+  assert.equal(repo.getUserStats(vic, scope).coins, 50);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: resolveChallenge timeout + processExpired não double-steal', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ defense: true, maxSteal: 40 });
+  const atk = uniqueJid('5614');
+  const vic = uniqueJid('5615');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+
+  chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 40, funConfig: cfg, now: now + 1000,
+  });
+
+  // checkMessageForChallenge em timeout executa transferência
+  const msg = chaosEvent.checkMessageForChallenge(scope, vic, 'timeout', now + 6000);
+  assert.equal(msg.matched, true);
+  assert.equal(msg.result.timedOut, true);
+  assert.equal(msg.result.stolen, 40);
+
+  // processExpired não deve achar nada
+  const expired = chaosEvent.processExpiredChallenges(scope, now + 7000);
+  assert.equal(expired.length, 0);
+  assert.equal(repo.getUserStats(atk, scope).coins, 140);
+  assert.equal(repo.getUserStats(vic, scope).coins, 60);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: checkMessageForChallenge extrai número embutido ("é 18", "resposta: 7")', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ defense: true });
+  const atk = uniqueJid('5616');
+  const vic = uniqueJid('5617');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+
+  const p = chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 20, funConfig: cfg, now: now + 1000,
+  });
+  assert.equal(p.success, 'pending');
+  const ans = p.challenge.answer;
+
+  const check = chaosEvent.checkMessageForChallenge(scope, vic, `é ${ans} né`, now + 2000);
+  assert.equal(check.matched, true);
+  assert.equal(check.result.defended, true);
+  assert.equal(repo.getUserStats(vic, scope).coins, 100);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: shouldSendEnd só uma vez e ignora evento antigo', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => null });
+  const scope = uniqueGroup();
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, chaosEventDurationMs: 60_000 });
+  const now = atHour(TEST_HOUR);
+  chaosEvent.tryStartEvent(scope, cfg, now);
+
+  assert.equal(chaosEvent.shouldSendEnd(scope, now + 30_000), false, 'ainda ativo');
+  assert.equal(chaosEvent.shouldSendEnd(scope, now + 61_000), true, 'acabou agora');
+  assert.equal(chaosEvent.shouldSendEnd(scope, now + 62_000), false, 'já anunciado');
+
+  // Evento velho (terminou há mais de 1 duração): não re-anuncia
+  const scope2 = uniqueGroup();
+  eventRepo.upsert(scope2, {
+    eventType: 'crime_chaos',
+    multiplier: 1,
+    startsAt: now - 30 * 60_000,
+    endsAt: now - 20 * 60_000,
+    lastSpawnAt: now - 30 * 60_000,
+    payload: { label: 'PURGA' },
+  });
+  assert.equal(chaosEvent.shouldSendEnd(scope2, now), false, 'evento stale não re-anuncia');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: shouldSendWarning só na janela ~2min e uma vez', () => {
+  const { chaosEvent, scope, now } = setupPurga({ durationMs: 10 * 60_000 });
+  // remaining = 10min → fora da janela
+  assert.equal(chaosEvent.shouldSendWarning(scope, now + 1000), false);
+  // remaining ≈ 90s (dentro 10s..140s)
+  const nearEnd = now + 10 * 60_000 - 90_000;
+  assert.equal(chaosEvent.shouldSendWarning(scope, nearEnd), true);
+  assert.equal(chaosEvent.shouldSendWarning(scope, nearEnd + 1000), false);
+  // remaining < 10s
+  assert.equal(chaosEvent.shouldSendWarning(scope, now + 10 * 60_000 - 5000), false);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: newsService quebrado não derruba start/end', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const boom = () => {
+    throw new Error('news down');
+  };
+  const chaosEvent = createChaosEventService({
+    repository: repo,
+    eventRepository: eventRepo,
+    getMarketService: () => null,
+    getNewsService: () => ({ log: boom }),
+  });
+  const scope = uniqueGroup();
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR });
+  const now = atHour(TEST_HOUR);
+  const started = chaosEvent.tryStartEvent(scope, cfg, now);
+  assert.equal(started.ok, true);
+  const endMsg = chaosEvent.formatEndAnnouncement(scope, (j) => j);
+  assert.match(endMsg, /FIM DA PURGA/);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: createChaosEventService exige repository e eventRepository', () => {
+  assert.throws(() => createChaosEventService({}), /repository required/);
+  assert.throws(() => createChaosEventService({ repository: {} }), /eventRepository required/);
+});
+
+test('edge: anúncios com leaderboard vazio e com dados', () => {
+  const { chaosEvent, scope, cfg, now, repo, started } = setupPurga({ maxSteal: 50 });
+  const startMsg = chaosEvent.formatStartAnnouncement(started);
+  assert.match(startMsg, /PURGA/);
+  assert.match(startMsg, /\/crime/);
+
+  const emptyEnd = chaosEvent.formatEndAnnouncement(uniqueGroup(), (j) => j);
+  assert.match(emptyEnd, /FIM DA PURGA/);
+  assert.ok(!emptyEnd.includes('Maiores criminosos'));
+
+  // recria leaderboard no scope atual
+  const atk = uniqueJid('5618');
+  const vic = uniqueJid('5619');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+  chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now: now + 1000,
+  });
+  const end = chaosEvent.formatEndAnnouncement(scope, (j) => j.split('@')[0]);
+  assert.match(end, /Maiores criminosos/);
+  assert.match(end, /Maiores vítimas/);
+  // cleanup limpa leaderboard
+  const lb = chaosEvent.getEventLeaderboard(scope);
+  assert.equal(lb.attackers.length, 0);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: isHeatDisabled e cooldownRemaining coerentes com ciclo de vida', () => {
+  const { chaosEvent, scope, now } = setupPurga({ durationMs: 120_000 });
+  assert.equal(chaosEvent.isHeatDisabled(scope, now + 1000), true);
+  assert.ok(chaosEvent.cooldownRemaining(scope, now + 1000) > 0);
+  assert.equal(chaosEvent.getTimeRemaining(scope, now + 1000) > 0, true);
+
+  const after = now + 121_000;
+  assert.equal(chaosEvent.isEventActive(scope, after), false);
+  assert.equal(chaosEvent.isHeatDisabled(scope, after), false);
+  assert.equal(chaosEvent.cooldownRemaining(scope, after), 0);
+  assert.equal(chaosEvent.getTimeRemaining(scope, after), 0);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: formatWarningAnnouncement limites de plural e zero', () => {
+  const { chaosEvent } = setupPurga();
+  assert.equal(chaosEvent.formatWarningAnnouncement(0), '');
+  assert.match(chaosEvent.formatWarningAnnouncement(30_000), /1 minuto[^s]/);
+  assert.match(chaosEvent.formatWarningAnnouncement(90_000), /2 minutos/);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('estresse: 50 assaltos sequenciais com conservação e caps', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ maxDebt: 50, maxSteal: 30 });
+  const atk = uniqueJid('5620');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 10_000, reason: 'seed' });
+
+  let totalStolen = 0;
+  for (let i = 0; i < 50; i++) {
+    const vic = uniqueJid('5621');
+    repo.addCoins({ userJid: vic, scopeKey: scope, amount: 20, reason: 'seed' });
+    const r = chaosEvent.doCrimeAssault({
+      attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 999, funConfig: cfg, now: now + 1000 + i,
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.success, true);
+    // max: 20 wallet + 50 debt = 70, mas maxSteal=30 → 20+10 debt ou 30 se wallet cheio
+    assert.ok(r.stolen <= 30, `stolen=${r.stolen} > maxSteal`);
+    assert.ok(repo.getUserStats(vic, scope).coins >= -50, 'vítima não ultrapassa maxDebt');
+    totalStolen += r.stolen;
+  }
+
+  assert.equal(repo.getUserStats(atk, scope).coins, 10_000 + totalStolen);
+  const lb = chaosEvent.getEventLeaderboard(scope);
+  assert.equal(lb.attackers[0].total, totalStolen);
+  assert.ok(lb.attackers.length === 1);
+  assert.ok(lb.victims.length <= 3);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('estresse: 30 desafios paralelos — metade defende, metade timeout', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ defense: true, maxSteal: 25 });
+  const pairs = [];
+  for (let i = 0; i < 30; i++) {
+    const atk = uniqueJid('5630');
+    const vic = uniqueJid('5631');
+    repo.addCoins({ userJid: atk, scopeKey: scope, amount: 500, reason: 'seed' });
+    repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+    const p = chaosEvent.doCrimeAssault({
+      attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 25, funConfig: cfg, now: now + 1000 + i,
+    });
+    assert.equal(p.success, 'pending');
+    pairs.push({ atk, vic, answer: p.challenge.answer });
+  }
+
+  // primeiros 15 defendem
+  for (let i = 0; i < 15; i++) {
+    const p = pairs[i];
+    const r = chaosEvent.checkMessageForChallenge(scope, p.vic, String(p.answer), now + 2000 + i);
+    assert.equal(r.matched, true);
+    assert.equal(r.result.defended, true);
+    assert.equal(repo.getUserStats(p.vic, scope).coins, 100);
+    assert.equal(repo.getUserStats(p.atk, scope).coins, 500);
+  }
+
+  // restantes expiram
+  const expired = chaosEvent.processExpiredChallenges(scope, now + 10_000);
+  assert.equal(expired.length, 15);
+  for (const exp of expired) {
+    assert.equal(exp.stolen, 25);
+  }
+  for (let i = 15; i < 30; i++) {
+    assert.equal(repo.getUserStats(pairs[i].vic, scope).coins, 75);
+    assert.equal(repo.getUserStats(pairs[i].atk, scope).coins, 525);
+  }
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('estresse: 1000 gerações de desafio matemático válidas e resolvíveis', () => {
+  // random determinístico variado
+  let seed = 42;
+  const rnd = () => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return (seed % 10000) / 10000;
+  };
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ defense: true, random: rnd });
+  const atk = uniqueJid('5640');
+  const vic = uniqueJid('5641');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 1_000_000, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 1_000_000, reason: 'seed' });
+
+  for (let i = 0; i < 1000; i++) {
+    const p = chaosEvent.doCrimeAssault({
+      attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 1, funConfig: cfg, now: now + 1000 + i,
+    });
+    if (p.success !== 'pending') continue; // falha aleatória de roll
+    assert.ok(Number.isFinite(p.challenge.answer));
+    assert.ok(p.challenge.answer >= 0);
+    assert.match(p.challenge.expression, /^\d+ [+\-] \d+$/);
+    // valida aritmética
+    const m = p.challenge.expression.match(/^(\d+) ([+\-]) (\d+)$/);
+    const a = Number(m[1]);
+    const op = m[2];
+    const b = Number(m[3]);
+    const expected = op === '+' ? a + b : a - b;
+    assert.equal(p.challenge.answer, expected);
+    // limpa desafio para próximo
+    chaosEvent.resolveChallenge({
+      scopeKey: scope, targetJid: vic, answer: p.challenge.answer, now: now + 1000 + i + 1,
+    });
+  }
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('handler: crime pendente e sucesso/falha durante PURGA', async () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
+  const chaosEvent = createChaosEventService({
+    repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.01,
+  });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5650');
+  const vic = uniqueJid('5651');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 200, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 200, reason: 'seed' });
+  const now = Date.now();
+  eventRepo.upsert(scope, {
+    eventType: 'crime_chaos', multiplier: 1,
+    startsAt: now, endsAt: now + 10 * 60_000, lastSpawnAt: now,
+    payload: { label: 'PURGA' },
+  });
+  const cfg = chaosConfig({
+    chaosEventEnabled: true, chaosEventHour: TEST_HOUR,
+    chaosEventNoWeaponSuccess: 1.0, chaosEventDefenseEnabled: true, chaosEventDefenseTimeoutMs: 4000,
+  });
+
+  let replyMsg = '';
+  const result = await handleAssaultCommand({
+    userJid: atk,
+    scopeKey: scope,
+    marketService: market,
+    funConfig: cfg,
+    getContactDisplayName: (j) => j.split('@')[0],
+    listContacts: () => [],
+    reply: (m) => { replyMsg = m; },
+    chaosEventService: chaosEvent,
+    args: [`@${vic.split('@')[0]}`, '40'],
+    mentionedJids: [vic],
+    quotedParticipant: '',
+    sock: null,
+    identityMap: null,
+    msgTimeMs: now,
+  });
+  assert.equal(result.handled, true);
+  assert.match(replyMsg, /Tentativa de crime|Defenda-se|Resolva/);
+  assert.ok(!replyMsg.includes('undefined'));
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('handler: crime sucesso sem defesa na PURGA', async () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
+  const chaosEvent = createChaosEventService({
+    repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.01,
+  });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5652');
+  const vic = uniqueJid('5653');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 200, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 200, reason: 'seed' });
+  const now = Date.now();
+  eventRepo.upsert(scope, {
+    eventType: 'crime_chaos', multiplier: 1,
+    startsAt: now, endsAt: now + 10 * 60_000, lastSpawnAt: now,
+    payload: { label: 'PURGA' },
+  });
+  const cfg = chaosConfig({
+    chaosEventEnabled: true, chaosEventHour: TEST_HOUR,
+    chaosEventNoWeaponSuccess: 1.0, ...NO_DEFENSE,
+  });
+
+  let replyMsg = '';
+  await handleAssaultCommand({
+    userJid: atk,
+    scopeKey: scope,
+    marketService: market,
+    funConfig: cfg,
+    getContactDisplayName: (j) => j.split('@')[0],
+    listContacts: () => [],
+    reply: (m) => { replyMsg = m; },
+    chaosEventService: chaosEvent,
+    args: [`@${vic.split('@')[0]}`, '40'],
+    mentionedJids: [vic],
+    quotedParticipant: '',
+    sock: null,
+    identityMap: null,
+    msgTimeMs: now,
+  });
+  assert.match(replyMsg, /Crime bem-sucedido/);
+  assert.match(replyMsg, /40/);
+  assert.equal(repo.getUserStats(atk, scope).coins, 240);
+  assert.equal(repo.getUserStats(vic, scope).coins, 160);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('integração: ciclo completo start → crimes → warning → end', () => {
+  const { chaosEvent, scope, cfg, now, repo, started } = setupPurga({ durationMs: 3 * 60_000, maxSteal: 50 });
+  assert.equal(started.ok, true);
+  assert.match(chaosEvent.formatStartAnnouncement(started), /PURGA/);
+
+  const players = Array.from({ length: 5 }, () => uniqueJid('5660'));
+  for (const p of players) {
+    repo.addCoins({ userJid: p, scopeKey: scope, amount: 300, reason: 'seed' });
+  }
+  // round-robin crimes
+  for (let i = 0; i < players.length; i++) {
+    const atk = players[i];
+    const vic = players[(i + 1) % players.length];
+    const r = chaosEvent.doCrimeAssault({
+      attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now: now + 1000 + i * 100,
+    });
+    assert.equal(r.ok, true);
+    assert.equal(r.success, true);
+  }
+
+  const warnAt = now + 3 * 60_000 - 90_000;
+  if (chaosEvent.shouldSendWarning(scope, warnAt)) {
+    const w = chaosEvent.formatWarningAnnouncement(chaosEvent.getTimeRemaining(scope, warnAt));
+    assert.match(w, /AVISO|minuto/);
+  }
+
+  const endAt = now + 3 * 60_000 + 1000;
+  assert.equal(chaosEvent.isEventActive(scope, endAt), false);
+  assert.equal(chaosEvent.shouldSendEnd(scope, endAt), true);
+  const endMsg = chaosEvent.formatEndAnnouncement(scope, (j) => j.split('@')[0]);
+  assert.match(endMsg, /FIM DA PURGA/);
+  assert.match(endMsg, /Maiores criminosos/);
+
+  // assalto pós-fim bloqueado
+  const blocked = chaosEvent.doCrimeAssault({
+    attackerJid: players[0], targetJid: players[1], scopeKey: scope, amount: 10, funConfig: cfg, now: endAt,
+  });
+  assert.equal(blocked.reason, 'event-inactive');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: opts clamp — duration mínima 60s, chances e caps', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => null });
+  const scope = uniqueGroup();
+  const cfg = chaosConfig({
+    chaosEventEnabled: true,
+    chaosEventHour: TEST_HOUR,
+    chaosEventDurationMs: 100, // abaixo do mínimo
+    chaosEventNoWeaponSuccess: 0.01, // abaixo
+    chaosEventWeaponBaseChance: 0.99, // acima
+    chaosEventMaxStealAmount: 0,
+  });
+  const now = atHour(TEST_HOUR);
+  const started = chaosEvent.tryStartEvent(scope, cfg, now);
+  assert.equal(started.ok, true);
+  assert.equal(started.durationMs, 60_000, 'duration floor 60s');
+  assert.equal(chaosEvent.isEventActive(scope, now + 59_000).active, true);
+  assert.equal(chaosEvent.isEventActive(scope, now + 61_000), false);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('edge: already-today bloqueia segundo spawn no mesmo dia civil do fuso', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const chaosEvent = createChaosEventService({ repository: repo, eventRepository: eventRepo, getMarketService: () => null });
+  const scope = uniqueGroup();
+  const cfg = chaosConfig({
+    chaosEventEnabled: true,
+    chaosEventHour: TEST_HOUR,
+    chaosEventMinute: 30,
+    chaosEventDurationMs: 60_000,
+  });
+  const dayStart = atHour(TEST_HOUR, 30);
+  assert.equal(chaosEvent.tryStartEvent(scope, cfg, dayStart).ok, true);
+  // após evento: ainda mesmo dia civil → already-today
+  const laterSameDay = dayStart + 5 * 60_000;
+  // force minute window: if outside hour window, wrong-hour; if we force hour window with minute 34:
+  const stillWindow = atHour(TEST_HOUR, 34, { base: dayStart });
+  // endsAt was dayStart+60s, so at stillWindow (4min later) event is dead
+  const r = chaosEvent.tryStartEvent(scope, cfg, stillWindow);
+  assert.equal(r.ok, false);
+  assert.ok(['already-today', 'wrong-hour'].includes(r.reason));
+  // Explicit: same day after window — use force false at exact hour next... actually minute 30 next day only.
+  // Simulate: same calendar day, minute still in window after event ended
+  const r2 = chaosEvent.tryStartEvent(scope, cfg, dayStart + 90_000); // 31:30 same hour window if minute was 30 → 31 is in window
+  // dayStart is HH:30, +90s = HH:31:30 — still in window m..m+5
+  assert.equal(r2.ok, false);
+  assert.equal(r2.reason, 'already-today');
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+// ─── Cooldown 30s · msgTime defesa · concorrência ───────────────────────────
+
+test('cooldown: 30s entre assaltos do mesmo atacante', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({
+    cooldownMs: 30_000, maxSteal: 20,
+  });
+  const atk = uniqueJid('5701');
+  const vic1 = uniqueJid('5702');
+  const vic2 = uniqueJid('5703');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 500, reason: 'seed' });
+  repo.addCoins({ userJid: vic1, scopeKey: scope, amount: 200, reason: 'seed' });
+  repo.addCoins({ userJid: vic2, scopeKey: scope, amount: 200, reason: 'seed' });
+
+  const r1 = chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic1, scopeKey: scope, amount: 20, funConfig: cfg, now: now + 1000,
+  });
+  assert.equal(r1.ok, true);
+  assert.equal(r1.success, true);
+
+  const blocked = chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic2, scopeKey: scope, amount: 20, funConfig: cfg, now: now + 2000,
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, 'cooldown');
+  assert.ok(blocked.remainingMs > 25_000);
+  assert.ok(blocked.remainingMs <= 30_000);
+
+  const afterCd = chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic2, scopeKey: scope, amount: 20, funConfig: cfg, now: now + 1000 + 30_000,
+  });
+  assert.equal(afterCd.ok, true);
+  assert.equal(afterCd.success, true);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('cooldown: atacantes diferentes não compartilham cooldown', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({ cooldownMs: 30_000, maxSteal: 10 });
+  const a1 = uniqueJid('5704');
+  const a2 = uniqueJid('5705');
+  const vic = uniqueJid('5706');
+  for (const u of [a1, a2, vic]) {
+    repo.addCoins({ userJid: u, scopeKey: scope, amount: 300, reason: 'seed' });
+  }
+  assert.equal(chaosEvent.doCrimeAssault({
+    attackerJid: a1, targetJid: vic, scopeKey: scope, amount: 10, funConfig: cfg, now: now + 1000,
+  }).ok, true);
+  // a2 pode assaltar na sequência (sem defesa — vic livre)
+  assert.equal(chaosEvent.doCrimeAssault({
+    attackerJid: a2, targetJid: vic, scopeKey: scope, amount: 10, funConfig: cfg, now: now + 1100,
+  }).ok, true);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('cooldown: default de config é 30s', () => {
+  const cfg = resolveFunConfig({});
+  assert.equal(cfg.chaosEventAssaultCooldownMs, 30_000);
+  assert.equal(cfg.chaosEventDefenseTimeoutMs, 8000);
+  assert.equal(cfg.chaosEventDefenseDeliveryGraceMs, 25_000);
+});
+
+test('defesa: msgTime no prazo vale mesmo com wall-clock atrasado (Baileys lag)', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({
+    defense: true, graceMs: 25_000, cooldownMs: 0,
+  });
+  const atk = uniqueJid('5710');
+  const vic = uniqueJid('5711');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+
+  const t0 = now + 1000;
+  const pending = chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 30, funConfig: cfg, now: t0,
+  });
+  assert.equal(pending.success, 'pending');
+  const ans = pending.challenge.answer;
+  const expiresAt = pending.challenge.expiresAt; // t0 + 4000
+
+  // User digitou a resposta 1s antes do prazo (msgTime)
+  const msgTime = expiresAt - 1000;
+  // Mas Baileys só entregou 15s depois do wall (simulado passando msgTime, não wall)
+  const check = chaosEvent.checkMessageForChallenge(scope, vic, String(ans), msgTime);
+  assert.equal(check.matched, true);
+  assert.equal(check.result.defended, true);
+  assert.equal(repo.getUserStats(vic, scope).coins, 100);
+  assert.equal(repo.getUserStats(atk, scope).coins, 100);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('defesa: msgTime depois do prazo = timeout mesmo se processado cedo', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({
+    defense: true, graceMs: 25_000, cooldownMs: 0,
+  });
+  const atk = uniqueJid('5712');
+  const vic = uniqueJid('5713');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+
+  const t0 = now + 1000;
+  const pending = chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 40, funConfig: cfg, now: t0,
+  });
+  const ans = pending.challenge.answer;
+  // User enviou 1ms depois do expiresAt
+  const lateMsg = pending.challenge.expiresAt + 1;
+  const check = chaosEvent.checkMessageForChallenge(scope, vic, String(ans), lateMsg);
+  assert.equal(check.matched, true);
+  assert.equal(check.result.timedOut, true);
+  assert.equal(check.result.stolen, 40);
+  assert.equal(repo.getUserStats(vic, scope).coins, 60);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('defesa: processExpired respeita grace — não rouba no soft-timeout', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({
+    defense: true, graceMs: 20_000, cooldownMs: 0,
+  });
+  const atk = uniqueJid('5714');
+  const vic = uniqueJid('5715');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+
+  const t0 = now + 1000;
+  const pending = chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 25, funConfig: cfg, now: t0,
+  });
+  // Soft-expired (4s) mas dentro do grace (20s)
+  const softExpired = pending.challenge.expiresAt + 1000;
+  const early = chaosEvent.processExpiredChallenges(scope, softExpired);
+  assert.equal(early.length, 0, 'grace ainda ativo — não liquida');
+  assert.equal(repo.getUserStats(vic, scope).coins, 100);
+
+  // Ainda dá para defender com msgTime no prazo
+  const ok = chaosEvent.checkMessageForChallenge(
+    scope, vic, String(pending.challenge.answer), pending.challenge.expiresAt - 50
+  );
+  assert.equal(ok.matched, true);
+  assert.equal(ok.result.defended, true);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('defesa: processExpired liquida só após hardExpiresAt', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({
+    defense: true, graceMs: 10_000, cooldownMs: 0,
+  });
+  const atk = uniqueJid('5716');
+  const vic = uniqueJid('5717');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+
+  const t0 = now + 1000;
+  const pending = chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 35, funConfig: cfg, now: t0,
+  });
+  const hard = pending.challenge.hardExpiresAt;
+  assert.ok(hard > pending.challenge.expiresAt);
+
+  assert.equal(chaosEvent.processExpiredChallenges(scope, hard).length, 0);
+  const done = chaosEvent.processExpiredChallenges(scope, hard + 1);
+  assert.equal(done.length, 1);
+  assert.equal(done[0].stolen, 35);
+  assert.equal(repo.getUserStats(vic, scope).coins, 65);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('concorrência: 20 assaltos no mesmo alvo sem defesa — saldo nunca negativo além do maxDebt', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({
+    maxDebt: 50, maxSteal: 40, cooldownMs: 0,
+  });
+  const vic = uniqueJid('5720');
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 100, reason: 'seed' });
+
+  let totalStolen = 0;
+  for (let i = 0; i < 20; i++) {
+    const atk = uniqueJid('5721');
+    repo.addCoins({ userJid: atk, scopeKey: scope, amount: 50, reason: 'seed' });
+    const r = chaosEvent.doCrimeAssault({
+      attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 40, funConfig: cfg, now: now + 1000 + i,
+    });
+    assert.equal(r.ok, true);
+    if (r.success) totalStolen += r.stolen;
+  }
+  const vicCoins = repo.getUserStats(vic, scope).coins;
+  assert.ok(vicCoins >= -50, `vítima em ${vicCoins}, maxDebt=50`);
+  // totalStolen não pode inventar coins além de wallet inicial + maxDebt
+  assert.ok(totalStolen <= 100 + 50, `stolen ${totalStolen} > cap 150`);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('concorrência: 40 challenges paralelos — defendidos sem throw e sem double-steal', () => {
+  const { chaosEvent, scope, cfg, now, repo } = setupPurga({
+    defense: true, graceMs: 0, cooldownMs: 0, maxSteal: 15,
+  });
+  const pairs = [];
+  for (let i = 0; i < 40; i++) {
+    const atk = uniqueJid('5730');
+    const vic = uniqueJid('5731');
+    repo.addCoins({ userJid: atk, scopeKey: scope, amount: 200, reason: 'seed' });
+    repo.addCoins({ userJid: vic, scopeKey: scope, amount: 80, reason: 'seed' });
+    const p = chaosEvent.doCrimeAssault({
+      attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 15, funConfig: cfg, now: now + 1000 + i,
+    });
+    assert.equal(p.ok, true, `assault ${i}: ${p.reason}`);
+    assert.equal(p.success, 'pending');
+    pairs.push({ atk, vic, answer: p.challenge.answer });
+  }
+
+  // Metade defende com msgTime no prazo
+  for (let i = 0; i < 20; i++) {
+    const p = pairs[i];
+    const r = chaosEvent.checkMessageForChallenge(scope, p.vic, String(p.answer), now + 2000 + i);
+    assert.equal(r.matched, true);
+    assert.equal(r.result.defended, true);
+    assert.equal(repo.getUserStats(p.vic, scope).coins, 80);
+    // segunda tentativa no mesmo desafio
+    const again = chaosEvent.checkMessageForChallenge(scope, p.vic, String(p.answer), now + 2100 + i);
+    assert.equal(again.matched, false);
+  }
+
+  // Outra metade: timeout via processExpired
+  const expired = chaosEvent.processExpiredChallenges(scope, now + 1000 + 40 + 4000 + 1);
+  assert.equal(expired.length, 20);
+  for (const e of expired) {
+    assert.equal(e.stolen, 15);
+  }
+  // Double processExpired vazio
+  assert.equal(chaosEvent.processExpiredChallenges(scope, now + 20_000).length, 0);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('concorrência: doCrimeAssault nunca lança com inputs lixo', () => {
+  const { chaosEvent, scope, cfg, now } = setupPurga();
+  const junk = [
+    { attackerJid: null, targetJid: uniqueJid('5740'), amount: 10 },
+    { attackerJid: uniqueJid('5741'), targetJid: null, amount: 10 },
+    { attackerJid: 'x', targetJid: 'x', amount: Infinity },
+    { attackerJid: uniqueJid('5742'), targetJid: uniqueJid('5743'), amount: -1e20 },
+  ];
+  for (const j of junk) {
+    const r = chaosEvent.doCrimeAssault({
+      ...j, scopeKey: scope, funConfig: cfg, now: now + 1,
+    });
+    assert.equal(typeof r.ok, 'boolean');
+  }
+  // resolve/check também seguros
+  assert.equal(chaosEvent.resolveChallenge({ scopeKey: scope, targetJid: 'nope', answer: 1 }).ok, false);
+  assert.equal(chaosEvent.checkMessageForChallenge(scope, 'nope', '1', now).matched, false);
+  assert.deepEqual(chaosEvent.processExpiredChallenges('no-scope', now), []);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('handler: cooldown exibe segundos amigáveis', async () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({ repository: repo, marketRepository: marketRepo, random: () => 0.5 });
+  const chaosEvent = createChaosEventService({
+    repository: repo, eventRepository: eventRepo, getMarketService: () => market, random: () => 0.01,
+  });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5750');
+  const vic = uniqueJid('5751');
+  const now = Date.now();
+  eventRepo.upsert(scope, {
+    eventType: 'crime_chaos', multiplier: 1,
+    startsAt: now, endsAt: now + 10 * 60_000, lastSpawnAt: now,
+    payload: { label: 'PURGA' },
+  });
+  const cfg = chaosConfig({
+    chaosEventEnabled: true, chaosEventHour: TEST_HOUR,
+    chaosEventNoWeaponSuccess: 1.0, chaosEventAssaultCooldownMs: 30_000, ...NO_DEFENSE,
+  });
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 200, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 200, reason: 'seed' });
+
+  // Primeiro assalto via service (marca cooldown)
+  chaosEvent.doCrimeAssault({
+    attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 10, funConfig: cfg, now,
+  });
+
+  let replyMsg = '';
+  await handleAssaultCommand({
+    userJid: atk,
+    scopeKey: scope,
+    marketService: market,
+    funConfig: cfg,
+    getContactDisplayName: (j) => j.split('@')[0],
+    listContacts: () => [],
+    reply: (m) => { replyMsg = m; },
+    chaosEventService: chaosEvent,
+    args: [`@${vic.split('@')[0]}`, '10'],
+    mentionedJids: [vic],
+    quotedParticipant: '',
+    sock: null,
+    identityMap: null,
+    msgTimeMs: now + 1000,
+  });
+  assert.match(replyMsg, /Aguarde/);
+  assert.match(replyMsg, /\d+s/);
+  assert.ok(!replyMsg.includes('cooldown'));
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('handler: target-busy mensagem amigável', async () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const chaosEvent = {
+    isEventActive: () => ({ active: true }),
+    doCrimeAssault: () => ({ ok: false, reason: 'target-busy', remainingMs: 3000 }),
+  };
+  let replyMsg = '';
+  await handleAssaultCommand({
+    userJid: uniqueJid('5752'),
+    scopeKey: uniqueGroup(),
+    marketService: null,
+    funConfig: chaosConfig({}),
+    getContactDisplayName: (j) => j.split('@')[0],
+    listContacts: () => [],
+    reply: (m) => { replyMsg = m; },
+    chaosEventService: chaosEvent,
+    args: ['@alvo', '50'],
+    mentionedJids: [uniqueJid('5753')],
+    quotedParticipant: '',
+    sock: null,
+    identityMap: null,
+    msgTimeMs: Date.now(),
+  });
+  assert.match(replyMsg, /defendendo|conta/i);
+  assert.ok(!replyMsg.includes('target-busy'));
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('anúncio: menciona cooldown e segundos de defesa configurados', () => {
+  const { chaosEvent, started, cfg } = setupPurga({
+    defense: true, cooldownMs: 30_000, graceMs: 0,
+  });
+  // force defense timeout 8s no cfg
+  const cfg8 = { ...cfg, chaosEventDefenseTimeoutMs: 8000, chaosEventAssaultCooldownMs: 30_000 };
+  const msg = chaosEvent.formatStartAnnouncement(started, cfg8);
+  assert.match(msg, /8s/);
+  assert.match(msg, /30s/);
+  assert.match(msg, /Cooldown/);
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });

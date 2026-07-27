@@ -862,6 +862,16 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.chaosEventDefenseTimeoutMs,
       { min: 1000, max: 30_000, rounding: 'floor', clamp: true }
     ),
+    chaosEventDefenseDeliveryGraceMs: normalizeInt(
+      raw.chaosEventDefenseDeliveryGraceMs,
+      DEFAULT_FUN_CONFIG.chaosEventDefenseDeliveryGraceMs,
+      { min: 0, max: 120_000, rounding: 'floor', clamp: true }
+    ),
+    chaosEventAssaultCooldownMs: normalizeInt(
+      raw.chaosEventAssaultCooldownMs,
+      DEFAULT_FUN_CONFIG.chaosEventAssaultCooldownMs,
+      { min: 0, max: 10 * 60_000, rounding: 'floor', clamp: true }
+    ),
     chaosEventActivityWindowMs: normalizeInt(
       raw.chaosEventActivityWindowMs,
       DEFAULT_FUN_CONFIG.chaosEventActivityWindowMs,

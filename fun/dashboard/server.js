@@ -404,7 +404,7 @@ export function startFunDashboardServer(deps = {}) {
         }
         
         // Disparar anúncio de início (opcionalmente) se houver sendText / WhatsApp conectado
-        const msg = funModule._services.chaosEventService.formatStartAnnouncement(started);
+        const msg = funModule._services.chaosEventService.formatStartAnnouncement(started, cfg);
         if (msg && getSock?.()) {
           try {
              await sendText(getSock(), scope, msg);
