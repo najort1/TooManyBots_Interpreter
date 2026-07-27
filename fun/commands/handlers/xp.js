@@ -1,6 +1,7 @@
 import {
   formatXpProfile,
   formatProfileIdentityMessage,
+  formatPoliceProfileLines,
 } from '../../formatters/rankCard.js';
 import {
   renderProfileCardPng,
@@ -61,6 +62,7 @@ export async function handleXpCommand({
   factionService,
   jobService,
   profileService,
+  marketService = null,
   cardService = null,
   getContactDisplayName,
   listContacts,
@@ -346,6 +348,56 @@ export async function handleXpCommand({
     favoriteCard = null;
   }
 
+  // Ficha policial (Wanted / Heat / imunidade) — mesmo scope do grupo
+  let police = null;
+  try {
+    const now = Date.now();
+    const heat =
+      typeof marketService?.getAssaultHeat === 'function'
+        ? marketService.getAssaultHeat(targetJid, scopeKey, now)
+        : 0;
+    const wantedPoints =
+      typeof marketService?.getWantedPoints === 'function'
+        ? marketService.getWantedPoints(targetJid, scopeKey, now)
+        : 0;
+    const wantedLevel =
+      typeof marketService?.getWantedLevel === 'function'
+        ? marketService.getWantedLevel(targetJid, scopeKey, now)
+        : 0;
+    let suspicion = 0;
+    let immune = false;
+    let immunityUsesLeft = 0;
+    let immunityExpiresAt = 0;
+    if (typeof marketService?.evaluatePolice === 'function') {
+      const ev = marketService.evaluatePolice({
+        userJid: targetJid,
+        scopeKey,
+        heat,
+        now,
+      });
+      suspicion = Number(ev?.suspicion) || 0;
+      immune = Boolean(ev?.immune);
+      immunityUsesLeft = Number(ev?.immunity?.remainingUses) || 0;
+      immunityExpiresAt = Number(ev?.immunity?.expiresAt) || 0;
+    } else if (typeof marketService?.getPoliceImmunity === 'function') {
+      const imm = marketService.getPoliceImmunity(targetJid, scopeKey, now);
+      immune = Boolean(imm?.active);
+      immunityUsesLeft = Number(imm?.remainingUses) || 0;
+      immunityExpiresAt = Number(imm?.expiresAt) || 0;
+    }
+    police = {
+      heat,
+      wantedPoints,
+      wantedLevel,
+      suspicion,
+      immune,
+      immunityUsesLeft,
+      immunityExpiresAt,
+    };
+  } catch {
+    police = null;
+  }
+
   const plainName = displayNameOnly(getContactDisplayName, targetJid);
   const profileOpts = {
     displayName: name,
@@ -367,6 +419,7 @@ export async function handleXpCommand({
     employment,
     customProfile,
     favoriteCard,
+    police,
   };
 
   if (funConfig.rankCardImage !== false && typeof replyImage === 'function') {
@@ -390,20 +443,31 @@ export async function handleXpCommand({
         isSelf,
         customProfile,
         favoriteCard,
+        police,
       });
       await replyImage(png, isSelf ? '📊 Seu perfil' : '📊 Perfil');
       // Foto trunca bio/extras — manda identidade completa em texto
-      await reply(
-        formatProfileIdentityMessage({
-          customProfile,
-          isSelf,
-          displayName: name,
-          userJid: targetJid,
-          partnerName,
-          factionLabel,
-          favoriteCard,
-        })
-      );
+      // + ficha policial (Wanted/Heat) que não cabe no card sozinho
+      const identityMsg = formatProfileIdentityMessage({
+        customProfile,
+        isSelf,
+        displayName: name,
+        userJid: targetJid,
+        partnerName,
+        factionLabel,
+        favoriteCard,
+      });
+      const policeLines = formatPoliceProfileLines(police);
+      const showPolice =
+        policeLines.length > 0 &&
+        (isSelf ||
+          (Number(police?.wantedLevel) || 0) > 0 ||
+          (Number(police?.heat) || 0) > 0 ||
+          Boolean(police?.immune));
+      const policeBlock = showPolice
+        ? ['', '*Polícia / ficha*', ...policeLines].join('\n')
+        : '';
+      await reply([identityMsg, policeBlock].filter(Boolean).join('\n'));
       // Carta favorita em imagem dedicada (Skia + arte original)
       if (favoriteCard) {
         try {

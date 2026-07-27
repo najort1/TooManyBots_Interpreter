@@ -145,6 +145,44 @@ export function formatProfileIdentityMessage({
  * @param {number} [opts.coinsTotal]
  * @param {number} [opts.messagesTotal]
  */
+/**
+ * Linha legível de Wanted (0–5) + Heat + imunidade.
+ * @param {{ wantedLevel?: number, wantedPoints?: number, heat?: number, suspicion?: number, immune?: boolean, immunityUsesLeft?: number, immunityExpiresAt?: number }} police
+ */
+export function formatPoliceProfileLines(police = null, { now = Date.now() } = {}) {
+  if (!police) return [];
+  const wantedLevel = Math.min(5, Math.max(0, Math.floor(Number(police.wantedLevel) || 0)));
+  const heat = Math.max(0, Math.floor(Number(police.heat) || 0));
+  const points = Math.max(0, Math.floor(Number(police.wantedPoints) || 0));
+  const suspicion = Number(police.suspicion);
+  const immune = Boolean(police.immune);
+  const usesLeft = Math.max(0, Math.floor(Number(police.immunityUsesLeft) || 0));
+  const expiresAt = Number(police.immunityExpiresAt) || 0;
+
+  const stars =
+    wantedLevel > 0 ? '⭐'.repeat(wantedLevel) : 'limpo';
+  const lines = [
+    `• Wanted: *${stars}*${wantedLevel > 0 ? ` (nv ${wantedLevel}` : ''}${
+      wantedLevel > 0 && points > 0 ? ` · ${points} pts)` : wantedLevel > 0 ? ')' : ''
+    }`,
+    `• Heat: *${heat}*${
+      Number.isFinite(suspicion) && suspicion > 0
+        ? ` · suspeita ~*${Math.round(suspicion * 100)}%*`
+        : ''
+    }`,
+  ];
+  if (immune) {
+    const left =
+      expiresAt > now ? formatMsRemaining(expiresAt - now) : null;
+    lines.push(
+      `• 🕶️ Imunidade ativa${usesLeft > 0 ? ` · *${usesLeft}* usos` : ''}${
+        left ? ` · ~${left}` : ''
+      }`
+    );
+  }
+  return lines;
+}
+
 export function formatXpProfile({
   displayName: name,
   userJid,
@@ -164,6 +202,8 @@ export function formatXpProfile({
   employment = null,
   customProfile = null,
   favoriteCard = null,
+  /** @type {{ wantedLevel?: number, wantedPoints?: number, heat?: number, suspicion?: number, immune?: boolean, immunityUsesLeft?: number, immunityExpiresAt?: number }|null} */
+  police = null,
 }) {
   const xp = Number(stats?.xp) || 0;
   const progress = progressInLevel(xp);
@@ -229,6 +269,18 @@ export function formatXpProfile({
     );
   }
 
+  // Wanted / Heat — sempre no próprio perfil; em outros só se houver ficha
+  const policeLines = formatPoliceProfileLines(police);
+  const showPolice =
+    policeLines.length > 0 &&
+    (isSelf ||
+      (Number(police?.wantedLevel) || 0) > 0 ||
+      (Number(police?.heat) || 0) > 0 ||
+      Boolean(police?.immune));
+  if (showPolice) {
+    lines.push('', '*Polícia / ficha*', ...policeLines);
+  }
+
   const identity = buildIdentityLines(customProfile, { emptyHint: isSelf });
   if (identity.length) {
     lines.push('', '*Identidade*', ...identity);
@@ -255,11 +307,16 @@ export function formatXpProfile({
       if (key === 'daily_double') return '🎁 daily 2x';
       if (key === 'flip_lucky') return '🔮 amuleto flip';
       if (key === 'bet_shield') return '🛡️ escudo aposta';
+      if (key === 'police_immunity') return '🕶️ imunidade policial';
       if (key === 'title') return '🏷️ título';
       return key;
     };
     const bits = activeBuffs.map((e) => {
       const lab = labelEffect(e.effectKey);
+      if (e.expiresAt > 0 && e.charges > 0 && e.payload?.useCharges) {
+        const left = formatMsRemaining(e.expiresAt - Date.now());
+        return `${lab} (${left} · ${e.charges} usos)`;
+      }
       if (e.expiresAt > 0) {
         const left = formatMsRemaining(e.expiresAt - Date.now());
         return `${lab} (${left})`;

@@ -995,6 +995,8 @@ export function renderProfileCardPng({
   isSelf = true,
   customProfile = null,
   favoriteCard = null,
+  /** @type {{ wantedLevel?: number, heat?: number, immune?: boolean }|null} */
+  police = null,
   nowMs = Date.now(),
 } = {}) {
   const t = resolveCardTheme('profile', nowMs);
@@ -1091,6 +1093,21 @@ export function renderProfileCardPng({
       label: `${sign}${fmtNum(profit)} coins`,
       color: profit >= 0 ? t.success : t.danger,
     });
+  }
+  // Wanted / Heat — chip compacto na ficha
+  {
+    const w = Math.min(5, Math.max(0, Math.floor(Number(police?.wantedLevel) || 0)));
+    const h = Math.max(0, Math.floor(Number(police?.heat) || 0));
+    const imm = Boolean(police?.immune);
+    if (w > 0 || h > 0 || imm || isSelf) {
+      const stars = w > 0 ? '★'.repeat(w) : 'limpo';
+      chips.push({
+        icon: 'flag',
+        sub: imm ? '🕶️ Imune · Polícia' : 'Polícia',
+        label: `Wanted ${stars} · Heat ${h}`,
+        color: w >= 4 ? t.danger : w >= 2 ? t.accent2 || t.accent : t.muted,
+      });
+    }
   }
   const chipRows = Math.ceil(chips.length / 2);
 
