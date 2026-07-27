@@ -6,6 +6,7 @@ import { parseAmountFromArgs, resolveUserTarget } from '../../utils/mentions.js'
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
 import { fmt } from '../../messages/index.js';
+import { tierLabel } from '../../shop/cards.js';
 
 function arrow(trend) {
   if (trend === 'up') return '↑';
@@ -130,11 +131,12 @@ export async function handleBazaarCommand({
   userJid,
   scopeKey,
   marketService,
+  cardService = null,
   getContactDisplayName,
   reply,
   args = [],
 }) {
-  if (!marketService) {
+  if (!marketService && !cardService) {
     await reply('Bazar indisponível.');
     return { handled: true };
   }
@@ -142,6 +144,52 @@ export async function handleBazaarCommand({
   const sub = String(args[0] || '').trim().toLowerCase();
   if (sub === 'comprar' || sub === 'buy') {
     const listingId = String(args[1] || '').trim();
+    if (!listingId) {
+      await reply('Uso: `/bazar comprar <id>`');
+      return { handled: true };
+    }
+
+    // tenta carta primeiro (anúncios de fun_card_listings)
+    if (cardService) {
+      const cardListings = cardService.listOpenCardListings(scopeKey);
+      const cardHit =
+        cardListings.find((l) => l.id === listingId) ||
+        cardListings.find((l) => l.id.startsWith(listingId));
+      if (cardHit) {
+        const result = cardService.buyFromBazaar({
+          userJid,
+          scopeKey,
+          listingId: cardHit.id,
+        });
+        if (!result.ok) {
+          if (result.reason === 'insufficient-funds') {
+            await reply(
+              fmt.insufficientBalance({ required: result.price, current: result.coins })
+            );
+            return { handled: true };
+          }
+          if (result.reason === 'self-buy') {
+            await reply('Não compra o próprio anúncio. `/cartas cancelar <id>`');
+            return { handled: true };
+          }
+          await reply('Compra da carta falhou.');
+          return { handled: true };
+        }
+        await reply(
+          [
+            '🛍️ *Carta comprada no bazar*',
+            `🃏 *${result.card?.displayName || result.card?.cardName}* ${tierLabel(result.card?.tier)} · *${result.price}*c`,
+            `de ${nameOf(getContactDisplayName, result.sellerJid)} · saldo *${result.coins}*`,
+          ].join('\n')
+        );
+        return { handled: true, result };
+      }
+    }
+
+    if (!marketService) {
+      await reply('Anúncio não encontrado.');
+      return { handled: true };
+    }
     const open = marketService.listOpenListings(scopeKey);
     const listing =
       open.find((l) => l.id === listingId) ||
@@ -177,13 +225,16 @@ export async function handleBazaarCommand({
     return { handled: true, result };
   }
 
-  const listings = marketService.listOpenListings(scopeKey);
-  if (!listings.length) {
+  const itemListings = marketService?.listOpenListings?.(scopeKey) || [];
+  const cardListings = cardService?.listOpenCardListings?.(scopeKey) || [];
+
+  if (!itemListings.length && !cardListings.length) {
     await reply(
       [
         '🏪 *Bazar de jogadores*',
         'Nada à venda.',
-        'Liste: `/vender <id> <preço>` (ids em `/inventario`)',
+        'Itens: `/vender <id> <preço>` (ids em `/inventario`)',
+        'Cartas: `/cartas vender <id> <preço>`',
         '_Aqui o dono da gasolina dita o preço pra quem tem carro sem combustível._',
       ].join('\n')
     );
@@ -195,7 +246,7 @@ export async function handleBazaarCommand({
     '_Não é a /loja de buffs nem o estoque do bot._',
     '',
   ];
-  for (const l of listings) {
+  for (const l of itemListings) {
     const col = marketService.getCollectible(l.itemId);
     lines.push(
       `${col?.emoji || '▪️'} *${col?.name || l.itemId}* — *${l.price}*c`,
@@ -203,6 +254,18 @@ export async function handleBazaarCommand({
       `   \`/bazar comprar ${l.id.slice(0, 8)}\``,
       ''
     );
+  }
+  if (cardListings.length) {
+    lines.push('*Cartas*');
+    for (const l of cardListings) {
+      const c = l.card;
+      lines.push(
+        `🃏 *${c?.displayName || c?.cardName || 'Carta'}* ${tierLabel(c?.tier)} — *${l.price}*c`,
+        `   ${nameOf(getContactDisplayName, l.sellerJid)} · \`${l.id.slice(0, 8)}\``,
+        `   \`/bazar comprar ${l.id.slice(0, 8)}\``,
+        ''
+      );
+    }
   }
   await reply(lines.join('\n'));
   return { handled: true };
