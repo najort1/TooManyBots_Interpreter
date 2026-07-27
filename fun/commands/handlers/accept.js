@@ -2,6 +2,7 @@ import { ACTION_TYPE } from '../../constants.js';
 import { nameOf } from '../../utils/userLabel.js';
 import { flavorWithLore } from '../../utils/flavorLore.js';
 import { fmt } from '../../messages/index.js';
+import { tierLabel } from '../../shop/cards.js';
 
 async function flavorItalic(flavorService, scenario, vars) {
   if (!flavorService?.italicLine) return null;
@@ -18,6 +19,7 @@ export async function handleAcceptCommand({
   relationshipService,
   gameService,
   casinoService,
+  cardService = null,
   getContactDisplayName,
   reply,
   socialHooks,
@@ -185,6 +187,22 @@ export async function handleAcceptCommand({
     return { handled: true, result };
   }
 
+  if (pending.actionType === ACTION_TYPE.CARD_TRADE) {
+    const p = funConfig?.prefix || '/';
+    const offerName = pending.payload?.offerCardName || 'carta';
+    const offerTier = pending.payload?.offerTier;
+    await reply(
+      [
+        '🔄 *Troca de cartas*',
+        `*${nameOf(getContactDisplayName, pending.fromJid)}* oferece *${offerName}*${offerTier ? ` ${tierLabel(offerTier)}` : ''}.`,
+        `Pra aceitar, envie uma carta sua:`,
+        `\`${p}cartas trocar <seu id>\``,
+        `_Ids em \`${p}cartas\`_`,
+      ].join('\n')
+    );
+    return { handled: true };
+  }
+
   await reply('Não entendi o pedido pendente. Tente de novo.');
   return { handled: true };
 }
@@ -195,6 +213,7 @@ export async function handleDeclineCommand({
   relationshipService,
   gameService,
   casinoService,
+  cardService = null,
   getContactDisplayName,
   reply,
 }) {
@@ -238,6 +257,18 @@ export async function handleDeclineCommand({
     }
     await reply(
       `🎲 *${nameOf(getContactDisplayName, result.toJid)}* recusou o desafio de *${result.amount}* coins de *${nameOf(getContactDisplayName, result.fromJid)}*.`
+    );
+    return { handled: true, result };
+  }
+
+  if (pending.actionType === ACTION_TYPE.CARD_TRADE) {
+    const result = cardService?.declineTrade?.({ userJid, scopeKey }) || { ok: false };
+    if (!result.ok) {
+      await reply('Troca expirada ou inválida.');
+      return { handled: true };
+    }
+    await reply(
+      `🔄 *${nameOf(getContactDisplayName, result.toJid)}* recusou a troca de *${nameOf(getContactDisplayName, result.fromJid)}*${result.cardName ? ` (*${result.cardName}*)` : ''}.`
     );
     return { handled: true, result };
   }
