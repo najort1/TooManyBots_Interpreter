@@ -1675,7 +1675,7 @@ export function createMarketService({
     return lines.join('\n');
   }
 
-  function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
+function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     ensureMarket(scopeKey, funConfig);
     const level =
       (userJid && repository.getUserStats(userJid, scopeKey)?.level) || 5;
@@ -1688,23 +1688,20 @@ export function createMarketService({
       '',
       '*Modos:*',
       `• \`/assaltar banco\` — *melhor grana* (${o.heistBankMin}–${o.heistBankMax}c)`,
-      `  🔧 Kit lockpick obrigatório (${pickStatus} — \`/adquirir lockpick\` \`/mercado\`)`,
+      `  🔧 Lockpick: ${pickStatus} — \`/adquirir lockpick\``,
       `• \`/assaltar lojinha\` — mais fácil (${o.heistShopMin}–${o.heistShopMax}c)`,
       '• `/assaltar @pessoa` — for fun entre players',
       '',
-      'Precisa de *arma*. Pistola/rifle gastam *municao*. Carro/moto + *gasolina* ajudam.',
-      `Reposição de estoque da loja: a cada *7 dias* (próxima em ~${formatRestockEta(Math.max(0, restock.nextAt - Date.now()))}).`,
+      'Precisa de *arma*. Pistola/rifle gastam *municao*.',
+      `Reposição: a cada *7 dias* (próx. ${formatRestockEta(Math.max(0, restock.nextAt - Date.now()))}).`,
       '',
-      '⚠️ *Nerfs anti-farm:*',
-      '• Multa progressiva: 5% do saldo (piso 10 · teto 200)',
-      '• Janela 2h: 3º+ assalto reduz chance −10% e prêmio −20%; 5º+ −20% e −40%',
-      '• Heat (curto prazo): +1 por sucesso · decai com o tempo · −3% chance por nível',
-      '• Wanted (reputação): sobe devagar com crimes · polícia fica mais agressiva (⭐1–⭐5)',
-      '• Suspicion: Heat + histórico + riqueza criminal + eventos policiais',
-      '• Decaimento 24h: 4º+ assalto no dia paga 70%; 7º+ paga 50%; 11º+ paga 35%',
-      '• 🕶️ *Crime Immunity Pass* (`/loja`): 3 dias ou 20 crimes sem bloqueio policial (Wanted ainda sobe)',
+      '⚠️ *Riscos:* multa progressiva, heat, wanted, suspeita policial.',
+      '🕶️ *Crime Immunity Pass* na `/loja`: bloqueia polícia por 3 dias/20 crimes.',
       '',
+      '📐 *Tabela de EV* (lucro médio por tentativa)',
       formatEvTable(scopeKey, funConfig, level),
+      '',
+      'Detalhes completos: `/ajuda economia`',
     ];
     return lines.join('\n');
   }

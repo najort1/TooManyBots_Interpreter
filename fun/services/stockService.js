@@ -844,7 +844,7 @@ export function createStockService({
 
     if (!port.positions.length) {
       lines.push(
-        'Vazio. O corretor do esquina te espera.',
+        'Vazio. Compre suas primeiras ações no Beco.',
         '`/bolsa` — cotações · `/bolsa comprar burgerzap 2`'
       );
       return lines.join('\n');
@@ -876,7 +876,7 @@ export function createStockService({
         case 'disabled':
           return 'Bolsa fechada no beco agora.';
         case 'unknown-ticker':
-          return `Não achei essa ação. Use \`/bolsa\` — ex.: bombatech, pato, uno.`;
+          return `Não encontrei essa ação. Use \`/bolsa\` para ver as disponíveis.`;
         case 'min-qty':
           return `Mínimo *${result.minQty}* ação(ões).`;
         case 'cooldown':
@@ -886,11 +886,11 @@ export function createStockService({
         case 'max-position':
           return `Carteira lotada no beco. Teto *${result.maxPosition}c* em ações.`;
         case 'insufficient-funds':
-          return `Faltam coins. Precisa *${result.cost}c* (tem *${result.coins}c*).`;
+          return `Faltam coins. Precisa *${result.cost}c* (saldo *${result.coins}c*).`;
         case 'insufficient-shares':
-          return `Você só tem *${result.holding}* ação(ões).`;
+          return `Você só tem *${result.holding}* ação(ões) dessa.`;
         default:
-          return 'Não rolou a ordem. Tenta de novo.';
+          return 'Algo deu errado na ordem. Tente de novo.';
       }
     }
     const c = result.company;

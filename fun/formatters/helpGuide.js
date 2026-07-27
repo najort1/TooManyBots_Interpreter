@@ -211,22 +211,30 @@ function topicMundo(p) {
   ].join('\n');
 }
 
-function topicSocial(p) {
+function topicSocial(p, nsfwPermitted) {
+  const nsfwLine = nsfwPermitted
+    ? [
+        '*NSFW*',
+        `\`${p}anal\` · \`${p}blowjob\` · \`${p}cum\` · \`${p}fuck\` · \`${p}neko\``,
+        `\`${p}pussylick\` · \`${p}solo\` · \`${p}solo_male\` · \`${p}yaoi\` · \`${p}yuri\``,
+      ]
+    : [
+        '*NSFW* (apenas grupos que ativaram)',
+        `Vote com \`${p}nsfw_enable\` para liberar.`,
+      ];
   return [
     '💛 *Social*',
     '',
     `\`${p}marry @user\` → \`${p}aceitar\` / \`${p}recusar\``,
     `\`${p}divorce\` · \`${p}ship @a @b\``,
     '',
-    '*Reações SFW*',
+    '*NSFW reações*',
     `\`${p}kiss\` · \`${p}hug\` · \`${p}pat\` · \`${p}slap\` · \`${p}cuddle\``,
     `\`${p}bite\` · \`${p}lick\` · \`${p}poke\` · \`${p}handhold\` · \`${p}nom\``,
     `\`${p}highfive\` · \`${p}wave\``,
     '*Memes*',
     `\`${p}happy\` · \`${p}cry\` · \`${p}laugh\` · \`${p}bruh\` · \`${p}sus\``,
-    '*NSFW*',
-    `\`${p}anal\` · \`${p}blowjob\` · \`${p}cum\` · \`${p}fuck\` · \`${p}neko\``,
-    `\`${p}pussylick\` · \`${p}solo\` · \`${p}solo_male\` · \`${p}yaoi\` · \`${p}yuri\``,
+    ...nsfwLine,
     '',
     `_Voltar: \`${p}ajuda\`_`,
   ].join('\n');
@@ -330,7 +338,7 @@ const RENDERERS = Object.freeze({
   basico: topicBasico,
   economia: topicEconomia,
   mundo: topicMundo,
-  social: topicSocial,
+  social: (p) => topicSocial(p, false),
   emprego: topicEmprego,
   jogos: topicJogos,
   cassino: topicCassino,
@@ -340,11 +348,18 @@ const RENDERERS = Object.freeze({
   privado: topicPrivado,
 });
 
+function renderTopic(id, p, nsfwPermitted) {
+  if (id === 'social') return topicSocial(p, nsfwPermitted);
+  const fn = RENDERERS[id];
+  return fn ? fn(p) : null;
+}
+
 /**
  * @param {string} [prefix='/']
  * @param {string} [topicToken] — opcional; vazio = índice
+ * @param {boolean} [nsfwPermitted=false] — se o grupo liberou NSFW
  */
-export function formatHelp(prefix = '/', topicToken = '') {
+export function formatHelp(prefix = '/', topicToken = '', nsfwPermitted = false) {
   const p = pfx(prefix);
   const raw = String(topicToken || '').trim();
   if (!raw) return formatIndex(p);
@@ -357,7 +372,7 @@ export function formatHelp(prefix = '/', topicToken = '') {
       formatIndex(p),
     ].join('\n');
   }
-  return RENDERERS[id](p);
+  return renderTopic(id, p, nsfwPermitted);
 }
 
 /** Índice + lista de ids (testes / debug) */

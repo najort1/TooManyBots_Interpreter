@@ -6,6 +6,7 @@ import {
   renderBolsaBoardPng,
   renderCarteiraCardPng,
 } from '../../formatters/rankCardImage.js';
+import { fmt } from '../../messages/index.js';
 
 /** Caption de imagem no WhatsApp (limite prático). */
 const WA_CAPTION_MAX = 1024;
@@ -145,6 +146,13 @@ export async function handleBolsaCommand({
       qty,
       funConfig,
     });
+    if (!result.ok) {
+      const r = result;
+      if (r.reason === 'insufficient-funds') {
+        await reply(fmt.insufficientBalance({ required: r.cost, current: r.coins }));
+        return { handled: true };
+      }
+    }
     await reply(stockService.formatTradeResult(result));
     if (result?.ok) {
       try {
@@ -174,6 +182,13 @@ export async function handleBolsaCommand({
       qty,
       funConfig,
     });
+    if (!result.ok) {
+      const r = result;
+      if (r.reason === 'insufficient-funds') {
+        await reply(fmt.insufficientBalance({ required: r.cost, current: r.coins }));
+        return { handled: true };
+      }
+    }
     await reply(stockService.formatTradeResult(result));
     return { handled: true };
   }

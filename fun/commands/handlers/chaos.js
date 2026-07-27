@@ -6,6 +6,7 @@
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf } from '../../utils/userLabel.js';
+import { fmt } from '../../messages/index.js';
 
 /**
  * Cascata IA (Zen→Ollama→template). Prefer chaosLine; senão line; senão template local.
@@ -84,11 +85,11 @@ export async function handleRussianCommand({
   profileService,
 }) {
   if (!isGroup) {
-    await reply('Roleta russa só no *grupo*. Lá o mico é coletivo.');
+    await reply('Roleta russa funciona apenas em *grupo*.');
     return { handled: true };
   }
   if (!chaosService) {
-    await reply('Roleta russa offline.');
+    await reply(fmt.notAvailable({ command: 'roletarussa' }));
     return { handled: true };
   }
 
@@ -104,7 +105,7 @@ export async function handleRussianCommand({
       );
       return { handled: true };
     }
-    await reply('Não deu pra girar o tambor.');
+    await reply(fmt.genericError({ command: 'roletarussa' }));
     return { handled: true };
   }
 
@@ -149,7 +150,7 @@ export async function handlePullCommand({
     return { handled: true };
   }
   if (!chaosService) {
-    await reply('Gatilho emperrado.');
+    await reply(fmt.genericError({ command: 'puxar' }));
     return { handled: true };
   }
 
@@ -165,7 +166,7 @@ export async function handlePullCommand({
       await reply('Calma no gatilho — um puxão por vez.');
       return { handled: true };
     }
-    await reply('O tambor não girou.');
+    await reply(fmt.genericError({ command: 'puxar' }));
     return { handled: true };
   }
 
@@ -230,13 +231,13 @@ export async function handleCancelCommand({
   achievementService = null,
 }) {
   if (!chaosService) {
-    await reply('Tribunal offline.');
+    await reply(fmt.notAvailable({ command: 'cancelar' }));
     return { handled: true };
   }
 
   const cd = chaosService.checkCooldown('cancel', userJid, scopeKey, funConfig);
   if (!cd.ok) {
-    await reply(`Tribunal em intervalo. Volta em *${cd.retryIn}*.`);
+    await reply(fmt.cooldown('cancelar', cd.retryInMs || cd.retryIn));
     return { handled: true };
   }
 
@@ -298,7 +299,7 @@ export async function handleRoastCommand({
   identityMap,
 }) {
   if (!roastService || funConfig.roastEnabled === false) {
-    await reply('Roast desligado.');
+    await reply(fmt.notAvailable({ command: 'roast' }));
     return { handled: true };
   }
 
@@ -313,7 +314,7 @@ export async function handleRoastCommand({
     if (!cd.ok) {
       const sec = Math.ceil((cd.retryInMs || 0) / 1000);
       const min = Math.ceil(sec / 60);
-      await reply(`Roast em cooldown. Volta em ~*${min}* min.`);
+      await reply(fmt.cooldown('roast', cd.retryInMs));
       return { handled: true };
     }
   }
@@ -331,7 +332,7 @@ export async function handleRoastCommand({
   });
   const target = resolved?.jid;
   if (!target || !isCanonicalUserJid(target)) {
-    await reply('Uso: `/roast @pessoa` (ou responda a msg).');
+    await reply(fmt.targetNotFound({ command: 'roast' }));
     return { handled: true };
   }
 
@@ -377,13 +378,13 @@ export async function handleGossipCommand({
   profileService,
 }) {
   if (!chaosService) {
-    await reply('Rádio peão offline.');
+    await reply(fmt.notAvailable({ command: 'fofoca' }));
     return { handled: true };
   }
 
   const cd = chaosService.checkCooldown('gossip', userJid, scopeKey, funConfig);
   if (!cd.ok) {
-    await reply(`Fofoqueiros em silêncio por *${cd.retryIn}*.`);
+    await reply(fmt.cooldown('fofoca', cd.retryInMs || cd.retryIn));
     return { handled: true };
   }
 
@@ -433,7 +434,7 @@ export async function handleOracleCommand({
   profileService,
 }) {
   if (!chaosService) {
-    await reply('Oráculo dormindo.');
+    await reply(fmt.notAvailable({ command: 'oraculo' }));
     return { handled: true };
   }
 
@@ -451,7 +452,7 @@ export async function handleOracleCommand({
 
   const cd = chaosService.checkCooldown('oracle', userJid, scopeKey, funConfig);
   if (!cd.ok) {
-    await reply(`Astros em cooldown. *${cd.retryIn}*.`);
+    await reply(fmt.cooldown('oraculo', cd.retryInMs || cd.retryIn));
     return { handled: true };
   }
 
@@ -480,13 +481,13 @@ export async function handleIlluminatiCommand({
   profileService,
 }) {
   if (!chaosService) {
-    await reply('Sociedade secreta offline.');
+    await reply(fmt.notAvailable({ command: 'illuminati' }));
     return { handled: true };
   }
 
   const cd = chaosService.checkCooldown('illuminati', userJid, scopeKey, funConfig);
   if (!cd.ok) {
-    await reply(`Arquivos selados por *${cd.retryIn}*.`);
+    await reply(fmt.cooldown('illuminati', cd.retryInMs || cd.retryIn));
     return { handled: true };
   }
 

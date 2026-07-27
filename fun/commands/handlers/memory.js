@@ -5,6 +5,7 @@
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf } from '../../utils/userLabel.js';
+import { fmt } from '../../messages/index.js';
 
 export async function handleLoreCommand({
   scopeKey,
@@ -18,7 +19,7 @@ export async function handleLoreCommand({
     return { handled: true };
   }
   if (!groupMemoryService) {
-    await reply('Memória offline.');
+    await reply(fmt.notAvailable({ command: 'lore' }));
     return { handled: true };
   }
   if (funConfig.memoryEnabled === false) {
@@ -51,7 +52,7 @@ export async function handleForgetLoreCommand({
     return { handled: true };
   }
   if (!groupMemoryService) {
-    await reply('Memória offline.');
+    await reply(fmt.notAvailable({ command: 'esquecelore' }));
     return { handled: true };
   }
 
@@ -65,7 +66,7 @@ export async function handleForgetLoreCommand({
       [
         '🧠 *Lore apagada*',
         n > 0 ? `Removi *${n}* fato(s) deste grupo.` : 'Já estava vazia.',
-        '_Amnésia seletiva concluída._',
+        '_Memória do grupo limpa._',
       ].join('\n')
     );
     return { handled: true, wiped: n };

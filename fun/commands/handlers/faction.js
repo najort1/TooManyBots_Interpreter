@@ -1,5 +1,6 @@
 import { formatPanelinhaGuide } from '../../formatters/panelinhaGuide.js';
 import { nameOf } from '../../utils/userLabel.js';
+import { fmt } from '../../messages/index.js';
 
 function pct(score) {
   return `${Math.round((Number(score) || 0) * 100)}%`;
@@ -158,12 +159,10 @@ export async function handleFactionCommand({
         return { handled: true };
       }
       if (result.reason === 'insufficient-funds') {
-        await reply(
-          `Criar panelinha custa *${result.cost}* coins. Você tem *${result.coins}*.`
-        );
+        await reply(fmt.insufficientBalance({ required: result.cost, current: result.coins }));
         return { handled: true };
       }
-      await reply('Não deu pra criar a panelinha.');
+      await reply(fmt.genericError({ command: 'panelinha criar' }));
       return { handled: true };
     }
     const fl = await flavorItalic(flavorService, 'faction_create', {
@@ -213,7 +212,7 @@ export async function handleFactionCommand({
         await reply('Essa panelinha está cheia.');
         return { handled: true };
       }
-      await reply('Não deu pra entrar.');
+      await reply(fmt.genericError({ command: 'panelinha entrar' }));
       return { handled: true };
     }
     const fl = await flavorItalic(flavorService, 'faction_join', {
@@ -240,10 +239,10 @@ export async function handleFactionCommand({
         return { handled: true };
       }
       if (result.reason === 'insufficient-funds') {
-        await reply(`Sair custa *${result.cost}* coins. Você tem *${result.coins}*.`);
+        await reply(fmt.insufficientBalance({ required: result.cost, current: result.coins }));
         return { handled: true };
       }
-      await reply('Não deu pra sair.');
+      await reply(fmt.genericError({ command: 'panelinha sair' }));
       return { handled: true };
     }
     const fl = await flavorItalic(flavorService, 'faction_leave', {
@@ -277,7 +276,7 @@ export async function handleFactionCommand({
         return { handled: true };
       }
       if (result.reason === 'insufficient-funds') {
-        await reply(`Saldo insuficiente (*${result.coins}*).`);
+        await reply(fmt.insufficientBalance({ current: result.coins }));
         return { handled: true };
       }
       await reply(`Uso: \`${p}panelinha doar 50\``);

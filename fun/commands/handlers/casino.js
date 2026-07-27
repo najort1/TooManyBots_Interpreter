@@ -3,6 +3,7 @@ import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
 import { renderLeaderboardPng } from '../../formatters/rankCardImage.js';
 import { flavorWithLore } from '../../utils/flavorLore.js';
+import { fmt } from '../../messages/index.js';
 
 import { pickDealer } from '../../casino/rouletteDealer.js';
 import { choiceLabel } from '../../casino/rouletteParser.js';
@@ -56,7 +57,7 @@ export async function handleRouletteCommand({
 
   if (!result.ok) {
     if (result.reason === 'cooldown') {
-      await reply(`Roleta em cooldown. Volte em *${result.retryIn}*.`);
+      await reply(fmt.cooldown('roleta', result.retryInMs || result.retryIn));
       return { handled: true };
     }
     if (result.reason === 'invalid-amount') {
@@ -64,10 +65,10 @@ export async function handleRouletteCommand({
       return { handled: true };
     }
     if (result.reason === 'insufficient-funds') {
-      await reply(`Saldo insuficiente (*${result.coins}* coins).`);
+      await reply(fmt.insufficientBalance({ current: result.coins }));
       return { handled: true };
     }
-    await reply('Não rolou a roleta.');
+    await reply(fmt.genericError({ command: 'roleta' }));
     return { handled: true };
   }
 
@@ -152,7 +153,7 @@ export async function handleSlotCommand({
 
   if (!result.ok) {
     if (result.reason === 'cooldown') {
-      await reply(`Slot em cooldown. Volte em *${result.retryIn}*.`);
+      await reply(fmt.cooldown('slot', result.retryInMs || result.retryIn));
       return { handled: true };
     }
     if (result.reason === 'invalid-amount') {
@@ -160,10 +161,10 @@ export async function handleSlotCommand({
       return { handled: true };
     }
     if (result.reason === 'insufficient-funds') {
-      await reply(`Saldo insuficiente (*${result.coins}* coins).`);
+      await reply(fmt.insufficientBalance({ current: result.coins }));
       return { handled: true };
     }
-    await reply('Slot travou. Tente de novo.');
+    await reply(fmt.genericError({ command: 'slot' }));
     return { handled: true };
   }
 
@@ -261,14 +262,14 @@ export async function handleDiceDuelCommand({
       return { handled: true };
     }
     if (result.reason === 'insufficient-funds') {
-      await reply(`Você não tem coins (*${result.coins}*).`);
+      await reply(fmt.insufficientBalance({ current: result.coins }));
       return { handled: true };
     }
     if (result.reason === 'target-insufficient') {
       await reply(`*${nameOf(getContactDisplayName, target)}* não tem coins suficientes.`);
       return { handled: true };
     }
-    await reply('Não deu pra criar o desafio.');
+    await reply(fmt.genericError({ command: 'desafio' }));
     return { handled: true };
   }
 
@@ -312,7 +313,7 @@ export async function handleCrashCommand({
 
   if (!result.ok) {
     if (result.reason === 'cooldown') {
-      await reply(`Crash em cooldown. Volte em *${result.retryIn}*.`);
+      await reply(fmt.cooldown('crash', result.retryInMs || result.retryIn));
       return { handled: true };
     }
     if (result.reason === 'already-flying') {
@@ -324,10 +325,10 @@ export async function handleCrashCommand({
       return { handled: true };
     }
     if (result.reason === 'insufficient-funds') {
-      await reply(`Saldo insuficiente (*${result.coins}* coins).`);
+      await reply(fmt.insufficientBalance({ current: result.coins }));
       return { handled: true };
     }
-    await reply('Não decolou.');
+    await reply(fmt.genericError({ command: 'crash' }));
     return { handled: true };
   }
 
@@ -470,7 +471,7 @@ export async function handleBlackjackCommand({
 
   if (!result.ok) {
     if (result.reason === 'cooldown') {
-      await reply(`Blackjack em cooldown. Volte em *${result.retryIn}*.`);
+      await reply(fmt.cooldown('blackjack', result.retryInMs || result.retryIn));
       return { handled: true };
     }
     if (result.reason === 'already-playing') {
@@ -482,10 +483,10 @@ export async function handleBlackjackCommand({
       return { handled: true };
     }
     if (result.reason === 'insufficient-funds') {
-      await reply(`Saldo insuficiente (*${result.coins}* coins).`);
+      await reply(fmt.insufficientBalance({ current: result.coins }));
       return { handled: true };
     }
-    await reply('Não abriu a mão.');
+    await reply(fmt.genericError({ command: 'blackjack' }));
     return { handled: true };
   }
 
@@ -651,10 +652,10 @@ export async function handleTournamentCommand({
       return { handled: true };
     }
     if (result.reason === 'insufficient-funds') {
-      await reply(`Precisa de *${result.fee}* coins. Você tem *${result.coins}*.`);
+      await reply(fmt.insufficientBalance({ required: result.fee, current: result.coins }));
       return { handled: true };
     }
-    await reply('Não entrou no torneio.');
+    await reply(fmt.genericError({ command: 'torneio' }));
     return { handled: true };
   }
 

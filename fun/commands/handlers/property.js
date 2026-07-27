@@ -3,6 +3,7 @@
  */
 
 import { nameOf } from '../../utils/userLabel.js';
+import { fmt } from '../../messages/index.js';
 
 export async function handlePropertyCommand({
   userJid,
@@ -52,10 +53,10 @@ export async function handlePropertyCommand({
         return { handled: true };
       }
       if (result.reason === 'no-coins') {
-        await reply(`Faltam coins. Precisa *${result.need}*c · você tem *${result.coins}*c.`);
+        await reply(fmt.insufficientBalance({ required: result.need, current: result.coins }));
         return { handled: true };
       }
-      await reply('Não deu pra comprar.');
+      await reply(fmt.genericError({ command: 'negocio comprar' }));
       return { handled: true };
     }
 
@@ -111,10 +112,10 @@ export async function handlePropertyCommand({
         return { handled: true };
       }
       if (result.reason === 'no-coins') {
-        await reply(`Conserto custa *${result.need}*c · você tem *${result.coins}*c.`);
+        await reply(fmt.insufficientBalance({ required: result.need, current: result.coins }));
         return { handled: true };
       }
-      await reply('Não deu pra consertar.');
+      await reply(fmt.genericError({ command: 'negocio consertar' }));
       return { handled: true };
     }
     await reply(

@@ -5,6 +5,7 @@
 import { parseAmountFromArgs, resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
+import { fmt } from '../../messages/index.js';
 
 function arrow(trend) {
   if (trend === 'up') return '↑';
@@ -156,7 +157,7 @@ export async function handleBazaarCommand({
     });
     if (!result.ok) {
       if (result.reason === 'insufficient-funds') {
-        await reply(`Faltam coins. Preço *${result.price}*, você tem *${result.coins}*.`);
+        await reply(fmt.insufficientBalance({ required: result.price, current: result.coins }));
         return { handled: true };
       }
       if (result.reason === 'self-buy') {
@@ -335,7 +336,7 @@ export async function handleBuyCollectibleCommand({
       return { handled: true };
     }
     if (result.reason === 'insufficient-funds') {
-      await reply(`Faltam coins. Preço *${result.price}*, você tem *${result.coins}*.`);
+      await reply(fmt.insufficientBalance({ required: result.price, current: result.coins }));
       return { handled: true };
     }
     if (result.reason === 'wrong-shop') {
@@ -412,10 +413,10 @@ export async function handleRepairItemCommand({
       return { handled: true };
     }
     if (result.reason === 'insufficient-funds') {
-      await reply(`Conserto *${result.price}*c · você tem *${result.coins}*.`);
+      await reply(fmt.insufficientBalance({ required: result.price, current: result.coins }));
       return { handled: true };
     }
-    await reply('Não consertou.');
+    await reply(fmt.genericError({ command: 'consertar' }));
     return { handled: true };
   }
   await reply(
@@ -483,24 +484,42 @@ export async function handleAssaultCommand({
     }
     const amount = parseAmountFromArgs(args) || 50;
 
+    // Processamento do bot (Date.now): o desafio só existe quando respondemos.
+    // msgTimeMs NÃO entra aqui — se Baileys atrasar o /crime, o alvo ainda ganha os N s cheios.
+    // A defesa (resposta numérica) sim usa msgTimeMs no pipeline.
     const crimeNow = Date.now();
-    const result = chaosEventService.doCrimeAssault({
-      attackerJid: userJid, targetJid: target,
-      scopeKey, amount, funConfig, now: crimeNow,
-    });
+    let result;
+    try {
+      result = chaosEventService.doCrimeAssault({
+        attackerJid: userJid, targetJid: target,
+        scopeKey, amount, funConfig, now: crimeNow,
+      });
+    } catch {
+      await reply('Falha ao processar o crime. Tente de novo em instantes.');
+      return { handled: true };
+    }
 
-    if (!result.ok) {
-      await reply(result.reason === 'invalid-target'
-        ? 'Alvo inválido.'
-        : result.reason === 'inactive-target'
-          ? 'Este jogador está inativo. Só é possível atacar quem esteve ativo nos últimos minutos.'
-          : `Assalto falhou: ${result.reason}`);
+    if (!result?.ok) {
+      if (result?.reason === 'invalid-target') {
+        await reply('Alvo inválido.');
+      } else if (result?.reason === 'inactive-target') {
+        await reply('Este jogador está inativo. Só é possível atacar quem esteve ativo nos últimos minutos.');
+      } else if (result?.reason === 'cooldown') {
+        const sec = Math.max(1, Math.ceil((result.remainingMs || 0) / 1000));
+        await reply(`⏳ Aguarde *${sec}s* para assaltar de novo.`);
+      } else if (result?.reason === 'target-busy') {
+        await reply('🛡️ Esse alvo já está se defendendo de outro crime. Espere a conta acabar.');
+      } else if (result?.reason === 'event-inactive') {
+        await reply('A PURGA não está ativa agora.');
+      } else {
+        await reply(`Assalto falhou: ${result?.reason || 'erro'}`);
+      }
       return { handled: true };
     }
 
     const tName = nameOf(getContactDisplayName, target);
     if (result.success === 'pending') {
-      const timeoutSec = Math.round((result.challenge.defenseTimeoutMs || 8000) / 1000);
+      const timeoutSec = Math.round((result.challenge?.defenseTimeoutMs || 8000) / 1000);
       await reply(
         `🔪 *Tentativa de crime contra ${tName}*\n\n` +
         `🧮 Defenda-se! Resolva: *${result.challenge.expression}*\n` +
@@ -611,10 +630,10 @@ export async function handleAssaultCommand({
       return { handled: true };
     }
     if (result.reason === 'cooldown') {
-      await reply(`Esfria a mão. Próximo assalto em *${formatRetry(result.retryInMs)}*.`);
+      await reply(fmt.cooldown('assaltar', result.retryInMs));
       return { handled: true };
     }
-    await reply('Assalto inválido. `/assaltar` pra ver modos e EV.');
+    await reply(fmt.genericError({ command: 'assaltar' }));
     return { handled: true };
   }
 

@@ -1,6 +1,7 @@
 import { parseAmountFromArgs, resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf } from '../../utils/userLabel.js';
+import { fmt } from '../../messages/index.js';
 
 export async function handlePayCommand({
   userJid,
@@ -66,14 +67,14 @@ export async function handlePayCommand({
 
   if (!result.ok) {
     if (result.reason === 'insufficient-funds') {
-      await reply(`Saldo insuficiente. Você tem *${result.fromCoins}* coins.`);
+      await reply(fmt.insufficientBalance({ current: result.fromCoins }));
       return { handled: true };
     }
     if (result.reason === 'self-transfer') {
       await reply('Não dá pra pagar a si mesmo.');
       return { handled: true };
     }
-    await reply('Não foi possível transferir.');
+    await reply(fmt.genericError({ command: 'pay' }));
     return { handled: true };
   }
 
@@ -95,10 +96,7 @@ export async function handlePayCommand({
 
   await reply(
     [
-      '💸 *Pagamento*',
-      `Você enviou *${result.amount}* coins para *${toName}*.`,
-      `Seu saldo: *${result.fromCoins}*`,
-      result.toCoins != null ? `Saldo dela(e): *${result.toCoins}*` : null,
+      fmt.transferComplete({ to: toName, amount: result.amount, fromBalance: result.fromCoins, toBalance: result.toCoins }),
       eventLine,
     ]
       .filter(Boolean)

@@ -4,6 +4,7 @@
  */
 
 import { nameOf } from '../../utils/userLabel.js';
+import { fmt } from '../../messages/index.js';
 
 function formatRetry(ms) {
   const sec = Math.ceil(Math.max(0, ms) / 1000);
@@ -72,12 +73,10 @@ export async function handleEmploymentCommand({
       return { handled: true };
     }
     if (result.reason === 'insufficient-funds') {
-      await reply(
-        `Taxa de retentativa *${result.fee}*c · você tem *${result.coins}*c.`
-      );
+      await reply(fmt.insufficientBalance({ required: result.fee, current: result.coins }));
       return { handled: true };
     }
-    await reply('Não deu pra abrir o teste. Tente de novo.');
+    await reply(fmt.genericError({ command: 'emprego ' + sub }));
     return { handled: true };
   }
 

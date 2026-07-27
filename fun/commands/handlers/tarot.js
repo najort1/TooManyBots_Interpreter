@@ -2,6 +2,7 @@
  * /tarot [pergunta]
  * Tiragem de arcanos + leitura (Zen/Ollama/template).
  */
+import { fmt } from '../../messages/index.js';
 
 export async function handleTarotCommand({
   userJid,
@@ -52,7 +53,7 @@ export async function handleTarotCommand({
 
   if (!result.ok) {
     if (result.reason === 'cooldown') {
-      await reply(`As cartas pediram um tempo. Tenta de novo em *${result.retryIn}*.`);
+      await reply(fmt.cooldown('tarot', result.retryInMs || result.retryIn));
       return { handled: true };
     }
     if (result.reason === 'question-too-long') {

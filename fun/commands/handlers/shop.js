@@ -1,4 +1,5 @@
 import { listShopItems } from '../../shop/catalog.js';
+import { fmt } from '../../messages/index.js';
 
 function formatDuration(ms) {
   const m = Math.round(ms / 60000);
@@ -132,18 +133,18 @@ export async function handleTitleCommand({
 async function replyBuyResult(reply, result) {
   if (!result?.ok) {
     if (result?.reason === 'unknown-item') {
-      await reply('Item desconhecido. Veja `/loja`.');
+      await reply(fmt.itemNotFound({ command: 'loja' }));
       return { handled: true };
     }
     if (result?.reason === 'insufficient-funds') {
-      await reply(`Faltam coins. Preço *${result.price}*, você tem *${result.coins}*.`);
+      await reply(fmt.insufficientBalance({ required: result.price, current: result.coins }));
       return { handled: true };
     }
     if (result?.reason === 'already-owned') {
       await reply(
         result.item?.id === 'chave_armas'
           ? 'Você *já tem* a chave de armas nesta conta. É individual — não vende de novo.'
-          : 'Você já tem esse unlock.'
+          : fmt.alreadyOwned()
       );
       return { handled: true };
     }
@@ -163,7 +164,7 @@ async function replyBuyResult(reply, result) {
       await reply('Você já tem esse efeito ativo.');
       return { handled: true };
     }
-    await reply('Não foi possível comprar.');
+    await reply(fmt.genericError({ command: 'comprar' }));
     return { handled: true };
   }
 

@@ -2,6 +2,7 @@ import { parseAmountFromArgs, resolveUserTarget } from '../../utils/mentions.js'
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf } from '../../utils/userLabel.js';
 import { flavorWithLore } from '../../utils/flavorLore.js';
+import { fmt } from '../../messages/index.js';
 
 function parseFlipArgs(args = []) {
   const amount = parseAmountFromArgs(args);
@@ -71,14 +72,14 @@ export async function handleFlipCommand({
       return { handled: true };
     }
     if (result.reason === 'cooldown') {
-      await reply(`Aguarde *${result.retryIn}* pra jogar de novo.`);
+      await reply(fmt.cooldown('cf', result.retryInMs || result.retryIn));
       return { handled: true };
     }
     if (result.reason === 'insufficient-funds') {
-      await reply(`Saldo insuficiente (*${result.coins}* coins).`);
+      await reply(fmt.insufficientBalance({ current: result.coins }));
       return { handled: true };
     }
-    await reply('Não rolou o flip.');
+    await reply(fmt.genericError({ command: 'cf' }));
     return { handled: true };
   }
 
@@ -121,10 +122,10 @@ export async function handleJobCommand({
   const result = gameService.doJob({ userJid, scopeKey, funConfig });
   if (!result.ok) {
     if (result.reason === 'cooldown') {
-      await reply(`Você já trabalhou. Volte em *${result.retryIn}*.`);
+      await reply(fmt.cooldown('trabalhar', result.retryInMs || result.retryIn));
       return { handled: true };
     }
-    await reply('Não deu pra trabalhar agora.');
+    await reply(fmt.genericError({ command: 'trabalhar' }));
     return { handled: true };
   }
 
@@ -167,10 +168,10 @@ export async function handleLuckyCommand({
   const result = gameService.doLucky({ userJid, scopeKey, funConfig });
   if (!result.ok) {
     if (result.reason === 'cooldown') {
-      await reply(`Sorte já usada. Próxima em *${result.retryIn}*.`);
+      await reply(fmt.cooldown('sorte', result.retryInMs || result.retryIn));
       return { handled: true };
     }
-    await reply('Não rolou a sorte.');
+    await reply(fmt.genericError({ command: 'sorte' }));
     return { handled: true };
   }
 
@@ -271,14 +272,14 @@ export async function handleBetCommand({
       return { handled: true };
     }
     if (result.reason === 'insufficient-funds') {
-      await reply(`Você não tem coins suficientes (*${result.coins}*).`);
+      await reply(fmt.insufficientBalance({ current: result.coins }));
       return { handled: true };
     }
     if (result.reason === 'target-insufficient') {
-      await reply(`*${nameOf(getContactDisplayName, target)}* não tem coins suficientes.`);
+      await reply(fmt.insufficientBalance({ current: result.coins, target: nameOf(getContactDisplayName, target) }));
       return { handled: true };
     }
-    await reply('Não foi possível criar a aposta.');
+    await reply(fmt.genericError({ command: 'aposta' }));
     return { handled: true };
   }
 

@@ -1,5 +1,6 @@
 import { downloadResolvedMedia } from '../../utils/mediaDownload.js';
 import { convertToSticker, isStickerMediaType } from '../../utils/stickerConvert.js';
+import { fmt } from '../../messages/index.js';
 
 /**
  * /fig · /sticker · /figurinha
@@ -19,7 +20,7 @@ export async function handleStickerCommand({
   const say = typeof replyToChat === 'function' ? replyToChat : reply;
 
   if (typeof replySticker !== 'function') {
-    await say('Envio de figurinha indisponível neste momento.');
+    await say(fmt.notAvailable({ command: 'fig' }));
     return { handled: true, reason: 'no-sticker-sender' };
   }
 
@@ -71,7 +72,7 @@ export async function handleStickerCommand({
   } catch (err) {
     const msg = String(err?.message || err);
     if (msg.includes('ffmpeg-not-found')) {
-      await say('Pra figurinha animada precisa do *ffmpeg* instalado no servidor.');
+      await say('Figurinha animada não disponível no momento.');
       return { handled: true, reason: 'ffmpeg-not-found' };
     }
     if (msg.includes('sharp-unavailable')) {
@@ -86,7 +87,7 @@ export async function handleStickerCommand({
       { err: { message: msg } },
       'Fun sticker convert failed'
     );
-    await say('Não deu pra gerar a figurinha. Tenta outra mídia.');
+    await say('Não foi possível gerar a figurinha. Tente outra mídia.');
     return { handled: true, reason: 'convert-failed', error: msg };
   }
 }

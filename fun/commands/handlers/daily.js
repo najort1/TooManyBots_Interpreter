@@ -58,7 +58,7 @@ export async function handleDailyCommand({
     text += '\n⚡ *Daily turbinado* da loja aplicado!';
   }
   if (result.claimed && panelinha) {
-    text += '\n💀 Debuff *Panelinha oficial*: menos XP de daily. Melhore a `/ponte`.';
+    text += '\n💀 Ponte Social baixa: menos XP de daily. Aumente a mistura — veja `/ponte`.';
   }
   if (result.claimed && xpMorto) {
     text += '\n☠️ *Morto na roleta russa:* coins ok, *sem XP* até reviver.';
@@ -94,7 +94,7 @@ export async function handleDailyCommand({
         now,
       });
       if (fire?.fired) {
-        text += `\n🪪 *Demitido por inatividade* (${fire.jobId}). 3 dailys perdidos.`;
+        text += `\n🪪 *Demitido por inatividade* (${fire.jobId}). 3 dias sem daily.`;
       }
     }
   }
@@ -102,11 +102,11 @@ export async function handleDailyCommand({
   if (result.claimed && typeof socialHooks?.onDaily === 'function') {
     const mission = socialHooks.onDaily({ scopeKey, userJid, now });
     if (mission?.completed) {
-      text += '\n🏁 Squad: missão mista completa!';
+      text += '\n🏁 Missão do squad concluída!';
     } else if (mission?.updated && mission.mission?.progress?.daily) {
-      text += '\n🎯 Objetivo daily do squad ✅';
+      text += '\n🎯 Progresso do squad atualizado.';
     } else if (mission?.updated) {
-      text += '\n🎯 Daily do squad registrado.';
+      text += '\n🎯 Daily registrado no squad.';
     }
   }
 

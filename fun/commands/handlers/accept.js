@@ -1,6 +1,7 @@
 import { ACTION_TYPE } from '../../constants.js';
 import { nameOf } from '../../utils/userLabel.js';
 import { flavorWithLore } from '../../utils/flavorLore.js';
+import { fmt } from '../../messages/index.js';
 
 async function flavorItalic(flavorService, scenario, vars) {
   if (!flavorService?.italicLine) return null;
@@ -37,10 +38,10 @@ export async function handleAcceptCommand({
     const result = relationshipService.acceptMarry({ userJid, scopeKey });
     if (!result.ok) {
       if (result.reason === 'already-married' || result.reason === 'partner-married') {
-        await reply('Não deu pra casar — alguém já está casado(a).');
+        await reply('Não foi possível casar — alguém já está casado(a).');
         return { handled: true };
       }
-      await reply('Pedido expirado ou inválido.');
+      await reply(fmt.genericError({ command: 'aceitar' }));
       return { handled: true };
     }
     if (typeof socialHooks?.onSocialPair === 'function') {

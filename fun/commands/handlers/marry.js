@@ -2,6 +2,7 @@ import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf } from '../../utils/userLabel.js';
 import { flavorWithLore } from '../../utils/flavorLore.js';
+import { fmt } from '../../messages/index.js';
 
 export async function handleMarryCommand({
   userJid,
@@ -61,7 +62,7 @@ export async function handleMarryCommand({
       await reply('Não dá pra casar consigo mesmo.');
       return { handled: true };
     }
-    await reply('Não foi possível enviar o pedido.');
+    await reply(fmt.genericError({ command: 'marry' }));
     return { handled: true };
   }
 
@@ -131,7 +132,7 @@ export async function handleDivorceCommand({
       ?? repository.getUserStats(userJid, scopeKey)?.coins
       ?? 0;
     if (bal < cost) {
-      await reply(`Divórcio custa *${cost}* coins. Você tem *${bal}*.`);
+      await reply(fmt.insufficientBalance({ required: cost, current: bal }));
       return { handled: true };
     }
   }
