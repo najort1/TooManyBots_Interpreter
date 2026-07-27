@@ -566,7 +566,13 @@ export async function handleAssaultCommand({
       if (result?.reason === 'invalid-target') {
         await reply('Alvo inválido.');
       } else if (result?.reason === 'inactive-target') {
-        await reply('Este jogador está inativo. Só é possível atacar quem esteve ativo nos últimos minutos.');
+        await reply(
+          'Este jogador está inativo. Só é possível atacar quem mandou mensagem nos *últimos 3 minutos*.'
+        );
+      } else if (result?.reason === 'victim-silent-after-rob') {
+        await reply(
+          '🔇 Esse alvo *já foi roubado* e ainda não falou no chat. Espere ele mandar uma mensagem.'
+        );
       } else if (result?.reason === 'cooldown') {
         const sec = Math.max(1, Math.ceil((result.remainingMs || 0) / 1000));
         await reply(`⏳ Aguarde *${sec}s* para assaltar de novo.`);
@@ -591,9 +597,16 @@ export async function handleAssaultCommand({
       return { handled: true };
     }
 
+    const loadout = result.fists
+      ? '👊 punhos'
+      : result.weapon
+        ? `${result.weapon.emoji || '🔫'} ${result.weapon.name || result.weapon.id}`
+        : '👊 punhos';
+
     if (!result.success) {
       await reply(
         `🔪 *Crime falhou contra ${tName}* (chance ~${Math.round((result.chance || 0) * 100)}%)\n` +
+        `Arma: ${loadout}\n` +
         `💨 O alvo escapou.\n` +
         `Saldo: *${result.coins}*`
       );
@@ -602,6 +615,7 @@ export async function handleAssaultCommand({
 
     await reply(
       `💀 *Crime bem-sucedido contra ${tName}*\n` +
+      `Arma: ${loadout}\n` +
       `💰 Levou *${result.stolen}* coins` +
       (result.stolenFromDebt > 0 ? ` (${result.stolenFromDebt} em dívida)` : '') +
       `\nSaldo: *${result.coins}*`
