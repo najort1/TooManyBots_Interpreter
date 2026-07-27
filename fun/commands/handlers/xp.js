@@ -2,12 +2,16 @@ import {
   formatXpProfile,
   formatProfileIdentityMessage,
 } from '../../formatters/rankCard.js';
-import { renderProfileCardPng } from '../../formatters/rankCardImage.js';
+import {
+  renderProfileCardPng,
+  renderCollectibleCardPng,
+} from '../../formatters/rankCardImage.js';
 import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
 import { isGroupAdmin } from '../../utils/groupMembership.js';
 import { formatBirthdayDisplay } from '../../services/profileService.js';
+import { tierLabel } from '../../shop/cards.js';
 
 function normSub(s) {
   return String(s || '')
@@ -57,6 +61,7 @@ export async function handleXpCommand({
   factionService,
   jobService,
   profileService,
+  cardService = null,
   getContactDisplayName,
   listContacts,
   reply,
@@ -332,6 +337,15 @@ export async function handleXpCommand({
     employment = null;
   }
 
+  let favoriteCard = null;
+  try {
+    if (cardService?.getFavorite) {
+      favoriteCard = cardService.getFavorite(targetJid, scopeKey);
+    }
+  } catch {
+    favoriteCard = null;
+  }
+
   const plainName = displayNameOnly(getContactDisplayName, targetJid);
   const profileOpts = {
     displayName: name,
@@ -352,6 +366,7 @@ export async function handleXpCommand({
     factionLabel,
     employment,
     customProfile,
+    favoriteCard,
   };
 
   if (funConfig.rankCardImage !== false && typeof replyImage === 'function') {
@@ -374,6 +389,7 @@ export async function handleXpCommand({
         employment,
         isSelf,
         customProfile,
+        favoriteCard,
       });
       await replyImage(png, isSelf ? '📊 Seu perfil' : '📊 Perfil');
       // Foto trunca bio/extras — manda identidade completa em texto
@@ -385,8 +401,31 @@ export async function handleXpCommand({
           userJid: targetJid,
           partnerName,
           factionLabel,
+          favoriteCard,
         })
       );
+      // Carta favorita em imagem dedicada (Skia + arte original)
+      if (favoriteCard) {
+        try {
+          const imagePath = cardService?.resolveCardImagePath?.(favoriteCard) || '';
+          if (imagePath) {
+            const cardPng = await renderCollectibleCardPng({
+              imagePath,
+              displayName: favoriteCard.displayName || favoriteCard.cardName,
+              tier: favoriteCard.tier,
+              favorite: true,
+            });
+            if (cardPng) {
+              await replyImage(
+                cardPng,
+                `⭐ Favorita · ${favoriteCard.displayName || favoriteCard.cardName} · ${tierLabel(favoriteCard.tier)}`
+              );
+            }
+          }
+        } catch {
+          /* ignore card render fail */
+        }
+      }
       return { handled: true, targetJid, isSelf, image: true };
     } catch {
       // fallback texto

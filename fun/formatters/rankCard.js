@@ -100,6 +100,7 @@ export function formatProfileIdentityMessage({
   userJid = '',
   partnerName = '',
   factionLabel = '',
+  favoriteCard = null,
 } = {}) {
   const who = displayName(name, userJid);
   const header = isSelf ? '👤 *Sua identidade*' : `👤 *Identidade de* ${who}`;
@@ -108,11 +109,23 @@ export function formatProfileIdentityMessage({
 
   if (partnerName) lines.push(`• Casado(a) com: *${partnerName}*`);
   if (factionLabel) lines.push(`• Panelinha: *${factionLabel}*`);
+  if (favoriteCard) {
+    const t = Math.min(5, Math.max(1, Math.floor(Number(favoriteCard.tier) || 1)));
+    lines.push(
+      `• ⭐ Favorita: *${favoriteCard.displayName || favoriteCard.cardName || 'Carta'}* T${t}`
+    );
+  }
 
-  if (identity.length === 1 && identity[0].includes('Ainda vazio') && !partnerName && !factionLabel) {
+  if (
+    identity.length === 1 &&
+    identity[0].includes('Ainda vazio') &&
+    !partnerName &&
+    !factionLabel &&
+    !favoriteCard
+  ) {
     return lines.join('\n');
   }
-  if (!identity.length && !partnerName && !factionLabel) {
+  if (!identity.length && !partnerName && !factionLabel && !favoriteCard) {
     return isSelf
       ? `${header}\n• Ainda vazio · \`/perfil set me chamam de …, niver DD/MM\``
       : `${header}\n• Sem dados de identidade.`;
@@ -150,6 +163,7 @@ export function formatXpProfile({
   messagesTotal = 0,
   employment = null,
   customProfile = null,
+  favoriteCard = null,
 }) {
   const xp = Number(stats?.xp) || 0;
   const progress = progressInLevel(xp);
@@ -223,6 +237,12 @@ export function formatXpProfile({
   const social = [];
   if (partnerName) social.push(`• Casado(a) com: *${partnerName}*`);
   if (factionLabel) social.push(`• Panelinha: *${factionLabel}*`);
+  if (favoriteCard) {
+    const t = Math.min(5, Math.max(1, Math.floor(Number(favoriteCard.tier) || 1)));
+    social.push(
+      `• ⭐ Favorita: *${favoriteCard.displayName || favoriteCard.cardName || 'Carta'}* T${t}`
+    );
+  }
   if (social.length) {
     lines.push('', '*Social*', ...social);
   }
@@ -283,6 +303,58 @@ export function formatLeaderboard({ entries, yourRank, yourTotal, limit = 10 }) 
     lines.push(`Sua posição: *#${yourRank}*${yourTotal ? `/${yourTotal}` : ''}`);
   }
 
+  return lines.join('\n');
+}
+
+/**
+ * Ranking semanal do QMP (Quem é Mais Provável?).
+ */
+export function formatQmpWeeklyLeaderboard({
+  entries,
+  yourRank,
+  yourTotal,
+  yourVotes,
+  weekKey = '',
+  limit = 10,
+}) {
+  const lines = [
+    '👑 *Mais Provável da semana*',
+    weekKey ? `Semana \`${weekKey}\` · top ${limit}` : `Top ${limit}`,
+    '',
+  ];
+
+  if (!entries || entries.length === 0) {
+    lines.push('Ainda sem votos esta semana.');
+    lines.push('Use `/qmp` e marque alguém no grupo!');
+    return lines.join('\n');
+  }
+
+  for (const entry of entries) {
+    const medal =
+      entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : `${entry.rank}.`;
+    const label = nameOf((j) => entry.displayName || displayNameOnly(null, j), entry.userJid);
+    const votes = Number(entry.votes ?? entry.messageCount ?? entry.xp) || 0;
+    lines.push(`${medal} *${label}* — ${votes} voto(s)`);
+  }
+
+  if (entries[0]) {
+    const crown = nameOf(
+      (j) => entries[0].displayName || displayNameOnly(null, j),
+      entries[0].userJid
+    );
+    lines.push('');
+    lines.push(`🏆 Em destaque: *${crown}*`);
+  }
+
+  if (yourRank != null) {
+    lines.push('');
+    lines.push(
+      `Sua posição: *#${yourRank}*${yourTotal ? `/${yourTotal}` : ''}` +
+        (yourVotes != null ? ` · ${yourVotes} voto(s)` : '')
+    );
+  }
+
+  lines.push('', '_Reseta toda segunda-feira_');
   return lines.join('\n');
 }
 

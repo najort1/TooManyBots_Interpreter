@@ -5,7 +5,7 @@
  * Festas: carnaval · são joão · natal · ano novo
  */
 
-import { Canvas } from 'skia-canvas';
+import { Canvas, loadImage } from 'skia-canvas';
 import { progressInLevel } from '../services/levelCurve.js';
 import {
   resolveCardTheme,
@@ -789,6 +789,198 @@ function drawLevelRing(ctx, cx, cy, rOuter, ratio, theme, level) {
   ctx.textAlign = 'left';
 }
 
+/**
+ * Renderiza carta colecionável (arte + moldura + badge de favorita).
+ * @returns {Promise<Buffer|null>}
+ */
+export async function renderCollectibleCardPng({
+  imagePath = '',
+  displayName = '',
+  tier = 1,
+  favorite = false,
+  nowMs = Date.now(),
+} = {}) {
+  const t = resolveCardTheme('profile', nowMs);
+  const width = 640;
+  const height = 820;
+  const pad = 28;
+  const { canvas, ctx } = createSurface(width, height, t.canvas);
+  const m = 12;
+  drawShell(ctx, width, height, t);
+  drawAtmosphere(ctx, width, height, t, m);
+
+  const artX = pad;
+  const artY = pad + 36;
+  const artW = width - pad * 2;
+  const artH = height - pad * 2 - 120;
+
+  fillRoundRect(ctx, artX, artY, artW, artH, 16, t.raise2 || t.canvas);
+  strokeRoundRect(ctx, artX, artY, artW, artH, 16, t.accent, 3);
+
+  try {
+    if (imagePath) {
+      const img = await loadImage(String(imagePath));
+      const iw = img.width || 1;
+      const ih = img.height || 1;
+      const scale = Math.min(artW / iw, artH / ih);
+      const dw = iw * scale;
+      const dh = ih * scale;
+      const dx = artX + (artW - dw) / 2;
+      const dy = artY + (artH - dh) / 2;
+      ctx.save();
+      roundRect(ctx, artX + 4, artY + 4, artW - 8, artH - 8, 12);
+      ctx.clip();
+      ctx.drawImage(img, dx, dy, dw, dh);
+      ctx.restore();
+    }
+  } catch {
+    ctx.fillStyle = t.muted;
+    ctx.font = `600 16px ${FONT}`;
+    ctx.fillText('Imagem indisponível', artX + 24, artY + artH / 2);
+  }
+
+  const stars = '★'.repeat(Math.min(5, Math.max(1, Math.floor(Number(tier) || 1))));
+  const title = shortName(displayName || 'Carta', '', 36);
+
+  ctx.fillStyle = t.muted;
+  ctx.font = `700 12px ${FONT}`;
+  ctx.fillText(favorite ? '⭐ FAVORITA' : 'CARTA', pad, pad + 18);
+
+  ctx.fillStyle = t.text;
+  ctx.font = `800 22px ${FONT}`;
+  ctx.fillText(title, pad, height - pad - 36);
+
+  ctx.fillStyle = t.accent;
+  ctx.font = `700 16px ${FONT}`;
+  ctx.fillText(
+    `${stars}  T${Math.min(5, Math.max(1, Math.floor(Number(tier) || 1)))}`,
+    pad,
+    height - pad - 10
+  );
+
+  if (favorite) {
+    fillRoundRect(ctx, width - pad - 120, pad + 4, 120, 28, 14, t.accent);
+    ctx.fillStyle = t.canvas;
+    ctx.font = `700 12px ${FONT}`;
+    ctx.fillText('⭐ Favorita', width - pad - 108, pad + 23);
+  }
+
+  return toPngBuffer(canvas);
+}
+
+/**
+ * Grid de cartas abertas no pack (2–4). Layout:
+ * 2 → 1×2 · 3 → 2+1 · 4 → 2×2
+ * @param {{ cards: Array<{ imagePath?: string, displayName?: string, cardName?: string, tier?: number }>, nowMs?: number }} opts
+ * @returns {Promise<Buffer|null>}
+ */
+export async function renderCollectibleCardGridPng({ cards = [], nowMs = Date.now() } = {}) {
+  const list = (Array.isArray(cards) ? cards : []).slice(0, 4);
+  if (!list.length) return null;
+  if (list.length === 1) {
+    const c = list[0];
+    return renderCollectibleCardPng({
+      imagePath: c.imagePath || '',
+      displayName: c.displayName || c.cardName || 'Carta',
+      tier: c.tier,
+      favorite: false,
+      nowMs,
+    });
+  }
+
+  const t = resolveCardTheme('profile', nowMs);
+  const n = list.length;
+  const cols = n === 3 ? 2 : Math.min(2, n);
+  const rows = Math.ceil(n / cols);
+
+  const cellW = 300;
+  const cellH = 380;
+  const gap = 16;
+  const headerH = 72;
+  const pad = 24;
+  const width = pad * 2 + cols * cellW + (cols - 1) * gap;
+  const height = pad * 2 + headerH + rows * cellH + (rows - 1) * gap;
+
+  const { canvas, ctx } = createSurface(width, height, t.canvas);
+  const m = 12;
+  drawShell(ctx, width, height, t);
+  drawAtmosphere(ctx, width, height, t, m);
+
+  ctx.fillStyle = t.muted;
+  ctx.font = `700 12px ${FONT}`;
+  ctx.fillText('PACK ABERTO', pad, pad + 18);
+  ctx.fillStyle = t.text;
+  ctx.font = `800 24px ${FONT}`;
+  ctx.fillText(`${n} carta${n > 1 ? 's' : ''}`, pad, pad + 48);
+
+  // pré-carrega imagens em paralelo
+  const loaded = await Promise.all(
+    list.map(async (c) => {
+      try {
+        if (!c?.imagePath) return null;
+        return await loadImage(String(c.imagePath));
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  for (let i = 0; i < n; i++) {
+    const c = list[i];
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    // 3 cartas: última centralizada na 2ª linha
+    let x = pad + col * (cellW + gap);
+    if (n === 3 && i === 2) {
+      x = pad + (width - pad * 2 - cellW) / 2;
+    }
+    const y = pad + headerH + row * (cellH + gap);
+
+    fillRoundRect(ctx, x, y, cellW, cellH, 14, t.raise2 || t.canvas);
+    strokeRoundRect(ctx, x, y, cellW, cellH, 14, t.accent, 2);
+
+    const artPad = 10;
+    const labelH = 56;
+    const artX = x + artPad;
+    const artY = y + artPad;
+    const artW = cellW - artPad * 2;
+    const artH = cellH - artPad * 2 - labelH;
+
+    const img = loaded[i];
+    if (img) {
+      const iw = img.width || 1;
+      const ih = img.height || 1;
+      const scale = Math.min(artW / iw, artH / ih);
+      const dw = iw * scale;
+      const dh = ih * scale;
+      const dx = artX + (artW - dw) / 2;
+      const dy = artY + (artH - dh) / 2;
+      ctx.save();
+      roundRect(ctx, artX, artY, artW, artH, 10);
+      ctx.clip();
+      ctx.drawImage(img, dx, dy, dw, dh);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = t.muted;
+      ctx.font = `600 13px ${FONT}`;
+      ctx.fillText('—', artX + 12, artY + artH / 2);
+    }
+
+    const tier = Math.min(5, Math.max(1, Math.floor(Number(c.tier) || 1)));
+    const title = shortName(c.displayName || c.cardName || 'Carta', '', 22);
+    const stars = '★'.repeat(tier);
+
+    ctx.fillStyle = t.text;
+    ctx.font = `700 14px ${FONT}`;
+    ctx.fillText(title, x + artPad, y + cellH - 28);
+    ctx.fillStyle = t.accent;
+    ctx.font = `700 12px ${FONT}`;
+    ctx.fillText(`${stars} T${tier}`, x + artPad, y + cellH - 10);
+  }
+
+  return toPngBuffer(canvas);
+}
+
 export function renderProfileCardPng({
   displayName = '',
   userJid = '',
@@ -802,6 +994,7 @@ export function renderProfileCardPng({
   employment = null,
   isSelf = true,
   customProfile = null,
+  favoriteCard = null,
   nowMs = Date.now(),
 } = {}) {
   const t = resolveCardTheme('profile', nowMs);
@@ -873,6 +1066,19 @@ export function renderProfileCardPng({
       sub: 'Casado(a) com',
       label: shortName(partnerName, '', 22),
       color: '#f9a8d4',
+    });
+  }
+  if (favoriteCard) {
+    const tLabel = Math.min(5, Math.max(1, Math.floor(Number(favoriteCard.tier) || 1)));
+    chips.push({
+      icon: 'star',
+      sub: '⭐ Favorita',
+      label: shortName(
+        `${favoriteCard.displayName || favoriteCard.cardName || 'Carta'} · T${tLabel}`,
+        '',
+        28
+      ),
+      color: t.accent,
     });
   }
   const casinoActive = casino && (casino.games > 0 || casino.wagered > 0);
