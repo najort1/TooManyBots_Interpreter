@@ -43,6 +43,15 @@ function atHour(hour = TEST_HOUR, minute = 30, { base = Date.now() } = {}) {
   return d.getTime();
 }
 
+/** Simula a vítima mandando mensagem (libera re-roubo na Purga). */
+function pokeActivity(jid, occurredAt, flowPath = '') {
+  const db = getDb();
+  db.prepare(`
+    INSERT INTO analytics.conversation_events (occurred_at, event_type, direction, jid, flow_path, message_text, metadata)
+    VALUES (?, 'message', 'incoming', ?, ?, '', '{}')
+  `).run(Number(occurredAt), String(jid), String(flowPath || ''));
+}
+
 const NO_DEFENSE = { chaosEventDefenseEnabled: false };
 /** Sem cooldown entre assaltos (testes de sequência no mesmo atacante). */
 const NO_COOLDOWN = { chaosEventAssaultCooldownMs: 0 };
@@ -216,6 +225,209 @@ test('assalto com arma usa chance base maior', () => {
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
 
+test('purga: pistola sem munição cai nos punhos (não bloqueia assalto)', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.5,
+  });
+  const chaosEvent = createChaosEventService({
+    repository: repo,
+    eventRepository: eventRepo,
+    getMarketService: () => market,
+    random: () => 0.01,
+  });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('55930');
+  const vic = uniqueJid('55931');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 500, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 300, reason: 'seed' });
+  const cfg = chaosConfig({
+    chaosEventEnabled: true,
+    chaosEventHour: TEST_HOUR,
+    chaosEventNoWeaponSuccess: 0.5,
+    ...NO_DEFENSE,
+  });
+  const now = atHour(TEST_HOUR);
+  chaosEvent.tryStartEvent(scope, cfg, now);
+  effects.addCharges({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  // pistola sem munição no inventário
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'pistola',
+    acquiredPrice: 260,
+    usesLeft: 10,
+  });
+  const win = chaosEvent.doCrimeAssault({
+    attackerJid: atk,
+    targetJid: vic,
+    scopeKey: scope,
+    amount: 50,
+    funConfig: cfg,
+    now: now + 1000,
+  });
+  assert.equal(win.ok, true, 'sem munição ainda pode assaltar');
+  assert.equal(win.success, true);
+  assert.equal(win.fists, true, 'deve usar punhos');
+  assert.equal(win.weapon, null);
+  assert.ok(win.chance <= 0.55, `chance de punhos ~50%: ${win.chance}`);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('purga: pistola sem munição mas com faca usa a faca', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.5,
+  });
+  const chaosEvent = createChaosEventService({
+    repository: repo,
+    eventRepository: eventRepo,
+    getMarketService: () => market,
+    random: () => 0.01,
+  });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('55932');
+  const vic = uniqueJid('55933');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 500, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 300, reason: 'seed' });
+  const cfg = chaosConfig({ chaosEventEnabled: true, chaosEventHour: TEST_HOUR, ...NO_DEFENSE });
+  const now = atHour(TEST_HOUR);
+  chaosEvent.tryStartEvent(scope, cfg, now);
+  effects.addCharges({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'pistola',
+    acquiredPrice: 260,
+    usesLeft: 10,
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 10,
+  });
+  const win = chaosEvent.doCrimeAssault({
+    attackerJid: atk,
+    targetJid: vic,
+    scopeKey: scope,
+    amount: 50,
+    funConfig: cfg,
+    now: now + 1000,
+  });
+  assert.equal(win.ok, true);
+  assert.equal(win.success, true);
+  assert.equal(win.weapon?.id, 'faca');
+  assert.notEqual(win.fists, true);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('purga: vítima roubada e silenciosa não pode ser roubada de novo', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const eventRepo = createFunEventRepository({ getDatabase: getDb });
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    random: () => 0.5,
+  });
+  const chaosEvent = createChaosEventService({
+    repository: repo,
+    eventRepository: eventRepo,
+    getMarketService: () => market,
+    random: () => 0.01,
+  });
+  const scope = uniqueGroup();
+  const atk = uniqueJid('55934');
+  const atk2 = uniqueJid('55935');
+  const vic = uniqueJid('55936');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 500, reason: 'seed' });
+  repo.addCoins({ userJid: atk2, scopeKey: scope, amount: 500, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 500, reason: 'seed' });
+  const cfg = chaosConfig({
+    chaosEventEnabled: true,
+    chaosEventHour: TEST_HOUR,
+    chaosEventNoWeaponSuccess: 1,
+    ...NO_DEFENSE,
+  });
+  const now = atHour(TEST_HOUR);
+  chaosEvent.tryStartEvent(scope, cfg, now);
+  insertConversationEvent(vic, scope, now - 30_000);
+
+  const first = chaosEvent.doCrimeAssault({
+    attackerJid: atk,
+    targetJid: vic,
+    scopeKey: scope,
+    amount: 40,
+    funConfig: cfg,
+    now: now + 1000,
+  });
+  assert.equal(first.ok, true);
+  assert.equal(first.success, true);
+  assert.ok(first.stolen > 0);
+
+  // Sem nova mensagem da vítima → bloqueado
+  const second = chaosEvent.doCrimeAssault({
+    attackerJid: atk2,
+    targetJid: vic,
+    scopeKey: scope,
+    amount: 40,
+    funConfig: cfg,
+    now: now + 2000,
+  });
+  assert.equal(second.ok, false);
+  assert.equal(second.reason, 'victim-silent-after-rob');
+
+  // Vítima manda mensagem depois do roubo → pode ser alvo de novo
+  insertConversationEvent(vic, scope, now + 3000);
+  const third = chaosEvent.doCrimeAssault({
+    attackerJid: atk2,
+    targetJid: vic,
+    scopeKey: scope,
+    amount: 40,
+    funConfig: cfg,
+    now: now + 4000,
+  });
+  assert.equal(third.ok, true);
+  assert.equal(third.success, true);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
 test('saldo negativo limitado pelo maxDebt', () => {
   process.env.FUN_DISABLE_LIVE_LLM = '1';
   const repo = createFunStatsRepository({ getDatabase: getDb });
@@ -347,6 +559,8 @@ test('leaderboard registra maiores criminosos e vítimas', () => {
   chaosEvent.tryStartEvent(scope, cfg, now);
   chaosEvent.doCrimeAssault({ attackerJid: a1, targetJid: vic1, scopeKey: scope, amount: 100, funConfig: cfg, now: now + 1000 });
   chaosEvent.doCrimeAssault({ attackerJid: a1, targetJid: vic2, scopeKey: scope, amount: 300, funConfig: cfg, now: now + 2000 });
+  // vic1 precisa "falar" depois do roubo pra poder ser alvo de novo
+  pokeActivity(vic1, now + 2500, scope);
   chaosEvent.doCrimeAssault({ attackerJid: a2, targetJid: vic1, scopeKey: scope, amount: 50, funConfig: cfg, now: now + 3000 });
   const lb = chaosEvent.getEventLeaderboard(scope);
   assert.equal(lb.attackers.length, 2);
@@ -590,8 +804,9 @@ test('defesa: responder vazio ou null executa assalto', () => {
   assert.equal(r1.defended, false);
   assert.equal(r1.stolen, 30);
 
-  // recarrega vic
+  // recarrega vic + manda msg (libera re-roubo)
   repo.addCoins({ userJid: vic, scopeKey: scope, amount: 50, reason: 'refill', now: now + 2000 });
+  pokeActivity(vic, now + 2200, scope);
   const pending2 = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 20, funConfig: cfg, now: now + 2500 });
   assert.equal(pending2.success, 'pending');
 
@@ -1074,17 +1289,17 @@ test('janela de atividade — dentro da janela permite seguir', () => {
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
 
-test('janela de atividade — exatamente no limite permite seguir', () => {
+test('janela de atividade — exatamente no limite (3 min) permite seguir', () => {
   const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
-  insertConversationEvent(vic, scope, now - 600_000);
+  insertConversationEvent(vic, scope, now - 180_000);
   const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
   assert.equal(result.ok, true, 'exatamente no limite não deve bloquear');
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
 
-test('janela de atividade — 1ms além do limite bloqueia', () => {
+test('janela de atividade — 1ms além do limite (3 min) bloqueia', () => {
   const { chaosEvent, scope, atk, vic, cfg, now } = setupActivityTest();
-  insertConversationEvent(vic, scope, now - 600_001);
+  insertConversationEvent(vic, scope, now - 180_001);
   const result = chaosEvent.doCrimeAssault({ attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 50, funConfig: cfg, now });
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'inactive-target');
@@ -1188,9 +1403,9 @@ test('isolamento entre alvos — ativo passa, inativo bloqueia no mesmo evento',
 
 // ─── Testes de Configuração ─────────────────────────────────────────────────
 
-test('config — default de 10 minutos', () => {
+test('config — default de 3 minutos (atividade na Purga)', () => {
   const cfg = resolveFunConfig({});
-  assert.equal(cfg.chaosEventActivityWindowMs, 10 * 60_000);
+  assert.equal(cfg.chaosEventActivityWindowMs, 3 * 60_000);
 });
 
 test('config — aceita mínimo de 1 minuto', () => {
@@ -1223,13 +1438,13 @@ test('config — valor intermediário preservado', () => {
 });
 
 test('config — entradas inválidas caem no default ou mínimo', () => {
-  // undefined / ausente → default (600_000)
-  assert.equal(resolveFunConfig({}).chaosEventActivityWindowMs, 10 * 60_000);
-  assert.equal(resolveFunConfig({ chaosEventActivityWindowMs: undefined }).chaosEventActivityWindowMs, 10 * 60_000);
+  // undefined / ausente → default (3 min)
+  assert.equal(resolveFunConfig({}).chaosEventActivityWindowMs, 3 * 60_000);
+  assert.equal(resolveFunConfig({ chaosEventActivityWindowMs: undefined }).chaosEventActivityWindowMs, 3 * 60_000);
   // string com texto, NaN, Infinity → normalizeInt retorna default
   for (const val of ['abc', NaN, Infinity]) {
     const cfg = resolveFunConfig({ chaosEventActivityWindowMs: val });
-    assert.equal(cfg.chaosEventActivityWindowMs, 10 * 60_000, `valor ${val} deve usar default 600_000`);
+    assert.equal(cfg.chaosEventActivityWindowMs, 3 * 60_000, `valor ${val} deve usar default 180_000`);
   }
   // string vazia e null → normalizeInt converte para 0 → clamp ao mínimo (60_000)
   for (const val of ['', null]) {
@@ -1381,8 +1596,9 @@ function setupPurga({
       ? { chaosEventDefenseEnabled: true, chaosEventDefenseTimeoutMs: 4000 }
       : NO_DEFENSE),
   });
-  const now = atHour(TEST_HOUR);
-  const started = chaosEvent.tryStartEvent(scope, cfg, now);
+  // Wall-clock + force: evita skew de atHour futuro vs resolveEventTime(msgTime)
+  const now = Date.now();
+  const started = chaosEvent.tryStartEvent(scope, cfg, now, { force: true });
   return { repo, eventRepo, marketRepo, market, chaosEvent, scope, cfg, now, started };
 }
 
@@ -1440,15 +1656,17 @@ test('edge: janela de ativação m..m+4 ok, m+5 rejeita', () => {
 test('edge: amount 0/negativo/NaN/string vira mínimo 1 (cap maxSteal)', () => {
   const { chaosEvent, scope, cfg, now, repo } = setupPurga({ maxSteal: 100 });
   const atk = uniqueJid('5601');
-  const vic = uniqueJid('5602');
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 500, reason: 'seed' });
-  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 500, reason: 'seed' });
 
+  let t = 1000;
   for (const amount of [0, -10, NaN, 'abc', null, undefined, '']) {
+    const vic = uniqueJid('5602');
+    repo.addCoins({ userJid: vic, scopeKey: scope, amount: 500, reason: 'seed' });
     const r = chaosEvent.doCrimeAssault({
-      attackerJid: atk, targetJid: vic, scopeKey: scope, amount, funConfig: cfg, now: now + 1000,
+      attackerJid: atk, targetJid: vic, scopeKey: scope, amount, funConfig: cfg, now: now + t,
     });
-    assert.equal(r.ok, true, `amount=${amount} deve processar`);
+    t += 1000;
+    assert.equal(r.ok, true, `amount=${amount} deve processar (${r.reason || r.success})`);
     assert.equal(r.success, true);
     assert.equal(r.stolen, 1, `amount=${amount} deve roubar mínimo 1`);
   }
@@ -2075,7 +2293,8 @@ test('cooldown: atacantes diferentes não compartilham cooldown', () => {
   assert.equal(chaosEvent.doCrimeAssault({
     attackerJid: a1, targetJid: vic, scopeKey: scope, amount: 10, funConfig: cfg, now: now + 1000,
   }).ok, true);
-  // a2 pode assaltar na sequência (sem defesa — vic livre)
+  // vic fala no chat → a2 pode assaltar (cooldown é por atacante, não por vítima)
+  pokeActivity(vic, now + 1050, scope);
   assert.equal(chaosEvent.doCrimeAssault({
     attackerJid: a2, targetJid: vic, scopeKey: scope, amount: 10, funConfig: cfg, now: now + 1100,
   }).ok, true);
@@ -2204,10 +2423,12 @@ test('concorrência: 20 assaltos no mesmo alvo sem defesa — saldo nunca negati
   for (let i = 0; i < 20; i++) {
     const atk = uniqueJid('5721');
     repo.addCoins({ userJid: atk, scopeKey: scope, amount: 50, reason: 'seed' });
+    // cada roubo exige que a vítima "fale" de novo (anti-farm AFK)
+    pokeActivity(vic, now + 1000 + i * 2, scope);
     const r = chaosEvent.doCrimeAssault({
-      attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 40, funConfig: cfg, now: now + 1000 + i,
+      attackerJid: atk, targetJid: vic, scopeKey: scope, amount: 40, funConfig: cfg, now: now + 1001 + i * 2,
     });
-    assert.equal(r.ok, true);
+    assert.equal(r.ok, true, `i=${i} reason=${r.reason}`);
     if (r.success) totalStolen += r.stolen;
   }
   const vicCoins = repo.getUserStats(vic, scope).coins;

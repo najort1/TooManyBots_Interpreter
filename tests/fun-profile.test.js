@@ -30,6 +30,7 @@ import {
 import {
   formatXpProfile,
   formatProfileIdentityMessage,
+  formatPoliceProfileLines,
   buildIdentityLines,
 } from '../fun/formatters/rankCard.js';
 
@@ -220,6 +221,40 @@ test('formatXpProfile mostra identidade', () => {
   });
   assert.match(text, /Identidade|Nina|figurinhas|12\/08|Lenda/i);
   assert.match(text, /proano|negro/i);
+});
+
+test('formatXpProfile / formatPoliceProfileLines: Wanted e Heat no perfil', () => {
+  const lines = formatPoliceProfileLines({
+    wantedLevel: 3,
+    wantedPoints: 42,
+    heat: 4,
+    suspicion: 0.55,
+    immune: true,
+    immunityUsesLeft: 12,
+    immunityExpiresAt: Date.now() + 2 * 60 * 60_000,
+  });
+  assert.ok(lines.some((l) => /Wanted/i.test(l) && /⭐/.test(l)));
+  assert.ok(lines.some((l) => /Heat/i.test(l) && /\*4\*/.test(l)));
+  assert.ok(lines.some((l) => /Imunidade/i.test(l)));
+
+  const text = formatXpProfile({
+    displayName: '@bandido',
+    userJid: uniqueJid(),
+    stats: { xp: 50, level: 1, coins: 100 },
+    rank: 2,
+    total: 10,
+    isSelf: true,
+    police: {
+      wantedLevel: 2,
+      wantedPoints: 20,
+      heat: 3,
+      suspicion: 0.4,
+      immune: false,
+    },
+  });
+  assert.match(text, /Polícia|ficha/i);
+  assert.match(text, /Wanted/i);
+  assert.match(text, /Heat/i);
 });
 
 test('formatProfileIdentityMessage não trunca extras', () => {

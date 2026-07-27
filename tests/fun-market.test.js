@@ -867,13 +867,15 @@ test('suspicion score: weights e riqueza sozinha não maximiza', () => {
   assert.ok(activePoor > richHonest);
 });
 
-test('wanted level thresholds e decay lento vs heat', () => {
+test('wanted level thresholds e decay ocioso vs heat', () => {
+  // thresholds: [0, 6, 14, 28, 48, 80]
   assert.equal(wantedLevelFromPoints(0), 0);
-  assert.equal(wantedLevelFromPoints(8), 1);
-  assert.equal(wantedLevelFromPoints(20), 2);
-  assert.equal(wantedLevelFromPoints(40), 3);
-  assert.equal(wantedLevelFromPoints(70), 4);
-  assert.equal(wantedLevelFromPoints(110), 5);
+  assert.equal(wantedLevelFromPoints(5), 0);
+  assert.equal(wantedLevelFromPoints(6), 1);
+  assert.equal(wantedLevelFromPoints(14), 2);
+  assert.equal(wantedLevelFromPoints(28), 3);
+  assert.equal(wantedLevelFromPoints(48), 4);
+  assert.equal(wantedLevelFromPoints(80), 5);
   assert.equal(wantedLevelFromPoints(999), 5);
 
   process.env.FUN_DISABLE_LIVE_LLM = '1';
@@ -900,12 +902,139 @@ test('wanted level thresholds e decay lento vs heat', () => {
   // Heat decai com o relógio próprio; Wanted ainda presente após "decay de heat"
   market.setAssaultHeat(atk, scope, 5, t0);
   assert.equal(market.getAssaultHeat(atk, scope, t0), 5);
-  // Wanted não some com o tempo de heat: só após WANTED_DECAY_MS
+  // Wanted não some com o tempo de heat: só após 24h ocioso
   const afterHeatish = t0 + 60 * 60_000;
   assert.equal(market.getWantedPoints(atk, scope, afterHeatish), 25);
-  // Após um passo de decay de Wanted (−1)
+  // Após um passo de decay de Wanted (−1) sem crime
   const afterWantedDecay = t0 + WANTED_DECAY_MS + 1000;
   assert.equal(market.getWantedPoints(atk, scope, afterWantedDecay), 24);
+
+  // Crime ativo reinicia o relógio: +pts e não decai nas próximas 24h
+  const police = createPoliceService({ repository: repo, effectsRepository: effects });
+  police.addWantedPoints(atk, scope, 5, afterWantedDecay);
+  assert.equal(
+    market.getWantedPoints(atk, scope, afterWantedDecay + WANTED_DECAY_MS - 1000),
+    29
+  );
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('wanted: falha também sobe ficha; sucesso sobe mais e dá estrela', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const police = createPoliceService({
+    repository: repo,
+    effectsRepository: effects,
+    random: () => 0.99,
+  });
+  // fail market: rolls altos = falha
+  const failMarket = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    policeService: police,
+    random: () => 0.99,
+  });
+  const winMarket = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    policeService: createPoliceService({
+      repository: repo,
+      effectsRepository: effects,
+      random: () => 0.99,
+    }),
+    random: () => 0.01,
+  });
+
+  const scope = uniqueGroup();
+  const unlucky = uniqueJid('55115');
+  const farmer = uniqueJid('55116');
+  const t0 = Date.now();
+  const cfg = resolveFunConfig({ assaultCooldownMs: 0, heistBankCooldownMs: 0 });
+
+  for (const u of [unlucky, farmer]) {
+    repo.addCoins({ userJid: u, scopeKey: scope, amount: 5000, reason: 'seed' });
+    effects.addCharges({
+      userJid: u,
+      scopeKey: scope,
+      effectKey: 'weapons_license',
+      charges: 1,
+      payload: { permanent: true },
+    });
+    marketRepo.addInventory({
+      userJid: u,
+      scopeKey: scope,
+      itemId: 'faca',
+      acquiredPrice: 90,
+      usesLeft: 20,
+    });
+    marketRepo.addInventory({
+      userJid: u,
+      scopeKey: scope,
+      itemId: 'lockpick',
+      acquiredPrice: 50,
+      usesLeft: 20,
+    });
+  }
+
+  // 2 falhas de banco → +2 cada = 4 pts (sobe ficha, ainda sem estrela)
+  for (let i = 0; i < 2; i += 1) {
+    marketRepo.addInventory({
+      userJid: unlucky,
+      scopeKey: scope,
+      itemId: 'lockpick',
+      acquiredPrice: 50,
+      usesLeft: 5,
+    });
+    const f = failMarket.assault({
+      attackerJid: unlucky,
+      heistToken: 'banco',
+      scopeKey: scope,
+      funConfig: cfg,
+      now: t0 + i * 1000,
+    });
+    assert.equal(f.ok, true);
+    assert.equal(f.success, false);
+    assert.notEqual(f.policeBust, true);
+  }
+  const failPts = failMarket.getWantedPoints(unlucky, scope, t0 + 5000);
+  assert.equal(failPts, 4, `falhas devem somar Wanted: ${failPts}`);
+  assert.equal(failMarket.getWantedLevel(unlucky, scope, t0 + 5000), 0);
+
+  // 2 bancos com sucesso → ⭐1 (5+5 = 10 ≥ 6)
+  for (let i = 0; i < 2; i += 1) {
+    marketRepo.addInventory({
+      userJid: farmer,
+      scopeKey: scope,
+      itemId: 'lockpick',
+      acquiredPrice: 50,
+      usesLeft: 5,
+    });
+    const w = winMarket.assault({
+      attackerJid: farmer,
+      heistToken: 'banco',
+      scopeKey: scope,
+      funConfig: cfg,
+      now: t0 + 10_000 + i * 1000,
+    });
+    assert.equal(w.ok, true);
+    assert.equal(w.success, true);
+  }
+  assert.ok(winMarket.getWantedPoints(farmer, scope, t0 + 20_000) >= 10);
+  assert.ok(winMarket.getWantedLevel(farmer, scope, t0 + 20_000) >= 1);
+  // sucesso acumula mais que falha
+  assert.ok(
+    winMarket.getWantedPoints(farmer, scope, t0 + 20_000) > failPts,
+    'sucesso deve gerar mais Wanted que falha'
+  );
 
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
