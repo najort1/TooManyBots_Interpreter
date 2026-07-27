@@ -84,6 +84,8 @@ import {
   handleCollectCommand,
 } from './handlers/property.js';
 import { handleAchievementsCommand } from './handlers/achievements.js';
+import { handleCartasCommand } from './handlers/cartas.js';
+import { handleQmpCommand } from './handlers/qmp.js';
 import { handleNsfwEnableCommand, handleNsfwRejectCommand } from './handlers/nsfwVote.js';
 import { handleNsfwForceCommand } from './handlers/nsfwForce.js';
 
@@ -149,6 +151,8 @@ export async function routeFunCommand(ctx) {
     roastService,
     newsService,
     achievementService,
+    cardService,
+    qmpService,
     casinoRepository,
     groupMemoryService,
     profileService,
@@ -216,6 +220,8 @@ export async function routeFunCommand(ctx) {
     roastService,
     newsService,
     achievementService,
+    cardService,
+    qmpService,
     casinoRepository,
     groupMemoryService,
     profileService,
@@ -388,6 +394,10 @@ export async function routeFunCommand(ctx) {
       return handleCollectCommand(base);
     case FUN_COMMANDS.ACHIEVEMENTS:
       return handleAchievementsCommand(base);
+    case FUN_COMMANDS.CARTAS:
+      return handleCartasCommand(base);
+    case FUN_COMMANDS.QMP:
+      return handleQmpCommand(base);
     case FUN_COMMANDS.NSFW_ENABLE:
       return handleNsfwEnableCommand(base);
     case FUN_COMMANDS.NSFW_REJECT:
