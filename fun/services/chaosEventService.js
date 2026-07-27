@@ -1,12 +1,16 @@
 /**
  * Purga — evento diário de 10 minutos (referência ao filme Uma Noite de Crime).
  * Ativa 1x/dia em horário configurável.
- * Durante o evento: assalto livre, sem arma = 50%, saldo negativo limitado, heat desativado.
+ * Durante o evento: assalto livre, sem arma / sem munição = punhos (50%), saldo negativo
+ * limitado, heat desativado.
  * Defesa: alvo resolve conta de matemática em N s (msgTime do Baileys, não wall-clock).
  * Cooldown entre assaltos por atacante (padrão 30s) para evitar flood no pico do evento.
  *
  * Critério de atividade: apenas jogadores com interação nos últimos N minutos
- * podem ser vítimas (activityWindowMs, padrão 10 min).
+ * podem ser vítimas (activityWindowMs, padrão 3 min).
+ *
+ * Proteção pós-roubo: quem foi roubado e ainda não mandou mensagem no chat
+ * não pode ser roubado de novo até interagir (anti-farm de AFK).
  *
  * Concorrência (muitos users ao mesmo tempo):
  * - cooldown por atacante
@@ -91,6 +95,13 @@ export function createChaosEventService({
   /** @type {Map<string, number>} */
   const assaultCooldowns = new Map();
 
+  /**
+   * Último roubo bem-sucedido na Purga: `${scope}\0${victimJid}` → timestamp.
+   * Enquanto a vítima não mandar mensagem depois disso, não pode ser roubada de novo.
+   * @type {Map<string, number>}
+   */
+  const lastRobbedAt = new Map();
+
   function opts(funConfig = {}) {
     return {
       enabled: funConfig.chaosEventEnabled !== false,
@@ -108,10 +119,100 @@ export function createChaosEventService({
         0,
         Math.floor(numOr(funConfig.chaosEventDefenseDeliveryGraceMs, 25_000))
       ),
-      activityWindowMs: Math.max(60_000, Math.floor(numOr(funConfig.chaosEventActivityWindowMs, 10 * 60_000))),
+      activityWindowMs: Math.max(
+        60_000,
+        Math.floor(numOr(funConfig.chaosEventActivityWindowMs, 3 * 60_000))
+      ),
       /** Cooldown entre assaltos do mesmo atacante no mesmo grupo (padrão 30s) */
       assaultCooldownMs: Math.max(0, Math.floor(numOr(funConfig.chaosEventAssaultCooldownMs, 30_000))),
     };
+  }
+
+  function robKey(scopeKey, victimJid) {
+    return `${String(scopeKey || '')}\0${String(victimJid || '')}`;
+  }
+
+  function markVictimRobbed(scopeKey, victimJid, now = Date.now()) {
+    lastRobbedAt.set(robKey(scopeKey, victimJid), Number(now) || Date.now());
+  }
+
+  function clearRobbedMarks(scopeKey) {
+    const prefix = `${String(scopeKey || '')}\0`;
+    for (const k of [...lastRobbedAt.keys()]) {
+      if (k.startsWith(prefix)) lastRobbedAt.delete(k);
+    }
+  }
+
+  /**
+   * True se a vítima já foi roubada e ainda não mandou mensagem depois do roubo.
+   */
+  function isVictimSilentAfterRob(scopeKey, victimJid, clock = Date.now()) {
+    const robbedAt = lastRobbedAt.get(robKey(scopeKey, victimJid)) || 0;
+    if (robbedAt <= 0) return false;
+    const lastAct = getLastPlayerActivity(victimJid, scopeKey, clock);
+    // precisa de interação *depois* do roubo
+    return !(lastAct > robbedAt);
+  }
+
+  /**
+   * Arma utilizável na Purga: se exige munição e não tem, tenta a próxima (ex.: faca).
+   * Sem nenhuma arma usável → null (punhos).
+   */
+  function pickUsableWeapon(ms, userJid, scopeKey) {
+    if (!ms) return null;
+    let bag = [];
+    try {
+      bag = typeof ms.inventoryOf === 'function' ? ms.inventoryOf(userJid, scopeKey) || [] : [];
+    } catch {
+      bag = [];
+    }
+    const weapons = bag
+      .filter(
+        (i) =>
+          i?.collectible?.category === 'arma' &&
+          i.condition === 'ok' &&
+          !i.listed &&
+          (i.usesLeft === -1 || i.usesLeft > 0)
+      )
+      .sort(
+        (a, b) =>
+          (Number(b.collectible?.assaultPower) || 0) -
+          (Number(a.collectible?.assaultPower) || 0)
+      );
+
+    const hasAmmo = () => {
+      try {
+        return bag.some(
+          (i) =>
+            i.itemId === 'municao' &&
+            i.condition === 'ok' &&
+            !i.listed &&
+            (i.usesLeft === -1 || i.usesLeft > 0)
+        );
+      } catch {
+        return false;
+      }
+    };
+
+    for (const w of weapons) {
+      const req = w.collectible?.requires;
+      if (req === 'municao' && !hasAmmo()) {
+        continue; // arma de fogo sem cartucho → tenta melee / punhos
+      }
+      return w;
+    }
+
+    // Fallback: findBestWeapon + checagem de munição (se inventoryOf indisponível)
+    if (!weapons.length && typeof ms.findBestWeapon === 'function') {
+      const w = ms.findBestWeapon(userJid, scopeKey);
+      if (!w) return null;
+      if (w.collectible?.requires === 'municao') {
+        // tenta consumir depois; se falhar, caller trata como punhos
+        return w;
+      }
+      return w;
+    }
+    return null;
   }
 
   function cooldownKey(scopeKey, attackerJid) {
@@ -317,6 +418,8 @@ export function createChaosEventService({
 
       if (totalStolen > 0) {
         recordLeaderboard(scopeKey, attackerJid, targetJid, totalStolen);
+        // vítima roubada: só pode ser alvo de novo após mandar mensagem
+        markVictimRobbed(scopeKey, targetJid, now);
       }
 
       return { stolen: totalStolen, stolenFromWallet: finalTaken, stolenFromDebt: finalDebt };
@@ -350,9 +453,13 @@ export function createChaosEventService({
     now = Date.now(),
   }) {
     try {
-      // Relógio do assalto = momento do processamento (prod: Date.now(); testes: injetado).
-      // NÃO usar msgTime atrasado aqui — o user só vê o desafio quando o bot responde.
-      const clock = resolveEventTime(now, Date.now());
+      // Relógio do assalto = momento do processamento (prod: Date.now() no handler; testes: injetado).
+      // NÃO usar resolveEventTime/msgTime aqui — o desafio só existe quando o bot responde.
+      // Clamp de skew futuro quebraria timelines controlados de teste e a janela de AFK.
+      const clock =
+        Number.isFinite(Number(now)) && Number(now) > 0
+          ? Math.floor(Number(now))
+          : Date.now();
       const a = String(attackerJid || '');
       const t = String(targetJid || '');
       if (!a || !t || a === t) return { ok: false, reason: 'invalid-target' };
@@ -375,6 +482,11 @@ export function createChaosEventService({
       const lastActivity = getLastPlayerActivity(t, scopeKey, clock);
       if (lastActivity > 0 && clock - lastActivity > o.activityWindowMs) {
         return { ok: false, reason: 'inactive-target' };
+      }
+
+      // Roubado e ainda mudo no chat → não pode ser farmado de novo
+      if (isVictimSilentAfterRob(String(scopeKey || ''), t, clock)) {
+        return { ok: false, reason: 'victim-silent-after-rob' };
       }
 
       // Alvo já sob desafio: não sobrescreve (evita roubo silencioso do 1º atacante)
@@ -403,9 +515,11 @@ export function createChaosEventService({
       const desired = Math.min(requested, o.maxStealAmount);
 
       const ms = typeof getMarketService === 'function' ? getMarketService() : null;
-      const weapon = ms?.findBestWeapon ? ms.findBestWeapon(a, scopeKey) : null;
-      let hasWeapon = Boolean(weapon);
-      const wCol = weapon?.collectible;
+
+      // Arma usável (com munição se precisar) → senão punhos (mesma chance de sem arma)
+      let weapon = pickUsableWeapon(ms, a, scopeKey);
+      let wCol = weapon?.collectible || null;
+      let usedFists = false;
 
       const tStats = repository.getUserStats(t, scopeKey) || repository.ensureUserRow(t, scopeKey, clock);
       const tCoins = Number(tStats.coins) || 0;
@@ -414,20 +528,28 @@ export function createChaosEventService({
       let success = false;
       let chance = 0;
 
-      if (hasWeapon && wCol) {
+      if (weapon && wCol) {
+        let usable = true;
         if (wCol.requires === 'municao') {
-          if (!ms?.consumeOneConsumable(a, scopeKey, 'municao')) {
-            hasWeapon = false;
+          if (!ms?.consumeOneConsumable?.(a, scopeKey, 'municao')) {
+            usable = false;
           }
         }
-        if (hasWeapon) {
+        if (usable) {
           const power = Number(wCol.assaultPower) || 0;
           chance = Math.min(0.85, Math.max(0.12, o.weaponBaseChance + power / 200));
           if (ms?.consumeUse) ms.consumeUse(weapon, clock);
           success = random() < chance;
+        } else {
+          // sem munição e pickUsable falhou no peek → punhos
+          weapon = null;
+          wCol = null;
+          usedFists = true;
+          chance = o.noWeaponSuccess;
+          success = random() < chance;
         }
-      }
-      if (!hasWeapon) {
+      } else {
+        usedFists = true;
         chance = o.noWeaponSuccess;
         success = random() < chance;
       }
@@ -438,7 +560,7 @@ export function createChaosEventService({
       if (!success) {
         return {
           ok: true, success: false, mode: 'crime_event',
-          event: true, chance, weapon: wCol || null,
+          event: true, chance, weapon: wCol || null, fists: usedFists,
           stolen: 0, reason: 'failed',
           cooldownMs: o.assaultCooldownMs,
           coins: repository.getUserStats(a, scopeKey)?.coins || 0,
@@ -449,7 +571,7 @@ export function createChaosEventService({
         const transfer = executeAssaultTransfer(scopeKey, a, t, desired, tCoins, clock, o.maxDebt);
         return {
           ok: true, success: true, mode: 'crime_event',
-          event: true, chance, weapon: wCol || null,
+          event: true, chance, weapon: wCol || null, fists: usedFists,
           stolen: transfer.stolen, stolenFromWallet: transfer.stolenFromWallet,
           stolenFromDebt: transfer.stolenFromDebt, targetCoins: tCoins,
           targetAfter: Number(repository.getUserStats(t, scopeKey)?.coins) || 0,
@@ -485,7 +607,7 @@ export function createChaosEventService({
 
       return {
         ok: true, success: 'pending', mode: 'crime_event',
-        event: true, chance, weapon: wCol || null,
+        event: true, chance, weapon: wCol || null, fists: usedFists,
         stolen: 0, reason: 'defense',
         cooldownMs: o.assaultCooldownMs,
         challenge: {
@@ -648,6 +770,7 @@ export function createChaosEventService({
     const minutes = Math.max(1, Math.round((result.durationMs || o.durationMs || 0) / 60000));
     const defSec = Math.max(1, Math.round(o.defenseTimeoutMs / 1000));
     const cdSec = Math.max(0, Math.round(o.assaultCooldownMs / 1000));
+    const actMin = Math.max(1, Math.round(o.activityWindowMs / 60_000));
     return [
       '🚨🚨 *PURGA — ESTADO DE EMERGÊNCIA*',
       '',
@@ -656,7 +779,9 @@ export function createChaosEventService({
       '',
       `Durante *${minutes} minutos*:`,
       '💰 Qualquer valor pode ser roubado',
-      '🔫 Assaltos ficaram mais fáceis',
+      '🔫 Armas se tiver · sem munição = *punhos*',
+      `👁️ Só alvos ativos nos últimos *${actMin} min*`,
+      '🔇 Roubado e mudo no chat? Não pode ser roubado de novo até mandar msg',
       `🧮 Defenda-se resolvendo a conta em ${defSec}s`,
       cdSec > 0 ? `⏳ Cooldown de ${cdSec}s entre assaltos` : null,
       '🔥 Heat foi desativado — sem wanted',
@@ -710,6 +835,7 @@ export function createChaosEventService({
     const finalLb = { attackers: [...lb.attackers], victims: [...lb.victims] };
     cleanupLeaderboard(scopeKey);
     clearAssaultCooldowns(scopeKey);
+    clearRobbedMarks(scopeKey);
     try {
       const ns = typeof getNewsService === 'function' ? getNewsService() : null;
       ns?.log?.(scopeKey, 'purga_end', {
