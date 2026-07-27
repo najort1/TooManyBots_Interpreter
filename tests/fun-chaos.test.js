@@ -51,7 +51,7 @@ test('parseFunCommand: aliases de caos (oraculo ≠ tarot)', () => {
   assert.deepEqual(o.args, ['Vou', 'namorar?']);
 
   assert.equal(parseFunCommand('/tarot oi', '/').command, FUN_COMMANDS.TAROT);
-  assert.equal(parseFunCommand('/cartas', '/').command, FUN_COMMANDS.TAROT);
+  assert.equal(parseFunCommand('/cartas', '/').command, FUN_COMMANDS.CARTAS);
 });
 
 test('chaosService: templates de texto não vazios', () => {

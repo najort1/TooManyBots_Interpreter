@@ -36,9 +36,9 @@ function uniqueGroup() {
 test('parseFunCommand: aliases tarot', () => {
   assert.equal(parseFunCommand('/tarot vai dar certo?', '/').command, FUN_COMMANDS.TAROT);
   assert.equal(parseFunCommand('/taro oi', '/').command, FUN_COMMANDS.TAROT);
-  assert.equal(parseFunCommand('/cartas', '/').command, FUN_COMMANDS.TAROT);
+  assert.equal(parseFunCommand('/cartas', '/').command, FUN_COMMANDS.CARTAS);
   assert.equal(parseFunCommand('/vidente', '/').command, FUN_COMMANDS.TAROT);
-  // /oraculo agora é ORACLE (caos); tarô fica em /tarot /cartas /vidente
+  // /oraculo agora é ORACLE (caos); tarô fica em /tarot /vidente
   assert.notEqual(parseFunCommand('/oraculo amor', '/').command, FUN_COMMANDS.TAROT);
   const p = parseFunCommand('/tarot ele gosta de mim?', '/');
   assert.deepEqual(p.args, ['ele', 'gosta', 'de', 'mim?']);
