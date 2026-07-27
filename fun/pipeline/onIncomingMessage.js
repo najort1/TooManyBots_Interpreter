@@ -11,6 +11,7 @@ import {
   displayNameOnly,
   ensureActorMention,
 } from '../utils/userLabel.js';
+import { tryPassiveQmpVote } from '../commands/handlers/qmp.js';
 
 /**
  * Respostas no privado desabilitadas por padrão (ban/spam do WhatsApp).
@@ -109,6 +110,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
     roastService,
     newsService,
     achievementService,
+    cardService,
+    qmpService,
     casinoRepository,
     groupMemoryService,
     profileService,
@@ -492,6 +495,33 @@ export async function handleFunIncomingMessage(deps, ctx) {
     }
   }
 
+  /** Quem é Mais Provável? — chance pequena por mensagem normal do grupo. */
+  async function maybeAutoQmp(now = Date.now()) {
+    if (!isGroup || !qmpService?.tryAutoTrigger) return null;
+    if (funConfig.qmpEnabled === false) return null;
+    if (isWorldQuietHours(funConfig, now)) return null;
+    try {
+      const hit = await qmpService.tryAutoTrigger({
+        scopeKey: scope.scopeKey,
+        funConfig,
+        now,
+      });
+      if (!hit?.ok || !hit.question) return hit;
+      const msg = qmpService.formatQuestionAnnouncement(hit.question, {
+        voteCount: 0,
+        auto: true,
+      });
+      if (msg) await replyToChat(msg);
+      return hit;
+    } catch (err) {
+      getLogger?.()?.debug?.(
+        { err: { message: err?.message || 'auto-qmp' } },
+        'Fun auto-QMP failed'
+      );
+      return null;
+    }
+  }
+
   // Lore seletiva: observa chat do grupo (async extract em batch; ignora comandos)
   if (isGroup && groupMemoryService?.observeMessage && scope.scopeKey) {
     try {
@@ -595,6 +625,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
           roastService,
           newsService,
           achievementService,
+          cardService,
+          qmpService,
           casinoRepository,
           groupMemoryService,
           profileService,
@@ -659,6 +691,32 @@ export async function handleFunIncomingMessage(deps, ctx) {
 
   if (!isCountableMessage({ text, messageType })) {
     return { handled: false, skipFlows: false, reason: 'not-countable' };
+  }
+
+  // QMP: menção em mensagem normal conta como voto se houver rodada ativa
+  if (isGroup && mentionedJids?.length && qmpService) {
+    try {
+      const passiveVote = await runWithUserLabels(userFmt, async () =>
+        tryPassiveQmpVote({
+          userJid,
+          scopeKey: scope.scopeKey,
+          isGroup,
+          funConfig,
+          qmpService,
+          mentionedJids,
+          getContactDisplayName,
+          listContacts,
+          reply,
+          sock,
+          identityMap,
+        })
+      );
+      if (passiveVote?.voted) {
+        // ainda deixa XP passivo seguir; voto não engole a mensagem
+      }
+    } catch {
+      // voto passivo nunca quebra o pipeline
+    }
   }
 
   try {
@@ -751,11 +809,12 @@ export async function handleFunIncomingMessage(deps, ctx) {
       });
     }
 
-    // evento surpresa + mercado em mensagem normal do grupo
+    // evento surpresa + mercado + QMP em mensagem normal do grupo
     if (award.applied) {
       await runWithUserLabels(userFmt, async () => {
         await maybeAutoEvent(now);
         await maybeAutoMarket(now);
+        await maybeAutoQmp(now);
       });
     }
 

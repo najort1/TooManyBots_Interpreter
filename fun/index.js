@@ -48,8 +48,12 @@ import { createFunNsfwVoteRepository } from './db/funNsfwVoteRepository.js';
 import { createFunNsfwService } from './services/funNsfwService.js';
 import { createFunMemoryRepository } from './db/funMemoryRepository.js';
 import { createFunProfileRepository } from './db/funProfileRepository.js';
+import { createFunCardRepository } from './db/funCardRepository.js';
+import { createFunQmpRepository } from './db/funQmpRepository.js';
 import { createGroupMemoryService } from './services/groupMemoryService.js';
 import { createProfileService } from './services/profileService.js';
+import { createCardService } from './services/cardService.js';
+import { createQmpService } from './services/qmpService.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
 import { nameOf } from './utils/userLabel.js';
 import { getDb } from '../db/context.js';
@@ -165,6 +169,25 @@ export function createFunModule(deps = {}) {
       profileRepository,
       statsRepository: repository,
       getContactDisplayName: resolveContactName,
+      getLogger,
+      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateOllama: deps.ollamaGenerate || deps.generate,
+    });
+  const cardRepository =
+    deps.cardRepository || createFunCardRepository({ getDatabase });
+  const cardService =
+    deps.cardService ||
+    createCardService({
+      repository,
+      cardRepository,
+      actionRepository,
+    });
+  const qmpRepository =
+    deps.qmpRepository || createFunQmpRepository({ getDatabase });
+  const qmpService =
+    deps.qmpService ||
+    createQmpService({
+      qmpRepository,
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
       generateOllama: deps.ollamaGenerate || deps.generate,
@@ -368,6 +391,8 @@ export function createFunModule(deps = {}) {
         roastService,
         newsService,
         achievementService,
+        cardService,
+        qmpService,
         casinoRepository,
         groupMemoryService,
         profileService,
@@ -883,6 +908,10 @@ export function createFunModule(deps = {}) {
       snapshotRepository,
       changelogService,
       achievementService,
+      cardService,
+      cardRepository,
+      qmpService,
+      qmpRepository,
       casinoRepository,
       stockRepository,
       jobService,
