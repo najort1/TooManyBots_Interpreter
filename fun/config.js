@@ -89,6 +89,24 @@ export function normalizeFunConfig(input) {
     logLevel: toText(raw.logLevel, DEFAULT_FUN_CONFIG.logLevel).toLowerCase() || DEFAULT_FUN_CONFIG.logLevel,
     dataDir: toText(raw.dataDir, '') || '',
     rankCardImage: normalizeBoolean(raw.rankCardImage, DEFAULT_FUN_CONFIG.rankCardImage),
+    cardsEnabled: normalizeBoolean(raw.cardsEnabled, DEFAULT_FUN_CONFIG.cardsEnabled),
+    cardPackCost: normalizeInt(raw.cardPackCost, DEFAULT_FUN_CONFIG.cardPackCost, {
+      min: 1,
+      max: 1_000_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    cardMaxPacksPerOpen: normalizeInt(
+      raw.cardMaxPacksPerOpen,
+      DEFAULT_FUN_CONFIG.cardMaxPacksPerOpen,
+      { min: 1, max: 100, rounding: 'floor', clamp: true }
+    ),
+    cardTradeTtlMs: normalizeInt(raw.cardTradeTtlMs, DEFAULT_FUN_CONFIG.cardTradeTtlMs, {
+      min: 30_000,
+      max: 24 * 60 * 60 * 1000,
+      rounding: 'floor',
+      clamp: true,
+    }),
     dashboardEnabled: normalizeBoolean(raw.dashboardEnabled, DEFAULT_FUN_CONFIG.dashboardEnabled),
     dashboardHost: toText(raw.dashboardHost, DEFAULT_FUN_CONFIG.dashboardHost) || DEFAULT_FUN_CONFIG.dashboardHost,
     dashboardPort: normalizeInt(raw.dashboardPort, DEFAULT_FUN_CONFIG.dashboardPort, {
@@ -593,6 +611,90 @@ export function normalizeFunConfig(input) {
     tarotTemperature: Number.isFinite(Number(raw.tarotTemperature))
       ? Math.min(1.5, Math.max(0, Number(raw.tarotTemperature)))
       : DEFAULT_FUN_CONFIG.tarotTemperature,
+    qmpEnabled: normalizeBoolean(raw.qmpEnabled, DEFAULT_FUN_CONFIG.qmpEnabled),
+    qmpAutoTriggerChance: (() => {
+      const envRaw = process.env.QMP_AUTO_TRIGGER_CHANCE;
+      const fromEnv = envRaw != null && envRaw !== '' ? Number(envRaw) : NaN;
+      const rawVal = Number.isFinite(fromEnv)
+        ? fromEnv
+        : Number.isFinite(Number(raw.qmpAutoTriggerChance))
+          ? Number(raw.qmpAutoTriggerChance)
+          : DEFAULT_FUN_CONFIG.qmpAutoTriggerChance;
+      return Math.min(1, Math.max(0, rawVal));
+    })(),
+    qmpAutoTriggerCooldownMs: normalizeInt(
+      raw.qmpAutoTriggerCooldownMs,
+      DEFAULT_FUN_CONFIG.qmpAutoTriggerCooldownMs,
+      { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    qmpRoundDurationMs: normalizeInt(
+      raw.qmpRoundDurationMs,
+      DEFAULT_FUN_CONFIG.qmpRoundDurationMs,
+      { min: 60_000, max: 2 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    qmpCooldownMs: normalizeInt(raw.qmpCooldownMs, DEFAULT_FUN_CONFIG.qmpCooldownMs, {
+      min: 0,
+      max: 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    qmpMaxPromptLen: normalizeInt(raw.qmpMaxPromptLen, DEFAULT_FUN_CONFIG.qmpMaxPromptLen, {
+      min: 40,
+      max: 300,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    qmpRankLimit: normalizeInt(raw.qmpRankLimit, DEFAULT_FUN_CONFIG.qmpRankLimit, {
+      min: 3,
+      max: 50,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    qmpHistoryLimit: normalizeInt(raw.qmpHistoryLimit, DEFAULT_FUN_CONFIG.qmpHistoryLimit, {
+      min: 3,
+      max: 20,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    qmpHeavyEvery: normalizeInt(raw.qmpHeavyEvery, DEFAULT_FUN_CONFIG.qmpHeavyEvery, {
+      min: 2,
+      max: 20,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    qmpHeavyEnabled: normalizeBoolean(raw.qmpHeavyEnabled, DEFAULT_FUN_CONFIG.qmpHeavyEnabled),
+    qmpAntiEchoLimit: normalizeInt(
+      raw.qmpAntiEchoLimit,
+      DEFAULT_FUN_CONFIG.qmpAntiEchoLimit,
+      { min: 4, max: 40, rounding: 'floor', clamp: true }
+    ),
+    qmpAntiEchoMaxOverlap: Number.isFinite(Number(raw.qmpAntiEchoMaxOverlap))
+      ? Math.min(0.9, Math.max(0.2, Number(raw.qmpAntiEchoMaxOverlap)))
+      : DEFAULT_FUN_CONFIG.qmpAntiEchoMaxOverlap,
+    qmpInventRetries: normalizeInt(
+      raw.qmpInventRetries,
+      DEFAULT_FUN_CONFIG.qmpInventRetries,
+      { min: 1, max: 4, rounding: 'floor', clamp: true }
+    ),
+    qmpTimeoutMs: normalizeInt(raw.qmpTimeoutMs, DEFAULT_FUN_CONFIG.qmpTimeoutMs, {
+      min: 3000,
+      max: 90_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    qmpMaxTokens: normalizeInt(raw.qmpMaxTokens, DEFAULT_FUN_CONFIG.qmpMaxTokens, {
+      min: 64,
+      max: 500,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    qmpTemperature: Number.isFinite(Number(raw.qmpTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.qmpTemperature)))
+      : DEFAULT_FUN_CONFIG.qmpTemperature,
+    qmpZenModel:
+      toText(raw.qmpZenModel, DEFAULT_FUN_CONFIG.qmpZenModel) ||
+      DEFAULT_FUN_CONFIG.qmpZenModel ||
+      '',
     happyHourDurationMs: normalizeInt(raw.happyHourDurationMs, DEFAULT_FUN_CONFIG.happyHourDurationMs, { min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
     happyHourPayoutMult: Number.isFinite(Number(raw.happyHourPayoutMult))
       ? Math.min(2, Math.max(1, Number(raw.happyHourPayoutMult)))
@@ -995,6 +1097,10 @@ export function saveFunUserConfig(input) {
     logLevel: normalized.logLevel,
     dataDir: normalized.dataDir || FUN_DEFAULT_DATA_DIR,
     rankCardImage: normalized.rankCardImage,
+    cardsEnabled: normalized.cardsEnabled,
+    cardPackCost: normalized.cardPackCost,
+    cardMaxPacksPerOpen: normalized.cardMaxPacksPerOpen,
+    cardTradeTtlMs: normalized.cardTradeTtlMs,
     dashboardEnabled: normalized.dashboardEnabled,
     dashboardHost: normalized.dashboardHost,
     dashboardPort: normalized.dashboardPort,
