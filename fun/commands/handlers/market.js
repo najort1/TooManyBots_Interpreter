@@ -545,6 +545,12 @@ export async function handleAssaultCommand({
       await reply('Marque quem quer assaltar: `/crime @alvo quantia`');
       return { handled: true };
     }
+    // Não pode assaltar o próprio bot
+    const botJid = sock?.user?.id?.split(':')[0] || null;
+    if (botJid && botJid === target) {
+      await reply('Não pode assaltar o bot.');
+      return { handled: true };
+    }
     const amount = parseAmountFromArgs(args) || 50;
 
     // Processamento do bot (Date.now): o desafio só existe quando respondemos.
@@ -650,12 +656,35 @@ export async function handleAssaultCommand({
   let result;
   let pvpName = '';
 
+  // Extrai token de arma (opcional): último arg que referencia uma arma do catálogo.
+  // Ex: `/assaltar banco faca` · `/assaltar @alvo pistola` · `/assaltar 5511... rifle`
+  const isWeapon = typeof marketService.isWeaponToken === 'function'
+    ? (t) => marketService.isWeaponToken(t)
+    : () => false;
+  function extractWeaponToken(argList) {
+    const mentioned = new Set(
+      (mentionedJids || []).map((m) => String(m || '').trim()).filter(Boolean)
+    );
+    for (const raw of argList) {
+      const t = String(raw || '').trim();
+      if (!t) continue;
+      const cleaned = t.replace(/^@/, '');
+      if (mentioned.has(t) || mentioned.has(cleaned)) continue;
+      if (/^\d{8,15}$/.test(cleaned)) continue;
+      if (cleaned.includes('@s.whatsapp.net') || cleaned.includes('@lid')) continue;
+      if (isWeapon(cleaned)) return cleaned;
+    }
+    return '';
+  }
+
   if (heist) {
+    const weaponToken = extractWeaponToken(args.slice(1));
     result = marketService.assault({
       attackerJid: userJid,
       heistToken: first,
       scopeKey,
       funConfig,
+      weaponToken,
     });
   } else {
     const contacts = typeof listContacts === 'function' ? listContacts() : [];
@@ -679,17 +708,31 @@ export async function handleAssaultCommand({
       return { handled: true };
     }
     pvpName = nameOf(getContactDisplayName, target);
+    const weaponToken = extractWeaponToken(args);
     result = marketService.assault({
       attackerJid: userJid,
       targetJid: target,
       scopeKey,
       funConfig,
+      weaponToken,
     });
   }
 
   if (!result.ok) {
     if (result.reason === 'no-weapon') {
       await reply('Sem arma pronta. `/armas` (com chave) ou `/bazar`.');
+      return { handled: true };
+    }
+    if (result.reason === 'unknown-weapon') {
+      await reply(
+        'Arma *desconhecida*. Use `/armas` para ver as opções (faca, pistola, rifle).'
+      );
+      return { handled: true };
+    }
+    if (result.reason === 'weapon-not-owned') {
+      await reply(
+        'Você *não tem* essa arma pronta no inventário. `/armas` para ver o que pode usar.'
+      );
       return { handled: true };
     }
     if (result.reason === 'no-ammo') {

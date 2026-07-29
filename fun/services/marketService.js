@@ -1336,6 +1336,43 @@ export function createMarketService({
     return ready[0];
   }
 
+  /** Arma específica (por id/nome do colecionável) pronta no inventário, ou null. */
+  function findWeaponById(userJid, scopeKey, token) {
+    const col = getCollectible(token);
+    if (!col || col.category !== 'arma') return null;
+    return (
+      findReadyItem(userJid, scopeKey, (i) => i.collectible?.category === 'arma' && i.itemId === col.id) || null
+    );
+  }
+
+  /**
+   * Resolve a arma do assalto: se token fornecido e válido, usa essa;
+   * senão cai pra mais forte (comportamento anterior). Token inválido/novo
+   * no inventário retorna reason específico pra handler dar mensagem útil.
+   */
+  function resolveAssaultWeapon(userJid, scopeKey, weaponToken) {
+    const token = String(weaponToken || '').trim();
+    if (!token) {
+      const fallback = findBestWeapon(userJid, scopeKey);
+      return { weapon: fallback, reason: fallback ? '' : 'no-weapon' };
+    }
+    const col = getCollectible(token);
+    if (!col || col.category !== 'arma') {
+      return { weapon: null, reason: 'unknown-weapon' };
+    }
+    const weapon = findWeaponById(userJid, scopeKey, token);
+    if (!weapon) {
+      return { weapon: null, reason: 'weapon-not-owned' };
+    }
+    return { weapon, reason: '' };
+  }
+
+  /** True se o token referencia uma arma do catálogo (id ou nome). */
+  function isWeaponToken(token) {
+    const col = getCollectible(token);
+    return Boolean(col && col.category === 'arma');
+  }
+
   function consumeUse(inv, now = Date.now()) {
     if (!inv) return null;
     if (inv.usesLeft < 0) return inv;
@@ -1691,6 +1728,9 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       `  🔧 Lockpick: ${pickStatus} — \`/adquirir lockpick\``,
       `• \`/assaltar lojinha\` — mais fácil (${o.heistShopMin}–${o.heistShopMax}c)`,
       '• `/assaltar @pessoa` — for fun entre players',
+      '• `/assaltar banco faca` — *escolha a arma* do crime (opcional)',
+      '  Sem arma na mensagem, usa sempre a *mais forte* pronta.',
+      '  Armas: `faca`, `pistola`, `rifle` (disponíveis no `/armas`).',
       '',
       'Precisa de *arma*. Pistola/rifle gastam *municao*.',
       `Reposição: a cada *7 dias* (próx. ${formatRestockEta(Math.max(0, restock.nextAt - Date.now()))}).`,
@@ -1728,6 +1768,7 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     heist,
     funConfig = {},
     now = Date.now(),
+    weaponToken = '',
   }) {
     const o = opts(funConfig);
     const a = String(attackerJid || '');
@@ -1745,8 +1786,8 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       consumeLockpick(a, scopeKey, now);
     }
 
-    const weapon = findBestWeapon(a, scopeKey);
-    if (!weapon) return { ok: false, reason: 'no-weapon' };
+    const { weapon, reason } = resolveAssaultWeapon(a, scopeKey, weaponToken);
+    if (!weapon) return { ok: false, reason };
     const wCol = weapon.collectible;
 
     if (wCol.requires === 'municao') {
@@ -2033,6 +2074,7 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     scopeKey,
     funConfig = {},
     now = Date.now(),
+    weaponToken = '',
   }) {
     const o = opts(funConfig);
     const a = String(attackerJid || '');
@@ -2042,8 +2084,8 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     const cd = checkAssaultCooldown(a, scopeKey, o.assaultCooldownMs, now);
     if (!cd.ok) return cd;
 
-    const weapon = findBestWeapon(a, scopeKey);
-    if (!weapon) return { ok: false, reason: 'no-weapon' };
+    const { weapon, reason } = resolveAssaultWeapon(a, scopeKey, weaponToken);
+    if (!weapon) return { ok: false, reason };
     const wCol = weapon.collectible;
 
     if (wCol.requires === 'municao') {
@@ -2407,6 +2449,7 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     scopeKey,
     funConfig = {},
     now = Date.now(),
+    weaponToken = '',
   }) {
     const heist = resolveHeistTarget(heistToken || targetJid);
     if (heist) {
@@ -2416,6 +2459,7 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
         heist,
         funConfig,
         now,
+        weaponToken,
       });
     }
     return assaultPlayer({
@@ -2424,6 +2468,7 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       scopeKey,
       funConfig,
       now,
+      weaponToken,
     });
   }
 
@@ -2805,6 +2850,9 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     computeSuspicionScore: (input) => police.computeSuspicionScore(input),
     getPoliceImmunity: (userJid, scopeKey, now) => police.getImmunity(userJid, scopeKey, now),
     findBestWeapon,
+    findWeaponById,
+    resolveAssaultWeapon,
+    isWeaponToken,
     factionArsenal,
     formatEventAnnouncement,
     applyEventToPrices,
