@@ -31,3 +31,4 @@ CONVENTIONS.md
 /.agents
 /.zcode
 /fun/assets
+tests/_zen-*.mjs
