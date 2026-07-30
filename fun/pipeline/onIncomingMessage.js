@@ -130,6 +130,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     prefsRepository,
     nsfwVoteRepository,
     nsfwService,
+    dailyChallengeService,
   } = deps;
 
   const {
@@ -652,6 +653,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           prefsRepository,
           nsfwVoteRepository,
           nsfwService,
+          dailyChallengeService,
           dmGroups: scope.dmGroups || null,
           rawMessage,
           messageType,

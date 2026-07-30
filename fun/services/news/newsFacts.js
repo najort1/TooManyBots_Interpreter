@@ -133,6 +133,7 @@ export function collectDayFacts({
     stockRepository,
     rouletteHistory,
     snapshotRepository,
+    dailyChallengeService,
   } = deps;
 
   // ── Eventos do dia (fun_daily_events) ────────────────────────────
@@ -355,6 +356,11 @@ export function collectDayFacts({
   );
   const personality = derivePersonality(moodHistory7, mood);
 
+  const challenge =
+    typeof dailyChallengeService?.getTodayStats === 'function'
+      ? safeCall(dailyChallengeService.getTodayStats.bind(dailyChallengeService), scope)
+      : null;
+
   const facts = {
     scopeKey: scope,
     since,
@@ -440,6 +446,7 @@ export function collectDayFacts({
     mood,
     memory,
     personality,
+    challenge,
     quotes: {
       list: notableQuotes.slice(0, 3).map((e) => ({
         userJid: e.userJid,

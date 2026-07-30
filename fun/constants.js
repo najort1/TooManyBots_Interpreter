@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '23';
+export const FUN_SCHEMA_VERSION = '24';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -88,6 +88,10 @@ export const FUN_COMMANDS = Object.freeze({
   NSFW_ENABLE: 'nsfw_enable',
   NSFW_REJECT: 'nsfw_reject',
   NSFW_FORCE: 'nsfw_force',
+  // Desafio Diário
+  RESPONDER: 'responder',
+  DICA: 'dica',
+  TROCAR_DESAFIO: 'trocar_desafio',
 });
 
 /**
@@ -138,6 +142,10 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     // emprego: anúncio curto no grupo no start
     FUN_COMMANDS.EMPLOYMENT,
     FUN_COMMANDS.REACTION,
+    // Desafio diário: precisa visibilidade no grupo
+    FUN_COMMANDS.RESPONDER,
+    FUN_COMMANDS.DICA,
+    FUN_COMMANDS.TROCAR_DESAFIO,
   ])
 );
 
@@ -434,6 +442,17 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   forcar_nsfw: FUN_COMMANDS.NSFW_FORCE,
   forcansfw: FUN_COMMANDS.NSFW_FORCE,
   forcansf: FUN_COMMANDS.NSFW_FORCE,
+  // Desafio Diário
+  responder: FUN_COMMANDS.RESPONDER,
+  responda: FUN_COMMANDS.RESPONDER,
+  answer: FUN_COMMANDS.RESPONDER,
+  response: FUN_COMMANDS.RESPONDER,
+  dica: FUN_COMMANDS.DICA,
+  hint: FUN_COMMANDS.DICA,
+  'trocar desafio': FUN_COMMANDS.TROCAR_DESAFIO,
+  trocardesafio: FUN_COMMANDS.TROCAR_DESAFIO,
+  skip: FUN_COMMANDS.TROCAR_DESAFIO,
+  pular: FUN_COMMANDS.TROCAR_DESAFIO,
 });
 
 export const ACTION_TYPE = Object.freeze({
@@ -660,8 +679,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   marketBreakChance: 0.06,
   marketRepairRate: 0.22,
   marketAnnounce: true,
-  /** Reposição de estoque (armas + rua) em tempo real — 7 dias */
-  marketRestockMs: 7 * 24 * 60 * 60_000,
+  /** Reposição de estoque (armas + rua) em tempo real — 4 dias */
+  marketRestockMs: 4 * 24 * 60 * 60_000,
   /** Economia 4 camadas: regulador + ticks de preço sem evento */
   economyEnabled: true,
   economyTickMs: 15 * 60_000,
@@ -674,7 +693,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   bolsaMinQty: 1,
   bolsaDividendPeriodMs: 24 * 60 * 60_000,
   bolsaDividendCapPerTick: 80,
-  assaultCooldownMs: 10 * 60_000,
+  assaultCooldownMs: 60 * 60_000,
   assaultMinSteal: 8,
   /** PvP: ganho real mas menor que banco/lojinha */
   assaultMaxStealRatio: 0.12,
@@ -698,7 +717,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   heistBankBaseChance: 0.34,
   /** Penalidade de chance quando se usa arma em assalto a banco (armas corpo a corpo/fogo são ineficazes contra cofre). */
   heistBankWeaponPenalty: 0.10,
-  heistBankCooldownMs: 12 * 60_000,
+  heistBankCooldownMs: 60 * 60_000,
   // Tarô (tiragem local + leitura Zen)
   tarotEnabled: true,
   tarotCooldownMs: 45_000,
@@ -828,6 +847,30 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   outputJidGapMs: 600,
   outputCoalesceDelayMs: 2000,
   outputQueueMax: 2000,
+  // Desafio Diário
+  dailyChallengeEnabled: true,
+  dailyChallengeStartHour: 8,
+  dailyChallengeEndHour: 20,
+  dailyChallengeDurationMs: 4 * 60 * 60 * 1000,
+  dailyChallengeHintCooldownMs: 10 * 60 * 1000,
+  dailyChallengeMaxAttemptsPerUser: 30,
+  dailyChallengeAttemptCooldownMs: 5 * 1000,
+  dailyChallengeSkipVotesRequired: 3,
+  dailyChallengeRewardWeights: { boost_xp: 40, coins: 35, daily_bonus: 20, jackpot: 5 },
+  dailyChallengeRewardCoinsMin: 20,
+  dailyChallengeRewardCoinsMax: 50,
+  dailyChallengeRewardBoostXpDurationMs: 4 * 60 * 60 * 1000,
+  dailyChallengeRewardDailyBonusMultiplier: 2,
+  dailyChallengeRewardJackpotAmount: 100,
+  dailyChallengeSpeedBonus: {
+    fast: { max: 5, mult: 1.0 },
+    medium: { max: 15, mult: 0.8 },
+    slow: { max: 30, mult: 0.6 },
+    late: { max: Infinity, mult: 0.4 },
+  },
+  dailyChallengeNewsEnabled: true,
+  dailyChallengePokemonMaxGen: 386,
+  dailyChallengeContentMemory: { pokemon: 30, game: 30, riddle: 50 },
 });
 
 /**

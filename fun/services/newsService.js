@@ -66,6 +66,7 @@ export function createNewsService({
   rouletteHistory = null,
   marketService = null,
   flavorService = null,
+  dailyChallengeService = null,
   getContactDisplayName = null,
   random = Math.random,
 } = {}) {
@@ -101,6 +102,7 @@ export function createNewsService({
       rouletteHistory,
       snapshotRepository,
       marketService,
+      dailyChallengeService,
     };
 
     const facts = collectDayFacts({ scopeKey, now, deps, timeZone: tz });

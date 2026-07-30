@@ -2,6 +2,86 @@ import { FUN_SCHEMA_VERSION } from './constants.js';
 
 const ANALYTICS_SCHEMA = 'analytics';
 
+// Schema de desafio diário (tabelas fun_daily_challenges e derivadas).
+// Centralizado aqui para garantir create-if-not-exists no boot do módulo fun.
+const DAILY_CHALLENGE_SCHEMA_BLOCKS = `
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_daily_challenges (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_key TEXT NOT NULL,
+      challenge_type TEXT NOT NULL,
+      challenge_date TEXT NOT NULL,
+      challenge_data TEXT NOT NULL,
+      answer TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      launched_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      completed_at INTEGER,
+      completed_by_jid TEXT,
+      solve_time_sec INTEGER,
+      reward_type TEXT,
+      reward_value INTEGER
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_dc_scope_status
+      ON fun_daily_challenges(scope_key, status);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_dc_scope_date
+      ON fun_daily_challenges(scope_key, challenge_date);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_daily_challenge_attempts (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      challenge_id INTEGER NOT NULL,
+      user_jid TEXT NOT NULL,
+      guess TEXT NOT NULL,
+      correct INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_dca_challenge
+      ON fun_daily_challenge_attempts(challenge_id);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_dca_user
+      ON fun_daily_challenge_attempts(challenge_id, user_jid);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_daily_challenge_skip_votes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      challenge_id INTEGER NOT NULL,
+      user_jid TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE(challenge_id, user_jid)
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_daily_challenge_hints (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      challenge_id INTEGER NOT NULL,
+      hint_index INTEGER NOT NULL,
+      released_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_dch_challenge
+      ON fun_daily_challenge_hints(challenge_id);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_daily_challenge_schedule (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_key TEXT NOT NULL,
+      schedule_date TEXT NOT NULL,
+      target_minute INTEGER NOT NULL,
+      launched INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(scope_key, schedule_date)
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_daily_challenge_memory (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_key TEXT NOT NULL,
+      content_type TEXT NOT NULL,
+      content_value TEXT NOT NULL,
+      used_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_dcm_scope_type
+      ON fun_daily_challenge_memory(scope_key, content_type);
+`;
+
 /**
  * DDL do módulo Fun (analytics.*).
  * Schema auto-criado no boot do bot Fun (decisão A).
@@ -714,6 +794,9 @@ export function buildFunSchemaSql() {
       last_question_at  INTEGER NOT NULL DEFAULT 0,
       updated_at        INTEGER NOT NULL DEFAULT 0
     );
+
+    -- Desafio diário (Daily Challenge) — schema v24
+    ${DAILY_CHALLENGE_SCHEMA_BLOCKS}
   `;
 }
 

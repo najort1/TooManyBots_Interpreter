@@ -88,6 +88,11 @@ import { handleCartasCommand } from './handlers/cartas.js';
 import { handleQmpCommand } from './handlers/qmp.js';
 import { handleNsfwEnableCommand, handleNsfwRejectCommand } from './handlers/nsfwVote.js';
 import { handleNsfwForceCommand } from './handlers/nsfwForce.js';
+import {
+  handleResponderCommand,
+  handleDicaCommand,
+  handleTrocarDesafioCommand,
+} from './handlers/dailyChallenge.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -184,6 +189,7 @@ export async function routeFunCommand(ctx) {
     getLogger,
     nsfwVoteRepository,
     nsfwService,
+    dailyChallengeService,
     msgTimeMs,
   } = ctx;
 
@@ -252,6 +258,7 @@ export async function routeFunCommand(ctx) {
     getLogger,
     nsfwVoteRepository,
     nsfwService,
+    dailyChallengeService,
     msgTimeMs,
   };
 
@@ -404,6 +411,12 @@ export async function routeFunCommand(ctx) {
       return handleNsfwRejectCommand(base);
     case FUN_COMMANDS.NSFW_FORCE:
       return handleNsfwForceCommand(base);
+    case FUN_COMMANDS.RESPONDER:
+      return handleResponderCommand(base);
+    case FUN_COMMANDS.DICA:
+      return handleDicaCommand(base);
+    case FUN_COMMANDS.TROCAR_DESAFIO:
+      return handleTrocarDesafioCommand(base);
     default:
       return { handled: false };
   }

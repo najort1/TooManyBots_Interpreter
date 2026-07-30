@@ -128,6 +128,7 @@ const CATEGORY_HEADERS = {
   policia: ['🚔 *POLÍCIA*', '🚨 *DIÁRIO POLICIAL*', '🔫 *CRIMES*'],
   cassino: ['🎰 *CASSINO*', '🎲 *MESA DE APOSTAS*', '🃏 *RODADA*'],
   bolsa: ['📈 *BOLSA DE VALORES*', '📊 *MERCADO*'],
+  desafio: ['🎯 *DESAFIO DO DIA*', '🧠 *DESAFIO DO DIA*'],
   stats: ['📊 *HOJE NO GRUPO*', '📋 *BALANÇO*'],
   rankings: ['🏆 *RANKINGS*', '🥇 *TOPS DO DIA*'],
   premio: ['🏅 *PRÊMIO DO DIA*', '🎬 *OSCAR DA ZOEIRA*'],
@@ -276,6 +277,37 @@ function renderStocks(facts, getName, random) {
 }
 
 // ── Stats do grupo (req 4) ───────────────────────────────────────────
+
+function renderChallenge(facts, getName, random) {
+  const c = facts.challenge;
+  if (!c) return null;
+  const fmtMin = (sec) => {
+    const s = Math.max(0, Math.floor(Number(sec) || 0));
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    return `${m} min${s % 60 > 0 ? ` ${s % 60}s` : ''}`;
+  };
+  const lines = [];
+  if (c.solved && c.winnerJid) {
+    const winner = c.winnerName || nameOf(c.winnerJid, getName);
+    lines.push(`🏆 *${winner}* resolveu em *${fmtMin(c.solveTimeSec)}*!`);
+    lines.push('Foi o mais rapido do dia.');
+    lines.push('');
+    lines.push(`📊 *Historico do grupo:*`);
+    lines.push(`✔ ${c.totalSolved || 0} desafios resolvidos`);
+    if (Array.isArray(c.fastest) && c.fastest[0]?.jid) {
+      const fastest = c.fastest[0];
+      lines.push(`⚡ Mais rapido: ${nameOf(fastest.jid, getName)} — ${fmtMin(fastest.best)}`);
+    }
+  } else {
+    lines.push('😢 Ninguem conseguiu resolver hoje.');
+    if (c.answer) lines.push(`A resposta era: *${c.answer}*`);
+    lines.push('');
+    lines.push('Tentem novamente amanha!');
+  }
+  if (lines.length === 0) return null;
+  return [headerFor('desafio', random), ...lines].join('\n');
+}
 
 function renderStats(facts, random) {
   const t = facts.totals;
@@ -470,6 +502,7 @@ export function renderEdition(facts, llmBits = {}, opts = {}) {
     () => renderCasino(facts, getName, random),
     () => renderSociety(facts, getName, random),
     () => renderStocks(facts, getName, random),
+    () => renderChallenge(facts, getName, random),
   ];
   for (const render of catRenderers) {
     const block = render();

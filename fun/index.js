@@ -50,6 +50,8 @@ import { createFunMemoryRepository } from './db/funMemoryRepository.js';
 import { createFunProfileRepository } from './db/funProfileRepository.js';
 import { createFunCardRepository } from './db/funCardRepository.js';
 import { createFunQmpRepository } from './db/funQmpRepository.js';
+import { createFunDailyChallengeRepository } from './db/funDailyChallengeRepository.js';
+import { createDailyChallengeService } from './services/dailyChallengeService.js';
 import { createGroupMemoryService } from './services/groupMemoryService.js';
 import { createProfileService } from './services/profileService.js';
 import { createCardService } from './services/cardService.js';
@@ -302,6 +304,29 @@ export function createFunModule(deps = {}) {
       groupMemoryService,
       profileService,
     });
+  const nsfwVoteRepository =
+    deps.nsfwVoteRepository || createFunNsfwVoteRepository({ getDatabase });
+  const nsfwService =
+    deps.nsfwService || createFunNsfwService({ nsfwVoteRepository, groupRepository });
+
+  // Desafio Diário
+  const dailyChallengeRepository =
+    deps.dailyChallengeRepository ||
+    createFunDailyChallengeRepository({ getDatabase });
+  const dailyChallengeService =
+    deps.dailyChallengeService ||
+    createDailyChallengeService({
+      repository: dailyChallengeRepository,
+      statsRepository: repository,
+      effectsRepository,
+      flavorService,
+      getContactDisplayName: resolveContactName,
+      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateOllama: deps.ollamaGenerate || deps.generate,
+      getConfig: () => resolveFunConfig(getConfig() || {}),
+      getLogger,
+    });
+
   const newsService =
     deps.newsService ||
     createNewsService({
@@ -316,12 +341,9 @@ export function createFunModule(deps = {}) {
       rouletteHistory: casinoRepository?.rouletteHistory || null,
       marketService,
       flavorService,
+      dailyChallengeService,
       getContactDisplayName: resolveContactName,
     });
-  const nsfwVoteRepository =
-    deps.nsfwVoteRepository || createFunNsfwVoteRepository({ getDatabase });
-  const nsfwService =
-    deps.nsfwService || createFunNsfwService({ nsfwVoteRepository, groupRepository });
 
   const changelogService =
     deps.changelogService ||
@@ -411,6 +433,7 @@ export function createFunModule(deps = {}) {
         prefsRepository,
         nsfwVoteRepository,
         nsfwService,
+        dailyChallengeService,
       },
       {
         sock: ctx.sock,
@@ -590,6 +613,35 @@ export function createFunModule(deps = {}) {
       });
 
       await runWithUserLabels(userFmt, async () => {
+        // Desafio diário: processa expirados antes de tudo
+        if (
+          dailyChallengeService?.processExpired &&
+          funConfig.dailyChallengeEnabled !== false
+        ) {
+          try {
+            const exp = await dailyChallengeService.processExpired({
+              scopeKey,
+              now,
+              sendText: async (to, msg) => postWithMentions(to, msg, userFmt),
+            });
+            if (exp?.ok) {
+              results.push({
+                scopeKey,
+                kind: 'challenge-expired',
+                ok: true,
+                announced: Boolean(exp.announced),
+              });
+            }
+          } catch (err) {
+            results.push({
+              scopeKey,
+              kind: 'challenge-expired',
+              ok: false,
+              reason: err?.message || 'challenge-expired-error',
+            });
+          }
+        }
+
         // Aniversários do dia (1x/ano/user) — independente de world events de mercado
         if (
           profileService?.listBirthdayAnnouncements &&
@@ -843,6 +895,60 @@ export function createFunModule(deps = {}) {
             });
           }
         }
+
+        // Desafio diário: tenta lançar o desafio de hoje se for a hora certa
+        if (
+          dailyChallengeService?.tryLaunchToday &&
+          funConfig.dailyChallengeEnabled !== false
+        ) {
+          try {
+            let sharpFn = null;
+            try {
+              const m = await import('sharp');
+              sharpFn = m.default || m;
+            } catch {
+              // sharp indisponível — pokémon será pulado, mas guess_game/riddle funcionam
+            }
+            const sendTextFn = async (to, msg) => postWithMentions(to, msg, userFmt);
+            const sendImageFn = async (to, buf, opts) => {
+              try {
+                await sendImage(sock, to, buf, opts?.caption || '');
+              } catch {
+                // fallback pra texto se imagem falhar
+                if (opts?.caption) await postWithMentions(to, opts.caption, userFmt);
+              }
+            };
+            const launched = await dailyChallengeService.tryLaunchToday({
+              scopeKey,
+              now,
+              sendText: sendTextFn,
+              sendImage: sendImageFn,
+              sharp: sharpFn,
+            });
+            if (launched?.ok) {
+              results.push({
+                scopeKey,
+                kind: 'challenge-launched',
+                ok: true,
+                challengeType: launched.challenge?.challengeType || null,
+              });
+            } else if (launched && !launched.ok && launched.reason !== 'not-window' && launched.reason !== 'already-launched' && launched.reason !== 'exists' && launched.reason !== 'disabled') {
+              results.push({
+                scopeKey,
+                kind: 'challenge-launched',
+                ok: false,
+                reason: launched.reason || 'skip',
+              });
+            }
+          } catch (err) {
+            results.push({
+              scopeKey,
+              kind: 'challenge-launched',
+              ok: false,
+              reason: err?.message || 'challenge-launch-error',
+            });
+          }
+        }
       });
     }
 
@@ -931,6 +1037,8 @@ export function createFunModule(deps = {}) {
       prefsRepository,
       nsfwVoteRepository,
       nsfwService,
+      dailyChallengeService,
+      dailyChallengeRepository,
     },
   };
 }
