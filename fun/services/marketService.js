@@ -1776,11 +1776,8 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     if (!cd.ok) return cd;
 
     // Lockpick obrigatório para banco
-    if (heist.kind === 'bank') {
-      if (!hasLockpick(a, scopeKey)) {
-        return { ok: false, reason: 'no-lockpick' };
-      }
-      consumeLockpick(a, scopeKey, now);
+    if (heist.kind === 'bank' && !hasLockpick(a, scopeKey)) {
+      return { ok: false, reason: 'no-lockpick' };
     }
 
     const { weapon, reason } = resolveAssaultWeapon(a, scopeKey, weaponToken);
@@ -1791,6 +1788,10 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       if (!consumeOneConsumable(a, scopeKey, 'municao')) {
         return { ok: false, reason: 'no-ammo' };
       }
+    }
+
+    if (heist.kind === 'bank') {
+      consumeLockpick(a, scopeKey, now);
     }
 
     const { vehicleBonus, usedGas } = applyVehicleBonus(a, scopeKey);
