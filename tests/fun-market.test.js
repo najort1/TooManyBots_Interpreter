@@ -465,6 +465,39 @@ test('findBestWeapon: usa rifle em vez da faca', () => {
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
 
+test('market invent: Zen inválido não dispara segunda chamada real antes do fallback', async () => {
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  let zenCalls = 0;
+  let ollamaCalls = 0;
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    random: () => 0.5,
+    generateZen: async () => {
+      zenCalls += 1;
+      return '';
+    },
+    generateOllama: async () => {
+      ollamaCalls += 1;
+      return JSON.stringify({ title: 'Bairro em alerta', body: 'Mercado ficou estranho hoje.' });
+    },
+  });
+
+  const out = await market.inventEvent(resolveFunConfig({
+    marketEnabled: true,
+    economyEnabled: true,
+    zenEnabled: true,
+    ollamaEnabled: true,
+  }));
+
+  assert.ok(out, 'evento deve existir');
+  assert.equal(zenCalls, 1, 'Zen deve ser chamado exatamente uma vez');
+  assert.equal(ollamaCalls, 1, 'Ollama deve ser chamado exatamente uma vez');
+});
+
 test('gasolina no bazar: dependência carro', () => {
   process.env.FUN_DISABLE_LIVE_LLM = '1';
   const repo = createFunStatsRepository({ getDatabase: getDb });
