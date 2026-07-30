@@ -102,6 +102,14 @@ export function createChaosEventService({
    */
   const lastRobbedAt = new Map();
 
+  /**
+   * Tracker de atividade de chat próprio do fun (por scope+jid).
+   * Independente do TMB / conversation_events — alimentado pelo pipeline onIncomingMessage.
+   * Chave: `${scope}\0${jid}` → lastActivityMs.
+   * @type {Map<string, number>}
+   */
+  const activityByScopeJid = new Map();
+
   function opts(funConfig = {}) {
     return {
       enabled: funConfig.chaosEventEnabled !== false,
@@ -311,6 +319,24 @@ export function createChaosEventService({
       startAt: now,
     });
 
+    // Limpa estado stale da purga anterior do escopo.
+    // Motivo: se formatEndAnnouncement não rodou (bot reiniciado, announce pulado),
+    // lastRobbedAt/assaultCooldowns/challenges persistiam e contaminavam o novo evento
+    // (vítimas com escudo permanente, cooldowns antigos, desafios dangling).
+    clearRobbedMarks(scopeKey);
+    clearAssaultCooldowns(scopeKey);
+    clearActivity(scopeKey);
+    const staleChallenges = challenges.get(String(scopeKey || ''));
+    if (staleChallenges) {
+      staleChallenges.clear();
+      challenges.delete(String(scopeKey || ''));
+    }
+    warningSent.delete(`${scopeKey}:2min`);
+    // Limpa flags de fim anunciado para o escopo (qualquer endsAt anterior)
+    for (const k of [...endSent.keys()]) {
+      if (k.startsWith(`${scopeKey}:`)) endSent.delete(k);
+    }
+
     try {
       const ns = typeof getNewsService === 'function' ? getNewsService() : null;
       ns?.log?.(scopeKey, 'purga_start', {
@@ -428,7 +454,38 @@ export function createChaosEventService({
     }
   }
 
+  function activityKey(scopeKey, jid) {
+    return `${String(scopeKey || '')}\0${String(jid || '')}`;
+  }
+
+  /**
+   * Registra atividade de chat de um jogador no escopo (chamado pelo pipeline onIncomingMessage).
+   * Fonte canônica da Purga — independe do TMB / conversation_events.
+   * @param {string} scopeKey
+   * @param {string} jid
+   * @param {number} [now] — timestamp ms da mensagem (msgTimeMs do Baileys preferencial)
+   */
+  function registerActivity(scopeKey, jid, now = Date.now()) {
+    const ts = Number(now) || Date.now();
+    const key = activityKey(scopeKey, jid);
+    const prev = activityByScopeJid.get(key) || 0;
+    // monotônico: só avança (msgTime de chegada tardia não deve regredir)
+    if (ts > prev) activityByScopeJid.set(key, ts);
+  }
+
+  function clearActivity(scopeKey) {
+    const prefix = `${String(scopeKey || '')}\0`;
+    for (const k of [...activityByScopeJid.keys()]) {
+      if (k.startsWith(prefix)) activityByScopeJid.delete(k);
+    }
+  }
+
   function getLastPlayerActivity(jid, scopeKey, now = Date.now()) {
+    // Fonte primária: tracker interno do fun (escopado por grupo).
+    const internal = activityByScopeJid.get(activityKey(scopeKey, jid)) || 0;
+    if (internal > 0) return internal;
+    // Fallback retroativo: conversation_events do core. Só usado se o tracker
+    // interno ainda não registrou atividade (ex.: bot reiniciado há poucos ms).
     try {
       const db = getDb();
       const row = db.prepare(`
@@ -509,6 +566,12 @@ export function createChaosEventService({
           now: clock,
           eventTime: hard + 1,
         });
+        // O resolve acima pode ter roubado a vítima (atacante antigo) e aplicado
+        // escudo via markVictimRobbed. Re-checa antes de prosseguir — evita duplo
+        // roubo na mesma vítima no mesmo instante.
+        if (isVictimSilentAfterRob(String(scopeKey || ''), t, clock)) {
+          return { ok: false, reason: 'victim-silent-after-rob' };
+        }
       }
 
       const requested = Math.max(1, Math.floor(Number(amount) || 1));
@@ -983,5 +1046,6 @@ export function createChaosEventService({
     shouldSendWarning,
     resetWarning,
     shouldSendEnd,
+    registerActivity,
   };
 }
