@@ -92,7 +92,9 @@ import {
   handleResponderCommand,
   handleDicaCommand,
   handleTrocarDesafioCommand,
+  handleDesafioCommand,
 } from './handlers/dailyChallenge.js';
+import { handleGerarCommand, handleImaginarCommand } from './handlers/image.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -190,6 +192,7 @@ export async function routeFunCommand(ctx) {
     nsfwVoteRepository,
     nsfwService,
     dailyChallengeService,
+    imageGenerationService,
     msgTimeMs,
   } = ctx;
 
@@ -259,6 +262,7 @@ export async function routeFunCommand(ctx) {
     nsfwVoteRepository,
     nsfwService,
     dailyChallengeService,
+    imageGenerationService,
     msgTimeMs,
   };
 
@@ -417,6 +421,12 @@ export async function routeFunCommand(ctx) {
       return handleDicaCommand(base);
     case FUN_COMMANDS.TROCAR_DESAFIO:
       return handleTrocarDesafioCommand(base);
+    case FUN_COMMANDS.DESAFIO:
+      return handleDesafioCommand(base);
+    case FUN_COMMANDS.GERAR:
+      return handleGerarCommand(base);
+    case FUN_COMMANDS.IMAGINAR:
+      return handleImaginarCommand(base);
     default:
       return { handled: false };
   }

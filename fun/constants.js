@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '24';
+export const FUN_SCHEMA_VERSION = '25';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -92,6 +92,10 @@ export const FUN_COMMANDS = Object.freeze({
   RESPONDER: 'responder',
   DICA: 'dica',
   TROCAR_DESAFIO: 'trocar_desafio',
+  DESAFIO: 'desafio',
+  // Geração de imagens (proxy /v1/images/generations)
+  GERAR: 'gerar',
+  IMAGINAR: 'imaginar',
 });
 
 /**
@@ -146,6 +150,10 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     FUN_COMMANDS.RESPONDER,
     FUN_COMMANDS.DICA,
     FUN_COMMANDS.TROCAR_DESAFIO,
+    FUN_COMMANDS.DESAFIO,
+    // geração de imagem: resposta precisa voltar no grupo
+    FUN_COMMANDS.GERAR,
+    FUN_COMMANDS.IMAGINAR,
   ])
 );
 
@@ -453,6 +461,20 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   trocardesafio: FUN_COMMANDS.TROCAR_DESAFIO,
   skip: FUN_COMMANDS.TROCAR_DESAFIO,
   pular: FUN_COMMANDS.TROCAR_DESAFIO,
+  desafio: FUN_COMMANDS.DESAFIO,
+  desafiostatus: FUN_COMMANDS.DESAFIO,
+  desafioforcar: FUN_COMMANDS.DESAFIO,
+  desafioexpirar: FUN_COMMANDS.DESAFIO,
+  desafioreiniciar: FUN_COMMANDS.DESAFIO,
+  // Geração de imagens
+  gerar: FUN_COMMANDS.GERAR,
+  gerarimagem: FUN_COMMANDS.GERAR,
+  imagem: FUN_COMMANDS.GERAR,
+  create: FUN_COMMANDS.GERAR,
+  imaginar: FUN_COMMANDS.IMAGINAR,
+  imagine: FUN_COMMANDS.IMAGINAR,
+  desenhar: FUN_COMMANDS.IMAGINAR,
+  render: FUN_COMMANDS.IMAGINAR,
 });
 
 export const ACTION_TYPE = Object.freeze({
@@ -871,6 +893,26 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   dailyChallengeNewsEnabled: true,
   dailyChallengePokemonMaxGen: 386,
   dailyChallengeContentMemory: { pokemon: 30, game: 30, riddle: 50 },
+  // Geração de imagens (/gerar e /imaginar) — proxy /v1/images/generations
+  imageGenEnabled: true,
+  /** Base URL da proxy de geração de imagens (OpenAI-compat). */
+  imageGenBaseUrl: 'http://127.0.0.1:3300',
+  /** API key opcional (Bearer). Vazio = sem auth. */
+  imageGenApiKey: '',
+  /** Modelo (enviado no body se não vazio). */
+  imageGenModel: '',
+  /** Limite global diário (todos os grupos). Reset 00h America/Sao_Paulo. */
+  imageGenDailyLimit: 25,
+  /** Timeout por requisição de geração (ms). */
+  imageGenTimeoutMs: 60_000,
+  /** Tamanho solicitado (ex.: 1024x1024). Vazio = default do proxy. */
+  imageGenSize: '',
+  /** Qualidade (ex.: standard / hd). Vazio = default do proxy. */
+  imageGenQuality: '',
+  /** Formato de resposta: 'url' (default) ou 'b64_json'. */
+  imageGenResponseFormat: 'url',
+  /** Teto de chars da lore injetada no /gerar (prefixo de memória). */
+  imageGenLoreMaxChars: 1200,
 });
 
 /**

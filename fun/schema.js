@@ -55,6 +55,7 @@ const DAILY_CHALLENGE_SCHEMA_BLOCKS = `
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       challenge_id INTEGER NOT NULL,
       hint_index INTEGER NOT NULL,
+      hint_text TEXT NOT NULL DEFAULT '',
       released_at INTEGER NOT NULL
     );
 
@@ -795,6 +796,25 @@ export function buildFunSchemaSql() {
       updated_at        INTEGER NOT NULL DEFAULT 0
     );
 
+    -- Geração de imagens (/gerar e /imaginar) — schema v25
+    -- Contagem global por date_str (timezone America/Sao_Paulo). Limite 25/dia.
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_image_generations (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_key   TEXT    NOT NULL DEFAULT '',
+      user_jid    TEXT    NOT NULL DEFAULT '',
+      prompt      TEXT    NOT NULL,
+      command     TEXT    NOT NULL DEFAULT '',
+      image_url   TEXT    NOT NULL DEFAULT '',
+      created_at  INTEGER NOT NULL,
+      date_str    TEXT    NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_image_generations_date
+      ON fun_image_generations(date_str, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_image_generations_scope
+      ON fun_image_generations(scope_key, created_at DESC);
+
     -- Desafio diário (Daily Challenge) — schema v24
     ${DAILY_CHALLENGE_SCHEMA_BLOCKS}
   `;
@@ -1119,6 +1139,19 @@ export function ensureFunSchema(db) {
           ELSE ${ANALYTICS_SCHEMA}.fun_user_profiles.title
         END
     `);
+  } catch {
+    // ignore
+  }
+
+  // Migra coluna hint_text (histórico de dicas do desafio diário)
+  try {
+    const dchCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_daily_challenge_hints)`).all();
+    const dchNames = new Set(dchCols.map((c) => String(c.name || '')));
+    if (dchNames.size && !dchNames.has('hint_text')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_daily_challenge_hints ADD COLUMN hint_text TEXT NOT NULL DEFAULT ''`
+      );
+    }
   } catch {
     // ignore
   }

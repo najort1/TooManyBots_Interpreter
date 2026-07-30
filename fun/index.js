@@ -56,6 +56,8 @@ import { createGroupMemoryService } from './services/groupMemoryService.js';
 import { createProfileService } from './services/profileService.js';
 import { createCardService } from './services/cardService.js';
 import { createQmpService } from './services/qmpService.js';
+import { createFunImageGenerationRepository } from './db/funImageGenerationRepository.js';
+import { createImageGenerationService } from './services/imageGenerationService.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
 import { nameOf } from './utils/userLabel.js';
 import { getDb } from '../db/context.js';
@@ -327,6 +329,18 @@ export function createFunModule(deps = {}) {
       getLogger,
     });
 
+  const imageGenerationRepository =
+    deps.imageGenerationRepository ||
+    createFunImageGenerationRepository({ getDatabase });
+  const imageGenerationService =
+    deps.imageGenerationService ||
+    createImageGenerationService({
+      repository: imageGenerationRepository,
+      groupMemoryService,
+      getConfig: () => resolveFunConfig(getConfig() || {}),
+      getLogger,
+    });
+
   const newsService =
     deps.newsService ||
     createNewsService({
@@ -434,6 +448,7 @@ export function createFunModule(deps = {}) {
         nsfwVoteRepository,
         nsfwService,
         dailyChallengeService,
+        imageGenerationService,
       },
       {
         sock: ctx.sock,
@@ -1039,6 +1054,8 @@ export function createFunModule(deps = {}) {
       nsfwService,
       dailyChallengeService,
       dailyChallengeRepository,
+      imageGenerationService,
+      imageGenerationRepository,
     },
   };
 }

@@ -131,6 +131,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     nsfwVoteRepository,
     nsfwService,
     dailyChallengeService,
+    imageGenerationService,
   } = deps;
 
   const {
@@ -272,6 +273,17 @@ export async function handleFunIncomingMessage(deps, ctx) {
 
   if (!scope.scopeKey && parsedCommand?.command !== 'group_scope') {
     return { handled: false, skipFlows: false, reason: 'no-scope' };
+  }
+
+  // Purga: registra atividade de chat do jogador no escopo.
+  // Fonte canônica do chaosEventService — independe do TMB.
+  // Cobertura: toda mensagem recebida (comando ou não), em grupo ou DM com scope.
+  if (scope.scopeKey && userJid) {
+    try {
+      chaosEventService?.registerActivity?.(scope.scopeKey, userJid, msgTimeMs);
+    } catch {
+      // tracker nunca pode derrubar o pipeline
+    }
   }
 
   // Em grupo: memoriza last group pro DM
@@ -654,6 +666,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           nsfwVoteRepository,
           nsfwService,
           dailyChallengeService,
+          imageGenerationService,
           dmGroups: scope.dmGroups || null,
           rawMessage,
           messageType,

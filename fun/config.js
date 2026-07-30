@@ -369,6 +369,37 @@ export function normalizeFunConfig(input) {
     tenorClientKey:
       toText(raw.tenorClientKey, DEFAULT_FUN_CONFIG.tenorClientKey) ||
       DEFAULT_FUN_CONFIG.tenorClientKey,
+    imageGenEnabled: normalizeBoolean(raw.imageGenEnabled, DEFAULT_FUN_CONFIG.imageGenEnabled),
+    imageGenBaseUrl:
+      toText(raw.imageGenBaseUrl, DEFAULT_FUN_CONFIG.imageGenBaseUrl) ||
+      DEFAULT_FUN_CONFIG.imageGenBaseUrl,
+    imageGenApiKey: toText(raw.imageGenApiKey, DEFAULT_FUN_CONFIG.imageGenApiKey) || '',
+    imageGenModel: toText(raw.imageGenModel, DEFAULT_FUN_CONFIG.imageGenModel) || '',
+    imageGenDailyLimit: normalizeInt(raw.imageGenDailyLimit, DEFAULT_FUN_CONFIG.imageGenDailyLimit, {
+      min: 1,
+      max: 500,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    imageGenTimeoutMs: normalizeInt(raw.imageGenTimeoutMs, DEFAULT_FUN_CONFIG.imageGenTimeoutMs, {
+      min: 1000,
+      max: 10 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    imageGenSize: toText(raw.imageGenSize, DEFAULT_FUN_CONFIG.imageGenSize) || '',
+    imageGenQuality: toText(raw.imageGenQuality, DEFAULT_FUN_CONFIG.imageGenQuality) || '',
+    imageGenResponseFormat:
+      toText(raw.imageGenResponseFormat, DEFAULT_FUN_CONFIG.imageGenResponseFormat)
+        .toLowerCase()
+        .trim() === 'b64_json'
+        ? 'b64_json'
+        : 'url',
+    imageGenLoreMaxChars: normalizeInt(
+      raw.imageGenLoreMaxChars,
+      DEFAULT_FUN_CONFIG.imageGenLoreMaxChars,
+      { min: 0, max: 10_000, rounding: 'floor', clamp: true }
+    ),
     casinoMin: normalizeInt(raw.casinoMin, DEFAULT_FUN_CONFIG.casinoMin, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
     casinoMax: normalizeInt(raw.casinoMax, DEFAULT_FUN_CONFIG.casinoMax, { min: 1, max: 1_000_000, rounding: 'floor', clamp: true }),
     casinoCooldownMs: normalizeInt(raw.casinoCooldownMs, DEFAULT_FUN_CONFIG.casinoCooldownMs, { min: 0, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }),
