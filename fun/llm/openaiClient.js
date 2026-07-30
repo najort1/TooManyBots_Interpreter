@@ -332,10 +332,9 @@ export async function openaiChatComplete({
       model: String(model || 'glm_5_2'),
       messages,
       stream: false,
-      // limite de tokens de saída (útil mesmo com modelo pré-fixurado)
-      max_tokens: Math.max(32, Math.min(4000, Math.floor(Number(maxTokens) || 400))),
     };
     if (sendSamplingParams !== false) {
+      body.max_tokens = Math.max(32, Math.min(4000, Math.floor(Number(maxTokens) || 400)));
       body.temperature = Number.isFinite(Number(temperature)) ? Number(temperature) : 0.85;
     }
     if (jsonMode) {
