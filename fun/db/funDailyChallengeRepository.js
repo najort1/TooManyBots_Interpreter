@@ -257,16 +257,16 @@ export function createFunDailyChallengeRepository({ getDatabase = getDb } = {}) 
     return row ? Number(row.hint_index) : -1;
   }
 
-  /** Registra que uma dica foi liberada. */
-  function recordHint(challengeId, hintIndex, now = Date.now()) {
+  /** Registra que uma dica foi liberada (com texto para histórico/anti-repetição). */
+  function recordHint(challengeId, hintIndex, now = Date.now(), hintText = '') {
     ensureSchema();
     const db = getDatabase();
     const info = db
       .prepare(
         `INSERT INTO ${ANALYTICS_SCHEMA}.fun_daily_challenge_hints
-            (challenge_id, hint_index, released_at) VALUES (?, ?, ?)`
+            (challenge_id, hint_index, hint_text, released_at) VALUES (?, ?, ?, ?)`
       )
-      .run(Number(challengeId) || 0, Number(hintIndex) || 0, Number(now) || Date.now());
+      .run(Number(challengeId) || 0, Number(hintIndex) || 0, String(hintText || ''), Number(now) || Date.now());
     return Number(info.lastInsertRowid) || null;
   }
 
@@ -282,6 +282,22 @@ export function createFunDailyChallengeRepository({ getDatabase = getDb } = {}) 
       )
       .get(Number(challengeId) || 0);
     return Number(row?.released_at) || 0;
+  }
+
+  /** Lista o histórico de dicas já liberadas (texto, em ordem crescente). */
+  function getHints(challengeId) {
+    ensureSchema();
+    const db = getDatabase();
+    const rows = db
+      .prepare(
+        `SELECT hint_index, hint_text FROM ${ANALYTICS_SCHEMA}.fun_daily_challenge_hints
+          WHERE challenge_id = ?
+          ORDER BY hint_index ASC`
+      )
+      .all(Number(challengeId) || 0);
+    return rows
+      .map((r) => ({ index: Number(r.hint_index) || 0, text: String(r.hint_text || '') }))
+      .filter((r) => r.text);
   }
 
   /** Agenda horário de lançamento do dia (idempotente upsert). */
@@ -433,6 +449,7 @@ export function createFunDailyChallengeRepository({ getDatabase = getDb } = {}) 
     getLastHintIndex,
     recordHint,
     getLastHintTime,
+    getHints,
     setLaunchSchedule,
     getLaunchSchedule,
     markScheduleLaunched,

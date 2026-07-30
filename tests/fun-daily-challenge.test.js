@@ -448,10 +448,19 @@ test('dailyChallenge service: launch pokemon usa fetch + sharp + responde por im
     };
 
     const sharp = () => ({
-      composite() {
+      async metadata() {
+        return { width: 96, height: 96 };
+      },
+      ensureAlpha() {
         return this;
       },
-      blur() {
+      extractChannel() {
+        return this;
+      },
+      threshold() {
+        return this;
+      },
+      composite() {
         return this;
       },
       png() {
@@ -483,6 +492,174 @@ test('dailyChallenge service: launch pokemon usa fetch + sharp + responde por im
     const active = repository.getActiveChallenge(scope);
     assert.equal(active.challengeType, 'pokemon');
     assert.equal(active.challengeData.name, 'pikachu');
+  } finally {
+    global.fetch = prevFetch;
+  }
+});
+
+test('dailyChallenge service: handleHint revela imagem colorida do pokemon na ultima dica', async () => {
+  const prevFetch = global.fetch;
+  try {
+    global.fetch = async (url) => {
+      if (/sprites\/pokemon\//i.test(String(url))) {
+        return {
+          ok: true,
+          async arrayBuffer() {
+            return new Uint8Array([1, 2, 3, 4]).buffer;
+          },
+        };
+      }
+      return {
+        ok: true,
+        async json() {
+          return { name: 'bulbasaur' };
+        },
+      };
+    };
+
+    const { service, repository } = createServiceHarness({
+      config: createConfig({ dailyChallengeStartHour: 0, dailyChallengeEndHour: 23 }),
+      random: () => 0,
+    });
+    const scope = uniqueGroup();
+    const now = Date.now();
+    const images = [];
+    const sendImage = async (_to, buf, opts) => images.push({ buf, opts });
+
+    repository.createChallenge({
+      scopeKey: scope,
+      type: 'pokemon',
+      data: { pokemonId: 1, name: 'bulbasaur', hints: [] },
+      answer: 'bulbasaur',
+      launchedAt: now,
+      expiresAt: now + 3600_000,
+      dateStr: '2099-02-01',
+    });
+
+    // avanca as duas primeiras dicas respeitando cooldown
+    await service.handleHint({ scopeKey: scope, now: now + 1000, sendImage });
+    await service.handleHint({ scopeKey: scope, now: now + 20 * 60 * 1000, sendImage });
+    const last = await service.handleHint({
+      scopeKey: scope,
+      now: now + 40 * 60 * 1000,
+      sendImage,
+    });
+
+    assert.equal(last.ok, true, 'ultima dica falhou: ' + JSON.stringify(last));
+    assert.equal(last.sentImage, true, 'ultima dica deveria ter enviado imagem');
+    assert.equal(images.length, 1, 'imagem colorida nao foi enviada na 3a dica');
+    assert.ok(Buffer.isBuffer(images[0].buf));
+  } finally {
+    global.fetch = prevFetch;
+  }
+});
+
+test('dailyChallenge service: handleAnswer revela imagem colorida do pokemon ao acertar', async () => {
+  const prevFetch = global.fetch;
+  try {
+    global.fetch = async (url) => {
+      if (/sprites\/pokemon\//i.test(String(url))) {
+        return {
+          ok: true,
+          async arrayBuffer() {
+            return new Uint8Array([5, 6, 7, 8]).buffer;
+          },
+        };
+      }
+      return {
+        ok: true,
+        async json() {
+          return { name: 'charmander' };
+        },
+      };
+    };
+
+    const { service, repository } = createServiceHarness({
+      config: createConfig({ dailyChallengeStartHour: 0, dailyChallengeEndHour: 23 }),
+      random: () => 0,
+    });
+    const scope = uniqueGroup();
+    const now = Date.now();
+    const images = [];
+    const sendImage = async (_to, buf, opts) => images.push({ buf, opts });
+
+    repository.createChallenge({
+      scopeKey: scope,
+      type: 'pokemon',
+      data: { pokemonId: 4, name: 'charmander', hints: [] },
+      answer: 'charmander',
+      launchedAt: now,
+      expiresAt: now + 3600_000,
+      dateStr: '2099-02-02',
+    });
+
+    const out = await service.handleAnswer({
+      scopeKey: scope,
+      userJid: uniqueJid(),
+      guess: 'charmander',
+      now: now + 30_000,
+      getContactDisplayName: () => 'Treinador',
+      sendImage,
+    });
+
+    assert.equal(out.ok, true, 'acerto falhou: ' + JSON.stringify(out));
+    assert.match(out.message, /PARABENS/i);
+    assert.equal(images.length, 1, 'imagem colorida deveria ser enviada ao acertar pokemon');
+  } finally {
+    global.fetch = prevFetch;
+  }
+});
+
+test('dailyChallenge service: processExpired revela imagem colorida do pokemon ao expirar', async () => {
+  const prevFetch = global.fetch;
+  try {
+    global.fetch = async (url) => {
+      if (/sprites\/pokemon\//i.test(String(url))) {
+        return {
+          ok: true,
+          async arrayBuffer() {
+            return new Uint8Array([10, 11, 12]).buffer;
+          },
+        };
+      }
+      return {
+        ok: true,
+        async json() {
+          return { name: 'squirtle' };
+        },
+      };
+    };
+
+    const { service, repository } = createServiceHarness({
+      config: createConfig({ dailyChallengeStartHour: 0, dailyChallengeEndHour: 23 }),
+      random: () => 0,
+    });
+    const scope = uniqueGroup();
+    const now = Date.now();
+    const images = [];
+    const sendImage = async (_to, buf, opts) => images.push({ buf, opts });
+    const sendText = async () => {};
+
+    repository.createChallenge({
+      scopeKey: scope,
+      type: 'pokemon',
+      data: { pokemonId: 7, name: 'squirtle', hints: [] },
+      answer: 'squirtle',
+      launchedAt: now,
+      expiresAt: now + 1000,
+      dateStr: '2099-02-03',
+    });
+
+    const out = await service.processExpired({
+      scopeKey: scope,
+      now: now + 5000,
+      sendText,
+      sendImage,
+    });
+
+    assert.equal(out.ok, true, 'expiracao falhou: ' + JSON.stringify(out));
+    assert.equal(out.announced, true);
+    assert.equal(images.length, 1, 'imagem colorida deveria ser enviada ao expirar pokemon');
   } finally {
     global.fetch = prevFetch;
   }

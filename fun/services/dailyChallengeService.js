@@ -588,6 +588,108 @@ export function createDailyChallengeService(deps = {}) {
     }
   }
 
+  /**
+   * Gera o SVG do fundo "explosao" estilo anime (Who's That Pokemon):
+   * gradiente vermelho/laranja com um estouro de raios claros no centro.
+   */
+  function buildBurstSvg(width, height, spikes = 26) {
+    const cx = width / 2;
+    const cy = height / 2;
+    const outerR = Math.max(width, height) * 0.68;
+    const innerR = Math.max(width, height) * 0.2;
+    const pts = [];
+    for (let i = 0; i < spikes * 2; i++) {
+      const angle = (Math.PI * i) / spikes - Math.PI / 2;
+      const r = i % 2 === 0 ? outerR : innerR;
+      pts.push(`${(cx + r * Math.cos(angle)).toFixed(1)},${(cy + r * Math.sin(angle)).toFixed(1)}`);
+    }
+    const points = pts.join(' ');
+    return `<svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="#ff3131"/>
+          <stop offset="100%" stop-color="#ff9224"/>
+        </linearGradient>
+      </defs>
+      <rect width="${width}" height="${height}" fill="url(#bg)"/>
+      <polygon points="${points}" fill="#bfe0ff"/>
+      <polygon points="${points}" fill="#ffffff" opacity="0.30"/>
+    </svg>`;
+  }
+
+  /**
+   * Constroi a cena completa "Quem e esse Pokemon?": fundo em explosao
+   * (estilo anime) com a silhueta navy do pokemon centralizada por cima.
+   *
+   * IMPORTANTE (correcao do bug do quadrado azul solido):
+   * a versao anterior extraia o canal alpha do sprite como imagem em
+   * escala de cinza (brilho = forma) e tentava usa-la como mascara num
+   * blend 'dest-in'. Esse blend so enxerga TRANSPARENCIA real (canal
+   * alpha), nao brilho — como a mascara nao tinha canal alpha, o sharp
+   * tratava tudo como 100% opaco e o 'dest-in' preservava o retangulo
+   * inteiro, gerando um quadrado solido sem nenhuma forma.
+   * Aqui extraimos o alpha binarizado como dado RAW e o anexamos
+   * diretamente como o canal alpha real de uma imagem navy solida
+   * (joinChannel), entao a transparencia da silhueta e verdadeira e
+   * qualquer composite 'over' subsequente respeita a forma do pokemon.
+   */
+  async function buildPokemonSilhouetteScene(spriteBuf, sharp) {
+    const CANVAS_W = 720;
+    const CANVAS_H = 420;
+
+    const meta = await sharp(spriteBuf).metadata();
+    const width = Math.max(1, Number(meta?.width) || 96);
+    const height = Math.max(1, Number(meta?.height) || 96);
+
+    const alphaRaw = await sharp(spriteBuf)
+      .ensureAlpha()
+      .extractChannel('alpha')
+      .threshold(1)
+      .raw()
+      .toBuffer();
+
+    const navyRgb = await sharp({
+      create: {
+        width,
+        height,
+        channels: 3,
+        background: { r: 10, g: 14, b: 46 },
+      },
+    })
+      .raw()
+      .toBuffer();
+
+    const untrimmed = await sharp(navyRgb, { raw: { width, height, channels: 3 } })
+      .joinChannel(alphaRaw, { raw: { width, height, channels: 1 } })
+      .png()
+      .toBuffer();
+
+    // Corta a margem transparente ao redor do pokemon: os sprites da
+    // PokeAPI ficam alinhados numa "linha de chao" comum dentro do frame
+    // 96x96, entao a forma visivel raramente esta centralizada no frame
+    // (ex.: Pikachu ocupa so ~39x45 dos 96x96). Sem o trim, o que fica
+    // centralizado no fundo e o frame inteiro (com a folga), nao o
+    // pokemon em si — por isso ele aparecia pequeno e deslocado.
+    const trimmed = await sharp(untrimmed).trim().toBuffer();
+
+    const silhouetteSize = Math.round(CANVAS_H * 0.85);
+    const silhouette = await sharp(trimmed)
+      .resize(silhouetteSize, silhouetteSize, {
+        fit: 'contain',
+        background: { r: 0, g: 0, b: 0, alpha: 0 },
+      })
+      .png()
+      .toBuffer();
+
+    const burstSvg = buildBurstSvg(CANVAS_W, CANVAS_H);
+    const burstBuf = await sharp(Buffer.from(burstSvg)).png().toBuffer();
+
+    return sharp(burstBuf)
+      .composite([{ input: silhouette, gravity: 'center' }])
+      .png()
+      .toBuffer();
+  }
+
   async function launchPokemon(scopeKey, now, sendImage, sharp) {
     const memoryLimit = cfg().dailyChallengeContentMemory?.pokemon || 30;
     const maxGen = Number(cfg().dailyChallengePokemonMaxGen) || 386;
@@ -616,14 +718,7 @@ export function createDailyChallengeService(deps = {}) {
     let image = buf;
     if (sharp && typeof sharp === 'function') {
       try {
-        const blackOverlay = Buffer.from(
-          '<svg width="200" height="200"><rect width="200" height="200" fill="black" opacity="0.6"/></svg>'
-        );
-        image = await sharp(buf)
-          .composite([{ input: blackOverlay, blend: 'over' }])
-          .blur(2)
-          .png()
-          .toBuffer();
+        image = await buildPokemonSilhouetteScene(buf, sharp);
       } catch (err) {
         log({ err: err?.message }, 'dailyChallenge sharp overlay fail');
         image = buf;
@@ -705,7 +800,7 @@ export function createDailyChallengeService(deps = {}) {
   /**
    * Processa desafios expirados — anuncia resposta + encerra ciclo.
    */
-  async function processExpired({ scopeKey, now, sendText }) {
+  async function processExpired({ scopeKey, now, sendText, sendImage, sharp }) {
     if (!scopeKey) return { ok: false, reason: 'no-scope' };
     const challenge = repository.getActiveChallenge(scopeKey);
     if (!challenge) return { ok: false, reason: 'no-active' };
@@ -723,6 +818,10 @@ export function createDailyChallengeService(deps = {}) {
       );
     } catch (err) {
       log({ err: err?.message }, 'dailyChallenge processExpired send fail');
+    }
+    /* Pokemon: revela a imagem colorida ao expirar. */
+    if (challenge.challengeType === 'pokemon') {
+      await revealPokemonImage(challenge, sendImage, sharp);
     }
     return { ok: true, announced: true };
   }
@@ -744,7 +843,15 @@ export function createDailyChallengeService(deps = {}) {
 
   /* ---------- resposta (/responder) ---------- */
 
-  async function handleAnswer({ scopeKey, userJid, guess, now, getContactDisplayName: gcdn }) {
+  async function handleAnswer({
+    scopeKey,
+    userJid,
+    guess,
+    now,
+    getContactDisplayName: gcdn,
+    sendImage,
+    sharp,
+  }) {
     const c = cfg();
     const ts = Number(now) || Date.now();
     const challenge = repository.getActiveChallenge(scopeKey);
@@ -810,6 +917,11 @@ export function createDailyChallengeService(deps = {}) {
     );
     const name = (gcdn || getContactDisplayName)(userJid) || 'alguem';
 
+    /* Pokemon: revela a imagem colorida ao acertar. */
+    if (challenge.challengeType === 'pokemon') {
+      await revealPokemonImage(challenge, sendImage, sharp);
+    }
+
     return {
       ok: true,
       message:
@@ -851,7 +963,7 @@ export function createDailyChallengeService(deps = {}) {
 
   /* ---------- dica (/dica) ---------- */
 
-  async function handleHint({ scopeKey, now }) {
+  async function handleHint({ scopeKey, now, sendImage, sharp }) {
     const c = cfg();
     const ts = Number(now) || Date.now();
     const challenge = repository.getActiveChallenge(scopeKey);
@@ -881,10 +993,46 @@ export function createDailyChallengeService(deps = {}) {
     }
 
     const hintIndex = repository.getLastHintIndex(challenge.id) + 1;
-    repository.recordHint(challenge.id, hintIndex, ts);
 
     const text = await buildHintMessage(challenge, hintIndex);
+
+    repository.recordHint(challenge.id, hintIndex, ts, text);
+
+    /* Pokemon: na ULTIMA dica revelamos a imagem colorida (sem escurecer). */
+    const isPokemonLastHint =
+      challenge.challengeType === 'pokemon' && hintIndex === MAX_HINTS - 1;
+    if (isPokemonLastHint) {
+      const revealed = await revealPokemonImage(challenge, sendImage, sharp);
+      if (revealed) {
+        return {
+          ok: true,
+          message: `💡 *Dica ${hintIndex + 1}*\n\n${text}\n\nRevelacao a seguir! Pokemon mostrado acima.`,
+          sentImage: true,
+        };
+      }
+    }
+
     return { ok: true, message: `💡 *Dica ${hintIndex + 1}*\n\n${text}` };
+  }
+
+  /**
+   * Baixa o sprite oficial (colorido) do pokemon do desafio e envia como imagem.
+   * Usado na revelacao da 3a dica, no acerto e na expiracao.
+   * Retorna true quando conseguiu enviar a imagem.
+   */
+  async function revealPokemonImage(challenge, sendImage, /* sharp */) {
+    if (typeof sendImage !== 'function') return false;
+    const id = challenge?.challengeData?.pokemonId;
+    if (!id) return false;
+    try {
+      const sprite = await fetchPokemonSprite(id);
+      if (!sprite) return false;
+      await sendImage(challenge.scopeKey, sprite, { caption: '' });
+      return true;
+    } catch (err) {
+      log({ err: err?.message }, 'dailyChallenge reveal pokemon image fail');
+      return false;
+    }
   }
 
   async function buildHintMessage(challenge, hintIndex) {
@@ -896,20 +1044,52 @@ export function createDailyChallengeService(deps = {}) {
       return 'Sem mais dicas pre-definidas para este jogo.';
     }
     if (type === 'riddle') {
-      const llmHint = await llmText(
-        'Voce esta ajudando em um jogo de enigmas. De uma dica SUTIL sobre a resposta ' +
-          'do enigma, sem nunca dar a resposta diretamente. A dica deve ser curta (1-2 frases).',
-        `Enigma: ${data.riddle || ''}`
-      );
+      const answer = (data.answers || [])[0] || challenge.answer || '';
+      const prior = repository.getHints(challenge.id);
+      const system =
+        'Voce e o mestre de um jogo de enigmas no WhatsApp. ' +
+        'Sua tarefa e dar UMA dica sobre a resposta correta do enigma.\n\n' +
+        'REGRAS OBRIGATORIAS:\n' +
+        '- NUNCA diga, revele, soletre ou parafraseie diretamente a resposta.\n' +
+        '- Nao de dicas obvias que entreguem a resposta (ex.: se a resposta e "espada", nao diga "e algo cortante").\n' +
+        '- Nao repita nenhuma dica ja dada (liste-as abaixo e evite conteudo similar).\n' +
+        '- A dica deve ser SUTIL, curta (1-2 frases) e progressiva: quanto maior o numero da dica, mais especifica, mas nunca obvia.\n' +
+        '- Responda apenas com a dica, sem prefixos como "Dica:" ou "Resposta:".\n' +
+        '- Responda em portugues brasileiro.';
+      const user =
+        `Enigma: ${data.riddle || ''}\n` +
+        `Resposta correta (para voce saber, NUNCA revele): ${answer}\n` +
+        `Numero desta dica: ${hintIndex + 1}\n` +
+        (prior.length
+          ? `Dicas JA dadas (NAO repita nem use conteudo similar):\n${prior.map((h) => `  - ${h.text}`).join('\n')}\n`
+          : 'Nenhuma dica dada ainda.\n') +
+        `De a ${hintIndex + 1}a dica:`;
+      const llmHint = await llmText(system, user);
       if (llmHint) return llmHint;
       return 'Pense no que o enigma descreve — algo do cotidiano.';
     }
     if (type === 'pokemon') {
-      const llmHint = await llmText(
-        'Voce esta ajudando em um jogo "Quem e esse Pokemon?". De uma dica sobre o Pokemon ' +
-          'sem dizer o nome dele. Pode mencionar tipo, habitat, cor ou caracteristica marcante.',
-        `Pokemon: ${data.name || 'desconhecido'}`
-      );
+      const answer = data.name || challenge.answer || '';
+      const prior = repository.getHints(challenge.id);
+      const system =
+        'Voce e o mestre de um jogo "Quem e esse Pokemon?" no WhatsApp. ' +
+        'Sua tarefa e dar UMA dica sobre o Pokemon sem dizer o nome dele.\n\n' +
+        'REGRAS OBRIGATORIAS:\n' +
+        '- NUNCA diga, soletre ou revele o nome do Pokemon.\n' +
+        '- Nao de dicas obvias que entreguem a resposta (ex.: se nome e "pikachu", nao diga "rato eletrico amarelo").\n' +
+        '- Pode mencionar tipo, habitat, cor, geracao ou caracteristica marcante — com sutileza.\n' +
+        '- Nao repita nenhuma dica ja dada (liste-as abaixo e evite conteudo similar).\n' +
+        '- A dica deve ser curta (1-2 frases) e progressiva: quanto maior o numero da dica, mais especifica, mas nunca obvia.\n' +
+        '- Responda apenas com a dica, sem prefixos como "Dica:" ou "Pokemon:".\n' +
+        '- Responda em portugues brasileiro.';
+      const user =
+        `Pokemon sorteado (para voce saber, NUNCA revele o nome): ${answer}\n` +
+        `Numero desta dica: ${hintIndex + 1}\n` +
+        (prior.length
+          ? `Dicas JA dadas (NAO repita nem use conteudo similar):\n${prior.map((h) => `  - ${h.text}`).join('\n')}\n`
+          : 'Nenhuma dica dada ainda.\n') +
+        `De a ${hintIndex + 1}a dica:`;
+      const llmHint = await llmText(system, user);
       if (llmHint) return llmHint;
       return 'Observe a silhueta e as cores.';
     }
