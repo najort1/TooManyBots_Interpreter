@@ -3,6 +3,8 @@
  * Sweet spot medido em probe live: ~6–8 fatos ranqueados (~0.8–2k chars), não dump de 4k+.
  */
 
+import { displayNameOnly } from './userLabel.js';
+
 export function withGroupLore(
   vars = {},
   {
@@ -20,6 +22,18 @@ export function withGroupLore(
     out.scopeKey = scope;
     out.__scopeKey = scope;
   }
+
+  // Garante que o autor da ação (quem rodou o comando) chegue ao prompt como
+  // nome legível. Sem isso o flavor fica sem sujeito e a IA atribui o feito a
+  // um nome qualquer da lore (ex.: chamou o Eduardo de Gabriel).
+  if (!out.user || String(out.user).trim() === '') {
+    const actorJid = (userJids || []).find(Boolean);
+    if (actorJid) {
+      const name = displayNameOnly(null, actorJid).trim();
+      if (name) out.user = name;
+    }
+  }
+
   if (out.groupLore || !scope) return out;
 
   let lore = '';
