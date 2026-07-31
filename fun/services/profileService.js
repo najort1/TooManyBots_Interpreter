@@ -614,81 +614,50 @@ export function createProfileService({
       const prompt = `Texto do usuário:\n"""${raw.slice(0, 800)}"""\n\nExtraia nickname, bio, birthday, title e extras (resto) em JSON.`;
 
       if (funConfig.zenEnabled !== false) {
-        try {
-          const task = resolveZenTaskParams('extract', funConfig);
-          const out = await generateZen({
-            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-            model: funConfig.zenModel || 'glm_5_2',
-            system: EXTRACT_SYSTEM,
-            prompt,
-            timeoutMs: Math.max(o.timeout, task.timeoutMs),
-            maxTokens: task.maxTokens,
-            temperature: task.temperature,
-            apiKey: funConfig.zenApiKey || '',
-            jsonMode: true,
-            jsonOnly: true,
-            sendSamplingParams: funConfig.zenSendSamplingParams === true,
-          });
-          const parsed = parseExtractJson(out);
-          if (parsed) {
-            fields = finalizeFields(
-              raw,
-              {
-                nickname: parsed.nickname ?? fields.nickname,
-                bio: parsed.bio ?? fields.bio,
-                birthday: parsed.birthday ?? fields.birthday,
-                title: parsed.title ?? fields.title,
-                extras: parsed.extras ?? fields.extras,
-              },
-              o.extrasMax
+        const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
+        let parsed = null;
+        for (let attempt = 1; attempt <= totalTries; attempt += 1) {
+          try {
+            const task = resolveZenTaskParams('extract', funConfig);
+            const out = await generateZen({
+              baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
+              model: funConfig.zenModel || 'glm_5_2',
+              system: EXTRACT_SYSTEM,
+              prompt,
+              timeoutMs: Math.max(o.timeout, task.timeoutMs),
+              maxTokens: task.maxTokens,
+              temperature: task.temperature,
+              apiKey: funConfig.zenApiKey || '',
+              jsonMode: true,
+              jsonOnly: true,
+              sendSamplingParams: funConfig.zenSendSamplingParams === true,
+            });
+            parsed = parseExtractJson(out);
+            if (parsed) {
+              fields = finalizeFields(
+                raw,
+                {
+                  nickname: parsed.nickname ?? fields.nickname,
+                  bio: parsed.bio ?? fields.bio,
+                  birthday: parsed.birthday ?? fields.birthday,
+                  title: parsed.title ?? fields.title,
+                  extras: parsed.extras ?? fields.extras,
+                },
+                o.extrasMax
+              );
+              recordLlmHit('profile', 'zen', { attempt });
+              return { ok: true, fields, source: 'zen' };
+            }
+          } catch (err) {
+            getLogger?.()?.debug?.(
+              { err: { message: err?.message || 'zen-profile' }, attempt },
+              'profile AI zen fail'
             );
-            recordLlmHit('profile', 'zen', {});
-            return { ok: true, fields, source: 'zen' };
           }
-        } catch (err) {
-          getLogger?.()?.debug?.(
-            { err: { message: err?.message || 'zen-profile' } },
-            'profile AI zen fail'
-          );
         }
       }
 
-      if (funConfig.ollamaEnabled !== false) {
-        try {
-          const out = await generateOllama({
-            baseUrl: funConfig.ollamaBaseUrl || 'http://127.0.0.1:11434',
-            model: funConfig.ollamaModel || 'gemma4:latest',
-            system: EXTRACT_SYSTEM,
-            prompt,
-            timeoutMs: o.timeout,
-            keepAlive: funConfig.ollamaKeepAlive ?? -1,
-            think: false,
-            numPredict: 280,
-            temperature: 0.3,
-            format: 'json',
-          });
-          const parsed = parseExtractJson(out);
-          if (parsed) {
-            fields = finalizeFields(
-              raw,
-              {
-                nickname: parsed.nickname ?? fields.nickname,
-                bio: parsed.bio ?? fields.bio,
-                birthday: parsed.birthday ?? fields.birthday,
-                title: parsed.title ?? fields.title,
-                extras: parsed.extras ?? fields.extras,
-              },
-              o.extrasMax
-            );
-            return { ok: true, fields, source: 'ollama' };
-          }
-        } catch (err) {
-          getLogger?.()?.debug?.(
-            { err: { message: err?.message || 'ollama-profile' } },
-            'profile AI ollama fail'
-          );
-        }
-      }
+      // Ollama fallback descontinuado — Zen já tentou 1 + retries antes de cair em manual/none.
     }
 
     fields = finalizeFields(raw, fields, o.extrasMax);

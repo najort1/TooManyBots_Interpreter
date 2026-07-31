@@ -465,7 +465,7 @@ export function createMarketService({
   /**
    * Inventa só a fofoca (title/body).
    * Código já decidiu archetype/category/companyId (skeleton).
-   * Ordem: 1) Zen  2) Ollama  3) fallback sintético do skeleton
+   * Ordem: 1) Zen (3 retentativas)  2) fallback sintético do skeleton. Ollama descontinuado.
    */
   async function inventEvent(funConfig = {}, reg = null, { overheat = 0 } = {}) {
     const log = getLogger?.();
@@ -499,6 +499,11 @@ export function createMarketService({
     });
     const inventSystem = EVENT_INVENT_SYSTEM;
     const task = resolveZenTaskParams('invent', funConfig);
+    const inventTimeoutMs = Math.max(
+      90_000,
+      Math.floor(Number(task.timeoutMs) || 0),
+      Math.floor(Number(funConfig.zenInventTimeoutMs) || 0)
+    );
 
     const pack = (parsed, source) => ({
       archetype: skeleton.archetype,
@@ -515,101 +520,76 @@ export function createMarketService({
       _skeleton: skeleton,
     });
 
-    // 1) Zen
-    const inventTimeoutMs = Math.max(
-      90_000,
-      Math.floor(Number(task.timeoutMs) || 0),
-      Math.floor(Number(funConfig.zenInventTimeoutMs) || 0)
-    );
+    // 1) Zen — 3 retentativas (1 chamada + 3 retries = 4 totais) antes do template
+    //    mockado. Fallback Ollama foi descontinuado.
     if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.zenEnabled !== false) {
-      try {
-        const raw = await generateZen({
-          baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-          model: funConfig.zenModel || 'glm_5_2',
-          system: inventSystem,
-          prompt,
-          timeoutMs: inventTimeoutMs,
-          maxTokens: task.maxTokens,
-          temperature: task.temperature,
-          apiKey: funConfig.zenApiKey || '',
-          jsonMode: true,
-          jsonOnly: true,
-          sendSamplingParams: funConfig.zenSendSamplingParams === true,
-        });
-        const parsed = parseInventResponse(raw, skeleton);
-        if (parsed?.title && parsed?.body) {
-          const source = parsed.salvaged ? 'zen-salvage' : 'zen';
-          recordLlmHit('invent', source, { title: parsed.title, attempt: 1 });
-          log?.info?.(
-            {
-              source,
-              model: funConfig.zenModel,
-              title: parsed.title,
-              attempt: 1,
-              timeoutMs: inventTimeoutMs,
-              skeleton: {
-                archetype: skeleton.archetype,
-                category: skeleton.category,
-                companyId: skeleton.companyId,
+      const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
+      let parsed = null;
+      let source = '';
+      let lastErr = null;
+      for (let attempt = 1; attempt <= totalTries; attempt += 1) {
+        try {
+          const raw = await generateZen({
+            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
+            model: funConfig.zenModel || 'glm_5_2',
+            system: inventSystem,
+            prompt,
+            timeoutMs: inventTimeoutMs,
+            maxTokens: task.maxTokens,
+            temperature: task.temperature,
+            apiKey: funConfig.zenApiKey || '',
+            jsonMode: true,
+            jsonOnly: true,
+            sendSamplingParams: funConfig.zenSendSamplingParams === true,
+          });
+          parsed = parseInventResponse(raw, skeleton);
+          if (parsed?.title && parsed?.body) {
+            source = parsed.salvaged ? 'zen-salvage' : 'zen';
+            recordLlmHit('invent', source, { title: parsed.title, attempt });
+            log?.info?.(
+              {
+                source,
+                model: funConfig.zenModel,
+                title: parsed.title,
+                attempt,
+                timeoutMs: inventTimeoutMs,
+                skeleton: {
+                  archetype: skeleton.archetype,
+                  category: skeleton.category,
+                  companyId: skeleton.companyId,
+                },
               },
+              'fun market invent via zen (copy-only)'
+            );
+            return pack(parsed, source);
+          }
+          log?.warn?.(
+            {
+              model: funConfig.zenModel,
+              attempt,
+              preview: String(raw || '').slice(0, 160),
             },
-            'fun market invent via zen (copy-only)'
+            'fun market zen invent invalid'
           );
-          return pack(parsed, source);
+        } catch (err) {
+          lastErr = err;
+          const msg = err?.message || String(err);
+          const isTimeout =
+            err?.name === 'AbortError' || /timeout/i.test(msg) || /aborted/i.test(msg);
+          log?.warn?.(
+            { err: msg, attempt, isTimeout, timeoutMs: inventTimeoutMs },
+            'fun market zen invent fail'
+          );
         }
-        console.warn(
-          `[fun/market] zen invent inválido (modelo=${funConfig.zenModel || 'glm_5_2'}) raw=${String(raw || '').slice(0, 100).replace(/\s+/g, ' ')}`
-        );
-        log?.warn?.(
-          {
-            model: funConfig.zenModel,
-            attempt: 1,
-            preview: String(raw || '').slice(0, 160),
-          },
-          'fun market zen invent invalid'
-        );
-      } catch (err) {
-        const msg = err?.message || String(err);
-        const isTimeout =
-          err?.name === 'AbortError' || /timeout/i.test(msg) || /aborted/i.test(msg);
-        console.warn(`[fun/market] zen event fail: ${msg}`);
-        log?.warn?.(
-          { err: msg, attempt: 1, isTimeout, timeoutMs: inventTimeoutMs },
-          'fun market zen invent fail'
-        );
       }
-      console.warn('[fun/market] zen falhou → tenta ollama');
-    }
-
-    // 2) Ollama
-    if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.ollamaEnabled !== false) {
-      try {
-        const raw = await generateOllama({
-          baseUrl: funConfig.ollamaBaseUrl || 'http://127.0.0.1:11434',
-          model: funConfig.ollamaModel || 'gemma4:latest',
-          system: inventSystem,
-          prompt,
-          timeoutMs: Math.max(8000, numOr(funConfig.ollamaTimeoutMs, 25000)),
-          keepAlive: funConfig.ollamaKeepAlive ?? -1,
-          think: false,
-          numPredict: Math.min(600, task.maxTokens),
-          temperature: 0.9,
-        });
-        const parsed = parseInventResponse(raw, skeleton);
-        if (parsed?.title && parsed?.body) {
-          const source = parsed.salvaged ? 'ollama-salvage' : 'ollama';
-          recordLlmHit('invent', source, { title: parsed.title });
-          log?.info?.(
-            { source, model: funConfig.ollamaModel, title: parsed.title },
-            'fun market invent via ollama (copy-only)'
-          );
-          return pack(parsed, source);
-        }
+      if (parsed && (!parsed?.title || !parsed?.body)) {
         console.warn(
-          `[fun/market] ollama invent inválido (modelo=${funConfig.ollamaModel || 'gemma4'}) → template`
+          `[fun/market] zen invent esgotou ${totalTries} tentativas (modelo=${funConfig.zenModel || 'glm_5_2'}) → template`
         );
-      } catch (err) {
-        console.warn(`[fun/market] ollama event fail: ${err?.message || err} → template`);
+      } else if (lastErr) {
+        console.warn(
+          `[fun/market] zen invent falhou em ${totalTries} tentativas: ${lastErr.message || lastErr} → template`
+        );
       }
     }
 

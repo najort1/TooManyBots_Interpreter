@@ -989,69 +989,44 @@ export function createGroupMemoryService({
 
     let lastRawPreview = '';
 
-    // Zen + jsonMode
+    // Zen + jsonMode — 3 retentativas (1 chamada + 3 retries = 4 totais) antes de
+    // retornar vazio. Fallback Ollama foi descontinuado.
     if (funConfig.zenEnabled !== false) {
-      try {
-        const task = resolveZenTaskParams('extract', funConfig);
-        const raw = await generateZen({
-          baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-          model: funConfig.zenModel || 'glm_5_2',
-          system: EXTRACT_SYSTEM,
-          prompt,
-          timeoutMs: Math.max(o.extractTimeout, task.timeoutMs, 45_000),
-          maxTokens: Math.max(task.maxTokens, 700),
-          temperature: task.temperature,
-          apiKey: funConfig.zenApiKey || '',
-          jsonMode: true,
-          jsonOnly: true,
-          sendSamplingParams: funConfig.zenSendSamplingParams === true,
-        });
-        if (raw) lastRawPreview = String(raw).slice(0, 240);
-        const mapped = mapParsed(raw);
-        if (mapped.length) {
-          recordLlmHit('memory', 'zen', { n: mapped.length });
-          return mapped;
-        }
-        if (raw) {
-          getLogger?.()?.debug?.(
-            { preview: lastRawPreview, batchSize: batch.length },
-            'Fun memory Zen extract empty after parse'
+      const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
+      for (let attempt = 1; attempt <= totalTries; attempt += 1) {
+        try {
+          const task = resolveZenTaskParams('extract', funConfig);
+          const raw = await generateZen({
+            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
+            model: funConfig.zenModel || 'glm_5_2',
+            system: EXTRACT_SYSTEM,
+            prompt,
+            timeoutMs: Math.max(o.extractTimeout, task.timeoutMs, 45_000),
+            maxTokens: Math.max(task.maxTokens, 700),
+            temperature: task.temperature,
+            apiKey: funConfig.zenApiKey || '',
+            jsonMode: true,
+            jsonOnly: true,
+            sendSamplingParams: funConfig.zenSendSamplingParams === true,
+          });
+          if (raw) lastRawPreview = String(raw).slice(0, 240);
+          const mapped = mapParsed(raw);
+          if (mapped.length) {
+            recordLlmHit('memory', 'zen', { n: mapped.length, attempt });
+            return mapped;
+          }
+          if (raw) {
+            getLogger?.()?.debug?.(
+              { preview: lastRawPreview, batchSize: batch.length, attempt },
+              'Fun memory Zen extract empty after parse'
+            );
+          }
+        } catch (err) {
+          getLogger?.()?.warn?.(
+            { err: { message: err?.message || 'zen-memory' }, attempt },
+            'Fun memory Zen extract fail'
           );
         }
-      } catch (err) {
-        getLogger?.()?.warn?.(
-          { err: { message: err?.message || 'zen-memory' } },
-          'Fun memory Zen extract fail'
-        );
-      }
-    }
-
-    // Ollama + format json
-    if (funConfig.ollamaEnabled !== false) {
-      try {
-        const raw = await generateOllama({
-          baseUrl: funConfig.ollamaBaseUrl || 'http://127.0.0.1:11434',
-          model: funConfig.ollamaModel || 'gemma4:latest',
-          system: EXTRACT_SYSTEM,
-          prompt,
-          timeoutMs: Math.max(o.extractTimeout, 20_000),
-          keepAlive: funConfig.ollamaKeepAlive ?? -1,
-          think: false,
-          numPredict: 400,
-          temperature: 0.45,
-          format: 'json',
-        });
-        if (raw) lastRawPreview = String(raw).slice(0, 240);
-        const mapped = mapParsed(raw);
-        if (mapped.length) {
-          recordLlmHit('memory', 'ollama', { n: mapped.length });
-          return mapped;
-        }
-      } catch (err) {
-        getLogger?.()?.warn?.(
-          { err: { message: err?.message || 'ollama-memory' } },
-          'Fun memory Ollama extract fail'
-        );
       }
     }
 
@@ -1084,42 +1059,32 @@ export function createGroupMemoryService({
     let text = '';
 
     if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.zenEnabled !== false) {
-      try {
-        const task = resolveZenTaskParams('persona', funConfig);
-        text = await generateZen({
-          baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-          model: funConfig.zenModel || 'glm_5_2',
-          system: PERSONA_SYSTEM,
-          prompt: `Fatos do grupo:\n${list}\n\nResuma o clima em 3–5 bullets (≤${o.personaMax} chars). NÃO invente fatos novos. Só os bullets:`,
-          timeoutMs: Math.max(o.extractTimeout, task.timeoutMs),
-          maxTokens: task.maxTokens,
-          temperature: task.temperature,
-          apiKey: funConfig.zenApiKey || '',
-          sendSamplingParams: funConfig.zenSendSamplingParams === true,
-        });
-        if (text) recordLlmHit('persona', 'zen', {});
-      } catch {
-        text = '';
+      const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
+      for (let attempt = 1; attempt <= totalTries; attempt += 1) {
+        try {
+          const task = resolveZenTaskParams('persona', funConfig);
+          text = await generateZen({
+            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
+            model: funConfig.zenModel || 'glm_5_2',
+            system: PERSONA_SYSTEM,
+            prompt: `Fatos do grupo:\n${list}\n\nResuma o clima em 3–5 bullets (≤${o.personaMax} chars). NÃO invente fatos novos. Só os bullets:`,
+            timeoutMs: Math.max(o.extractTimeout, task.timeoutMs),
+            maxTokens: task.maxTokens,
+            temperature: task.temperature,
+            apiKey: funConfig.zenApiKey || '',
+            sendSamplingParams: funConfig.zenSendSamplingParams === true,
+          });
+          if (text) {
+            recordLlmHit('persona', 'zen', { attempt });
+            break;
+          }
+        } catch {
+          text = '';
+        }
       }
     }
 
-    if (!text && process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.ollamaEnabled !== false) {
-      try {
-        text = await generateOllama({
-          baseUrl: funConfig.ollamaBaseUrl || 'http://127.0.0.1:11434',
-          model: funConfig.ollamaModel || 'gemma4:latest',
-          system: PERSONA_SYSTEM,
-          prompt: `Fatos do grupo:\n${list}\n\nResuma o clima:`,
-          timeoutMs: o.extractTimeout,
-          keepAlive: funConfig.ollamaKeepAlive ?? -1,
-          think: false,
-          numPredict: 220,
-          temperature: 0.7,
-        });
-      } catch {
-        text = '';
-      }
-    }
+    // Ollama fallback descontinuado — Zen tentou 1 + retries antes do fallback sintético.
 
     if (!text) {
       text = facts

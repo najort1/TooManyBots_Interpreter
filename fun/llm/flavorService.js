@@ -6,6 +6,15 @@ import {
   fingerprintLine,
 } from './zenTaskParams.js';
 import { recordLlmHit } from './llmMetrics.js';
+import { withRetries, BREAK } from '../utils/retry.js';
+
+/** Fallback Ollama foi descontinuado — Zen agora cai direto em template mockado. */
+const OLLAMA_DISABLED_REASON = 'ollama-deprecated';
+/**
+ * Retentativas do Zen antes do fallback mockado (template): 1 chamada + retries.
+ * Configurável via funConfig.zenMaxRetries (default 3 = 4 tentativas totais).
+ */
+const DEFAULT_ZEN_MAX_RETRIES = 3;
 
 /**
  * System “ápice” (Zen é o principal e mais capaz — prompt completo).
@@ -764,42 +773,44 @@ function buildUserPrompt(scenario, vars) {
     .join('; ');
 
   // Situação factual só — o modelo inventa tom/humor/título do comentário.
+  // {user} é expandido p/ o nome legível do autor (evita a IA atribuir o feito
+  // a um nome qualquer da lore). Cenários sem {user} ficam genéricos como antes.
   const scenarioHints = {
     faction_create: 'Panelinha (time) recém-criada no grupo.',
-    faction_join: 'Alguém entrou numa panelinha.',
-    faction_leave: 'Alguém saiu de uma panelinha (ou ela dissolveu).',
+    faction_join: '{user} entrou numa panelinha.',
+    faction_leave: '{user} saiu de uma panelinha (ou ela dissolveu).',
     mission_spawn: 'Missão mista entre panelinhas apareceu.',
     event_start: 'Evento relâmpago cross-panelinha começou.',
-    marry_propose: 'Pedido de casamento no bot (zap).',
-    marry_accept: 'Casamento aceito no bot.',
-    marry_mutual: 'Pedido de casamento mútuo.',
-    job_done: 'Alguém terminou um "trabalho" no bot e ganhou coins (não invente o valor).',
-    flip_win: 'Ganhou no cara ou coroa.',
-    flip_lose: 'Perdeu no cara ou coroa.',
-    roulette_win: 'Ganhou na ROLETA (bola/cor). Não confunda com cara ou coroa.',
-    roulette_lose: 'Perdeu na ROLETA. Não confunda com cara ou coroa.',
-    roulette_bigwin: 'Acertou GRANDE na roleta — pagamento alto.',
-    roulette_zero: 'Zero caiu na roleta — aposta comum perdeu.',
-    roulette_lapartage: 'Zero caiu na roleta, mas o jogador recebeu metade de volta (La Partage).',
-    slot_win: 'Ganhou no SLOT (rolos).',
-    slot_lose: 'Perdeu no SLOT.',
-    crash_win: 'Cashout a tempo no CRASH (foguete).',
-    crash_lose: 'Crash explodiu com o jogador a bordo.',
-    bj_win: 'Ganhou no BLACKJACK vs dealer.',
-    bj_lose: 'Perdeu no BLACKJACK.',
-    bj_push: 'Empate (push) no BLACKJACK.',
-    russian_click: 'Roleta russa virtual: click (câmara vazia).',
-    russian_dead: 'Roleta russa virtual: bang (morte simbólica, sem XP).',
-    cancel_absurd: 'Cancelamento absurdo da pessoa user=.',
-    gossip_fake: 'Fofoca falsa sobre user=.',
-    oracle_insane: 'Resposta de oráculo maluco à question=.',
-    illuminati_theory: 'Teoria Illuminati de zoeira com user= no centro.',
-    russian_start: 'Abertura da roleta russa virtual no grupo.',
-    bet_result: 'Resultado de aposta PvP (use os nomes; não invente pot/números).',
+    marry_propose: '{user} fez um pedido de casamento no bot (zap).',
+    marry_accept: 'Casamento aceito no bot por {user}.',
+    marry_mutual: 'Pedido de casamento mútuo envolvendo {user}.',
+    job_done: '{user} terminou um "trabalho" no bot e ganhou coins (não invente o valor).',
+    flip_win: '{user} ganhou no cara ou coroa.',
+    flip_lose: '{user} perdeu no cara ou coroa.',
+    roulette_win: '{user} ganhou na ROLETA (bola/cor). Não confunda com cara ou coroa.',
+    roulette_lose: '{user} perdeu na ROLETA. Não confunda com cara ou coroa.',
+    roulette_bigwin: '{user} acertou GRANDE na roleta — pagamento alto.',
+    roulette_zero: 'Zero caiu na roleta — aposta comum de {user} perdeu.',
+    roulette_lapartage: 'Zero caiu na roleta, mas {user} recebeu metade de volta (La Partage).',
+    slot_win: '{user} ganhou no SLOT (rolos).',
+    slot_lose: '{user} perdeu no SLOT.',
+    crash_win: '{user} fez cashout a tempo no CRASH (foguete).',
+    crash_lose: 'Crash explodiu com {user} a bordo.',
+    bj_win: '{user} ganhou no BLACKJACK vs dealer.',
+    bj_lose: '{user} perdeu no BLACKJACK.',
+    bj_push: '{user} empatou (push) no BLACKJACK.',
+    russian_click: '{user} ouviu o click na roleta russa virtual (câmara vazia).',
+    russian_dead: 'Roleta russa virtual: bang — {user} “morreu” simbolicamente (sem XP).',
+    cancel_absurd: 'Cancelamento absurdo de {user}.',
+    gossip_fake: 'Fofoca falsa sobre {user}.',
+    oracle_insane: 'Resposta de oráculo maluco de {user} à question=.',
+    illuminati_theory: 'Teoria Illuminati de zoeira com {user} no centro.',
+    russian_start: '{user} abriu a roleta russa virtual no grupo.',
+    bet_result: 'Resultado de aposta PvP envolvendo {user} (use os nomes; não invente pot/números).',
     ship: 'Ship do grupo (percent/label nos fatos se houver).',
-    lucky_hit: 'Deu sorte no comando de sorte.',
-    lucky_miss: 'Azar no comando de sorte.',
-    level_up: 'Alguém subiu de nível de XP no bot.',
+    lucky_hit: '{user} deu sorte no comando de sorte.',
+    lucky_miss: '{user} teve azar no comando de sorte.',
+    level_up: '{user} subiu de nível de XP no bot.',
     assault_bank_win: 'Assalto a BANCO que DEU CERTO. Elenco: attacker, weapon.',
     assault_bank_fail: 'Assalto a BANCO que FALHOU. Elenco: attacker, weapon.',
     assault_shop_win: 'Assalto a LOJINHA que DEU CERTO.',
@@ -809,9 +820,19 @@ function buildUserPrompt(scenario, vars) {
   };
 
   const assault = isAssaultScenario(scenario);
-  const hint =
+  const actorName = String(v.user || '').trim();
+  // Expande {user} no hint; se não houver user, Remove placeholder p/ não vazar token.
+  const rawHint =
     scenarioHints[scenario] ||
     'Algo rolou no bot de diversão do grupo — comente com base nos fatos.';
+  const hint = actorName
+    ? rawHint.replace(/\{user\}/g, actorName)
+    : rawHint.replace(/\{user\}/g, 'alguém');
+  // Linha extra de salvaguarda (caso o hint descreva em 3a pessoa): força o nome.
+  const actorLine =
+    actorName && !assault && scenario !== 'group_times'
+      ? `Quem fez: ${actorName}. (Use ESTE nome; NÃO troque pelo autor de um fato da lore.)\n`
+      : '';
   const shape = assault
     ? `Escreva o ROTEIRO CURTO (450–900 caracteres). PRIMEIRA LINHA = 🎬 TÍTULO: (invente o título)
 CENA 1 — PREPARAÇÃO
@@ -830,7 +851,7 @@ EPÍLOGO
     : '';
 
   return `Situação: ${hint}
-Fatos do momento (não invente placar/coins além disso): ${facts || 'nenhum'}${loreBlock}
+${actorLine}Fatos do momento (não invente placar/coins além disso): ${facts || 'nenhum'}${loreBlock}
 ${shape}`;
 }
 
@@ -1024,8 +1045,8 @@ export function createFlavorService(deps = {}) {
   }
 
   function ollamaOn(cfg) {
-    if (!liveLlmAllowed && generateOllama === ollamaGenerate) return false;
-    return cfg?.ollamaEnabled !== false;
+    // Ollama foi descontinuado como fallback — Zen encadeia direto em template mockado.
+    return false;
   }
 
   function isEnabled(cfg) {
@@ -1212,8 +1233,14 @@ Total de eventos: ${vars?.count ?? '?'}.`,
         .map(([k, v]) => `${k}=${String(v).slice(0, FACT_VALUE_MAX)}`)
         .join(', ');
       const lore = String(vars?.groupLore || '').trim();
+      const actorNameSimple = String(vars?.user || '').trim();
+      const actorLineSimple =
+        actorNameSimple && key !== 'group_times'
+          ? `Quem fez: ${actorNameSimple}. (Use ESTE nome; NÃO troque pelo autor de um fato da lore.)`
+          : null;
       prompt = [
         `Comente em 1–3 frases (pt-BR de zap, até ${maxChars} chars) a situação "${key}".`,
+        actorLineSimple,
         `Fatos: ${facts || 'nenhum'}.`,
         lore
           ? String(lore).includes('<group_lore>')
@@ -1238,7 +1265,28 @@ ${banHint}`.trim();
     return { prompt, system, maxChars, assault: false, chaos: false, maxTokens: null };
   }
 
-  async function tryZen(cfg, key, vars, { simple = false, assault = false, chaos = false } = {}) {
+  async function tryZen(cfg, key, vars, { simple = false, assault = false, chaos = false, maxRetries = 0 } = {}) {
+    if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
+    const totalRetries = Math.max(0, Math.floor(Number(cfg?.zenMaxRetries ?? maxRetries) || 0));
+    return withRetries(totalRetries, (attempt, prevFailure) => {
+      if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
+      // attempt 0 = chamada inicial; falha 'zen-empty' alterna p/ prompt "simple"
+      const trySimple =
+        attempt === 0
+          ? simple
+          : prevFailure?.reason === 'zen-empty'
+            ? !simple
+            : simple;
+      return tryZenOnce(cfg, key, vars, {
+        simple: trySimple,
+        assault,
+        chaos,
+        attempt,
+      });
+    });
+  }
+
+  async function tryZenOnce(cfg, key, vars, { simple = false, assault = false, chaos = false, attempt = 0 } = {}) {
     if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
     const taskName = assault ? 'assault' : chaos ? 'chaos' : 'flavor';
     const task = resolveZenTaskParams(taskName, cfg);
@@ -1266,6 +1314,12 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
       key === 'group_times'
         ? Math.max(ep.timeoutMs, task.timeoutMs, 90_000)
         : Math.max(ep.timeoutMs, task.timeoutMs);
+    if (attempt > 0) {
+      getLogger?.()?.debug?.(
+        { scenario: key, attempt, provider: 'zen', reason: 'retry' },
+        'Fun flavor Zen retry'
+      );
+    }
     try {
       const raw = await generateZen({
         baseUrl: ep.baseUrl,
@@ -1474,11 +1528,12 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
     );
 
     const cascade = async () => {
-      // 1) OpenCode Zen (principal)
-      let zenResult = await tryZen(cfg, key, vars, { simple: false });
-      if (!zenResult.ok && zenResult.reason === 'zen-empty') {
-        zenResult = await tryZen(cfg, key, vars, { simple: true });
-      }
+      // Zen (principal) — 3 retentativas (1 chamada + 3 retries = 4 totais) antes do
+      // template mockado. Fallback Ollama foi descontinuado.
+      const zenResult = await tryZen(cfg, key, vars, {
+        simple: false,
+        maxRetries: DEFAULT_ZEN_MAX_RETRIES,
+      });
       if (zenResult.ok) {
         lastProvider = 'zen';
         pushRecent(zenResult.text, cfg, scopeKey);
@@ -1493,33 +1548,6 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
           model: zenResult.model,
           err: zenResult.err
             ? { message: zenResult.err.message, name: zenResult.err.name }
-            : undefined,
-        });
-      }
-
-      // 2) Ollama local (fallback)
-      let ollamaResult = await tryOllama(cfg, key, vars, { simple: false });
-      if (!ollamaResult.ok && ollamaResult.reason === 'ollama-empty') {
-        ollamaResult = await tryOllama(cfg, key, vars, { simple: true });
-      }
-      if (ollamaResult.ok) {
-        const accepted = acceptOrNull(ollamaResult.text, cfg, scopeKey);
-        if (accepted) {
-          lastProvider = 'ollama';
-          pushRecent(accepted, cfg, scopeKey);
-          recordLlmHit('flavor', 'ollama', { scenario: key });
-          return accepted;
-        }
-      }
-      if (ollamaOn(cfg)) {
-        logFlavor(getLogger, {
-          scenario: key,
-          provider: 'ollama',
-          reason: ollamaResult.reason,
-          model: ollamaResult.model,
-          warm,
-          err: ollamaResult.err
-            ? { message: ollamaResult.err.message, name: ollamaResult.err.name }
             : undefined,
         });
       }
@@ -1594,11 +1622,13 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
           );
 
     const cascade = async () => {
-      // 1) Zen
-      let zenResult = await tryZen(cfg, key, vars, { simple: false, chaos: true });
-      if (!zenResult.ok && (zenResult.reason === 'zen-empty' || zenResult.reason === 'zen-fail')) {
-        zenResult = await tryZen(cfg, key, vars, { simple: true, chaos: true });
-      }
+      // Zen — 3 retentativas (1 chamada + 3 retries = 4 totais) antes do template mockado.
+      // Fallback Ollama descontinuado.
+      const zenResult = await tryZen(cfg, key, vars, {
+        simple: false,
+        chaos: true,
+        maxRetries: DEFAULT_ZEN_MAX_RETRIES,
+      });
       if (zenResult.ok) {
         lastProvider = 'zen';
         pushRecent(zenResult.text, cfg, scopeKey);
@@ -1613,37 +1643,6 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
           model: zenResult.model,
           err: zenResult.err
             ? { message: zenResult.err.message, name: zenResult.err.name }
-            : undefined,
-        }, 'Fun chaos');
-      }
-
-      // 2) Ollama
-      let ollamaResult = await tryOllama(cfg, key, vars, { simple: false, chaos: true });
-      if (
-        !ollamaResult.ok &&
-        (ollamaResult.reason === 'ollama-empty' || ollamaResult.reason === 'ollama-fail')
-      ) {
-        ollamaResult = await tryOllama(cfg, key, vars, { simple: true, chaos: true });
-      }
-      if (ollamaResult.ok) {
-        const accepted =
-          acceptOrNull(ollamaResult.text, cfg, scopeKey, {
-            skipOverlap: key === 'group_times',
-          }) || ollamaResult.text;
-        lastProvider = 'ollama';
-        pushRecent(accepted, cfg, scopeKey);
-        recordLlmHit('chaos', 'ollama', { scenario: key });
-        return accepted;
-      }
-      if (ollamaOn(cfg)) {
-        logFlavor(getLogger, {
-          scenario: key,
-          provider: 'ollama',
-          reason: ollamaResult.reason,
-          model: ollamaResult.model,
-          warm,
-          err: ollamaResult.err
-            ? { message: ollamaResult.err.message, name: ollamaResult.err.name }
             : undefined,
         }, 'Fun chaos');
       }
@@ -1705,11 +1704,13 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
     );
 
     const cascade = async () => {
-      let zenResult = await tryZen(cfg, key, vars, { simple: false, assault: true });
-      // se veio curto/vazio, tenta prompt “simple” ainda no modo assault (não o de 1–3 frases)
-      if (!zenResult.ok && zenResult.reason === 'zen-empty') {
-        zenResult = await tryZen(cfg, key, vars, { simple: true, assault: true });
-      }
+      // Zen — 3 retentativas (1 chamada + 3 retries = 4 totais) antes do template mockado.
+      // Fallback Ollama descontinuado.
+      const zenResult = await tryZen(cfg, key, vars, {
+        simple: false,
+        assault: true,
+        maxRetries: DEFAULT_ZEN_MAX_RETRIES,
+      });
       if (zenResult.ok) {
         lastProvider = 'zen';
         pushRecent(zenResult.text.slice(0, 120), cfg);
@@ -1724,29 +1725,6 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
           model: zenResult.model,
           err: zenResult.err
             ? { message: zenResult.err.message, name: zenResult.err.name }
-            : undefined,
-        });
-      }
-
-      let ollamaResult = await tryOllama(cfg, key, vars, { simple: false, assault: true });
-      if (!ollamaResult.ok && ollamaResult.reason === 'ollama-empty') {
-        ollamaResult = await tryOllama(cfg, key, vars, { simple: true, assault: true });
-      }
-      if (ollamaResult.ok) {
-        lastProvider = 'ollama';
-        pushRecent(String(ollamaResult.text).slice(0, 120), cfg);
-        recordLlmHit('assault', 'ollama', { scenario: key });
-        return ollamaResult.text;
-      }
-      if (ollamaOn(cfg)) {
-        logFlavor(getLogger, {
-          scenario: key,
-          provider: 'ollama',
-          reason: ollamaResult.reason,
-          model: ollamaResult.model,
-          warm,
-          err: ollamaResult.err
-            ? { message: ollamaResult.err.message, name: ollamaResult.err.name }
             : undefined,
         });
       }

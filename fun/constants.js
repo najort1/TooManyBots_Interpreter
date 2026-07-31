@@ -606,6 +606,12 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   zenSendSamplingParams: false,
   zenApiKey: '',
   /**
+   * Retentativas do Zen antes de cair nos fallbacks mockados (template/sintético):
+   * 1 chamada + zenMaxRetries = total de chamadas (default 3 → 4 totais).
+   * O fallback Ollama foi descontinuado.
+   */
+  zenMaxRetries: 3,
+  /**
    * Knobs por tarefa (override de zenTemperature/zenMaxTokens globais).
    * Ver fun/llm/zenTaskParams.js — invent/extract/flavor/chaos/tarot/assault/persona/journalist
    */
@@ -633,8 +639,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   flavorAlways: true,
   /** Quantas frases recentes lembrar p/ anti-eco (flavor/chaos). */
   flavorRecentMax: 10,
-  // Ollama local (fallback)
-  ollamaEnabled: true,
+  // Ollama local (DEPRECATED — fallback descontinuado; keys mantidas por compat)
+  ollamaEnabled: false,
   ollamaBaseUrl: 'http://127.0.0.1:11434',
   ollamaModel: 'gemma4:latest',
   ollamaTimeoutMs: 25_000,
@@ -771,8 +777,9 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   /** Quantas perguntas recentes entram no anti-eco do LLM. */
   qmpAntiEchoLimit: 12,
   qmpAntiEchoMaxOverlap: 0.42,
-  /** Tentativas de regenerar se ecoar histórico. */
-  qmpInventRetries: 2,
+  /** Tentativas totais de gerar via Zen antes do template mockado (1 + retries = default 4).
+   *  Fallback Ollama descontinuado. */
+  qmpInventRetries: 4,
   qmpTimeoutMs: 18_000,
   qmpMaxTokens: 220,
   qmpTemperature: 0.95,

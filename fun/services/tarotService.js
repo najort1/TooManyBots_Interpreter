@@ -147,8 +147,8 @@ export function createTarotService({
   }
 
   function ollamaOn(cfg) {
-    if (process.env.FUN_DISABLE_LIVE_LLM === '1') return false;
-    return cfg.ollamaEnabled !== false;
+    // Ollama descontinuado como fallback — Zen cai direto em template.
+    return false;
   }
 
   async function narrate({ question, cards, funConfig = {} }) {
@@ -161,61 +161,43 @@ export function createTarotService({
     const system = TAROT_SYSTEM_PROMPT;
 
     if (zenOn(funConfig)) {
-      try {
-        const task = resolveZenTaskParams('tarot', funConfig);
-        const raw = await generateZen({
-          baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-          model: funConfig.zenModel || 'glm_5_2',
-          system,
-          prompt,
-          timeoutMs: Math.max(o.timeoutMs, task.timeoutMs),
-          maxTokens: Math.max(o.maxTokens, task.maxTokens),
-          temperature: Number.isFinite(Number(funConfig.tarotTemperature))
-            ? o.temperature
-            : task.temperature,
-          apiKey: funConfig.zenApiKey || '',
-          sendSamplingParams: funConfig.zenSendSamplingParams === true,
-        });
-        const clean = sanitizeTarotText(raw, o.maxChars);
-        if (clean) {
-          recordLlmHit('tarot', 'zen', {});
-          return { text: clean, provider: 'zen' };
-        }
-      } catch (err) {
+      const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
+      for (let attempt = 1; attempt <= totalTries; attempt += 1) {
         try {
-          getLogger?.()?.warn?.(
-            { err: err?.message, scenario: 'tarot' },
-            'Fun tarot zen fail'
-          );
-        } catch {
-          // ignore
+          const task = resolveZenTaskParams('tarot', funConfig);
+          const raw = await generateZen({
+            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
+            model: funConfig.zenModel || 'glm_5_2',
+            system,
+            prompt,
+            timeoutMs: Math.max(o.timeoutMs, task.timeoutMs),
+            maxTokens: Math.max(o.maxTokens, task.maxTokens),
+            temperature: Number.isFinite(Number(funConfig.tarotTemperature))
+              ? o.temperature
+              : task.temperature,
+            apiKey: funConfig.zenApiKey || '',
+            sendSamplingParams: funConfig.zenSendSamplingParams === true,
+          });
+          const clean = sanitizeTarotText(raw, o.maxChars);
+          if (clean) {
+            recordLlmHit('tarot', 'zen', { attempt });
+            return { text: clean, provider: 'zen' };
+          }
+        } catch (err) {
+          try {
+            getLogger?.()?.warn?.(
+              { err: err?.message, scenario: 'tarot', attempt },
+              'Fun tarot zen fail'
+            );
+          } catch {
+            // ignore
+          }
+          console.warn(`[fun/tarot] zen fail reason=${err?.message || 'error'} attempt=${attempt}`);
         }
-        console.warn(`[fun/tarot] zen fail reason=${err?.message || 'error'}`);
       }
     }
 
-    if (ollamaOn(funConfig)) {
-      try {
-        const raw = await generateOllama({
-          baseUrl: funConfig.ollamaBaseUrl || 'http://127.0.0.1:11434',
-          model: funConfig.ollamaModel || 'gemma4:latest',
-          system,
-          prompt,
-          timeoutMs: Math.max(o.timeoutMs, numOr(funConfig.ollamaTimeoutMs, 25_000)),
-          keepAlive: funConfig.ollamaKeepAlive ?? -1,
-          think: false,
-          numPredict: o.maxTokens,
-          temperature: o.temperature,
-        });
-        const clean = sanitizeTarotText(raw, o.maxChars);
-        if (clean) {
-          recordLlmHit('tarot', 'ollama', {});
-          return { text: clean, provider: 'ollama' };
-        }
-      } catch (err) {
-        console.warn(`[fun/tarot] ollama fail reason=${err?.message || 'error'}`);
-      }
-    }
+    // Ollama fallback descontinuado — Zen já tentou 1 + retries antes do template.
 
     recordLlmHit('tarot', 'template', {});
     return {

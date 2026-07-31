@@ -469,22 +469,11 @@ export function createFunModule(deps = {}) {
   }
 
   /**
-   * Carrega gemma (ou modelo configurado) na memória do Ollama e inicia refresh.
-   * Custo no boot; comandos só geram texto (sem cold start).
+   * DEPRECATED — Ollama fallback foi descontinuado. warmupLlm agora é noop.
+   * Mantido como stub p/ compat de callers; Zen não exige warmup (proxy stateless).
    */
   async function warmupLlm() {
-    const funConfig = resolveFunConfig(getConfig() || {});
-    if (!funConfig.ollamaEnabled) {
-      return { ok: false, reason: 'disabled' };
-    }
-    const result = await flavorService.warmup();
-    if (result?.ok !== false) {
-      flavorService.startKeepAliveLoop?.();
-    } else {
-      // mesmo com falha, tenta loop — pode recuperar depois
-      flavorService.startKeepAliveLoop?.();
-    }
-    return result;
+    return { ok: false, reason: 'deprecated' };
   }
 
   function stopLlmKeepAlive() {
