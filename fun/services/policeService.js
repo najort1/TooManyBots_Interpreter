@@ -20,7 +20,7 @@ const ANALYTICS_SCHEMA = 'analytics';
  * Decay de Wanted: −1 ponto a cada 24h **sem crime**.
  * Crime ativo reinicia o relógio (farmador não esfria no meio da rotina).
  */
-export const WANTED_DECAY_MS = 24 * 60 * 60_000;
+export const WANTED_DECAY_MS = 12 * 60 * 60_000;
 
 /**
  * Thresholds de pontos → nível 0–5.
