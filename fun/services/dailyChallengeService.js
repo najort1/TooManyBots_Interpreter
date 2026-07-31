@@ -756,13 +756,9 @@ export function createDailyChallengeService(deps = {}) {
     const durationMin = Math.max(1, Math.round(((expiresAt || 0) - (ch?.launchedAt || 0)) / 60000));
     let body = '';
     if (type === 'guess_game') {
-      const hints = (payload.data?.hints || []).slice(0, MAX_HINTS);
-      const hintLines = hints
-        .map((h, i) => `  ${i + 1}. ${h}`)
-        .join('\n');
       body =
         `🎯 *${payload.title}*\n\n` +
-        `Aqui estao as dicas:\n${hintLines || '  (sem dicas)'}\n\n` +
+        `Use /dica para revelar as 3 dicas progressivamente (1 a cada 10 min).\n\n` +
         `⏳ *Tempo:* ${durationMin} min\n🎁 *Recompensa:* surpresa!\n\n` +
         `💬 *Responda:* /responder <palpite>\n💡 *Dica:* /dica\n🔄 *Pular (3 votos):* /trocar desafio`;
     } else if (type === 'riddle') {
@@ -1051,11 +1047,15 @@ export function createDailyChallengeService(deps = {}) {
         'Sua tarefa e dar UMA dica sobre a resposta correta do enigma.\n\n' +
         'REGRAS OBRIGATORIAS:\n' +
         '- NUNCA diga, revele, soletre ou parafraseie diretamente a resposta.\n' +
-        '- Nao de dicas obvias que entreguem a resposta (ex.: se a resposta e "espada", nao diga "e algo cortante").\n' +
+        '- ABSOLUTAMENTE PROIBIDO usar a palavra da resposta (ou variacoes/derivacoes) em qualquer parte da dica, mesmo dentro de metáforas ou analogias.\n' +
+        '- PROIBIDO usar sinonimo obvio da resposta (ex.: resposta "nuvem" -> proibido dizer "nuvem","coberto","fumaça no céu","vapor"; resposta "espada" -> proibido "cortante","lâmina","aço").\n' +
+        '- PROIBIDO copiar/reusar palavras-chave do propio enigma — inverta a perspectiva (fale de habit, contexto, origem, categoria ampla) em vez de reformular a mesma metáfora.\n' +
+        '- Nao de dicas obvias que entreguem a resposta.\n' +
         '- Nao repita nenhuma dica ja dada (liste-as abaixo e evite conteudo similar).\n' +
         '- A dica deve ser SUTIL, curta (1-2 frases) e progressiva: quanto maior o numero da dica, mais especifica, mas nunca obvia.\n' +
         '- Responda apenas com a dica, sem prefixos como "Dica:" ou "Resposta:".\n' +
-        '- Responda em portugues brasileiro.';
+        '- Responda em portugues brasileiro.\n' +
+        '- ANTES de responder, verifique mentalmente: minha dica contém a palavra resposta ou um sinonimo obvio? Se sim, reescreva.';
       const user =
         `Enigma: ${data.riddle || ''}\n` +
         `Resposta correta (para voce saber, NUNCA revele): ${answer}\n` +
@@ -1076,12 +1076,14 @@ export function createDailyChallengeService(deps = {}) {
         'Sua tarefa e dar UMA dica sobre o Pokemon sem dizer o nome dele.\n\n' +
         'REGRAS OBRIGATORIAS:\n' +
         '- NUNCA diga, soletre ou revele o nome do Pokemon.\n' +
-        '- Nao de dicas obvias que entreguem a resposta (ex.: se nome e "pikachu", nao diga "rato eletrico amarelo").\n' +
-        '- Pode mencionar tipo, habitat, cor, geracao ou caracteristica marcante — com sutileza.\n' +
+        '- ABSOLUTAMENTE PROIBIDO usar o nome do Pokemon (ou derivacoes/silabas recognizaveis) em qualquer parte da dica, mesmo dentro de metáforas.\n' +
+        '- PROIBIDO usar sinonimo obvio ou descricao literal que entregue a resposta (ex.: se nome e "pikachu", proibido dizer "pikachu","pika","chu","rato eletrico amarelo", "mascara amarela").\n' +
+        '- Pode mencionar tipo, habitat, cor, geracao ou caracteristica marcante — mas com SUTILEZA, nunca direto.\n' +
         '- Nao repita nenhuma dica ja dada (liste-as abaixo e evite conteudo similar).\n' +
         '- A dica deve ser curta (1-2 frases) e progressiva: quanto maior o numero da dica, mais especifica, mas nunca obvia.\n' +
         '- Responda apenas com a dica, sem prefixos como "Dica:" ou "Pokemon:".\n' +
-        '- Responda em portugues brasileiro.';
+        '- Responda em portugues brasileiro.\n' +
+        '- ANTES de responder, verifique mentalmente: minha dica contém o nome ou um sinonimo obvio? Se sim, reescreva.';
       const user =
         `Pokemon sorteado (para voce saber, NUNCA revele o nome): ${answer}\n` +
         `Numero desta dica: ${hintIndex + 1}\n` +
