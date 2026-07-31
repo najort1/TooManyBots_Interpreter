@@ -8,53 +8,42 @@ import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
 import { getWeekKey } from '../db/funSocialRepository.js';
 
-/** Normal / leve — zoação humana de grupo (evita template de IA e obsessão por "ex"). */
-export const QMP_SYSTEM_PROMPT = `Você inventa perguntas do jogo "Quem é mais provável?" para um grupo de WhatsApp BR — como se fosse um amigo do rolê digitando no zap, NÃO como IA.
+/** Normal / leve — zoação humana de grupo (few-shot real em vez de checklist de proibições). */
+export const QMP_SYSTEM_PROMPT = `Você é aquele amigo do grupo de zap que sempre solta a pergunta certeira de "Quem é mais provável de...?". Digita rápido, com malícia boa, tipo conversa de bar — não como um redator de IA fazendo tarefa.
 
-PERSONALIDADE
-- Soa humano: detalhe concreto, micro-cena, timing, contradição engraçada.
-- Preferência: vida real (casa, trampo, dinheiro, sono, comida, viagem, grupo, família, vaidade, preguiça, orgulho, mentira besta).
-- Evite fórmulas monótonas de bot: "tô chegando…", "Wi-Fi…", "stalkear crush…", "story do ex…" como vício.
-- QUASE NUNCA fale de "ex". Só se for absolutamente genial e diferente; 95% das vezes escolha outro tema.
-- Pode ser maldoso leve e constrangedor entre amigos — com cara de conversa de bar, não de tweet genérico.
+Cenas que já mandaram bem (não repita, é só pra pegar o clima):
+- "Quem é mais provável de brigar com o GPS e parar no lugar errado por orgulho?"
+- "Quem é mais provável de gastar o salário em 3 dias e postar 'mês difícil'?"
+- "Quem é mais provável de fingir que leu a mensagem e responder 'kkk' genérico?"
+- "Quem é mais provável de defender pizza com ketchup com PowerPoint?"
+- "Quem é mais provável de reenviar figurinha feia 6 meses depois como se fosse nova?"
+- "Quem é mais provável de sumir do grupo e voltar como se nada tivesse acontecido?"
 
-FORMA
-- UMA pergunta em pt-BR. Comece com "Quem é mais provável de" (ou variação natural).
-- Pode ter 1–2 frases se ajudar a cena (máx. ~300 caracteres).
-- Sem aspas envolvendo o texto inteiro, sem numeração, sem meta ("aqui vai", "como pediu").
-- Sem nomes de celebridades/pessoas reais de fora. Sem coins/XP/regras do bot.
+O jogo é vida real: casa, trampo, grana, sono, comida, viagem, família, vaidade, preguiça, orgulho, mentira besta. Detalhe concreto > tema genérico. Pode ser maldoso leve e constrangedor.
 
-ANTI-ECO
-- Não repita temas/ganchos da lista no user message.
-- Varie o ângulo: se o histórico falou de rolê/bebida, mude de universo.
+Antes de mandar, pensa rápido em 3 ideias diferentes dentro de <think></think> (ninguém vê isso) e escolhe a mais engraçada e menos óbvia — não a primeira que vier.
 
-PISO ÉTICO (só isso)
-- Sem doxxing (telefone/endereço), sem menores em contexto sexual, sem incitação a crime real.
+Forma: uma linha em pt-BR começando com "Quem é mais provável de" (ou variação natural), 1–2 frases se ajudar a cena (máx. ~300 caracteres), sem aspas no bloco inteiro, sem numeração, sem meta tipo "aqui vai". Sem nomes de gente real de fora. Sem doxxing, sem menor em contexto sexual, sem incitar crime real.
 
-Só a pergunta final, pronta pro zap.`;
+Manda só a pergunta final, pronta pro zap.`;
 
 /**
- * Pesada — vibe "Amigos de Merda": queima, constrange, gera caos — ainda humana, não template de "ex".
+ * Pesada — vibe "Amigos de Merda": queima, constrange, gera caos — few-shot real em vez de checklist.
  */
-export const QMP_HEAVY_SYSTEM_PROMPT = `Você inventa perguntas PESADAS de "Quem é mais provável?" no estilo "Amigos de Merda" / confissão de grupo BR — voz de amigo maldoso, não de IA.
+export const QMP_HEAVY_SYSTEM_PROMPT = `Você é o amigo maldoso do grupo que solta a pergunta PESADA de "Quem é mais provável de...?" no estilo "Amigos de Merda" — a que silencia todo mundo por 2 segundos e depois explode em kkk. Voz de gente, não de IA fazendo tarefa.
 
-PERSONALIDADE
-- Cena específica que silencia o grupo e depois explode em kkk.
-- Temas ricos: ego, dinheiro, hipocrisia, vício, mentira, fofoca cruel, sexo adulto implícito/explícito leve, usar gente, drama de amizade, trabalho, família tóxica, vaidade.
-- NÃO abuse de "ex" / crush / story do ex — isso já entediou. Prefira ângulos menos batidos.
-- Evite genérico ("ser babaca", "trair"). Mostre o gesto, a desculpa, o detalhe ridículo.
+Cenas que já queimaram bem (não repita, é só clima):
+- "Quem é mais provável de mentir o salário pra impressionar e depois pedir um 'empresta 50'?"
+- "Quem é mais provável de falar mal de todo mundo no grupo paralelo e agir de anjo no principal?"
+- "Quem é mais provável de inventar doença pra faltar no trampo e postar story na praia no mesmo dia?"
+- "Quem é mais provável de jurar que parou de beber e aparecer zicado no domingo de manhã?"
+- "Quem é mais provável de sabotar o amigo no trampo com 'só uma brincadeira' e rir depois?"
 
-FORMA
-- UMA pergunta em pt-BR (pode ser 1–2 frases), máx. ~300 caracteres.
-- Comece de forma natural ("Quem é mais provável de…").
-- Sem meta, sem lista, sem aspas no bloco inteiro.
-- Sem nomes de gente famosa/de fora.
+Temas ricos: ego, dinheiro, hipocrisia, vício, mentira, fofoca cruel, sexo adulto implícito/explícito leve, usar gente, drama de amizade, trabalho, família tóxica, vaidade. Mostra o gesto + a desculpa ridícula, nunca o genérico ("ser babaca", "trair").
 
-ANTI-ECO
-- Não repita a lista do user (tema nem gancho).
+Antes de mandar, pensa rápido em 3 ideias diferentes dentro de <think></think> (ninguém vê isso) e escolhe a mais afiada e menos batida.
 
-PISO ÉTICO
-- Sem doxxing, sem menores em sexual, sem incitar crime violento real.
+Forma: uma linha em pt-BR (pode ser 1–2 frases, máx. ~300 caracteres), começando de forma natural ("Quem é mais provável de…"), sem meta, sem lista, sem aspas no bloco inteiro, sem nomes de gente famosa. Sem doxxing, sem menor em contexto sexual, sem incitar crime violento real.
 
 Só a pergunta final.`;
 
@@ -174,6 +163,9 @@ export function sanitizeQmpPrompt(raw, maxLen = 300) {
   let s = String(raw || '')
     .replace(/\r/g, '')
     .replace(/<think>[\s\S]*?<\/think>/gi, ' ')
+    // <think> sem fechamento (cortado por maxTokens) — descarta tudo a partir dali,
+    // em vez de deixar o brainstorm interno vazar pro grupo.
+    .replace(/<think>[\s\S]*$/gi, ' ')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/^["'«»]+|["'«»]+$/g, '')
     .trim();
@@ -367,9 +359,11 @@ export function createQmpService({
       antiEchoMaxOverlap: Number.isFinite(Number(funConfig.qmpAntiEchoMaxOverlap))
         ? Math.min(0.9, Math.max(0.2, Number(funConfig.qmpAntiEchoMaxOverlap)))
         : 0.42,
-      inventRetries: Math.max(1, Math.min(4, Math.floor(numOr(funConfig.qmpInventRetries, 2)))),
+      inventRetries: Math.max(1, Math.min(8, Math.floor(numOr(funConfig.qmpInventRetries, 4)))),
       timeoutMs: Math.max(3000, Math.floor(numOr(funConfig.qmpTimeoutMs, 18_000))),
-      maxTokens: Math.max(64, Math.min(500, Math.floor(numOr(funConfig.qmpMaxTokens, 220)))),
+      // 320 (era 220): dá espaço pro brainstorm de 3 ideias dentro de <think></think>
+      // antes da pergunta final — sanitizeQmpPrompt já descarta esse bloco.
+      maxTokens: Math.max(64, Math.min(500, Math.floor(numOr(funConfig.qmpMaxTokens, 320)))),
       temperature: Number.isFinite(Number(funConfig.qmpTemperature))
         ? Number(funConfig.qmpTemperature)
         : 0.95,
@@ -387,8 +381,8 @@ export function createQmpService({
   }
 
   function ollamaOn(cfg) {
-    if (process.env.FUN_DISABLE_LIVE_LLM === '1') return false;
-    return cfg.ollamaEnabled !== false;
+    // Ollama descontinuado como fallback — Zen cai direto em template mockado.
+    return false;
   }
 
   function fallbackPrompt(tone = 'normal', recent = []) {
@@ -412,23 +406,18 @@ export function createQmpService({
 
     if (tone === 'heavy') {
       return [
-        'Modo PESADO (Amigos de Merda): uma pergunta que queima o grupo com cena humana.',
-        'Maldosa, constrangedora, adulta se couber — gesto + desculpa ridícula.',
-        'EVITE "ex", crush e stalk de story (tema saturado). Escolha outro drama.',
-        `Até ${maxChars} caracteres. Pode ser 1–2 frases. Só a pergunta.`,
-        `Tom (não copie): ${example}`,
+        'Bora, modo PESADO agora: solta a pergunta que queima o grupo com cena bem humana.',
+        `Até ${maxChars} caracteres. Pode ser 1–2 frases. Lembra do brainstorm de 3 e escolhe a melhor. Só a pergunta.`,
+        `Clima parecido com (não repita): ${example}`,
         '',
         recentBlock,
       ].join('\n');
     }
 
     return [
-      'Inventa UMA pergunta de "Quem é mais provável?" como amigo no zap BR — voz humana.',
-      'Cena concreta (não template). Faça o grupo apontar alguém de verdade.',
-      'EVITE: ex, crush, stalk de foto antiga, Wi-Fi, "tô chegando" (já saturaram).',
-      'Prefira: casa, trampo, grana, sono, comida, vaidade, preguiça, orgulho, mentira besta, família, viagem.',
-      `Até ${maxChars} caracteres. Pode ser 1–2 frases. Só a pergunta.`,
-      `Tom (não copie): ${example}`,
+      'Bora, solta UMA pergunta de "Quem é mais provável?" agora, no clima de sempre.',
+      `Até ${maxChars} caracteres. Pode ser 1–2 frases. Lembra do brainstorm de 3 e escolhe a melhor. Só a pergunta.`,
+      `Clima parecido com (não repita): ${example}`,
       '',
       recentBlock,
     ].join('\n');
@@ -515,30 +504,7 @@ export function createQmpService({
         }
       }
 
-      if (ollamaOn(funConfig)) {
-        try {
-          const raw = await generateOllama({
-            baseUrl: funConfig.ollamaBaseUrl || 'http://127.0.0.1:11434',
-            model: funConfig.ollamaModel || 'gemma4:latest',
-            system,
-            prompt: userPrompt + nudge,
-            timeoutMs: Math.max(o.timeoutMs, numOr(funConfig.ollamaTimeoutMs, 25_000)),
-            keepAlive: funConfig.ollamaKeepAlive ?? -1,
-            think: false,
-            numPredict: o.maxTokens,
-            temperature: Math.min(1.3, o.temperature + attempt * 0.08),
-          });
-          const hit = tryClean(raw, 'ollama');
-          if (hit) {
-            recordLlmHit('qmp', 'ollama', { tone, attempt });
-            return hit;
-          }
-          lastClean = sanitizeQmpPrompt(raw, o.maxPromptLen) || lastClean;
-          lastProvider = 'ollama';
-        } catch {
-          // next
-        }
-      }
+      // Ollama descontinuado como fallback — não tenta mais.
     }
 
     // fallback template sem eco
