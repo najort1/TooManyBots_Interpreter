@@ -720,6 +720,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           isGroup,
           funConfig,
           qmpService,
+          text,
           mentionedJids,
           getContactDisplayName,
           listContacts,

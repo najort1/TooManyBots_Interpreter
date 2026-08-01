@@ -4,6 +4,8 @@ import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
 import { parseQmpSubcommand } from '../../services/qmpService.js';
 import { formatQmpWeeklyLeaderboard } from '../../formatters/rankCard.js';
 import { renderLeaderboardPng } from '../../formatters/rankCardImage.js';
+import { parseFunCommand } from '../router.js';
+import { FUN_COMMANDS } from '../../constants.js';
 
 async function resolveVoteTarget({
   mentionedJids,
@@ -342,6 +344,8 @@ export async function handleQmpCommand({
 
 /**
  * Voto passivo: mensagem com menção enquanto há rodada ativa.
+ * Só conta se a mensagem começa com `/qmp` (ou alias) — sem o comando,
+ * uma menção qualquer num texto de zoeira não pode virar voto.
  * @returns {Promise<{ handled: boolean, voted?: boolean }>}
  */
 export async function tryPassiveQmpVote({
@@ -350,6 +354,7 @@ export async function tryPassiveQmpVote({
   isGroup,
   funConfig,
   qmpService,
+  text = '',
   mentionedJids = [],
   getContactDisplayName,
   listContacts,
@@ -361,6 +366,12 @@ export async function tryPassiveQmpVote({
     return { handled: false };
   }
   if (!mentionedJids?.length) return { handled: false };
+
+  // Guard: a mensagem precisa ser um comando QMP (com prefixo).
+  // Sem isso, qualquer zoeira com @alguém vira voto indevido.
+  const prefix = funConfig?.prefix || '/';
+  const parsed = parseFunCommand(text, prefix);
+  if (!parsed || parsed.command !== FUN_COMMANDS.QMP) return { handled: false };
 
   const target = await resolveVoteTarget({
     mentionedJids,
