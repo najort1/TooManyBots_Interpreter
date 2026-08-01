@@ -95,6 +95,8 @@ import {
   handleDesafioCommand,
 } from './handlers/dailyChallenge.js';
 import { handleGerarCommand, handleImaginarCommand } from './handlers/image.js';
+import { handleDespedirCommand } from './handlers/despedir.js';
+import { handleDespedidaRankCommand } from './handlers/despedidaRank.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -194,6 +196,7 @@ export async function routeFunCommand(ctx) {
     dailyChallengeService,
     imageGenerationService,
     msgTimeMs,
+    farewellService,
   } = ctx;
 
   const parsed = parseFunCommand(text, funConfig.prefix);
@@ -263,6 +266,7 @@ export async function routeFunCommand(ctx) {
     nsfwService,
     dailyChallengeService,
     imageGenerationService,
+    farewellService,
     msgTimeMs,
   };
 
@@ -427,6 +431,10 @@ export async function routeFunCommand(ctx) {
       return handleGerarCommand(base);
     case FUN_COMMANDS.IMAGINAR:
       return handleImaginarCommand(base);
+    case FUN_COMMANDS.DESPEDIR:
+      return handleDespedirCommand(base);
+    case FUN_COMMANDS.DESPEDIDA_RANK:
+      return handleDespedidaRankCommand(base);
     default:
       return { handled: false };
   }

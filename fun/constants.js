@@ -96,6 +96,9 @@ export const FUN_COMMANDS = Object.freeze({
   // Geração de imagens (proxy /v1/images/generations)
   GERAR: 'gerar',
   IMAGINAR: 'imaginar',
+  // Despedidas — /despedir (poema) + /despedida rank (ranking)
+  DESPEDIR: 'despedir',
+  DESPEDIDA_RANK: 'despedida_rank',
 });
 
 /**
@@ -475,6 +478,11 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   imagine: FUN_COMMANDS.IMAGINAR,
   desenhar: FUN_COMMANDS.IMAGINAR,
   render: FUN_COMMANDS.IMAGINAR,
+  // Despedidas (sem cooldown; não conflitam com /demitir do emprego)
+  despedir: FUN_COMMANDS.DESPEDIR,
+  despedida: FUN_COMMANDS.DESPEDIDA_RANK,
+  adeus: FUN_COMMANDS.DESPEDIR,
+  dispensar: FUN_COMMANDS.DESPEDIR,
 });
 
 export const ACTION_TYPE = Object.freeze({

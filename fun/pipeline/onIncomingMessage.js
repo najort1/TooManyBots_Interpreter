@@ -132,6 +132,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     nsfwService,
     dailyChallengeService,
     imageGenerationService,
+    farewellService,
   } = deps;
 
   const {
@@ -667,6 +668,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           nsfwService,
           dailyChallengeService,
           imageGenerationService,
+          farewellService,
           dmGroups: scope.dmGroups || null,
           rawMessage,
           messageType,

@@ -817,6 +817,18 @@ export function buildFunSchemaSql() {
 
     -- Desafio diário (Daily Challenge) — schema v24
     ${DAILY_CHALLENGE_SCHEMA_BLOCKS}
+
+    -- Ranking de despedidas (/despedir) — contador por usuário+grupo
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_farewells (
+      scope_key  TEXT    NOT NULL,
+      user_jid   TEXT    NOT NULL,
+      count      INTEGER NOT NULL DEFAULT 0,
+      last_at    INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (scope_key, user_jid)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_farewells_scope
+      ON fun_farewells(scope_key, count DESC);
   `;
 }
 

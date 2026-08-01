@@ -153,6 +153,7 @@ export function collectDayFacts({
   const purgaStartEvents = safeArr(buckets.purga_start);
   const purgaEndEvents = safeArr(buckets.purga_end);
   const notableQuotes = safeArr(buckets.notable_quote);
+  const despedirEvents = safeArr(buckets.despedir);
 
   // ── Ledger: economia / cassino / crime por reason (últimas 24h) ──
   const ledgerByReason = safeArr(
@@ -311,7 +312,22 @@ export function collectDayFacts({
     .map((u) => ({ jid: u.jid, total: u.lost }))
     .filter((u) => u.jid);
 
-  // ── Totais do grupo (para stats) ─────────────────────────────────
+  // ── Despedidas: ranking do dia (agrupado por userJid dos eventos) ──
+  const farewellsByUser = new Map();
+  for (const e of despedirEvents) {
+    const jid = String(e.userJid || '');
+    if (!jid) continue;
+    const cur = farewellsByUser.get(jid) || { jid, count: 0, lastAt: 0 };
+    cur.count += 1;
+    cur.lastAt = Math.max(cur.lastAt, Number(e.createdAt) || 0);
+    farewellsByUser.set(jid, cur);
+  }
+  const topFarewellUsers = [...farewellsByUser.values()]
+    .sort((a, b) => b.count - a.count || a.lastAt - b.lastAt)
+    .slice(0, 3);
+  const despedidasTotal = despedirEvents.length;
+
+  // ── Totals do grupo (para stats) ─────────────────────────────────
   const betsCount =
     ledgerByReason
       .filter((r) => reasonCategory(r.reason) === 'casino')
@@ -395,6 +411,9 @@ export function collectDayFacts({
       achievementsRecent: achievementsSince.slice(0, 5),
       marryEvents,
       divorceEvents,
+      despedidas: despedidasTotal,
+      despedirEvents,
+      topFarewellUsers,
     },
     police: {
       assaultsTotal,
@@ -442,6 +461,7 @@ export function collectDayFacts({
       coinsDestroyed,
       achievements: achievementsSince.length,
       purgas: purgaStartEvents.length,
+      despedidas: despedidasTotal,
     },
     mood,
     memory,
@@ -605,6 +625,7 @@ export function factsToSnapshotPayload(facts) {
       divorces: facts.society.divorces,
       couplesActive: facts.society.couplesActive,
       achievements: facts.society.achievementsUnlocked,
+      despedidas: facts.society.despedidas,
     },
     police: {
       assaultsTotal: facts.police.assaultsTotal,

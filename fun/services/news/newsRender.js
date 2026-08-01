@@ -191,6 +191,13 @@ function renderSociety(facts, getName, random) {
   if (s.achievementsUnlocked > 0) {
     lines.push(`• *${s.achievementsUnlocked}* conquista${s.achievementsUnlocked > 1 ? 's' : ''} desbloqueada${s.achievementsUnlocked > 1 ? 's' : ''}. A vaidade agradece.`);
   }
+  if (s.despedidas > 0) {
+    lines.push(`• *${s.despedidas}* despedida${s.despedidas > 1 ? 's' : ''} solene${s.despedidas > 1 ? 's' : ''} (\`/despedir\`).`);
+    const top = firstOf(s.topFarewellUsers);
+    if (top) {
+      lines.push(`• Quem mais se despediu: *${nameOf(top.jid, getName)}* (${top.count}×). Insistente.`);
+    }
+  }
   if (lines.length === 0) return null;
   return [headerFor('sociedade', random), ...lines].join('\n');
 }
@@ -319,6 +326,7 @@ function renderStats(facts, random) {
   if (t.propertiesBought) parts.push(`${t.propertiesBought} propriedade${t.propertiesBought > 1 ? 's' : ''} comprada${t.propertiesBought > 1 ? 's' : ''}`);
   if (t.coinsDestroyed) parts.push(`${fmtCoins(t.coinsDestroyed)} moedas destruídas`);
   if (t.achievements) parts.push(`${t.achievements} conquista${t.achievements > 1 ? 's' : ''}`);
+  if (t.despedidas) parts.push(`${t.despedidas} despedida${t.despedidas > 1 ? 's' : ''}`);
   if (parts.length === 0) return null;
   return [
     headerFor('stats', random),

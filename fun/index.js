@@ -58,6 +58,8 @@ import { createCardService } from './services/cardService.js';
 import { createQmpService } from './services/qmpService.js';
 import { createFunImageGenerationRepository } from './db/funImageGenerationRepository.js';
 import { createImageGenerationService } from './services/imageGenerationService.js';
+import { createFunFarewellRepository } from './db/funFarewellRepository.js';
+import { createFarewellService } from './services/farewellService.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
 import { nameOf } from './utils/userLabel.js';
 import { getDb } from '../db/context.js';
@@ -359,6 +361,16 @@ export function createFunModule(deps = {}) {
       getContactDisplayName: resolveContactName,
     });
 
+  const farewellRepository =
+    deps.farewellRepository || createFunFarewellRepository({ getDatabase });
+  const farewellService =
+    deps.farewellService ||
+    createFarewellService({
+      farewellRepository,
+      newsService,
+      getContactDisplayName: resolveContactName,
+    });
+
   const changelogService =
     deps.changelogService ||
     createChangelogService({
@@ -449,6 +461,7 @@ export function createFunModule(deps = {}) {
         nsfwService,
         dailyChallengeService,
         imageGenerationService,
+        farewellService,
       },
       {
         sock: ctx.sock,
@@ -1045,6 +1058,8 @@ export function createFunModule(deps = {}) {
       dailyChallengeRepository,
       imageGenerationService,
       imageGenerationRepository,
+      farewellRepository,
+      farewellService,
     },
   };
 }
