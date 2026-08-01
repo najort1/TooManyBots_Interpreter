@@ -748,12 +748,18 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   heistShopMin: 48,
   heistShopMax: 100,
   heistShopBaseChance: 0.5,
+  /** Multa de falha em heist de loja: 10% do saldo (piso 10 · teto 200). */
+  heistShopFailFinePct: 0.10,
   heistBankMin: 150,
   heistBankMax: 340,
   heistBankBaseChance: 0.34,
+  /** Multa de falha em heist de banco: 20% do saldo (piso 10 · teto 200). */
+  heistBankFailFinePct: 0.20,
   /** Penalidade de chance quando se usa arma em assalto a banco (armas corpo a corpo/fogo são ineficazes contra cofre). */
   heistBankWeaponPenalty: 0.10,
   heistBankCooldownMs: 60 * 60_000,
+  /** Cooldown de heist de loja: 30 minutos (metade do banco; loja é crime menor). */
+  heistShopCooldownMs: 30 * 60_000,
   // Tarô (tiragem local + leitura Zen)
   tarotEnabled: true,
   tarotCooldownMs: 45_000,

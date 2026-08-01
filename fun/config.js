@@ -572,6 +572,18 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    /**
+     * Multas de heist (NPC) calibradas por modo:
+     * - loja (10%): crime menor, perda moderada.
+     * - banco (20%): crime grave, perda pesada.
+     * Teto por modo é o mesmo `assaultFailFineMax` para não fragmentar clamping.
+     */
+    heistShopFailFinePct: Number.isFinite(Number(raw.heistShopFailFinePct))
+      ? Math.min(0.5, Math.max(0, Number(raw.heistShopFailFinePct)))
+      : DEFAULT_FUN_CONFIG.heistShopFailFinePct,
+    heistBankFailFinePct: Number.isFinite(Number(raw.heistBankFailFinePct))
+      ? Math.min(0.5, Math.max(0, Number(raw.heistBankFailFinePct)))
+      : DEFAULT_FUN_CONFIG.heistBankFailFinePct,
     heistShopMin: normalizeInt(raw.heistShopMin, DEFAULT_FUN_CONFIG.heistShopMin, {
       min: 1,
       max: 50_000,
@@ -603,6 +615,12 @@ export function normalizeFunConfig(input) {
       ? Math.min(0.9, Math.max(0.05, Number(raw.heistBankBaseChance)))
       : DEFAULT_FUN_CONFIG.heistBankBaseChance,
     heistBankCooldownMs: normalizeInt(raw.heistBankCooldownMs, DEFAULT_FUN_CONFIG.heistBankCooldownMs, {
+      min: 0,
+      max: 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    heistShopCooldownMs: normalizeInt(raw.heistShopCooldownMs, DEFAULT_FUN_CONFIG.heistShopCooldownMs, {
       min: 0,
       max: 24 * 60 * 60_000,
       rounding: 'floor',
