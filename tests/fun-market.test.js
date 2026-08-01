@@ -842,6 +842,7 @@ test('heist lojinha: arma NÃO sofre penalidade de banco', () => {
   const cfg = resolveFunConfig({
     assaultCooldownMs: 0,
     heistBankCooldownMs: 0,
+    heistShopCooldownMs: 0,
     heistBankBaseChance: 0.5,
     heistBankWeaponPenalty: 0.10,
   });
@@ -1122,6 +1123,7 @@ test('wanted sobe com heist e escalona chance; heat ainda funciona', () => {
   const cfg = resolveFunConfig({
     assaultCooldownMs: 0,
     heistBankCooldownMs: 0,
+    heistShopCooldownMs: 0,
   });
 
   const beforeWanted = market.getWantedPoints(atk, scope, t0);
@@ -1411,5 +1413,459 @@ test('help assalto menciona Heat, Wanted e Immunity Pass', () => {
   assert.match(help, /Heat/i);
   assert.match(help, /Wanted/i);
   assert.match(help, /Immunity Pass|imunidade/i);
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+// ─── Regras de cooldown + multa por modo (banco / loja) ─────────────────────
+
+test('heist: cooldown de loja é 30 min (default) e banco segue 1h', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  // random alto = falha; mas sem bust (wanted baixo, suspicion baixa, heat 0)
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.99,
+  });
+
+  const scope = uniqueGroup();
+  const cfg = resolveFunConfig({}); // defaults: shop 30min, bank 1h
+
+  // === LOJA: cooldown de 30 min ===
+  const shopAtk = uniqueJid('5570');
+  repo.addCoins({ userJid: shopAtk, scopeKey: scope, amount: 5000, reason: 'seed' });
+  effects.addCharges({
+    userJid: shopAtk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  marketRepo.addInventory({
+    userJid: shopAtk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 20,
+  });
+
+  const tShop = Date.now();
+  const shopFail = market.assault({
+    attackerJid: shopAtk,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    funConfig: cfg,
+    now: tShop,
+  });
+  assert.equal(shopFail.ok, true);
+  assert.equal(shopFail.success, false);
+
+  // loja bloqueada 1 min depois: retryInMs ≈ 29 min
+  const shopBlocked = market.assault({
+    attackerJid: shopAtk,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    funConfig: cfg,
+    now: tShop + 60_000,
+  });
+  assert.equal(shopBlocked.ok, false);
+  assert.equal(shopBlocked.reason, 'cooldown');
+  assert.ok(
+    Math.abs(shopBlocked.retryInMs - 29 * 60_000) < 1500,
+    `loja cooldown deve ser ~29 min restantes, got ${shopBlocked.retryInMs}`
+  );
+
+  // === BANCO: cooldown de 1h (default heistBankCooldownMs preservado) ===
+  const bankAtk = uniqueJid('5571');
+  repo.addCoins({ userJid: bankAtk, scopeKey: scope, amount: 5000, reason: 'seed' });
+  effects.addCharges({
+    userJid: bankAtk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  marketRepo.addInventory({
+    userJid: bankAtk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 20,
+  });
+  marketRepo.addInventory({
+    userJid: bankAtk,
+    scopeKey: scope,
+    itemId: 'lockpick',
+    acquiredPrice: 50,
+    usesLeft: 20,
+  });
+
+  const tBank = Date.now();
+  const bankFail = market.assault({
+    attackerJid: bankAtk,
+    heistToken: 'banco',
+    scopeKey: scope,
+    funConfig: cfg,
+    now: tBank,
+  });
+  assert.equal(bankFail.ok, true);
+  assert.equal(bankFail.success, false);
+
+  // banco bloqueado 1 min depois: retryInMs ≈ 59 min
+  const bankBlocked = market.assault({
+    attackerJid: bankAtk,
+    heistToken: 'banco',
+    scopeKey: scope,
+    funConfig: cfg,
+    now: tBank + 60_000,
+  });
+  assert.equal(bankBlocked.ok, false);
+  assert.equal(bankBlocked.reason, 'cooldown');
+  assert.ok(
+    Math.abs(bankBlocked.retryInMs - 59 * 60_000) < 1500,
+    `banco cooldown deve ser ~59 min restantes, got ${bankBlocked.retryInMs}`
+  );
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('heist: cooldown customizado de loja sobrescreve default', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const market = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.99,
+  });
+
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5571');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 5000, reason: 'seed' });
+  effects.addCharges({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 20,
+  });
+
+  const cfg = resolveFunConfig({ heistShopCooldownMs: 10 * 60_000 }); // 10 min override
+
+  const t0 = Date.now();
+  const r = market.assault({
+    attackerJid: atk,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    funConfig: cfg,
+    now: t0,
+  });
+  assert.equal(r.ok, true);
+
+  // retryInMs ≈ 9 min (10 - 1)
+  const blocked = market.assault({
+    attackerJid: atk,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    funConfig: cfg,
+    now: t0 + 60_000,
+  });
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.reason, 'cooldown');
+  assert.ok(
+    Math.abs(blocked.retryInMs - 9 * 60_000) < 1500,
+    `override deve dar ~9 min restantes, got ${blocked.retryInMs}`
+  );
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('heist: multa de falha calibrada — banco 20%, loja 10%, PvP 5%', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  // random alto = falha; mas sem bust (wanted baixo, suspicion baixa, heat 0)
+  const failMarket = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.99,
+  });
+
+  const scope = uniqueGroup();
+
+  const seedAndArm = (jid, lockpick = false) => {
+    repo.addCoins({ userJid: jid, scopeKey: scope, amount: 1000, reason: 'seed' });
+    effects.addCharges({
+      userJid: jid,
+      scopeKey: scope,
+      effectKey: 'weapons_license',
+      charges: 1,
+      payload: { permanent: true },
+    });
+    marketRepo.addInventory({
+      userJid: jid,
+      scopeKey: scope,
+      itemId: 'faca',
+      acquiredPrice: 90,
+      usesLeft: 20,
+    });
+    if (lockpick) {
+      marketRepo.addInventory({
+        userJid: jid,
+        scopeKey: scope,
+        itemId: 'lockpick',
+        acquiredPrice: 50,
+        usesLeft: 20,
+      });
+    }
+  };
+
+  // Lojinha: multa = 10% de 1000 = 100 (entre piso 10 e teto 200)
+  const shopAtk = uniqueJid('5572');
+  seedAndArm(shopAtk, false);
+  const shopFail = failMarket.assault({
+    attackerJid: shopAtk,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    funConfig: resolveFunConfig({}),
+    now: Date.now(),
+  });
+  assert.equal(shopFail.ok, true);
+  assert.equal(shopFail.success, false);
+  assert.ok(shopFail.fine >= 10, `multa de loja >= piso: ${shopFail.fine}`);
+  assert.ok(shopFail.fine <= 200, `multa de loja <= teto: ${shopFail.fine}`);
+  // 1000 * 0.10 = 100 → dentro do clamp
+  assert.equal(shopFail.fine, 100, `multa de loja deve ser 10% do saldo: ${shopFail.fine}`);
+
+  // Banco: multa = 20% de 1000 = 200 (no teto)
+  const bankAtk = uniqueJid('5573');
+  seedAndArm(bankAtk, true);
+  const bankFail = failMarket.assault({
+    attackerJid: bankAtk,
+    heistToken: 'banco',
+    scopeKey: scope,
+    funConfig: resolveFunConfig({}),
+    now: Date.now(),
+  });
+  assert.equal(bankFail.ok, true);
+  assert.equal(bankFail.success, false);
+  assert.ok(bankFail.fine >= 10);
+  assert.ok(bankFail.fine <= 200, `multa de banco <= teto preservado: ${bankFail.fine}`);
+  // 1000 * 0.20 = 200 → exatamente no teto
+  assert.equal(bankFail.fine, 200, `multa de banco deve ser 20% do saldo: ${bankFail.fine}`);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('heist: multa de banco whale preserva teto (não estoura carteira)', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const failMarket = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.99,
+  });
+
+  const scope = uniqueGroup();
+  const whale = uniqueJid('5574');
+  // whale com saldo alto: 20% = 4000, mas teto = 200 → preservado
+  repo.addCoins({ userJid: whale, scopeKey: scope, amount: 20_000, reason: 'seed' });
+  effects.addCharges({
+    userJid: whale,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  marketRepo.addInventory({
+    userJid: whale,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 10,
+  });
+  marketRepo.addInventory({
+    userJid: whale,
+    scopeKey: scope,
+    itemId: 'lockpick',
+    acquiredPrice: 50,
+    usesLeft: 10,
+  });
+
+  // cooldown zerado pra permitir loja após banco
+  const cfg = resolveFunConfig({ heistBankCooldownMs: 0, heistShopCooldownMs: 0 });
+  const fail = failMarket.assault({
+    attackerJid: whale,
+    heistToken: 'banco',
+    scopeKey: scope,
+    funConfig: cfg,
+  });
+  assert.equal(fail.ok, true);
+  assert.equal(fail.success, false);
+  // 20% de 20.000 = 4000; clamp pelo teto preservado
+  assert.equal(fail.fine, 200, 'whale deve ser protegido pelo teto de multa');
+
+  // loja do mesmo whale: 10% = ~2000 → teto 200
+  const failShop = failMarket.assault({
+    attackerJid: whale,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    funConfig: cfg,
+  });
+  assert.equal(failShop.ok, true);
+  assert.equal(failShop.success, false);
+  assert.equal(failShop.fine, 200, 'loja whale também protegida pelo teto');
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('heist: piso de multa protege jogador iniciante (loja)', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const failMarket = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.99,
+  });
+
+  const scope = uniqueGroup();
+  const newbie = uniqueJid('5575');
+  // saldo muito baixo: 10% de 30 = 3, mas piso = 10
+  repo.addCoins({ userJid: newbie, scopeKey: scope, amount: 30, reason: 'seed' });
+  effects.addCharges({
+    userJid: newbie,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  marketRepo.addInventory({
+    userJid: newbie,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 10,
+  });
+
+  const fail = failMarket.assault({
+    attackerJid: newbie,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    funConfig: resolveFunConfig({}),
+  });
+  assert.equal(fail.ok, true);
+  assert.equal(fail.success, false);
+  assert.equal(fail.fine, 10, 'multa mínima é o piso, mesmo que % do saldo seja menor');
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('heist: override de heistBankFailFinePct e heistShopFailFinePct via config', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  const failMarket = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.99,
+  });
+
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5576');
+  // saldo 1000, heistShopFailFinePct 0.05 → multa = 50 (mas piso 10 e teto 200)
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 1000, reason: 'seed' });
+  effects.addCharges({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 10,
+  });
+
+  const cfg = resolveFunConfig({
+    heistShopFailFinePct: 0.05, // override: loja cobra só 5% (legado PvP)
+    heistBankFailFinePct: 0.30, // override: banco 30%
+    heistShopCooldownMs: 0, // sem cooldown para isolar o teste
+    heistBankCooldownMs: 0,
+  });
+
+  const shopFail = failMarket.assault({
+    attackerJid: atk,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    funConfig: cfg,
+  });
+  assert.equal(shopFail.ok, true);
+  assert.equal(shopFail.success, false);
+  assert.equal(shopFail.fine, 50, `override de loja: 5% de 1000 = 50, got ${shopFail.fine}`);
+
+  // refill + lockpick para o teste de banco
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 1000, reason: 'refill' });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'lockpick',
+    acquiredPrice: 50,
+    usesLeft: 5,
+  });
+
+  const bankFail = failMarket.assault({
+    attackerJid: atk,
+    heistToken: 'banco',
+    scopeKey: scope,
+    funConfig: cfg,
+  });
+  assert.equal(bankFail.ok, true);
+  assert.equal(bankFail.success, false);
+  // 30% de 2000 (saldo após refill) = 600; mas teto 200 → clamp
+  assert.equal(bankFail.fine, 200, `override de banco: 30% clampado pelo teto, got ${bankFail.fine}`);
+
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
