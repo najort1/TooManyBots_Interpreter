@@ -765,7 +765,7 @@ export async function handleAssaultCommand({
   const attackerStoryName = displayNameOnly(getContactDisplayName, userJid);
   const targetStoryName = isNpc
     ? heistLabel
-    : displayNameOnly(getContactDisplayName, result.targetJid || '') || pvpName;
+    : (pvpName || displayNameOnly(getContactDisplayName, result.targetJid || ''));
   const weaponLabel = [result.weapon?.emoji, result.weapon?.name].filter(Boolean).join(' ').trim();
 
   const story = await assaultFlavor(flavorService, assaultScenario(result), {
