@@ -116,23 +116,23 @@ export function createMarketService({
         60 * 60_000,
         Math.floor(numOr(funConfig.marketRestockMs, 3 * 24 * 60 * 60_000))
       ),
-      assaultCooldownMs: Math.max(0, Math.floor(numOr(funConfig.assaultCooldownMs, 60 * 60_000))),
+      assaultCooldownMs: Math.max(0, Math.floor(numOr(funConfig.assaultCooldownMs, 5 * 60_000))),
       assaultMinSteal: Math.max(1, Math.floor(numOr(funConfig.assaultMinSteal, 8))),
       assaultMaxStealRatio: Math.min(0.4, Math.max(0.05, numOr(funConfig.assaultMaxStealRatio, 0.12))),
       assaultBaseChance: Math.min(0.75, Math.max(0.1, numOr(funConfig.assaultBaseChance, 0.38))),
-      assaultFailFinePct: Math.min(0.15, Math.max(0, numOr(funConfig.assaultFailFinePct, 0.05))),
+      assaultFailFinePct: Math.min(0.15, Math.max(0, numOr(funConfig.assaultFailFinePct, 0))),
       assaultFailFineMin: Math.max(0, Math.floor(numOr(funConfig.assaultFailFineMin, 10))),
       assaultFailFineMax: Math.max(1, Math.floor(numOr(funConfig.assaultFailFineMax, 200))),
       heistShopMin: Math.max(1, Math.floor(numOr(funConfig.heistShopMin, 48))),
       heistShopMax: Math.max(1, Math.floor(numOr(funConfig.heistShopMax, 100))),
       heistShopBaseChance: Math.min(0.85, Math.max(0.1, numOr(funConfig.heistShopBaseChance, 0.5))),
-      /** Multa de loja calibrada: 10% do saldo (piso/teto herdados de assaultFailFine*). */
-      heistShopFailFinePct: Math.min(0.5, Math.max(0, numOr(funConfig.heistShopFailFinePct, 0.10))),
+      /** Multa de loja calibrada: 5% do saldo (piso/teto herdados de assaultFailFine*). */
+      heistShopFailFinePct: Math.min(0.5, Math.max(0, numOr(funConfig.heistShopFailFinePct, 0.05))),
       heistBankMin: Math.max(1, Math.floor(numOr(funConfig.heistBankMin, 150))),
       heistBankMax: Math.max(1, Math.floor(numOr(funConfig.heistBankMax, 340))),
       heistBankBaseChance: Math.min(0.85, Math.max(0.1, numOr(funConfig.heistBankBaseChance, 0.34))),
-      /** Multa de banco calibrada: 20% do saldo (piso/teto herdados de assaultFailFine*). */
-      heistBankFailFinePct: Math.min(0.5, Math.max(0, numOr(funConfig.heistBankFailFinePct, 0.20))),
+      /** Multa de banco calibrada: 10% do saldo (piso/teto herdados de assaultFailFine*). */
+      heistBankFailFinePct: Math.min(0.5, Math.max(0, numOr(funConfig.heistBankFailFinePct, 0.10))),
       heistBankWeaponPenalty: Math.min(0.5, Math.max(0, numOr(funConfig.heistBankWeaponPenalty, 0.10))),
       heistBankCooldownMs: Math.max(0, Math.floor(numOr(funConfig.heistBankCooldownMs, 60 * 60_000))),
       /** Cooldown de loja: 30 min (default). Banco segue 1h. */
@@ -1385,29 +1385,41 @@ export function createMarketService({
    * Multa progressiva por falha de assalto.
    *
    * Por modo:
-   * - `bank`     → `heistBankFailFinePct` (default 20% do saldo)
-   * - `shop`     → `heistShopFailFinePct` (default 10% do saldo)
-   * - `player` / undefined → `assaultFailFinePct` (PvP, default 5% — preservado)
+   * - `bank`     → `heistBankFailFinePct` (default 10% do saldo)
+   * - `shop`     → `heistShopFailFinePct` (default 5% do saldo)
+   * - `player` / undefined → `assaultFailFinePct` (PvP, default 0% — sem multa)
    *
    * Piso (`assaultFailFineMin`) e teto (`assaultFailFineMax`) são compartilhados
    * entre todos os modos para não fragmentar o clamping e manter paridade com
-   * a janela de proteção ao jogador iniciante.
+   * a janela de proteção ao jogador iniciante. Quando a taxa é 0, a multa é 0
+   * (o piso não força cobrança).
    *
    * @param {number} coins saldo do atacante
    * @param {object} o opts normalizado
    * @param {'bank'|'shop'|'player'} [mode] modo do assalto
    */
-  function computeFailFine(coins, o, mode) {
-    const bal = Math.max(0, Math.floor(Number(coins) || 0));
+  /**
+   * Taxa de multa (%) por modo de assalto (fonte única do rótulo exibido).
+   * - `bank`   → `heistBankFailFinePct` (default 10%)
+   * - `shop`   → `heistShopFailFinePct` (default 5%)
+   * - `player` → `assaultFailFinePct`   (default 0% — sem multa)
+   */
+  function finePctFor(o, mode) {
     let pct = Number(o.assaultFailFinePct) || 0;
     if (mode === 'bank') {
       pct = Number(o.heistBankFailFinePct);
-      if (!Number.isFinite(pct)) pct = 0.20;
+      if (!Number.isFinite(pct)) pct = 0.10;
     } else if (mode === 'shop') {
       pct = Number(o.heistShopFailFinePct);
-      if (!Number.isFinite(pct)) pct = 0.10;
+      if (!Number.isFinite(pct)) pct = 0.05;
     }
-    pct = Math.min(1, Math.max(0, pct));
+    return Math.min(1, Math.max(0, pct));
+  }
+
+  function computeFailFine(coins, o, mode) {
+    const bal = Math.max(0, Math.floor(Number(coins) || 0));
+    const pct = finePctFor(o, mode);
+    if (pct <= 0) return 0;
     return Math.min(
       bal,
       Math.min(o.assaultFailFineMax, Math.max(o.assaultFailFineMin, Math.floor(bal * pct)))
@@ -1628,7 +1640,7 @@ export function createMarketService({
     const ammoCost =
       weaponCol.requires === 'municao' ? ammoUnitCost(scopeKey, funConfig) : 0;
     const assumedBalance = 500;
-    // EV usa a multa calibrada do modo (banco 20% · loja 10% · PvP 5%).
+    // EV usa a multa calibrada do modo (banco 10% · loja 5% · PvP 0%).
     const failFineMid = computeFailFine(assumedBalance, o, mode);
 
     let baseChance;
@@ -1978,6 +1990,7 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
         chance,
         roll,
         fine,
+        finePct: finePctFor(o, heist.kind),
         weapon: wCol,
         usedGas,
         vehicleBonus,
@@ -2287,6 +2300,7 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
         chance,
         roll,
         fine,
+        finePct: finePctFor(o, 'player'),
         weapon: wCol,
         usedGas,
         vehicleBonus,

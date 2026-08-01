@@ -814,7 +814,7 @@ export async function handleAssaultCommand({
           `Arma: ${result.weapon?.emoji || ''} ${result.weapon?.name || '?'}`,
           result.usedGas ? 'Usou gasolina na fuga (mesmo assim deu ruim).' : null,
           result.fine > 0
-            ? `Multa: *${result.fine}*c de prejuízo (5% do bolso).`
+            ? `Multa: *${result.fine}*c de prejuízo (${Math.round((result.finePct ?? 0.05) * 100)}% do bolso).`
             : null,
           immuneNote,
           wantedStars,

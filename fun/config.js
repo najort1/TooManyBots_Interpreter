@@ -574,8 +574,8 @@ export function normalizeFunConfig(input) {
     }),
     /**
      * Multas de heist (NPC) calibradas por modo:
-     * - loja (10%): crime menor, perda moderada.
-     * - banco (20%): crime grave, perda pesada.
+     * - loja (5%): crime menor, perda leve.
+     * - banco (10%): crime grave, perda moderada.
      * Teto por modo é o mesmo `assaultFailFineMax` para não fragmentar clamping.
      */
     heistShopFailFinePct: Number.isFinite(Number(raw.heistShopFailFinePct))

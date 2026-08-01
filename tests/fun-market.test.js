@@ -1598,7 +1598,7 @@ test('heist: cooldown customizado de loja sobrescreve default', () => {
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
 
-test('heist: multa de falha calibrada — banco 20%, loja 10%, PvP 5%', () => {
+test('heist: multa de falha calibrada — banco 10%, loja 5%, PvP 0%', () => {
   process.env.FUN_DISABLE_LIVE_LLM = '1';
   const repo = createFunStatsRepository({ getDatabase: getDb });
   repo.ensureFunSchema();
@@ -1643,7 +1643,7 @@ test('heist: multa de falha calibrada — banco 20%, loja 10%, PvP 5%', () => {
     }
   };
 
-  // Lojinha: multa = 10% de 1000 = 100 (entre piso 10 e teto 200)
+  // Lojinha: multa = 5% de 1000 = 50 (entre piso 10 e teto 200)
   const shopAtk = uniqueJid('5572');
   seedAndArm(shopAtk, false);
   const shopFail = failMarket.assault({
@@ -1657,10 +1657,11 @@ test('heist: multa de falha calibrada — banco 20%, loja 10%, PvP 5%', () => {
   assert.equal(shopFail.success, false);
   assert.ok(shopFail.fine >= 10, `multa de loja >= piso: ${shopFail.fine}`);
   assert.ok(shopFail.fine <= 200, `multa de loja <= teto: ${shopFail.fine}`);
-  // 1000 * 0.10 = 100 → dentro do clamp
-  assert.equal(shopFail.fine, 100, `multa de loja deve ser 10% do saldo: ${shopFail.fine}`);
+  // 1000 * 0.05 = 50 → dentro do clamp
+  assert.equal(shopFail.fine, 50, `multa de loja deve ser 5% do saldo: ${shopFail.fine}`);
+  assert.equal(shopFail.finePct, 0.05, `rótulo de multa de loja deve refletir 5%: ${shopFail.finePct}`);
 
-  // Banco: multa = 20% de 1000 = 200 (no teto)
+  // Banco: multa = 10% de 1000 = 100 (entre piso 10 e teto 200)
   const bankAtk = uniqueJid('5573');
   seedAndArm(bankAtk, true);
   const bankFail = failMarket.assault({
@@ -1674,8 +1675,9 @@ test('heist: multa de falha calibrada — banco 20%, loja 10%, PvP 5%', () => {
   assert.equal(bankFail.success, false);
   assert.ok(bankFail.fine >= 10);
   assert.ok(bankFail.fine <= 200, `multa de banco <= teto preservado: ${bankFail.fine}`);
-  // 1000 * 0.20 = 200 → exatamente no teto
-  assert.equal(bankFail.fine, 200, `multa de banco deve ser 20% do saldo: ${bankFail.fine}`);
+  // 1000 * 0.10 = 100 → dentro do clamp
+  assert.equal(bankFail.fine, 100, `multa de banco deve ser 10% do saldo: ${bankFail.fine}`);
+  assert.equal(bankFail.finePct, 0.10, `rótulo de multa de banco deve refletir 10%: ${bankFail.finePct}`);
 
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
@@ -1697,7 +1699,7 @@ test('heist: multa de banco whale preserva teto (não estoura carteira)', () => 
 
   const scope = uniqueGroup();
   const whale = uniqueJid('5574');
-  // whale com saldo alto: 20% = 4000, mas teto = 200 → preservado
+  // whale com saldo alto: 10% = 2000, mas teto = 200 → preservado
   repo.addCoins({ userJid: whale, scopeKey: scope, amount: 20_000, reason: 'seed' });
   effects.addCharges({
     userJid: whale,
@@ -1731,10 +1733,10 @@ test('heist: multa de banco whale preserva teto (não estoura carteira)', () => 
   });
   assert.equal(fail.ok, true);
   assert.equal(fail.success, false);
-  // 20% de 20.000 = 4000; clamp pelo teto preservado
+  // 10% de 20.000 = 2000; clamp pelo teto preservado
   assert.equal(fail.fine, 200, 'whale deve ser protegido pelo teto de multa');
 
-  // loja do mesmo whale: 10% = ~2000 → teto 200
+  // loja do mesmo whale: 5% = ~1000 → teto 200
   const failShop = failMarket.assault({
     attackerJid: whale,
     heistToken: 'lojinha',
@@ -1765,7 +1767,7 @@ test('heist: piso de multa protege jogador iniciante (loja)', () => {
 
   const scope = uniqueGroup();
   const newbie = uniqueJid('5575');
-  // saldo muito baixo: 10% de 30 = 3, mas piso = 10
+  // saldo muito baixo: 5% de 30 = 1,5, mas piso = 10
   repo.addCoins({ userJid: newbie, scopeKey: scope, amount: 30, reason: 'seed' });
   effects.addCharges({
     userJid: newbie,
@@ -1830,7 +1832,7 @@ test('heist: override de heistBankFailFinePct e heistShopFailFinePct via config'
   });
 
   const cfg = resolveFunConfig({
-    heistShopFailFinePct: 0.05, // override: loja cobra só 5% (legado PvP)
+    heistShopFailFinePct: 0.05, // override: loja 5% (explícito, igual ao default atual)
     heistBankFailFinePct: 0.30, // override: banco 30%
     heistShopCooldownMs: 0, // sem cooldown para isolar o teste
     heistBankCooldownMs: 0,
@@ -1845,6 +1847,7 @@ test('heist: override de heistBankFailFinePct e heistShopFailFinePct via config'
   assert.equal(shopFail.ok, true);
   assert.equal(shopFail.success, false);
   assert.equal(shopFail.fine, 50, `override de loja: 5% de 1000 = 50, got ${shopFail.fine}`);
+  assert.equal(shopFail.finePct, 0.05, `override de loja: rótulo deve refletir 5%, got ${shopFail.finePct}`);
 
   // refill + lockpick para o teste de banco
   repo.addCoins({ userJid: atk, scopeKey: scope, amount: 1000, reason: 'refill' });
@@ -1866,6 +1869,71 @@ test('heist: override de heistBankFailFinePct e heistShopFailFinePct via config'
   assert.equal(bankFail.success, false);
   // 30% de 2000 (saldo após refill) = 600; mas teto 200 → clamp
   assert.equal(bankFail.fine, 200, `override de banco: 30% clampado pelo teto, got ${bankFail.fine}`);
+  assert.equal(bankFail.finePct, 0.30, `override de banco: rótulo deve refletir 30%, got ${bankFail.finePct}`);
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('assalto PvP: falha não cobra multa (0%) e cooldown default de 5min', () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const marketRepo = createFunMarketRepository({ getDatabase: getDb });
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+  // random alto = falha; sem bust (wanted baixo, suspicion baixa, heat 0)
+  const failMarket = createMarketService({
+    repository: repo,
+    marketRepository: marketRepo,
+    effectsRepository: effects,
+    casinoRepository: casinoRepo,
+    random: () => 0.99,
+  });
+
+  const scope = uniqueGroup();
+  const atk = uniqueJid('5579');
+  const vic = uniqueJid('5580');
+  repo.addCoins({ userJid: atk, scopeKey: scope, amount: 601, reason: 'seed' });
+  repo.addCoins({ userJid: vic, scopeKey: scope, amount: 400, reason: 'seed' });
+  effects.addCharges({
+    userJid: atk,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+  marketRepo.addInventory({
+    userJid: atk,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 10,
+  });
+
+  // defaults: assaultFailFinePct 0 (sem multa) e assaultCooldownMs 5min
+  const cfg = resolveFunConfig({});
+  const r = failMarket.assault({
+    attackerJid: atk,
+    targetJid: vic,
+    scopeKey: scope,
+    funConfig: cfg,
+  });
+  assert.equal(r.ok, true);
+  assert.equal(r.success, false);
+  assert.equal(r.fine, 0, 'PvP: falha não deve cobrar multa');
+  assert.equal(r.finePct, 0, 'PvP: rótulo deve refletir 0%');
+  // saldo intacto (piso/teto não forçam cobrança com taxa 0)
+  assert.equal(repo.getUserStats(atk, scope).coins, 601);
+
+  // cooldown default de 5min: nova tentativa imediata é bloqueada
+  const cd = failMarket.assault({
+    attackerJid: atk,
+    targetJid: vic,
+    scopeKey: scope,
+    funConfig: cfg,
+  });
+  assert.equal(cd.ok, false);
+  assert.equal(cd.reason, 'cooldown');
 
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
