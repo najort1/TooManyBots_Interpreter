@@ -211,8 +211,14 @@ export function fingerprintLine(text) {
     .replace(/\s+/g, ' ')
     .trim();
   if (s.length < 8) return s;
-  // palavras-chave + tamanho
-  const words = s.split(' ').filter((w) => w.length > 3).slice(0, 6);
+  // palavras-chave + tamanho. Descarta tokens puramente numéricos (JIDs:
+  // 558199462399) — eles dominam o fingerprint e causam colisão entre
+  // respostas distintas dirigidas ao mesmo usuário (ex.: russian_click vs
+  // russian_dead do mesmo ator).
+  const words = s
+    .split(' ')
+    .filter((w) => w.length > 3 && !/^\d+$/.test(w))
+    .slice(0, 6);
   return (words.join(' ') || s).slice(0, 48);
 }
 
