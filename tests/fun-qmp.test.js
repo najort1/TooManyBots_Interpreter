@@ -26,7 +26,7 @@ import {
 } from '../fun/services/qmpService.js';
 import { parseFunCommand, resolveFunConfig } from '../fun/index.js';
 import { FUN_COMMANDS, DEFAULT_FUN_CONFIG } from '../fun/constants.js';
-import { handleQmpCommand } from '../fun/commands/handlers/qmp.js';
+import { handleQmpCommand, tryPassiveQmpVote } from '../fun/commands/handlers/qmp.js';
 import { formatQmpWeeklyLeaderboard } from '../fun/formatters/rankCard.js';
 import { getWeekKey } from '../fun/db/funSocialRepository.js';
 
@@ -628,6 +628,74 @@ test('qmp: expira rodada e bloqueia voto', async () => {
   });
   assert.equal(expired.ok, false);
   assert.ok(['question-expired', 'no-active'].includes(expired.reason));
+
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+});
+
+test('tryPassiveQmpVote: só conta se a mensagem começar com /qmp', async () => {
+  process.env.FUN_DISABLE_LIVE_LLM = '1';
+  const { qmpService } = makeService({ random: () => 0.99 });
+  const scope = uniqueGroup();
+  const voter = uniqueJid('5570');
+  const target = uniqueJid('5571');
+  const cfg = resolveFunConfig({
+    qmpEnabled: true,
+    qmpCooldownMs: 0,
+    qmpRoundDurationMs: 60_000,
+  });
+
+  // abre rodada manualmente
+  qmpService.startRound({
+    scopeKey: scope,
+    userJid: voter,
+    customText: 'roubar o carregador do amigo',
+    source: 'custom',
+    funConfig: cfg,
+  });
+
+  const replies = [];
+  const base = {
+    userJid: voter,
+    scopeKey: scope,
+    isGroup: true,
+    funConfig: cfg,
+    qmpService,
+    getContactDisplayName: (jid) => String(jid).split('@')[0],
+    listContacts: () => [],
+    reply: async (t) => {
+      replies.push(String(t));
+    },
+    sock: null,
+    identityMap: null,
+    mentionedJids: [target],
+  };
+
+  // 1. Mensagem normal com menção (sem /qmp) — NÃO pode virar voto
+  const rNoCmd = await tryPassiveQmpVote({
+    ...base,
+    text: '@Paulinho leva o Zelda pra dar pra graci',
+  });
+  assert.equal(rNoCmd.voted, undefined);
+  assert.equal(rNoCmd.handled, false);
+  assert.equal(replies.length, 0);
+
+  // 2. Mensagem com /qmp + menção — VOTA normalmente
+  const rCmd = await tryPassiveQmpVote({
+    ...base,
+    text: '/qmp @Paulinho',
+  });
+  assert.equal(rCmd.voted, true);
+  assert.equal(rCmd.handled, true);
+  assert.equal(replies.length, 1);
+  assert.match(replies.at(-1), /votou/i);
+
+  // 3. Alias /maisprovavel + menção — VOTA
+  const rAlias = await tryPassiveQmpVote({
+    ...base,
+    userJid: uniqueJid('5572'),
+    text: '/maisprovavel @Paulinho',
+  });
+  assert.equal(rAlias.voted, true);
 
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
