@@ -86,6 +86,18 @@ test('fingerprint + overlapsRecent', () => {
   assert.equal(overlapsRecent('totalmente outra frase de bairro', [a]), false);
 });
 
+test('fingerprint ignora JID: respostas ao mesmo ator não colidem', () => {
+  // bug: fingerprint dominado por JID fazia russian_dead rejeitar todas as
+  // respostas válidas por colidirem com russian_click anterior do mesmo user.
+  const click = 'O tambor para… click. @558199462399 abre um olho só.';
+  const dead = '@558199462399 foi de base no modo vergonha alheia: 15m sem XP.';
+  assert.equal(overlapsRecent(dead, [click]), false);
+  // fingerprint sem JID numérico
+  assert.ok(!/558199462399/.test(fingerprintLine(dead)));
+  // eco real de texto idêntico ainda colide
+  assert.equal(overlapsRecent(dead, [dead]), true);
+});
+
 test('looksLikeScoreboardEcho', () => {
   assert.equal(looksLikeScoreboardEcho('Ganhou 500 coins no slot'), true);
   assert.equal(looksLikeScoreboardEcho('A moeda te escolheu hoje.'), false);
