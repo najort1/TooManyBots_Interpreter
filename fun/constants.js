@@ -596,11 +596,11 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // OpenCode Zen Proxy (OpenAI-compatible)
   zenEnabled: true,
   /** Proxy OpenAI-compat com modelos pré-configurados (glm_5_2 em :3300). */
-  zenBaseUrl: 'http://127.0.0.1:3300',
+  zenBaseUrl: 'http://localhost:20128/v1',
   // glm_5_2: melhor invent/flavor na bateria de comparação (Jul/2026)
-  zenModel: 'glm_5_2',
+  zenModel: 'bot-zap',
   // timeout de rede global (tarefas longas usam zen*TimeoutMs próprio)
-  zenTimeoutMs: 60_000,
+  zenTimeoutMs: 90_000,
   /** Invent de evento de mercado — modelo grande demora; 45s gerava timeout com texto pronto. */
   zenInventTimeoutMs: 120_000,
   zenMaxTokens: 900,
