@@ -18,6 +18,7 @@ import {
   sanitizeNickname,
   parseProfileManual,
   deriveExtras,
+  mergePreferenceExtras,
   todayBirthdayMd,
 } from '../fun/services/profileService.js';
 import { resolveFunConfig } from '../fun/index.js';
@@ -113,6 +114,23 @@ test('profileRepository upsert merge e clear', () => {
   const c = repo.getProfile(u, g);
   assert.equal(c.nickname, '');
   assert.equal(c.empty, true);
+});
+
+test('profileService appendPreference preserva extras manuais e deduplica sem acento/case', () => {
+  const repo = createFunProfileRepository({ getDatabase: getDb });
+  const svc = createProfileService({ profileRepository: repo });
+  const u = uniqueJid('5597');
+  const g = uniqueGroup();
+  const cfg = resolveFunConfig({ profileAiExtract: false, profileExtrasMax: 500 });
+
+  repo.upsertProfile({ userJid: u, scopeKey: g, extras: 'torce pro time B' });
+  svc.appendPreference({ userJid: u, scopeKey: g, preference: 'adora cachorro Chupetão', funConfig: cfg });
+  svc.appendPreference({ userJid: u, scopeKey: g, preference: 'adora pão com ovo', funConfig: cfg });
+  const result = svc.appendPreference({ userJid: u, scopeKey: g, preference: 'ADORA CACHORRO CHUPETAO', funConfig: cfg });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.profile.extras, 'torce pro time B; adora cachorro Chupetão; adora pão com ovo');
+  assert.equal(mergePreferenceExtras(result.profile.extras, 'adora pão com ovo', { max: 500 }), result.profile.extras);
 });
 
 test('profileService applyFreeText com mock Zen', async () => {

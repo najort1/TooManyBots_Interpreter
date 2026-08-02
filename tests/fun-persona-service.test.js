@@ -13,7 +13,7 @@ import { getDb } from '../db/context.js';
 import { createFunPersonaRepository } from '../fun/db/funPersonaRepository.js';
 import { createFunGroupRepository } from '../fun/db/funGroupRepository.js';
 import { createPersonaService } from '../fun/services/personaService.js';
-import { createIdentityMap } from '../fun/utils/identity.js';
+import { createIdentityMap, loadGroupIdentity } from '../fun/utils/identity.js';
 import { DEFAULT_FUN_CONFIG } from '../fun/constants.js';
 
 await initDb();
@@ -60,6 +60,30 @@ test('detectTrigger: "bot" como palavra inteira, não "botão"/"robô"/"botox"/"
   assert.equal(svc.detectTrigger({ text: 'vi um robô', mentionedJids: [] }).mention, false);
   assert.equal(svc.detectTrigger({ text: 'botox no rosto', mentionedJids: [] }).mention, false);
   assert.equal(svc.detectTrigger({ text: 'bota isso ali', mentionedJids: [] }).mention, false);
+});
+
+test('detectTrigger: aceita apenas vocativos inequívocos e rejeita referências a bot', () => {
+  const { svc } = setup();
+  for (const text of ['bot?', 'bot, me ajuda', 'bot me ajuda', 'ei bot, tudo bem']) {
+    assert.equal(svc.detectTrigger({ text }).mention, true, text);
+  }
+  for (const text of ['esse bot travou', 'o bot respondeu', 'um bot faz isso', 'todo streamer usa bot', 'botão quebrado']) {
+    assert.equal(svc.detectTrigger({ text }).mention, false, text);
+  }
+});
+
+test('loadGroupIdentity resolve LID de bot para @mention e reply', async () => {
+  const { svc, botJ, identityMap } = setup();
+  const botLid = '999999999999999@lid';
+  const sock = {
+    groupMetadata: async () => ({ participants: [{ id: botJ, lid: botLid }] }),
+  };
+
+  assert.equal(identityMap.resolve(botLid), '');
+  await loadGroupIdentity(sock, uniqueGroup(), identityMap);
+  assert.equal(identityMap.resolve(botLid), botJ);
+  assert.equal(svc.detectTrigger({ text: 'oi', mentionedJids: [botLid], botJid: botJ, identityMap }).atMention, true);
+  assert.equal(identityMap.resolve(botLid), botJ, 'reply quoted usa a mesma resolução canônica');
 });
 
 test('detectTrigger: @marcação via identityMap (LID→SID)', () => {
