@@ -85,6 +85,31 @@ export type ChangelogPayload = {
   history: ChangelogHistoryItem[];
 };
 
+export type DailyChallengeType = "guess_game" | "riddle" | "pokemon";
+
+export type DailyChallengeLaunchRow = {
+  jid: string;
+  ok: boolean;
+  replacedChallengeId?: number;
+  challenge?: {
+    id: number;
+    type: DailyChallengeType;
+    challengeType: DailyChallengeType;
+  };
+  reason?: string;
+};
+
+export type DailyChallengeLaunchResult = {
+  ok: boolean;
+  type?: DailyChallengeType;
+  targetCount?: number;
+  okCount?: number;
+  failCount?: number;
+  results?: DailyChallengeLaunchRow[];
+  reason?: string;
+  error?: string;
+};
+
 export type ChangelogBroadcastResult = {
   ok: boolean;
   id?: string;

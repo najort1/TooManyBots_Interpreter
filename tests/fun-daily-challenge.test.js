@@ -388,6 +388,45 @@ test('dailyChallenge service: tryLaunchToday agenda e lança desafio do dia', as
   assert.ok(repository.getActiveChallenge(scope));
 });
 
+test('dailyChallenge service: tryLaunchToday usa fallback local se Pokemon automático falhar', async () => {
+  const prevFetch = global.fetch;
+  const fetchCalls = [];
+  try {
+    global.fetch = async (url, options) => {
+      fetchCalls.push({ url: String(url), options });
+      assert.match(String(url), /raw\.githubusercontent\.com/i);
+      assert.ok(options?.signal instanceof AbortSignal);
+      throw new Error('sprite indisponivel');
+    };
+
+    const randomValues = [0, 0.99];
+    const { service, repository } = createServiceHarness({
+      config: createConfig({ dailyChallengeStartHour: 0, dailyChallengeEndHour: 23 }),
+      random: () => randomValues.shift() ?? 0,
+    });
+    const scope = uniqueGroup();
+    const now = new Date('2099-01-10T12:00:00.000Z').getTime();
+    const images = [];
+
+    const out = await service.tryLaunchToday({
+      scopeKey: scope,
+      now,
+      sendText: async () => {},
+      sendImage: async (...args) => images.push(args),
+      sharp: null,
+    });
+
+    assert.equal(out.ok, true);
+    assert.notEqual(out.challenge.challengeType, 'pokemon');
+    assert.equal(fetchCalls.length, 8);
+    assert.equal(images.length, 0);
+    assert.equal(repository.getActiveChallenge(scope).challengeType, out.challenge.challengeType);
+    assert.equal(repository.getLaunchSchedule(scope, '2099-01-10').launched, true);
+  } finally {
+    global.fetch = prevFetch;
+  }
+});
+
 test('dailyChallenge service: tryLaunchToday não relança quando já existe ativo', async () => {
   const now = new Date('2099-01-09T12:00:00.000Z').getTime();
   const { service, repository } = createServiceHarness({

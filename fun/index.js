@@ -304,6 +304,7 @@ export function createFunModule(deps = {}) {
     createPersonaService({
       personaRepository,
       groupRepository,
+      threadContextService,
       getLogger,
     });
   const flavorService =
@@ -1032,12 +1033,96 @@ export function createFunModule(deps = {}) {
     return changelogService.listHistory(opts);
   }
 
+  async function launchDailyChallengeForWhitelist(opts = {}) {
+    const type = String(opts.type || '').trim();
+    if (!['guess_game', 'riddle', 'pokemon'].includes(type)) {
+      return { ok: false, reason: 'invalid-type' };
+    }
+
+    const funConfig = resolveFunConfig(getConfig() || {});
+    const targets = [...getFunGroupWhitelistSet(funConfig)].filter((jid) => jid.endsWith('@g.us'));
+    if (targets.length === 0) return { ok: false, reason: 'no-groups' };
+    if (funConfig.dailyChallengeEnabled === false) {
+      return { ok: false, reason: 'daily-challenge-disabled' };
+    }
+    if (!dailyChallengeService?.launchChallenge || !dailyChallengeService?.processExpired) {
+      return { ok: false, reason: 'daily-challenge-unavailable' };
+    }
+
+    const sock = opts.sock || getSock?.();
+    const sendTextFn = opts.sendText || sendText;
+    const sendImageFn = opts.sendImage || sendImage;
+    if (!sock || typeof sendTextFn !== 'function' || typeof sendImageFn !== 'function') {
+      return { ok: false, reason: 'whatsapp-offline' };
+    }
+
+    ensureInit();
+    const now = Number(opts.now) || Date.now();
+    let sharpFn = opts.sharp || null;
+    if (type === 'pokemon' && !sharpFn) {
+      try {
+        const sharpModule = await import('sharp');
+        sharpFn = sharpModule.default || sharpModule;
+      } catch {
+        sharpFn = null;
+      }
+    }
+
+    const results = [];
+    for (const jid of targets) {
+      try {
+        const active = dailyChallengeRepository.getActiveChallenge(jid);
+        await dailyChallengeService.processExpired({
+          scopeKey: jid,
+          now: now + 9e15,
+          sendText: async () => {},
+        });
+        const challenge = await dailyChallengeService.launchChallenge({
+          scopeKey: jid,
+          type,
+          now,
+          sendText: async (to, message) => sendTextFn(sock, to, message),
+          sendImage: async (to, image, imageOpts) => {
+            try {
+              await sendImageFn(sock, to, image, imageOpts?.caption || '');
+            } catch {
+              if (imageOpts?.caption) await sendTextFn(sock, to, imageOpts.caption);
+            }
+          },
+          sharp: sharpFn,
+        });
+        if (challenge?.ok) {
+          results.push({
+            jid,
+            ok: true,
+            ...(active?.id ? { replacedChallengeId: active.id } : {}),
+            challenge: challenge.challenge,
+          });
+        } else {
+          results.push({ jid, ok: false, ...(active?.id ? { replacedChallengeId: active.id } : {}), reason: challenge?.reason || 'launch-failed' });
+        }
+      } catch (err) {
+        results.push({ jid, ok: false, reason: err?.message || 'launch-failed' });
+      }
+    }
+    const okCount = results.filter((result) => result.ok).length;
+    return {
+      ok: okCount === results.length,
+      type,
+      targetCount: targets.length,
+      okCount,
+      failCount: targets.length - okCount,
+      results,
+    };
+  }
+
   return {
     init,
     onIncomingMessage,
     tickWorldEvents,
     broadcastChangelog,
     listChangelogHistory,
+    launchDailyChallengeForWhitelist,
     warmupLlm,
     stopLlmKeepAlive,
     identityMap,

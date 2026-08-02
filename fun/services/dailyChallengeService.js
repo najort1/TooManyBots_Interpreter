@@ -22,8 +22,10 @@ import { FALLBACK_GAMES } from './data/guessGameFallback.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
 
 const CHALLENGE_TYPES = ['guess_game', 'riddle', 'pokemon'];
+const LOCAL_CHALLENGE_TYPES = ['guess_game', 'riddle'];
 const MAX_HINTS = 3;
 const HINT_COOLDOWN_DEFAULT_MS = 10 * 60 * 1000;
+const POKEMON_FETCH_TIMEOUT_MS = 5000;
 
 const REWARD_EMOJI = {
   boost_xp: '⭐',
@@ -405,14 +407,28 @@ export function createDailyChallengeService(deps = {}) {
     const minutesNow = minutesOfDay(now);
     if (minutesNow < sched.targetMinute) return { ok: false, reason: 'not-window' };
 
-    const result = await launchChallenge({
+    const type = pickChallengeType(null);
+    let result = await launchChallenge({
       scopeKey,
-      type: pickChallengeType(null),
+      type,
       now,
       sendText,
       sendImage,
       sharp,
     });
+    if (!result?.ok && type === 'pokemon') {
+      for (const localType of LOCAL_CHALLENGE_TYPES) {
+        result = await launchChallenge({
+          scopeKey,
+          type: localType,
+          now,
+          sendText,
+          sendImage,
+          sharp,
+        });
+        if (result?.ok) break;
+      }
+    }
     if (result?.ok) {
       repository.markScheduleLaunched(scopeKey, ds);
     }
@@ -612,7 +628,9 @@ export function createDailyChallengeService(deps = {}) {
     ];
     for (const url of urls) {
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, {
+          signal: AbortSignal.timeout(POKEMON_FETCH_TIMEOUT_MS),
+        });
         if (!res.ok) continue;
         const buf = Buffer.from(await res.arrayBuffer());
         if (buf && buf.length > 0) return buf;
@@ -623,7 +641,9 @@ export function createDailyChallengeService(deps = {}) {
 
   async function fetchPokemonName(id) {
     try {
-      const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`);
+      const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`, {
+        signal: AbortSignal.timeout(POKEMON_FETCH_TIMEOUT_MS),
+      });
       if (!res.ok) return null;
       const json = await res.json();
       return json?.name ? String(json.name) : null;

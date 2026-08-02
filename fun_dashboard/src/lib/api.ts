@@ -6,6 +6,8 @@ import type {
   CasinoPayload,
   ChangelogBroadcastResult,
   ChangelogPayload,
+  DailyChallengeLaunchResult,
+  DailyChallengeType,
   Faction,
   FunConfig,
   FunGroup,
@@ -115,6 +117,12 @@ export const funApi = {
     request<ChangelogBroadcastResult>("/api/fun/changelog", {
       method: "POST",
       body: JSON.stringify(body),
+    }),
+
+  launchDailyChallengeForWhitelist: (type: DailyChallengeType) =>
+    request<DailyChallengeLaunchResult>("/api/fun/daily-challenge/launch-all", {
+      method: "POST",
+      body: JSON.stringify({ type }),
     }),
 
   /** Corretora read-only (público por grupo). */

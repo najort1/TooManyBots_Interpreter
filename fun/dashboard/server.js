@@ -758,6 +758,33 @@ export function startFunDashboardServer(deps = {}) {
         return;
       }
 
+      if (req.method === 'POST' && path === '/api/fun/daily-challenge/launch-all') {
+        if (typeof funModule.launchDailyChallengeForWhitelist !== 'function') {
+          sendJson(res, 503, { error: 'daily-challenge-unavailable' });
+          return;
+        }
+        if (!isSocketReady()) {
+          sendJson(res, 503, { error: 'whatsapp-offline', reason: 'whatsapp-offline' });
+          return;
+        }
+        const body = await readBody(req);
+        const result = await funModule.launchDailyChallengeForWhitelist({
+          type: body.type,
+          sock: getSock?.(),
+          sendText,
+        });
+        if (!result.ok && ['invalid-type', 'no-groups'].includes(result.reason)) {
+          sendJson(res, 400, { error: result.reason, ...result });
+          return;
+        }
+        if (!result.ok && ['whatsapp-offline', 'daily-challenge-disabled', 'daily-challenge-unavailable'].includes(result.reason)) {
+          sendJson(res, 503, { error: result.reason, ...result });
+          return;
+        }
+        sendJson(res, result.ok ? 200 : 207, result);
+        return;
+      }
+
       if (req.method === 'POST' && path === '/api/fun/changelog') {
         if (typeof funModule.broadcastChangelog !== 'function') {
           sendJson(res, 503, { error: 'changelog-indisponivel' });
