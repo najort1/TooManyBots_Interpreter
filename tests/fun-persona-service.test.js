@@ -126,7 +126,7 @@ test('tryRespond: cooldown impede segunda resposta imediata', async () => {
   assert.equal(r2.reason, 'cooldown');
 });
 
-test('tryRespond: quiet hours silencia', async () => {
+test('tryRespond: responde mesmo durante quiet hours (persona não dorme)', async () => {
   const { svc, sock, identityMap } = setup({
     ...baseConfig,
     worldQuietHoursEnabled: true,
@@ -134,6 +134,7 @@ test('tryRespond: quiet hours silencia', async () => {
     worldQuietHourEnd: 6,
   });
   const scope = uniqueGroup();
+  sock.sendMessage = async () => {};
   const now = new Date('2026-08-02T02:30:00-03:00').getTime();
   const r = await svc.tryRespond({
     scopeKey: scope, text: 'bot?', mentionedJids: [], authorJid: uniqueJid(),
@@ -141,8 +142,7 @@ test('tryRespond: quiet hours silencia', async () => {
       ...baseConfig, worldQuietHoursEnabled: true, worldQuietHourStart: 1, worldQuietHourEnd: 6,
     }, now,
   });
-  assert.equal(r.responded, false);
-  assert.equal(r.reason, 'quiet-hours');
+  assert.equal(r.responded, true, 'persona deve responder mesmo durante quiet hours');
 });
 
 test('tryRespond: fallback sem LLM (FUN_DISABLE_LIVE_LLM=1)', async () => {

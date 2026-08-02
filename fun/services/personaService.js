@@ -14,7 +14,6 @@
 import { sanitizeFlavor, looksLikeScoreboardEcho } from '../llm/flavorService.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
-import { isWorldQuietHours } from '../utils/worldQuietHours.js';
 
 /** "bot" como palavra inteira (exclui "botão"/"robô"/"botox"/"bota"): \b falha com acentos. */
 const MENTION_RE = /(?:^|[^\p{L}\p{N}_])bot(?=[^\p{L}\p{N}_]|$)/iu;
@@ -316,7 +315,6 @@ export function createPersonaService({
 
       const now = Number(ctx.now) || Date.now();
       if (String(ctx.messageType || 'text').toLowerCase() !== 'text') return { responded: false, reason: 'message-type' };
-      if (isWorldQuietHours(ctx.funConfig || {}, now)) return { responded: false, reason: 'quiet-hours' };
       if (isInCooldown(scopeKey, now, o.cooldownMs)) return { responded: false, reason: 'cooldown' };
       if (inFlightScopes.has(scopeKey)) return { responded: false, reason: 'in-flight' };
 
