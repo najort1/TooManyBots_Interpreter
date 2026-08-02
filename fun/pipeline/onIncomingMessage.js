@@ -79,6 +79,28 @@ function isCountableMessage({ text, messageType }) {
   return ['image', 'video', 'audio', 'document', 'sticker', 'ptt'].includes(type);
 }
 
+function extractPreferenceMemory(text) {
+  const body = String(text || '').trim();
+  if (!body) return null;
+
+  const m = body.match(/\beu\s+(?:adoro|gosto\s+de|curto)\s+(.+?)\??$/iu);
+  if (!m) return null;
+
+  const subject = String(m[1] || '')
+    .trim()
+    .replace(/[.!?]+$/g, '')
+    .replace(/^o\s+/iu, 'o ')
+    .slice(0, 120);
+
+  if (!subject || subject.length < 3) return null;
+
+  return {
+    extras: `adora ${subject}`,
+    lore: `curte ${subject}`,
+    keywords: ['gosto', 'preferencia', ...subject.toLowerCase().split(/\s+/).slice(0, 4)],
+  };
+}
+
 /**
  * @returns {Promise<{ handled: boolean, skipFlows: boolean, passiveXp?: object|null }>}
  */
@@ -115,6 +137,12 @@ export async function handleFunIncomingMessage(deps, ctx) {
     casinoRepository,
     groupMemoryService,
     personaService,
+    personaContextService,
+    threadContextService,
+    memoryIngestionService,
+    memoryDecayService,
+    personaIdentityService,
+    socialMemoryService,
     profileService,
     socialHooks,
     flavorService,
@@ -147,6 +175,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
     appConfig,
     mentionedJids = [],
     quotedParticipant = '',
+    quotedMessageId = '',
+    messageId = '',
     rawMessage = null,
   } = ctx;
 
@@ -554,6 +584,31 @@ export async function handleFunIncomingMessage(deps, ctx) {
     }
   }
 
+  const preferenceMemory = isGroup && scope.scopeKey ? extractPreferenceMemory(text) : null;
+  if (preferenceMemory) {
+    try {
+      profileService?.appendPreference?.({
+        userJid,
+        scopeKey: scope.scopeKey,
+        preference: preferenceMemory.extras,
+        funConfig,
+        now: Date.now(),
+      });
+    } catch {
+      // perfil nunca quebra o fluxo
+    }
+    try {
+      groupMemoryService?._pushRaw?.(scope.scopeKey, {
+        userJid,
+        name: displayNameOnly(getContactDisplayName, userJid),
+        text: preferenceMemory.lore,
+        at: Date.now(),
+      });
+    } catch {
+      // lore nunca quebra o fluxo
+    }
+  }
+
   // Persona (Bot Membro Vivo): observa estilo do grupo e tenta responder passivamente
   // após o roteamento de comandos. Nunca quebra o pipeline.
   if (isGroup && personaService && scope.scopeKey) {
@@ -563,19 +618,50 @@ export async function handleFunIncomingMessage(deps, ctx) {
           scopeKey: scope.scopeKey,
           userJid,
           text,
+          messageType,
           funConfig,
           now: Date.now(),
         });
       }
+      const memoryEvent = {
+        scopeKey: scope.scopeKey, authorJid: userJid, text, messageId, quotedMessageId,
+        mentionedJids, occurredAt: msgTimeMs, threadTtlMs: funConfig.personaThreadTtlMs,
+        maxContextItems: funConfig.personaMemoryMaxContextItems,
+      };
+      const resolvedThread = funConfig.personaMemoryEnabled !== false && threadContextService
+        ? threadContextService.resolve(memoryEvent).thread
+        : null;
+      if (funConfig.personaMemoryEnabled !== false) {
+        try {
+          memoryIngestionService?.observe?.({ ...memoryEvent, threadKey: resolvedThread?.threadKey || '' });
+          threadContextService?.observe?.(memoryEvent, resolvedThread);
+          memoryDecayService?.expireScope?.(scope.scopeKey, msgTimeMs);
+          const socialSignal = socialMemoryService?.observe?.(memoryEvent);
+          personaIdentityService?.refresh?.({
+            scopeKey: scope.scopeKey,
+            ...socialMemoryService?.toIdentityInput?.(socialSignal),
+            now: msgTimeMs,
+          });
+        } catch { /* memória observacional não interrompe o pipeline */ }
+      }
       if (personaService.tryRespond && !isCommand) {
+        const responseContextPack = funConfig.personaMemoryEnabled !== false && personaContextService
+          ? personaContextService.build(memoryEvent)
+          : null;
         const groupSettings = groupRepository?.getGroupSettings
           ? groupRepository.getGroupSettings(scope.scopeKey)
           : null;
+        getLogger?.()?.info?.(
+          '[persona-debug] tryRespond chamado scope=%s text=%j mentionedJids=%j quoted=%j msgType=%s settingsPersona=%s',
+          scope.scopeKey, String(text || '').slice(0, 80), mentionedJids, quotedParticipant, messageType, groupSettings?.personaEnabled
+        );
         void personaService.tryRespond({
           scopeKey: scope.scopeKey,
           text,
           mentionedJids,
           quotedParticipant,
+          quotedMessageId,
+          responseContextPack,
           authorJid: userJid,
           messageType,
           sock,
@@ -583,13 +669,24 @@ export async function handleFunIncomingMessage(deps, ctx) {
           groupSettings,
           funConfig,
           now: Date.now(),
-        }).catch(() => {
+        }).then((r) => {
+          getLogger?.()?.info?.(
+            '[persona-debug] tryRespond resultado responded=%s reason=%s usedFallback=%s',
+            r?.responded, r?.reason, r?.usedFallback
+          );
+        }).catch((err) => {
+          getLogger?.()?.warn?.('[persona-debug] tryRespond erro: %s', String(err?.message || err));
           // persona nunca quebra o pipeline
         });
       }
     } catch {
       // persona nunca quebra o pipeline
     }
+  } else {
+    getLogger?.()?.debug?.(
+      '[persona-debug] skip isGroup=%s personaService=%s scopeKey=%s',
+      isGroup, Boolean(personaService), scope.scopeKey
+    );
   }
 
   // Purga: resposta de defesa — usa msgTimeMs (hora enviada no WhatsApp), não Date.now().

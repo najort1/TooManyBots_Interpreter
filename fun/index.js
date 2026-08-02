@@ -47,12 +47,24 @@ import { createAchievementService } from './services/achievementService.js';
 import { createFunNsfwVoteRepository } from './db/funNsfwVoteRepository.js';
 import { createFunNsfwService } from './services/funNsfwService.js';
 import { createFunMemoryRepository } from './db/funMemoryRepository.js';
+import { createFunPersonaRepository } from './db/funPersonaRepository.js';
 import { createFunProfileRepository } from './db/funProfileRepository.js';
 import { createFunCardRepository } from './db/funCardRepository.js';
 import { createFunQmpRepository } from './db/funQmpRepository.js';
 import { createFunDailyChallengeRepository } from './db/funDailyChallengeRepository.js';
 import { createDailyChallengeService } from './services/dailyChallengeService.js';
 import { createGroupMemoryService } from './services/groupMemoryService.js';
+import { createPersonaService } from './services/personaService.js';
+import { createFunConversationMemoryRepository } from './db/funConversationMemoryRepository.js';
+import { createFunThreadContextRepository } from './db/funThreadContextRepository.js';
+import { createFunPersonaIdentityRepository } from './db/funPersonaIdentityRepository.js';
+import { createThreadContextService } from './services/threadContextService.js';
+import { createMemoryRetrievalService } from './services/memoryRetrievalService.js';
+import { createMemoryIngestionService } from './services/memoryIngestionService.js';
+import { createMemoryDecayService } from './services/memoryDecayService.js';
+import { createPersonaIdentityService } from './services/personaIdentityService.js';
+import { createSocialMemoryService } from './services/socialMemoryService.js';
+import { createPersonaContextService } from './services/personaContextService.js';
 import { createProfileService } from './services/profileService.js';
 import { createCardService } from './services/cardService.js';
 import { createQmpService } from './services/qmpService.js';
@@ -265,6 +277,8 @@ export function createFunModule(deps = {}) {
     });
   const memoryRepository =
     deps.memoryRepository || createFunMemoryRepository({ getDatabase });
+  const personaRepository =
+    deps.personaRepository || createFunPersonaRepository({ getDatabase });
   const groupMemoryService =
     deps.groupMemoryService ||
     createGroupMemoryService({
@@ -274,6 +288,23 @@ export function createFunModule(deps = {}) {
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
       generateOllama: deps.ollamaGenerate || deps.generate,
       getNewsService: () => newsService,
+    });
+  const conversationMemoryRepository = deps.conversationMemoryRepository || createFunConversationMemoryRepository({ getDatabase });
+  const threadContextRepository = deps.threadContextRepository || createFunThreadContextRepository({ getDatabase });
+  const personaIdentityRepository = deps.personaIdentityRepository || createFunPersonaIdentityRepository({ getDatabase });
+  const threadContextService = deps.threadContextService || createThreadContextService({ threadContextRepository });
+  const memoryRetrievalService = deps.memoryRetrievalService || createMemoryRetrievalService({ conversationMemoryRepository, getLogger });
+  const memoryIngestionService = deps.memoryIngestionService || createMemoryIngestionService({ conversationMemoryRepository, getLogger });
+  const memoryDecayService = deps.memoryDecayService || createMemoryDecayService({ conversationMemoryRepository });
+  const personaIdentityService = deps.personaIdentityService || createPersonaIdentityService({ personaIdentityRepository });
+  const socialMemoryService = deps.socialMemoryService || createSocialMemoryService();
+  const personaContextService = deps.personaContextService || createPersonaContextService({ threadContextService, memoryRetrievalService, personaIdentityService, getLogger });
+  const personaService =
+    deps.personaService ||
+    createPersonaService({
+      personaRepository,
+      groupRepository,
+      getLogger,
     });
   const flavorService =
     deps.flavorService ||
@@ -443,6 +474,12 @@ export function createFunModule(deps = {}) {
         qmpService,
         casinoRepository,
         groupMemoryService,
+        personaService,
+        personaContextService,
+        threadContextService,
+        memoryIngestionService,
+        memoryDecayService,
+        personaIdentityService,
         profileService,
         socialHooks,
         flavorService,
@@ -473,6 +510,7 @@ export function createFunModule(deps = {}) {
         mediaMimeType: ctx.mediaMimeType ?? ctx.parsed?.mediaMimeType ?? '',
         messageId: ctx.messageId ?? ctx.parsed?.id ?? '',
         messageKey: ctx.messageKey ?? ctx.parsed?.messageKey,
+        quotedMessageId: ctx.quotedMessageId ?? '',
         mentionedJids: ctx.mentionedJids || ctx.parsed?.mentionedJids || [],
         quotedParticipant: ctx.quotedParticipant || '',
         rawMessage: ctx.rawMessage || ctx.msg || null,

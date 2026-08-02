@@ -956,6 +956,10 @@ export function normalizeFunConfig(input) {
       { min: 5_000, max: 90_000, rounding: 'floor', clamp: true }
     ),
     personaEnabled: normalizeBoolean(raw.personaEnabled, DEFAULT_FUN_CONFIG.personaEnabled),
+    personaMemoryEnabled: normalizeBoolean(raw.personaMemoryEnabled, DEFAULT_FUN_CONFIG.personaMemoryEnabled),
+    personaMemoryMaxContextItems: normalizeInt(raw.personaMemoryMaxContextItems, DEFAULT_FUN_CONFIG.personaMemoryMaxContextItems, {
+      min: 1, max: 20, rounding: 'floor', clamp: true,
+    }),
     personaCooldownMs: normalizeInt(
       raw.personaCooldownMs,
       DEFAULT_FUN_CONFIG.personaCooldownMs,

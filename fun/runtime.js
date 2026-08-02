@@ -98,6 +98,7 @@ import { loadFunUserConfig, FUN_DEFAULT_DATA_DIR } from './config.js';
 import { runFunSetupWizard, shouldRunFunWizard } from './wizard.js';
 import { startFunDashboardServer } from './dashboard/server.js';
 import { extractMentionedJids } from './utils/mentions.js';
+import { loadGroupIdentity } from './utils/identity.js';
 
 function resolveDisconnectReasonName(statusCode) {
   const entry = Object.entries(DisconnectReason).find(([, code]) => Number(code) === Number(statusCode));
@@ -108,17 +109,56 @@ function isLoggedOutDisconnect(statusCode) {
   return Number(statusCode) === DisconnectReason.loggedOut;
 }
 
+function extractQuotedMessageId(msg) {
+  const queue = [msg?.message || {}]; const seen = new Set();
+  while (queue.length) { const node = queue.shift(); if (!node || typeof node !== 'object' || seen.has(node)) continue; seen.add(node);
+    const contexts = [node.contextInfo, node.extendedTextMessage?.contextInfo, node.imageMessage?.contextInfo, node.videoMessage?.contextInfo, node.documentMessage?.contextInfo];
+    for (const context of contexts) { const id = String(context?.stanzaId || '').trim(); if (id) return id; }
+    for (const value of Object.values(node)) if (value && typeof value === 'object') queue.push(value);
+  } return '';
+}
+
 function extractQuotedParticipant(msg) {
-  const content = msg?.message || {};
-  const layers = [
-    content.extendedTextMessage?.contextInfo,
-    content.imageMessage?.contextInfo,
-    content.ephemeralMessage?.message?.extendedTextMessage?.contextInfo,
-  ];
-  for (const ctx of layers) {
-    const p = String(ctx?.participant || ctx?.participantPn || '').trim();
-    if (p) return p;
+  const queue = [msg?.message || {}];
+  const seen = new Set();
+
+  while (queue.length) {
+    const node = queue.shift();
+    if (!node || typeof node !== 'object' || seen.has(node)) continue;
+    seen.add(node);
+
+    const contexts = [
+      node.contextInfo,
+      node.extendedTextMessage?.contextInfo,
+      node.imageMessage?.contextInfo,
+      node.videoMessage?.contextInfo,
+      node.documentMessage?.contextInfo,
+      node.documentWithCaptionMessage?.message?.documentMessage?.contextInfo,
+      node.buttonsResponseMessage?.contextInfo,
+      node.templateButtonReplyMessage?.contextInfo,
+      node.buttonsMessage?.contextInfo,
+      node.listResponseMessage?.contextInfo,
+      node.interactiveResponseMessage?.contextInfo,
+    ];
+
+    for (const ctx of contexts) {
+      const p = String(ctx?.participant || ctx?.participantPn || '').trim();
+      if (p) return p;
+    }
+
+    const nested = [
+      node.ephemeralMessage?.message,
+      node.viewOnceMessage?.message,
+      node.viewOnceMessageV2?.message,
+      node.viewOnceMessageV2Extension?.message,
+      node.documentWithCaptionMessage?.message,
+      node.editedMessage?.message,
+    ];
+    for (const child of nested) {
+      if (child && typeof child === 'object') queue.push(child);
+    }
   }
+
   return '';
 }
 
@@ -456,18 +496,25 @@ export async function startFunBot(options = {}) {
       }
     }
 
-    const mentionedJids = extractMentionedJids(msg);
+    let mentionedJids = extractMentionedJids(msg);
     let quotedParticipant = extractQuotedParticipant(msg);
+    const quotedMessageId = extractQuotedMessageId(msg);
+    const identityMap = funModule.identityMap;
 
-    // Aprende lid→pn sempre que o actor real (PN) chega com key de participante LID
+    // Aprende lid→pn sempre que o actor real (PN) chega com key de participante LID.
     if (actorJid) {
-      funModule.identityMap?.learnFromMessageKey?.(msg?.key || parsed.messageKey, actorJid);
-      // se o reply veio como lid, tenta mapear
-      if (quotedParticipant && !quotedParticipant.endsWith('@s.whatsapp.net')) {
-        const mapped = funModule.identityMap?.resolve?.(quotedParticipant);
-        if (mapped) quotedParticipant = mapped;
-      }
+      identityMap?.learnFromMessageKey?.(msg?.key || parsed.messageKey, actorJid);
     }
+
+    const hasUnresolvedCandidate =
+      mentionedJids.some((jid) => !identityMap?.resolve?.(jid)) ||
+      Boolean(quotedParticipant && !identityMap?.resolve?.(quotedParticipant));
+    if (parsed.isGroup && hasUnresolvedCandidate) {
+      await loadGroupIdentity(sock, parsed.jid, identityMap);
+    }
+
+    mentionedJids = mentionedJids.map((jid) => identityMap?.resolve?.(jid) || jid);
+    quotedParticipant = identityMap?.resolve?.(quotedParticipant) || quotedParticipant;
 
     if (config.debugMode) {
       console.log('[fun] msg', {
@@ -491,6 +538,7 @@ export async function startFunBot(options = {}) {
       messageKey: parsed.messageKey || msg?.key,
       mentionedJids,
       quotedParticipant,
+      quotedMessageId,
       parsed,
       rawMessage: msg,
     });

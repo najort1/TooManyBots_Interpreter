@@ -51,6 +51,10 @@ Detalhes da UI: [`fun_dashboard/README.md`](../fun_dashboard/README.md).
 
 ---
 
+## Persona: memória e contexto
+
+A persona preserva os gatilhos e fallback existentes, mas agora observa mensagens de grupo para manter threads por reply, fatos explícitos e uma identidade local. A recuperação é sempre isolada por `scope_key`: fatos confirmados são separados de sinais inferidos, e registros sensíveis, suprimidos ou expirados não entram no prompt. Configure `personaMemoryEnabled` e `personaMemoryMaxContextItems` em `fun/config.user.json` para desativar ou limitar essa camada.
+
 ## Configuração
 
 | Arquivo | Função |

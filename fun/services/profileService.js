@@ -201,6 +201,27 @@ function escapeRegExp(s) {
   return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function normalizePreferenceKey(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function mergePreferenceExtras(existing, preference, { max = 500 } = {}) {
+  const entries = String(existing || '')
+    .split(/\s*;\s*/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const next = String(preference || '').trim();
+  if (next && !entries.some((value) => normalizePreferenceKey(value) === normalizePreferenceKey(next))) {
+    entries.push(next);
+  }
+  return entries.join('; ').slice(0, max);
+}
+
 /**
  * Resto do texto livre depois de tirar nick/bio/niver/title.
  * Ex.: "sou um proano… e sou negro"
@@ -750,6 +771,19 @@ export function createProfileService({
     };
   }
 
+  function appendPreference({ userJid, scopeKey, preference, funConfig = {}, now = Date.now() }) {
+    const o = opts(funConfig);
+    if (!o.enabled) return { ok: false, reason: 'disabled' };
+
+    const current = profileRepository.getProfile(userJid, scopeKey);
+    const extras = mergePreferenceExtras(current?.extras, preference, { max: o.extrasMax });
+    const { patch, errors } = normalizePatch({ extras }, funConfig, { allowClear: false });
+    if (!patch.extras) return { ok: false, reason: 'invalid-preference', errors };
+
+    const result = profileRepository.upsertProfile({ userJid, scopeKey, extras: patch.extras, now });
+    return { ok: true, profile: result.profile, extras: patch.extras };
+  }
+
   function setTitle({ userJid, scopeKey, title, funConfig = {}, now = Date.now() }) {
     const { patch, errors } = normalizePatch({ title }, funConfig, { allowClear: false });
     if (!patch.title) {
@@ -845,6 +879,7 @@ export function createProfileService({
     getNickname,
     displayName,
     applyFreeText,
+    appendPreference,
     extractFromText,
     setTitle,
     clearOwn,

@@ -15,8 +15,8 @@ import { sanitizeFlavor, looksLikeScoreboardEcho } from '../llm/flavorService.js
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 
-/** "bot" como palavra inteira (exclui "botão"/"robô"/"botox"/"bota"): \b falha com acentos. */
-const MENTION_RE = /(?:^|[^\p{L}\p{N}_])bot(?=[^\p{L}\p{N}_]|$)/iu;
+/** Chamadas textuais inequívocas ao bot; menções @ e replies são tratados separadamente. */
+const MENTION_RE = /^\s*(?:bot(?:\s|[?!,.:;]|$)|ei\s+bot(?:\s|[?!,.:;]|$))/iu;
 
 const STOPWORDS = new Set([
   'de', 'a', 'o', 'que', 'e', 'do', 'da', 'em', 'um', 'para', 'com', 'não',
@@ -262,10 +262,15 @@ export function createPersonaService({
     return parts.join('\n');
   }
 
-  async function generateResponse({ text, scopeKey, funConfig, threadContext }) {
+  async function generateResponse({ text, scopeKey, funConfig, threadContext, responseContextPack }) {
     const o = opts(funConfig);
-    const styleBlock = buildStyleBlock(scopeKey);
-    const system = buildSystemPrompt({ styleBlock, threadContext, maxChars: o.maxChars });
+    const identityStyle = responseContextPack?.groupIdentity?.voiceStyle?.join(', ') || '';
+    const styleBlock = [buildStyleBlock(scopeKey), identityStyle].filter(Boolean).join('\n');
+    const contextTurns = responseContextPack?.threadContext?.topicSummary
+      ? [...(threadContext || []), { role: 'contexto', text: responseContextPack.threadContext.topicSummary }]
+      : threadContext;
+    const facts = responseContextPack?.confirmedFacts?.map((m) => m.factText).slice(0, 4) || [];
+    const system = `${buildSystemPrompt({ styleBlock, threadContext: contextTurns, maxChars: o.maxChars })}${facts.length ? `\nFatos confirmados relevantes (não invente além deles):\n${facts.map((fact) => `- ${fact}`).join('\n')}` : ''}\nSinais inferidos são apenas pistas: jamais os apresente como fato.`;
     const prompt = String(text || '').slice(0, o.maxChars);
 
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') return '';
@@ -338,7 +343,7 @@ export function createPersonaService({
       if (thread?.context?.length) threadContext = thread.context;
 
       inFlightScopes.add(scopeKey);
-      let response = await generateResponse({ text: ctx.text, scopeKey, funConfig: ctx.funConfig, threadContext });
+      let response = await generateResponse({ text: ctx.text, scopeKey, funConfig: ctx.funConfig, threadContext, responseContextPack: ctx.responseContextPack });
       let usedFallback = false;
       if (!response) {
         response = fallbackResponse(now);

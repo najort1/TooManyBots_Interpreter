@@ -1,4 +1,15 @@
-export const FUN_SCHEMA_VERSION = '26';
+export const FUN_SCHEMA_VERSION = '27';
+
+export const PERSONA_MEMORY_TYPES = Object.freeze(['thread', 'episodic', 'semantic', 'social']);
+export const PERSONA_MEMORY_EVIDENCE = Object.freeze(['explicit', 'corroborated', 'inferred']);
+export const PERSONA_MEMORY_SENSITIVITY = Object.freeze(['safe', 'private', 'sensitive']);
+export const PERSONA_MEMORY_DEFAULTS = Object.freeze({
+  maxContextItems: 8,
+  threadTtlMs: 30 * 60_000,
+  semanticTtlMs: 90 * 24 * 60 * 60_000,
+  episodicTtlMs: 7 * 24 * 60 * 60_000,
+  inferredConfidence: 0.35,
+});
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -871,6 +882,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   profileExtractTimeoutMs: 22_000,
   // Persona (Bot Membro Vivo) — o bot responde como membro quando citado
   personaEnabled: true,
+  personaMemoryEnabled: true,
+  personaMemoryMaxContextItems: PERSONA_MEMORY_DEFAULTS.maxContextItems,
   personaCooldownMs: PERSONA_COOLDOWN_MS,
   personaMaxTurns: PERSONA_MAX_TURNS,
   personaThreadTtlMs: PERSONA_THREAD_TTL_MS,

@@ -1,0 +1,27 @@
+import { randomUUID } from 'node:crypto';
+import { getDb } from '../../db/context.js';
+import { ensureFunSchema as applyFunSchema } from '../schema.js';
+
+const A = 'analytics';
+const array = (value) => Array.isArray(value) ? value : [];
+const parse = (value) => { try { const parsed = JSON.parse(value || '[]'); return Array.isArray(parsed) ? parsed : []; } catch { return []; } };
+function map(row) {
+  if (!row) return null;
+  return { id: String(row.id), scopeKey: String(row.scope_key), memoryType: String(row.memory_type), subjectUserJid: String(row.subject_user_jid || ''), targetUserJid: String(row.target_user_jid || ''), threadKey: String(row.thread_key || ''), relatedMessageId: String(row.related_message_id || ''), factText: String(row.fact_text || ''), factKey: String(row.fact_key || ''), confidence: Number(row.confidence) || 0, confirmationLevel: String(row.confirmation_level || 'inferred'), sensitivityLevel: String(row.sensitivity_level || 'safe'), sourceType: String(row.source_type || ''), keywords: parse(row.keywords_json), entities: parse(row.entities_json), firstSeenAt: Number(row.first_seen_at) || 0, lastSeenAt: Number(row.last_seen_at) || 0, expiresAt: Number(row.expires_at) || 0, usageCount: Number(row.usage_count) || 0, suppressed: Boolean(row.suppressed) };
+}
+export function createFunConversationMemoryRepository({ getDatabase = getDb } = {}) {
+  const schema = () => applyFunSchema(getDatabase());
+  function create(input = {}) {
+    schema(); const scopeKey = String(input.scopeKey || ''); if (!scopeKey) return { ok: false, reason: 'invalid-scope' };
+    const now = Number(input.now) || Date.now(); const id = String(input.id || randomUUID());
+    getDatabase().prepare(`INSERT INTO ${A}.fun_conversation_memories (id,scope_key,memory_type,subject_user_jid,target_user_jid,thread_key,related_message_id,fact_text,fact_key,confidence,confirmation_level,sensitivity_level,source_type,keywords_json,entities_json,first_seen_at,last_seen_at,expires_at,usage_count,suppressed) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,scopeKey,String(input.memoryType || 'semantic'),String(input.subjectUserJid || ''),String(input.targetUserJid || ''),String(input.threadKey || ''),String(input.relatedMessageId || ''),String(input.factText || ''),String(input.factKey || ''),Math.max(0,Math.min(1,Number(input.confidence) || 0)),String(input.confirmationLevel || 'inferred'),String(input.sensitivityLevel || 'safe'),String(input.sourceType || 'chat'),JSON.stringify(array(input.keywords).slice(0,20)),JSON.stringify(array(input.entities).slice(0,20)),now,now,Number(input.expiresAt) || 0,0,input.suppressed ? 1 : 0);
+    return { ok: true, memory: getById(scopeKey, id) };
+  }
+  function getById(scopeKey, id) { schema(); return map(getDatabase().prepare(`SELECT * FROM ${A}.fun_conversation_memories WHERE scope_key=? AND id=?`).get(String(scopeKey || ''),String(id || ''))); }
+  function reinforce({ scopeKey, id, confidence, confirmationLevel, now = Date.now() } = {}) { schema(); const existing = getById(scopeKey,id); if (!existing) return { ok:false, reason:'not-found' }; getDatabase().prepare(`UPDATE ${A}.fun_conversation_memories SET confidence=?, confirmation_level=?, last_seen_at=?, usage_count=usage_count+1 WHERE scope_key=? AND id=?`).run(Math.max(existing.confidence,Math.min(1,Number(confidence) || existing.confidence)),String(confirmationLevel || existing.confirmationLevel),Number(now) || Date.now(),String(scopeKey),String(id)); return { ok:true, memory:getById(scopeKey,id) }; }
+  function suppress({ scopeKey, id } = {}) { schema(); const r=getDatabase().prepare(`UPDATE ${A}.fun_conversation_memories SET suppressed=1 WHERE scope_key=? AND id=?`).run(String(scopeKey||''),String(id||'')); return {ok:r.changes>0}; }
+  function expire({ scopeKey, now = Date.now() } = {}) { schema(); const r=getDatabase().prepare(`UPDATE ${A}.fun_conversation_memories SET suppressed=1 WHERE scope_key=? AND expires_at>0 AND expires_at<?`).run(String(scopeKey||''),Number(now)||Date.now()); return {ok:true,count:r.changes}; }
+  function listByFact({ scopeKey, subjectUserJid, factKey } = {}) { schema(); return getDatabase().prepare(`SELECT * FROM ${A}.fun_conversation_memories WHERE scope_key=? AND subject_user_jid=? AND fact_key=? AND suppressed=0`).all(String(scopeKey || ''), String(subjectUserJid || ''), String(factKey || '')).map(map); }
+  function listRankable({ scopeKey, now = Date.now(), limit = 100 } = {}) { schema(); return getDatabase().prepare(`SELECT * FROM ${A}.fun_conversation_memories WHERE scope_key=? AND suppressed=0 AND sensitivity_level='safe' AND (expires_at=0 OR expires_at>=?) ORDER BY confidence DESC,last_seen_at DESC LIMIT ?`).all(String(scopeKey||''),Number(now)||Date.now(),Math.max(1,Math.min(200,Number(limit)||100))).map(map); }
+  return { create, getById, reinforce, suppress, expire, listByFact, listRankable };
+}

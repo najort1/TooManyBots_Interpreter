@@ -856,6 +856,33 @@ export function buildFunSchemaSql() {
 
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_persona_thread_scope
       ON fun_persona_thread(scope_key, last_activity_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_conversation_memories (
+      id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, memory_type TEXT NOT NULL,
+      subject_user_jid TEXT NOT NULL DEFAULT '', target_user_jid TEXT NOT NULL DEFAULT '',
+      thread_key TEXT NOT NULL DEFAULT '', related_message_id TEXT NOT NULL DEFAULT '',
+      fact_text TEXT NOT NULL, fact_key TEXT NOT NULL DEFAULT '', confidence REAL NOT NULL DEFAULT 0,
+      confirmation_level TEXT NOT NULL DEFAULT 'inferred', sensitivity_level TEXT NOT NULL DEFAULT 'safe',
+      source_type TEXT NOT NULL DEFAULT 'chat', keywords_json TEXT NOT NULL DEFAULT '[]', entities_json TEXT NOT NULL DEFAULT '[]',
+      first_seen_at INTEGER NOT NULL, last_seen_at INTEGER NOT NULL, expires_at INTEGER NOT NULL DEFAULT 0,
+      usage_count INTEGER NOT NULL DEFAULT 0, suppressed INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_conversation_memories_scope
+      ON fun_conversation_memories(scope_key, suppressed, sensitivity_level, last_seen_at DESC);
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_thread_contexts (
+      thread_key TEXT NOT NULL, scope_key TEXT NOT NULL, anchor_message_id TEXT NOT NULL DEFAULT '',
+      reply_to_message_id TEXT NOT NULL DEFAULT '', participants_json TEXT NOT NULL DEFAULT '[]',
+      topic_summary TEXT NOT NULL DEFAULT '', open_questions_json TEXT NOT NULL DEFAULT '[]',
+      last_user_jid TEXT NOT NULL DEFAULT '', turn_count INTEGER NOT NULL DEFAULT 0,
+      last_message_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY(scope_key, thread_key)
+    );
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_thread_contexts_scope
+      ON fun_thread_contexts(scope_key, last_message_at DESC);
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_persona_identities (
+      scope_key TEXT PRIMARY KEY, voice_style_json TEXT NOT NULL DEFAULT '[]', allowed_tones_json TEXT NOT NULL DEFAULT '[]',
+      forbidden_tones_json TEXT NOT NULL DEFAULT '[]', signature_traits_json TEXT NOT NULL DEFAULT '[]',
+      group_lore_summary TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL
+    );
   `;
 }
 
