@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '25';
+export const FUN_SCHEMA_VERSION = '26';
 
 export const FUN_COMMANDS = Object.freeze({
   XP: 'xp',
@@ -499,6 +499,15 @@ export const CRASH_TTL_MS = 45_000;
 export const BLACKJACK_TTL_MS = 3 * 60_000;
 export const TOURNAMENT_SIZE = 4;
 
+/** Persona (Bot Membro Vivo) — constantes de guarda e janela (spec 001). */
+export const PERSONA_COOLDOWN_MS = 60_000;
+export const PERSONA_MAX_TURNS = 3;
+export const PERSONA_THREAD_TTL_MS = 30 * 60_000;
+export const PERSONA_WINDOW_SIZE = 100;
+export const PERSONA_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const PERSONA_TIMEOUT_MS = 15_000;
+export const PERSONA_MAX_CHARS = 400;
+
 /** Defaults do bot Fun standalone (não herda config do TMB). */
 export const DEFAULT_FUN_CONFIG = Object.freeze({
   enabled: true,
@@ -860,6 +869,15 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   profileBlocklist: [],
   profileAiExtract: true,
   profileExtractTimeoutMs: 22_000,
+  // Persona (Bot Membro Vivo) — o bot responde como membro quando citado
+  personaEnabled: true,
+  personaCooldownMs: PERSONA_COOLDOWN_MS,
+  personaMaxTurns: PERSONA_MAX_TURNS,
+  personaThreadTtlMs: PERSONA_THREAD_TTL_MS,
+  personaWindowSize: PERSONA_WINDOW_SIZE,
+  personaWindowMs: PERSONA_WINDOW_MS,
+  personaTimeoutMs: PERSONA_TIMEOUT_MS,
+  personaMaxChars: PERSONA_MAX_CHARS,
   // 10 Minutos de Crime — evento diário de caos
   chaosEventEnabled: true,
   chaosEventHour: 23,

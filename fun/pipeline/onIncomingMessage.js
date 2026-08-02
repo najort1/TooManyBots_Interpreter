@@ -114,6 +114,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     qmpService,
     casinoRepository,
     groupMemoryService,
+    personaService,
     profileService,
     socialHooks,
     flavorService,
@@ -550,6 +551,44 @@ export async function handleFunIncomingMessage(deps, ctx) {
       });
     } catch {
       // memória nunca quebra o fluxo
+    }
+  }
+
+  // Persona (Bot Membro Vivo): observa estilo do grupo e tenta responder passivamente
+  // após o roteamento de comandos. Nunca quebra o pipeline.
+  if (isGroup && personaService && scope.scopeKey) {
+    try {
+      if (personaService.observeMessage) {
+        personaService.observeMessage({
+          scopeKey: scope.scopeKey,
+          userJid,
+          text,
+          funConfig,
+          now: Date.now(),
+        });
+      }
+      if (personaService.tryRespond && !isCommand) {
+        const groupSettings = groupRepository?.getGroupSettings
+          ? groupRepository.getGroupSettings(scope.scopeKey)
+          : null;
+        void personaService.tryRespond({
+          scopeKey: scope.scopeKey,
+          text,
+          mentionedJids,
+          quotedParticipant,
+          authorJid: userJid,
+          messageType,
+          sock,
+          identityMap,
+          groupSettings,
+          funConfig,
+          now: Date.now(),
+        }).catch(() => {
+          // persona nunca quebra o pipeline
+        });
+      }
+    } catch {
+      // persona nunca quebra o pipeline
     }
   }
 

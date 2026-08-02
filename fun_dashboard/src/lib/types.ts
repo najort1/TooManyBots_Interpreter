@@ -141,6 +141,8 @@ export type GroupSettings = {
   dailyXp?: number;
   dailyCoins?: number;
   levelUpAnnounce?: boolean;
+  /** Persona (membro vivo) por grupo. Default true. */
+  personaEnabled?: boolean;
   /** Eventos aleatórios do mundo (mercado auto + trégua). Happy hour segue anunciando. Default true. */
   worldEventsEnabled?: boolean;
   /** Jornal diário automático (~23:59). Default true. */

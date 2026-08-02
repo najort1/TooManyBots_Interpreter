@@ -125,6 +125,7 @@ export function buildFunSchemaSql() {
       daily_coins            INTEGER NOT NULL DEFAULT 50,
       rank_limit             INTEGER NOT NULL DEFAULT 10,
       world_events_enabled   INTEGER NOT NULL DEFAULT 1,
+      persona_enabled        INTEGER NOT NULL DEFAULT 1,
       updated_at             INTEGER NOT NULL
     );
 
@@ -829,6 +830,32 @@ export function buildFunSchemaSql() {
 
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_farewells_scope
       ON fun_farewells(scope_key, count DESC);
+
+    -- Persona (Bot Membro Vivo) — schema v26
+    -- Perfil de voz derivado e anonimizado do grupo (FR-014: nunca textos crus).
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_persona_profile (
+      scope_key    TEXT PRIMARY KEY,
+      top_tokens   TEXT NOT NULL DEFAULT '[]',
+      emojis       TEXT NOT NULL DEFAULT '[]',
+      avg_len      REAL NOT NULL DEFAULT 0,
+      style_lines  TEXT NOT NULL DEFAULT '[]',
+      sample_ts    INTEGER NOT NULL DEFAULT 0,
+      updated_at   INTEGER NOT NULL DEFAULT 0
+    );
+
+    -- Thread de conversa contínua da persona com o grupo (FR-006/FR-007/FR-015).
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_persona_thread (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_key        TEXT    NOT NULL,
+      turn_count      INTEGER NOT NULL DEFAULT 0,
+      max_turns       INTEGER NOT NULL DEFAULT 3,
+      last_activity_at INTEGER NOT NULL DEFAULT 0,
+      context          TEXT    NOT NULL DEFAULT '[]',
+      created_at       INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_persona_thread_scope
+      ON fun_persona_thread(scope_key, last_activity_at DESC);
   `;
 }
 
@@ -856,6 +883,11 @@ export function ensureFunSchema(db) {
     if (!names.has('world_events_enabled')) {
       db.exec(
         `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_settings ADD COLUMN world_events_enabled INTEGER NOT NULL DEFAULT 1`
+      );
+    }
+    if (!names.has('persona_enabled')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_settings ADD COLUMN persona_enabled INTEGER NOT NULL DEFAULT 1`
       );
     }
   } catch {

@@ -21,6 +21,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
     dailyXp: 150,
     dailyCoins: 50,
     levelUpAnnounce: true,
+    personaEnabled: true,
     worldEventsEnabled: true,
     journalAutoEnabled: true,
     marketAutoEnabled: true,
@@ -51,6 +52,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
           dailyXp: Number(base.dailyXp ?? 150),
           dailyCoins: Number(base.dailyCoins ?? 50),
           levelUpAnnounce: base.levelUpAnnounce !== false,
+          personaEnabled: base.personaEnabled !== false,
           worldEventsEnabled: base.worldEventsEnabled !== false,
           journalAutoEnabled: base.journalAutoEnabled !== false,
           marketAutoEnabled: base.marketAutoEnabled !== false,
@@ -79,6 +81,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
       await funApi.saveGroupSettings(groupJid, {
         ...form,
         levelUpAnnounce: form.levelUpAnnounce !== false,
+        personaEnabled: form.personaEnabled !== false,
         worldEventsEnabled: form.worldEventsEnabled !== false,
         journalAutoEnabled: form.journalAutoEnabled !== false,
         marketAutoEnabled: form.marketAutoEnabled !== false,
@@ -123,6 +126,21 @@ export function GroupSettingsForm({ groupJid }: Props) {
             <option value="1">Sim</option>
             <option value="0">Não</option>
           </Select>
+        </label>
+        <label className="block text-xs text-zinc-500 dark:text-zinc-400">
+          Persona (membro vivo)
+          <Select
+            className="mt-1"
+            value={form.personaEnabled === false ? "0" : "1"}
+            onChange={(e) => field("personaEnabled", e.target.value === "1")}
+            disabled={loading}
+          >
+            <option value="1">Ligado</option>
+            <option value="0">Desligado</option>
+          </Select>
+          <span className="mt-1 block text-[11px] leading-snug text-zinc-400 dark:text-zinc-500">
+            Faz o bot responder como membro quando citado por &quot;bot&quot; ou @.
+          </span>
         </label>
         <label className="block text-xs text-zinc-500 dark:text-zinc-400">
           Eventos do mundo

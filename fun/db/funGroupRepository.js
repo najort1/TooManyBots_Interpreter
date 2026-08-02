@@ -32,6 +32,10 @@ function mapGroupRow(row) {
     dailyCoins: Number(row.daily_coins) || 50,
     rankLimit: Number(row.rank_limit) || 10,
     worldEventsEnabled,
+    personaEnabled:
+      row.persona_enabled === undefined || row.persona_enabled === null
+        ? true
+        : Number(row.persona_enabled) !== 0,
     permitirNsfw: Number(row.permitir_nsfw ?? 0) !== 0,
     updatedAt: Number(row.updated_at) || 0,
   };
@@ -135,6 +139,16 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       worldEventsEnabled = existing.worldEventsEnabled ? 1 : 0;
     }
 
+    // Default ligado (FR-012); só desliga se explícito false/0
+    let personaEnabled = 1;
+    if (input.personaEnabled === false || input.personaEnabled === 0) {
+      personaEnabled = 0;
+    } else if (input.personaEnabled === true || input.personaEnabled === 1) {
+      personaEnabled = 1;
+    } else if (existing) {
+      personaEnabled = existing.personaEnabled ? 1 : 0;
+    }
+
     let permitirNsfw = 0;
     if (input.permitirNsfw === true || input.permitirNsfw === 1) {
       permitirNsfw = 1;
@@ -162,7 +176,8 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
 
     const columns = [
       'group_jid', 'enabled', 'xp_min', 'xp_max', 'cooldown_ms', 'level_up_announce',
-      'daily_xp', 'daily_coins', 'rank_limit', 'world_events_enabled', 'permitir_nsfw',
+      'daily_xp', 'daily_coins', 'rank_limit', 'world_events_enabled', 'persona_enabled',
+      'permitir_nsfw',
       ...GRANULAR_EVENTS,
       'updated_at',
     ];
@@ -186,6 +201,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       dailyCoins,
       rankLimit,
       worldEventsEnabled,
+      personaEnabled,
       permitirNsfw,
       ...GRANULAR_EVENTS.map((col) => granularCols[col]),
       updatedAt
@@ -218,6 +234,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
         dailyCoins: funConfig.dailyCoins ?? 50,
         rankLimit: funConfig.rankLimit ?? 10,
         worldEventsEnabled: true,
+        personaEnabled: true,
         permitirNsfw: false,
         journalAutoEnabled: true,
         marketAutoEnabled: true,
@@ -237,6 +254,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       dailyCoins: saved.dailyCoins,
       rankLimit: saved.rankLimit,
       worldEventsEnabled: saved.worldEventsEnabled !== false,
+      personaEnabled: saved.personaEnabled !== false,
       permitirNsfw: saved.permitirNsfw === true,
       journalAutoEnabled: saved.journalAutoEnabled !== false,
       marketAutoEnabled: saved.marketAutoEnabled !== false,

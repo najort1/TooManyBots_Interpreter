@@ -114,6 +114,7 @@ Ajuda no zap: `/ajuda` · `/ajuda economia` · `/ajuda mundo` · `/ajuda cassino
 | **Jogos** | `/cf 20 cara` `/sorte` `/aposta @user 20 cara` `/roletarussa` `/puxar` |
 | **Cassino** | `/roleta` `/slot` `/crash` `/bj` `/bingo` `/torneio` `/rankcassino` |
 | **Zoeira** | `/tarot` `/cancelar` `/fofoca` `/oraculo` `/illuminati` `/roast` `/lore` |
+| **Persona** | Cite `bot` ou marque o bot com `@` para ele responder como um membro do grupo. Respeita quiet hours, cooldown e toggle por grupo no dashboard. |
 | **Panelinhas** | `/panelinha` `/ponte` `/missao` `/squad` `/evento` |
 | **Mídia** | `/fig` (legenda na mídia ou reply) |
 | **Privado** | `/grupo` (escopo do DM, se `allowDm`) |

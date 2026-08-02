@@ -955,6 +955,44 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.profileExtractTimeoutMs,
       { min: 5_000, max: 90_000, rounding: 'floor', clamp: true }
     ),
+    personaEnabled: normalizeBoolean(raw.personaEnabled, DEFAULT_FUN_CONFIG.personaEnabled),
+    personaCooldownMs: normalizeInt(
+      raw.personaCooldownMs,
+      DEFAULT_FUN_CONFIG.personaCooldownMs,
+      { min: 10_000, max: 600_000, rounding: 'floor', clamp: true }
+    ),
+    personaMaxTurns: normalizeInt(raw.personaMaxTurns, DEFAULT_FUN_CONFIG.personaMaxTurns, {
+      min: 2,
+      max: 4,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    personaThreadTtlMs: normalizeInt(
+      raw.personaThreadTtlMs,
+      DEFAULT_FUN_CONFIG.personaThreadTtlMs,
+      { min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    personaWindowSize: normalizeInt(
+      raw.personaWindowSize,
+      DEFAULT_FUN_CONFIG.personaWindowSize,
+      { min: 10, max: 500, rounding: 'floor', clamp: true }
+    ),
+    personaWindowMs: normalizeInt(
+      raw.personaWindowMs,
+      DEFAULT_FUN_CONFIG.personaWindowMs,
+      { min: 60 * 60_000, max: 7 * 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    personaTimeoutMs: normalizeInt(
+      raw.personaTimeoutMs,
+      DEFAULT_FUN_CONFIG.personaTimeoutMs,
+      { min: 5_000, max: 15_000, rounding: 'floor', clamp: true }
+    ),
+    personaMaxChars: normalizeInt(raw.personaMaxChars, DEFAULT_FUN_CONFIG.personaMaxChars, {
+      min: 80,
+      max: 1_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
     chaosEventEnabled: normalizeBoolean(
       raw.chaosEventEnabled,
       DEFAULT_FUN_CONFIG.chaosEventEnabled
