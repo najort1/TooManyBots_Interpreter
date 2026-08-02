@@ -32,3 +32,4 @@ CONVENTIONS.md
 /.zcode
 /fun/assets
 tests/_zen-*.mjs
+/.specify
