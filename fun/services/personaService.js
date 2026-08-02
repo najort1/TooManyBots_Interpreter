@@ -74,6 +74,7 @@ function pickRotation(i, arr) {
 export function createPersonaService({
   personaRepository,
   groupRepository,
+  threadContextService = null,
   getLogger = () => null,
   random = Math.random,
 } = {}) {
@@ -102,38 +103,52 @@ export function createPersonaService({
     };
   }
 
-  function normalizeBotJid(sock) {
-    if (!sock?.user?.id) return '';
-    const raw = String(sock.user.id);
-    const colon = raw.indexOf(':');
-    const base = colon > 0 ? raw.slice(0, colon) : raw;
-    const at = base.indexOf('@');
-    return at > 0 ? base : `${base}@s.whatsapp.net`;
+  function normalizeJid(raw) {
+    const jid = String(raw || '').trim();
+    if (!jid) return '';
+    const at = jid.indexOf('@');
+    const user = at >= 0 ? jid.slice(0, at).split(':')[0] : jid.split(':')[0];
+    const domain = at >= 0 ? jid.slice(at) : '@s.whatsapp.net';
+    return user ? `${user}${domain}` : '';
   }
 
   function resolveJid(raw, identityMap) {
-    const jid = String(raw || '').trim();
+    const jid = normalizeJid(raw);
     if (!jid) return '';
-    if (identityMap?.resolve) {
-      const mapped = String(identityMap.resolve(jid) || '').trim();
-      if (mapped) return mapped;
-    }
-    return jid;
+    const mapped = identityMap?.resolve ? normalizeJid(identityMap.resolve(jid)) : '';
+    return mapped || jid;
   }
 
-  function detectTrigger({ text, mentionedJids = [], botJid, identityMap }) {
-    const mentioned = Boolean(text && MENTION_RE.test(String(text)));
-    let atMention = false;
-    if (botJid && Array.isArray(mentionedJids) && mentionedJids.length) {
-      for (const m of mentionedJids) {
-        const resolved = resolveJid(m, identityMap);
-        if (resolved === botJid || String(m || '') === botJid) {
-          atMention = true;
-          break;
-        }
-      }
+  function collectBotJids(sock, identityMap, extraJids = []) {
+    const candidates = [
+      sock?.user?.id, sock?.user?.lid, sock?.user?.pn, sock?.user?.jid,
+      sock?.authState?.creds?.me?.id, sock?.authState?.creds?.me?.lid,
+      sock?.authState?.creds?.me?.pn, sock?.authState?.creds?.me?.jid,
+      ...extraJids,
+    ];
+    const identities = new Set();
+    for (const candidate of candidates) {
+      const raw = normalizeJid(candidate);
+      const resolved = resolveJid(raw, identityMap);
+      if (raw) identities.add(raw);
+      if (resolved) identities.add(resolved);
     }
-    return { mention: mentioned, atMention };
+    return identities;
+  }
+
+  function detectTrigger({ text, mentionedJids = [], botJid, botJids = [], identityMap }) {
+    const mention = Boolean(text && MENTION_RE.test(String(text)));
+    const identities = collectBotJids(null, identityMap, [botJid, ...botJids]);
+    const atMention = Array.isArray(mentionedJids) && mentionedJids.some((jid) => {
+      const raw = normalizeJid(jid);
+      return identities.has(raw) || identities.has(resolveJid(raw, identityMap));
+    });
+    return { mention, atMention };
+  }
+
+  function isTextMessage(messageType) {
+    const type = String(messageType || 'text').toLowerCase();
+    return type === 'text' || type === 'extended-text';
   }
 
   function isInCooldown(scopeKey, now, cooldownMs) {
@@ -165,7 +180,7 @@ export function createPersonaService({
       if (!o.enabled) return { observed: false, reason: 'disabled' };
       const s = String(scopeKey || '');
       if (!s.endsWith('@g.us')) return { observed: false, reason: 'invalid' };
-      if (String(messageType || 'text').toLowerCase() !== 'text') {
+      if (!isTextMessage(messageType)) {
         return { observed: false, reason: 'type' };
       }
       const body = String(text || '').trim();
@@ -314,29 +329,29 @@ export function createPersonaService({
       if (settings?.personaEnabled === false) return { responded: false, reason: 'disabled-group' };
       if (!isGroupMessage(ctx)) return { responded: false, reason: 'not-group' };
 
-      const botJid = normalizeBotJid(ctx.sock);
-      const authorJid = resolveJid(ctx.authorJid, ctx.identityMap);
-      if (botJid && authorJid && authorJid === botJid) return { responded: false, reason: 'self-loop' };
+      const botJids = collectBotJids(ctx.sock, ctx.identityMap);
+      const authorRaw = normalizeJid(ctx.authorJid);
+      const authorJid = resolveJid(authorRaw, ctx.identityMap);
+      if (botJids.has(authorRaw) || botJids.has(authorJid)) return { responded: false, reason: 'self-loop' };
 
       const now = Number(ctx.now) || Date.now();
-      if (String(ctx.messageType || 'text').toLowerCase() !== 'text') return { responded: false, reason: 'message-type' };
-      if (isInCooldown(scopeKey, now, o.cooldownMs)) return { responded: false, reason: 'cooldown' };
+      if (!isTextMessage(ctx.messageType)) return { responded: false, reason: 'message-type' };
       if (inFlightScopes.has(scopeKey)) return { responded: false, reason: 'in-flight' };
 
       const { mention, atMention } = detectTrigger({
         text: ctx.text,
         mentionedJids: ctx.mentionedJids,
-        botJid,
+        botJids: [...botJids],
         identityMap: ctx.identityMap,
       });
 
-      const quotedIsBot = botJid && ctx.quotedParticipant
-        ? resolveJid(ctx.quotedParticipant, ctx.identityMap) === botJid
-        : false;
+      const quotedRaw = normalizeJid(ctx.quotedParticipant);
+      const quotedIsBot = botJids.has(quotedRaw) || botJids.has(resolveJid(quotedRaw, ctx.identityMap));
 
       let thread = personaRepository.getActiveThread(scopeKey, { now, ttlMs: o.threadTtlMs });
       const isContinuation = !mention && !atMention && quotedIsBot && thread;
       if (!mention && !atMention && !isContinuation) return { responded: false, reason: 'no-trigger' };
+      if (!isContinuation && isInCooldown(scopeKey, now, o.cooldownMs)) return { responded: false, reason: 'cooldown' };
       if (isContinuation && thread && thread.turnCount >= thread.maxTurns) return { responded: false, reason: 'thread-limit' };
 
       let threadContext = [];
@@ -350,9 +365,10 @@ export function createPersonaService({
         usedFallback = true;
       }
 
-      if (ctx.sock?.sendMessage && typeof ctx.sock.sendMessage === 'function') {
-        await ctx.sock.sendMessage(scopeKey, { text: response });
-      }
+      const sentMessage = ctx.sock?.sendMessage && typeof ctx.sock.sendMessage === 'function'
+        ? await ctx.sock.sendMessage(scopeKey, { text: response })
+        : null;
+      const responseMessageId = String(sentMessage?.key?.id || '');
 
       setCooldown(scopeKey, now);
 
@@ -375,6 +391,16 @@ export function createPersonaService({
             { role: 'membro', text: String(ctx.text || '').slice(0, 200) },
             { role: 'bot', text: response.slice(0, 200) },
           ],
+          now,
+        });
+      }
+
+      const threadKey = String(ctx.responseContextPack?.threadContext?.threadKey || '');
+      if (responseMessageId && threadKey) {
+        threadContextService?.anchorResponse?.({
+          scopeKey,
+          threadKey,
+          anchorMessageId: responseMessageId,
           now,
         });
       }

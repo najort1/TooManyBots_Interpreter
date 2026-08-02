@@ -13,6 +13,9 @@ import {
 } from '../utils/userLabel.js';
 import { tryPassiveQmpVote } from '../commands/handlers/qmp.js';
 
+const reportDebug = (hypothesisId, location, msg, data = {}) => { void Promise.resolve().then(() => fetch(process.env.DEBUG_SERVER_URL || 'http://127.0.0.1:7777/event', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: process.env.DEBUG_SESSION_ID || 'persona-runtime-signals', runId: 'pre-fix', hypothesisId, location, msg: `[DEBUG] ${msg}`, data, ts: Date.now() }) })).catch(() => {}); };
+const jidDomain = (jid) => String(jid || '').includes('@') ? `@${String(jid).split('@').pop()}` : '';
+
 /**
  * Respostas no privado desabilitadas por padrão (ban/spam do WhatsApp).
  * Mesmo com replyCommandsInPrivate=true no config, o pipeline NÃO envia DM —
@@ -633,7 +636,16 @@ export async function handleFunIncomingMessage(deps, ctx) {
         : null;
       if (funConfig.personaMemoryEnabled !== false) {
         try {
-          memoryIngestionService?.observe?.({ ...memoryEvent, threadKey: resolvedThread?.threadKey || '' });
+          const ingestion = memoryIngestionService?.observe?.({ ...memoryEvent, threadKey: resolvedThread?.threadKey || '' });
+          const memory = ingestion?.ok !== false ? ingestion?.memory : null;
+          if (memory?.factKey && memory?.subjectUserJid) {
+            memoryDecayService?.reconcile?.({
+              scopeKey: memory.scopeKey,
+              subjectUserJid: memory.subjectUserJid,
+              factKey: memory.factKey,
+              now: msgTimeMs,
+            });
+          }
           threadContextService?.observe?.(memoryEvent, resolvedThread);
           memoryDecayService?.expireScope?.(scope.scopeKey, msgTimeMs);
           const socialSignal = socialMemoryService?.observe?.(memoryEvent);
@@ -655,6 +667,9 @@ export async function handleFunIncomingMessage(deps, ctx) {
           '[persona-debug] tryRespond chamado scope=%s text=%j mentionedJids=%j quoted=%j msgType=%s settingsPersona=%s',
           scope.scopeKey, String(text || '').slice(0, 80), mentionedJids, quotedParticipant, messageType, groupSettings?.personaEnabled
         );
+        // #region debug-point persona-runtime-D
+        reportDebug('D', 'pipeline.before-personaService.tryRespond', 'tentativa de persona', { isGroup: Boolean(isGroup), scopeDomain: jidDomain(scope.scopeKey), isCommand: Boolean(isCommand), messageType: String(messageType || ''), mentionedCount: mentionedJids.length, mentionedDomains: [...new Set(mentionedJids.map(jidDomain).filter(Boolean))], hasQuotedParticipant: Boolean(quotedParticipant), quotedDomain: jidDomain(quotedParticipant), hasQuotedMessageId: Boolean(quotedMessageId), groupPersonaEnabled: groupSettings?.personaEnabled, sockUser: { id: Boolean(sock?.user?.id), lid: Boolean(sock?.user?.lid), pn: Boolean(sock?.user?.pn), jid: Boolean(sock?.user?.jid) } });
+        // #endregion
         void personaService.tryRespond({
           scopeKey: scope.scopeKey,
           text,
@@ -670,11 +685,17 @@ export async function handleFunIncomingMessage(deps, ctx) {
           funConfig,
           now: Date.now(),
         }).then((r) => {
+          // #region debug-point persona-runtime-D-result
+          reportDebug('D', 'pipeline.personaService.tryRespond.result', 'resultado da persona', { responded: Boolean(r?.responded), reason: String(r?.reason || ''), usedFallback: Boolean(r?.usedFallback) });
+          // #endregion
           getLogger?.()?.info?.(
             '[persona-debug] tryRespond resultado responded=%s reason=%s usedFallback=%s',
             r?.responded, r?.reason, r?.usedFallback
           );
         }).catch((err) => {
+          // #region debug-point persona-runtime-E-result-error
+          reportDebug('E', 'pipeline.personaService.tryRespond.error', 'erro da persona', { errorName: String(err?.name || 'Error') });
+          // #endregion
           getLogger?.()?.warn?.('[persona-debug] tryRespond erro: %s', String(err?.message || err));
           // persona nunca quebra o pipeline
         });

@@ -33,7 +33,7 @@ function makeSock(botJid) {
   return { user: { id: `${botLocal}:0` } };
 }
 
-function setup(cfg = baseConfig, botJid) {
+function setup(cfg = baseConfig, botJid, threadContextService = null) {
   const personaRepository = createFunPersonaRepository({ getDatabase: getDb });
   const groupRepository = createFunGroupRepository({ getDatabase: getDb });
   const botJ = botJid || uniqueJid('5599');
@@ -42,6 +42,7 @@ function setup(cfg = baseConfig, botJid) {
   const svc = createPersonaService({
     personaRepository,
     groupRepository,
+    threadContextService,
     getLogger: () => null,
     random: () => 0.5,
   });
@@ -131,21 +132,133 @@ test('tryRespond: anti self-loop (autor = bot)', async () => {
   assert.equal(r.reason, 'self-loop');
 });
 
-test('tryRespond: cooldown impede segunda resposta imediata', async () => {
-  const scope = uniqueGroup();
-  const author = uniqueJid();
-  const { svc, sock, identityMap, cfg } = setup();
+test('REGRESSAO persona: menção ao LID próprio responde sem identityMap', async () => {
+  const { svc, sock, botJ, identityMap, cfg } = setup();
+  const botLid = '999999999999999@lid';
+  sock.user.lid = botLid;
+  sock.user.pn = botJ;
   sock.sendMessage = async () => {};
-  const r1 = await svc.tryRespond({
-    scopeKey: scope, text: 'bot eai', mentionedJids: [], authorJid: author,
+
+  const r = await svc.tryRespond({
+    scopeKey: uniqueGroup(), text: 'me responde', mentionedJids: [botLid],
+    authorJid: uniqueJid(), sock, identityMap, funConfig: cfg, now: 1_000_000,
+  });
+
+  assert.equal(identityMap.resolve(botLid), '');
+  assert.equal(r.responded, true);
+});
+
+test('REGRESSAO persona: reply LID próprio continua thread sem identityMap', async () => {
+  const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup();
+  const botLid = '999999999999999@lid';
+  const scope = uniqueGroup();
+  const now = 2_000_000;
+  sock.user.lid = botLid;
+  sock.user.pn = botJ;
+  sock.sendMessage = async () => {};
+
+  const initial = await svc.tryRespond({
+    scopeKey: scope, text: 'bot eai', authorJid: uniqueJid(),
+    sock, identityMap, funConfig: cfg, now,
+  });
+  const reply = await svc.tryRespond({
+    scopeKey: scope, text: 'kkkk concordo', quotedParticipant: botLid,
+    messageType: 'extended-text', authorJid: uniqueJid(), sock, identityMap,
+    funConfig: cfg, now: now + 1,
+  });
+
+  assert.equal(identityMap.resolve(botLid), '');
+  assert.equal(initial.responded, true);
+  assert.equal(reply.responded, true);
+  assert.equal(personaRepository.getActiveThread(scope, { now: now + 1 }).turnCount, 1);
+});
+
+test('REGRESSAO persona: auto mensagem pelo LID próprio não responde', async () => {
+  const { svc, sock, botJ, identityMap, cfg } = setup();
+  const botLid = '999999999999999@lid';
+  sock.user.lid = botLid;
+  sock.user.pn = botJ;
+  sock.sendMessage = async () => {};
+
+  const r = await svc.tryRespond({
+    scopeKey: uniqueGroup(), text: 'bot?', authorJid: botLid,
     sock, identityMap, funConfig: cfg,
   });
-  assert.equal(r1.responded, true);
 
-  const r2 = await svc.tryRespond({
-    scopeKey: scope, text: 'bot de novo', mentionedJids: [], authorJid: author,
-    sock, identityMap, funConfig: cfg, now: Date.now() + 5000,
+  assert.equal(r.responded, false);
+  assert.equal(r.reason, 'self-loop');
+});
+
+test('REGRESSAO persona: @menção real em extended-text responde com texto neutro', async () => {
+  const { svc, sock, botJ, identityMap, cfg } = setup();
+  const scope = uniqueGroup();
+  sock.sendMessage = async () => {};
+
+  const mention = await svc.tryRespond({
+    scopeKey: scope, text: 'me responde', mentionedJids: [botJ], messageType: 'extended-text', authorJid: uniqueJid(),
+    sock, identityMap, funConfig: cfg, now: 1_000_000,
   });
+
+  assert.equal(mention.responded, true);
+});
+
+test('REGRESSAO persona: reply extended-text ao bot continua thread e incrementa turnCount', async () => {
+  const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup();
+  const scope = uniqueGroup();
+  const now = 2_000_000;
+  sock.sendMessage = async () => {};
+
+  const initial = await svc.tryRespond({
+    scopeKey: scope, text: 'bot eai', mentionedJids: [], authorJid: uniqueJid(),
+    sock, identityMap, funConfig: cfg, now,
+  });
+  const reply = await svc.tryRespond({
+    scopeKey: scope, text: 'kkkk concordo', quotedParticipant: botJ, messageType: 'extended-text', authorJid: uniqueJid(),
+    sock, identityMap, funConfig: cfg, now: now + 1,
+  });
+
+  assert.equal(initial.responded, true);
+  assert.equal(reply.responded, true);
+  assert.equal(personaRepository.getActiveThread(scope, { now: now + 1 }).turnCount, 1);
+});
+
+test('REGRESSAO Spec 002: ancora a resposta da persona pelo ID retornado pelo socket', async () => {
+  const anchors = [];
+  const threadContextService = { anchorResponse: (input) => anchors.push(input) };
+  const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, threadContextService);
+  const scope = uniqueGroup();
+  sock.sendMessage = async () => ({ key: { id: 'bot-response-001' } });
+
+  const result = await svc.tryRespond({
+    scopeKey: scope,
+    text: 'bot, fala de cinema',
+    authorJid: uniqueJid(),
+    sock,
+    identityMap,
+    funConfig: cfg,
+    now: 4_000_000,
+    responseContextPack: { threadContext: { threadKey: 'cinema' } },
+  });
+
+  assert.equal(result.responded, true);
+  assert.deepEqual(anchors, [{ scopeKey: scope, threadKey: 'cinema', anchorMessageId: 'bot-response-001', now: 4_000_000 }]);
+});
+
+test('tryRespond: cooldown bloqueia duas chamadas textuais vocativas seguidas', async () => {
+  const scope = uniqueGroup();
+  const { svc, sock, identityMap, cfg } = setup();
+  const now = 3_000_000;
+  sock.sendMessage = async () => {};
+  const r1 = await svc.tryRespond({
+    scopeKey: scope, text: 'bot eai', mentionedJids: [], authorJid: uniqueJid(),
+    sock, identityMap, funConfig: cfg, now,
+  });
+  const r2 = await svc.tryRespond({
+    scopeKey: scope, text: 'bot de novo', mentionedJids: [], authorJid: uniqueJid(),
+    sock, identityMap, funConfig: cfg, now: now + 1,
+  });
+
+  assert.equal(r1.responded, true);
   assert.equal(r2.responded, false);
   assert.equal(r2.reason, 'cooldown');
 });
