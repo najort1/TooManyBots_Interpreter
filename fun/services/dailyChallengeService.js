@@ -19,6 +19,7 @@
 
 import { RIDDLES } from './data/riddles.js';
 import { FALLBACK_GAMES } from './data/guessGameFallback.js';
+import { openaiChatComplete } from '../llm/openaiClient.js';
 
 const CHALLENGE_TYPES = ['guess_game', 'riddle', 'pokemon'];
 const MAX_HINTS = 3;
@@ -168,7 +169,7 @@ export function createDailyChallengeService(deps = {}) {
   const statsRepository = deps.statsRepository;
   const effectsRepository = deps.effectsRepository;
   const flavorService = deps.flavorService;
-  const generateZen = deps.generateZen;
+  const generateZen = deps.generateZen || openaiChatComplete;
   const getConfig = deps.getConfig || (() => ({}));
   const getContactDisplayName = deps.getContactDisplayName || (() => 'alguem');
   const logger = deps.getLogger?.() || null;
@@ -191,7 +192,8 @@ export function createDailyChallengeService(deps = {}) {
     const baseUrl = c.zenBaseUrl || 'http://127.0.0.1:3300';
     const model = c.zenModel || 'gpt-oss:latest';
     const apiKey = c.zenApiKey || '';
-    if (typeof generateZen !== 'function' || c.dailyChallengeEnabled === false) return null;
+    if (typeof generateZen !== 'function' || c.dailyChallengeEnabled === false || c.zenEnabled === false) return null;
+    if (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete) return null;
     try {
       const raw = await generateZen({
         baseUrl,
@@ -428,7 +430,7 @@ export function createDailyChallengeService(deps = {}) {
     if (type === 'guess_game') {
       payload = await launchGuessGame(scopeKey, now);
     } else if (type === 'riddle') {
-      payload = launchRiddle(scopeKey, now);
+      payload = await launchRiddle(scopeKey, now);
     } else if (type === 'pokemon') {
       payload = await launchPokemon(scopeKey, now, sendImage, sharp);
     } else {
@@ -467,6 +469,17 @@ export function createDailyChallengeService(deps = {}) {
       image: payload.image || null,
     });
 
+    /* guess_game: a primeira dica e exibida na mensagem de lancamento.
+       Registra-la como liberada para que o proximo /dica avance para a dica 2
+       (respeitando o cooldown de 10 min), evitando duplicacao. */
+    if (type === 'guess_game' && challenge?.id && Array.isArray(payload?.data?.hints) && payload.data.hints[0]) {
+      try {
+        repository.recordHint(challenge.id, 0, launchedAt, String(payload.data.hints[0]));
+      } catch (err) {
+        log({ err: err?.message }, 'dailyChallenge releaseFirstHint fail');
+      }
+    }
+
     return { ok: true, challenge: { id, type, challengeType: type } };
   }
 
@@ -482,6 +495,19 @@ export function createDailyChallengeService(deps = {}) {
       'Responda APENAS no formato JSON: ' +
       '{"game":"Nome","aliases":["a1","a2"],"hints":["h1","h2","h3"]}';
     const user = 'Gere um jogo popular agora.';
+    return await tryLlmJson(system, user, 45000);
+  }
+
+  async function tryLlmRiddle() {
+    const system =
+      'Voce e um criador de enigmas para WhatsApp. Gere UM enigma curto e inteligente em portugues brasileiro. ' +
+      'REGRAS: o campo "riddle" deve conter o enigma completo, pronto para ser enviado ao grupo. ' +
+      'O campo "answers" deve conter de 1 a 3 respostas aceitas em minusculo, incluindo variacoes comuns. ' +
+      'O enigma NAO pode conter a resposta literal, partes obvias da resposta, nem entregar a resposta de forma direta. ' +
+      'Evite repetir enigmas muito classicos de forma identica; varie o estilo e o objeto. ' +
+      'Responda APENAS no formato JSON: ' +
+      '{"riddle":"O que e, o que e?...","answers":["resposta1","resposta2"]}';
+    const user = 'Gere um enigma popular, claro e respondível agora.';
     return await tryLlmJson(system, user, 45000);
   }
 
@@ -535,24 +561,42 @@ export function createDailyChallengeService(deps = {}) {
 
   /* ---------- Riddle ---------- */
 
-  function launchRiddle(scopeKey, now) {
+  async function launchRiddle(scopeKey, now) {
     const memoryLimit = cfg().dailyChallengeContentMemory?.riddle || 50;
-    const pick = pickNonRepeating(
-      scopeKey,
-      'riddle',
-      RIDDLES.map((r, i) => ({ ...r, key: String(i) + ':' + normalizeAnswer((r.answers || [])[0] || '') })),
-      memoryLimit
-    );
-    if (!pick) return null;
-    const answers = (pick.answers || []).map(normalizeAnswer).filter(Boolean);
-    const answer = answers[0] || '';
-    const data = { riddle: pick.riddle, answers };
+    const llmRiddle = await tryLlmRiddle();
+    let riddle = null;
+    if (llmRiddle?.riddle) {
+      const answers = Array.isArray(llmRiddle.answers)
+        ? llmRiddle.answers.map(normalizeAnswer).filter(Boolean)
+        : [];
+      if (answers.length > 0) {
+        riddle = {
+          riddle: String(llmRiddle.riddle || '').trim(),
+          answers,
+        };
+      }
+    }
+    if (!riddle || !riddle.riddle) {
+      const pick = pickNonRepeating(
+        scopeKey,
+        'riddle',
+        RIDDLES.map((r, i) => ({ ...r, key: String(i) + ':' + normalizeAnswer((r.answers || [])[0] || '') })),
+        memoryLimit
+      );
+      if (!pick) return null;
+      riddle = {
+        riddle: pick.riddle,
+        answers: (pick.answers || []).map(normalizeAnswer).filter(Boolean),
+      };
+    }
+    const answer = riddle.answers[0] || '';
+    const data = { riddle: riddle.riddle, answers: riddle.answers };
 
     return {
       answer,
       data,
       recordContent: () =>
-        repository.recordContent(scopeKey, 'riddle', normalizeAnswer(pick.riddle || '')),
+        repository.recordContent(scopeKey, 'riddle', normalizeAnswer(riddle.riddle || '')),
       kind: 'riddle',
       title: 'DESAFIO DO DIA — ENIGMA',
       header: '🧩',
@@ -756,9 +800,14 @@ export function createDailyChallengeService(deps = {}) {
     const durationMin = Math.max(1, Math.round(((expiresAt || 0) - (ch?.launchedAt || 0)) / 60000));
     let body = '';
     if (type === 'guess_game') {
+      const firstHint = payload?.data?.hints?.[0];
+      const hintBlock = firstHint
+        ? `💡 *Dica 1 (de 3):* ${firstHint}\n\n` +
+          `Próximas dicas em /dica (1 a cada 10 min).\n\n`
+        : `Use /dica para revelar as 3 dicas progressivamente (1 a cada 10 min).\n\n`;
       body =
         `🎯 *${payload.title}*\n\n` +
-        `Use /dica para revelar as 3 dicas progressivamente (1 a cada 10 min).\n\n` +
+        hintBlock +
         `⏳ *Tempo:* ${durationMin} min\n🎁 *Recompensa:* surpresa!\n\n` +
         `💬 *Responda:* /responder <palpite>\n💡 *Dica:* /dica\n🔄 *Pular (3 votos):* /trocar desafio`;
     } else if (type === 'riddle') {

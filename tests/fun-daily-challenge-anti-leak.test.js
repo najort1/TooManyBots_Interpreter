@@ -160,11 +160,12 @@ function stripHintPrefix(msg) {
 }
 
 /* ============================================================ */
-/*  FIX #1 — Lancamento guess_game nao publica dicas            */
+/*  FIX #1 — Lancamento guess_game publica apenas a dica 1     */
+/*  (dica 1 e sutil por design; dicas 2 e 3 ficam no /dica)    */
 /* ============================================================ */
 
 test(
-  'FIX#1: lancamento guess_game NAO publica dicas no body (apenas orientacao /dica)',
+  'FIX#1: lancamento guess_game publica apenas a dica 1 (dicas 2 e 3 ocultas)',
   { skip: !zenReachable ? 'ZEN proxy offline em ' + ZEN_BASE : false, timeout: 90000 },
   withLiveLlm(async () => {
     const { service, repository } = createService({ random: () => 0.5 });
@@ -187,8 +188,17 @@ test(
     const body = messages.filter((m) => /ADIVINHE O JOGO/i.test(m)).join('\n---\n');
     assert.ok(body, 'sem anuncio de lancamento');
 
-    // FIX#1: body do lancamento NAO deve listar as dicas geradas
-    for (let i = 0; i < hints.length; i++) {
+    // dica 1 deve aparecer no lancamento (sutil por design)
+    const hint1 = String(hints[0] || '').trim();
+    if (hint1.length >= 8) {
+      assert.ok(
+        body.includes(hint1),
+        `FIX#1 (revisao): dica 1 nao apareceu no lancamento: "${hint1.slice(0, 60)}..."`
+      );
+    }
+
+    // dicas 2 e 3 NAO devem aparecer no lancamento
+    for (let i = 1; i < hints.length; i++) {
       const h = String(hints[i] || '').trim();
       if (h.length < 8) continue; // skip dicas curtas demais pra falso positivo
       assert.ok(
@@ -197,11 +207,15 @@ test(
       );
     }
     assert.match(body, /\/dica/i, 'lancamento deve orientar uso do /dica');
+
+    // dica 1 deve estar registrada como liberada: proximo /dica avanca para dica 2
+    assert.equal(repository.countHintsUsed(active.id), 1, 'dica 1 deveria constar como liberada');
+    assert.equal(repository.getLastHintIndex(active.id), 0, 'lastHintIndex deveria ser 0');
   })
 );
 
 test(
-  'FIX#1 (10 jogos): lancamento guess_game nunca publica dicas em 10 rodadas',
+  'FIX#1 (10 jogos): lancamento guess_game publica so dica 1 em 10 rodadas',
   { skip: !zenReachable ? 'ZEN proxy offline' : false, timeout: 600000 },
   withLiveLlm(async () => {
     for (let i = 0; i < 10; i++) {
@@ -220,7 +234,9 @@ test(
       const active = repository.getActiveChallenge(scope);
       const hints = active.challengeData?.hints || [];
       const body = messages.filter((m) => /ADIVINHE O JOGO/i.test(m)).join('\n---\n');
-      for (let j = 0; j < hints.length; j++) {
+
+      // dicas 2 e 3 (indices 1+) nao devem aparecer
+      for (let j = 1; j < hints.length; j++) {
         const h = String(hints[j] || '').trim();
         if (h.length < 8) continue;
         assert.ok(

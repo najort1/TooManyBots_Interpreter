@@ -427,6 +427,57 @@ test('dailyChallenge service: launch guess_game usa fallback quando LLM falha', 
   assert.ok(messages.some((m) => /ADIVINHE O JOGO/i.test(m)));
 });
 
+test('dailyChallenge service: launch riddle usa Zen quando JSON valido', async () => {
+  const { service, repository } = createServiceHarness({
+    generateZen: async () => JSON.stringify({
+      riddle: 'O que e, o que e? Fica cheio de paginas, mas nao e biblioteca?',
+      answers: ['caderno', 'livro de notas'],
+    }),
+  });
+  const scope = uniqueGroup();
+  const now = Date.now();
+  const messages = [];
+  const out = await service.launchChallenge({
+    scopeKey: scope,
+    type: 'riddle',
+    now,
+    sendText: async (_to, msg) => messages.push(msg),
+    sendImage: null,
+    sharp: null,
+  });
+  assert.equal(out.ok, true);
+  const active = repository.getActiveChallenge(scope);
+  assert.equal(active.challengeType, 'riddle');
+  assert.equal(active.challengeData.riddle, 'O que e, o que e? Fica cheio de paginas, mas nao e biblioteca?');
+  assert.deepEqual(active.challengeData.answers, ['caderno', 'livro de notas']);
+  assert.ok(messages.some((m) => /DESAFIO DO DIA — ENIGMA/i.test(m)));
+  assert.ok(messages.some((m) => /Fica cheio de paginas/i.test(m)));
+});
+
+test('dailyChallenge service: launch riddle usa fallback quando Zen falha', async () => {
+  const { service, repository } = createServiceHarness({
+    generateZen: async () => 'sem-json-valido',
+    random: () => 0,
+  });
+  const scope = uniqueGroup();
+  const now = Date.now();
+  const messages = [];
+  const out = await service.launchChallenge({
+    scopeKey: scope,
+    type: 'riddle',
+    now,
+    sendText: async (_to, msg) => messages.push(msg),
+    sendImage: null,
+    sharp: null,
+  });
+  assert.equal(out.ok, true);
+  const active = repository.getActiveChallenge(scope);
+  assert.equal(active.challengeType, 'riddle');
+  assert.equal(active.challengeData.riddle, 'O que e, o que e? Quanto mais se tira, maior fica?');
+  assert.deepEqual(active.challengeData.answers, ['buraco', 'buraco negro']);
+  assert.ok(messages.some((m) => /DESAFIO DO DIA — ENIGMA/i.test(m)));
+});
+
 test('dailyChallenge service: launch pokemon usa fetch + sharp + responde por imagem', async () => {
   const prevFetch = global.fetch;
   try {
