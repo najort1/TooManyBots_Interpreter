@@ -142,7 +142,7 @@ function extractQuotedParticipant(msg) {
     ];
 
     for (const ctx of contexts) {
-      const p = String(ctx?.participant || ctx?.participantPn || '').trim();
+      const p = String(ctx?.participantPn || ctx?.participant || '').trim();
       if (p) return p;
     }
 
@@ -474,6 +474,9 @@ export async function startFunBot(options = {}) {
     return 'text';
   }
 
+  const reportDebug = (hypothesisId, location, msg, data = {}) => { void Promise.resolve().then(() => fetch(process.env.DEBUG_SERVER_URL || 'http://127.0.0.1:7777/event', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: process.env.DEBUG_SESSION_ID || 'persona-runtime-signals', runId: 'pre-fix', hypothesisId, location, msg: `[DEBUG] ${msg}`, data, ts: Date.now() }) })).catch(() => {}); };
+  const jidDomain = (jid) => String(jid || '').includes('@') ? `@${String(jid).split('@').pop()}` : '';
+
   async function processIncoming({ sock, msg, type }) {
     if (!messagesEnabled) return;
     if (type !== 'notify') return;
@@ -501,6 +504,10 @@ export async function startFunBot(options = {}) {
     const quotedMessageId = extractQuotedMessageId(msg);
     const identityMap = funModule.identityMap;
 
+    // #region debug-point persona-runtime-A
+    reportDebug('A', 'runtime.processIncoming.before-loadGroupIdentity', 'sinais extraídos', { remoteDomain: jidDomain(parsed.jid), isGroup: Boolean(parsed.isGroup), messageType: parsed.messageType || extractMessageType(msg), mentionedCount: mentionedJids.length, mentionedDomains: [...new Set(mentionedJids.map(jidDomain).filter(Boolean))], hasQuotedParticipant: Boolean(quotedParticipant), quotedDomain: jidDomain(quotedParticipant), hasQuotedMessageId: Boolean(quotedMessageId), hasParticipantPn: Boolean(msg?.message?.extendedTextMessage?.contextInfo?.participantPn), hasParticipant: Boolean(msg?.message?.extendedTextMessage?.contextInfo?.participant) });
+    // #endregion
+
     // Aprende lid→pn sempre que o actor real (PN) chega com key de participante LID.
     if (actorJid) {
       identityMap?.learnFromMessageKey?.(msg?.key || parsed.messageKey, actorJid);
@@ -515,6 +522,10 @@ export async function startFunBot(options = {}) {
 
     mentionedJids = mentionedJids.map((jid) => identityMap?.resolve?.(jid) || jid);
     quotedParticipant = identityMap?.resolve?.(quotedParticipant) || quotedParticipant;
+
+    // #region debug-point persona-runtime-B
+    reportDebug('B', 'runtime.processIncoming.after-identity-resolution', 'identidades mapeadas', { mentionedCount: mentionedJids.length, mentionedDomains: [...new Set(mentionedJids.map(jidDomain).filter(Boolean))], quotedFormat: jidDomain(quotedParticipant), hasQuotedParticipant: Boolean(quotedParticipant), identityMapAvailable: Boolean(identityMap?.resolve) });
+    // #endregion
 
     if (config.debugMode) {
       console.log('[fun] msg', {
