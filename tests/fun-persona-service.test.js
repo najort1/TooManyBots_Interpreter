@@ -566,3 +566,27 @@ test('perfil: grupos diferentes não misturam estilos', () => {
   assert.ok(pb.topTokens.includes('zee'));
   assert.ok(!pb.topTokens.includes('cro'));
 });
+
+test('maybeDeriveProfile: deriva na 1ª chamada, debounce nas seguintes, deriva de novo após intervalo', () => {
+  const cfg = { ...baseConfig, personaDeriveIntervalMs: 60_000 };
+  const { svc, personaRepository } = setup(cfg);
+  const scope = uniqueGroup();
+  for (let i = 0; i < 5; i++) {
+    svc.observeMessage({ scopeKey: scope, userJid: uniqueJid(), text: `msg ${i} do grupo`, funConfig: cfg });
+  }
+  const t0 = Date.now();
+  assert.equal(svc.maybeDeriveProfile(scope, cfg, t0).ok, true, '1ª chamada deve derivar');
+  assert.ok(personaRepository.getProfile(scope), 'perfil deve ser persistido');
+  assert.equal(svc.maybeDeriveProfile(scope, cfg, t0 + 59_999).reason, 'debounced', 'dentro do intervalo não deriva');
+  assert.equal(svc.maybeDeriveProfile(scope, cfg, t0 + 60_001).ok, true, 'após o intervalo deriva de novo');
+});
+
+test('maybeDeriveProfile: janela insuficiente não deriva', () => {
+  const { svc, personaRepository } = setup();
+  const scope = uniqueGroup();
+  for (let i = 0; i < 3; i++) {
+    svc.observeMessage({ scopeKey: scope, userJid: uniqueJid(), text: `msg ${i} do grupo`, funConfig: baseConfig });
+  }
+  assert.equal(svc.maybeDeriveProfile(scope, baseConfig).reason, 'insufficient');
+  assert.equal(personaRepository.getProfile(scope), null, 'não deve criar perfil sem amostra suficiente');
+});
