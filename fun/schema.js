@@ -883,6 +883,21 @@ export function buildFunSchemaSql() {
       forbidden_tones_json TEXT NOT NULL DEFAULT '[]', signature_traits_json TEXT NOT NULL DEFAULT '[]',
       group_lore_summary TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_persona_social_hints (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_key TEXT NOT NULL,
+      participant_jid TEXT NOT NULL,
+      hint_text TEXT NOT NULL,
+      confidence INTEGER NOT NULL DEFAULT 50,
+      social_signal TEXT NOT NULL DEFAULT 'neutral',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      UNIQUE(scope_key, participant_jid, hint_text)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_persona_social_hints_scope_participant
+      ON fun_persona_social_hints(scope_key, participant_jid, updated_at DESC);
   `;
 }
 
@@ -1134,6 +1149,20 @@ export function ensureFunSchema(db) {
       db.exec(
         `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_job_attempts ADD COLUMN practice_at INTEGER NOT NULL DEFAULT 0`
       );
+    }
+  } catch {
+    // ignore
+  }
+
+  // Migra metadados sociais da persona em bancos existentes.
+  try {
+    const hintCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_persona_social_hints)`).all();
+    const hintNames = new Set(hintCols.map((c) => String(c.name || '')));
+    if (hintNames.size && !hintNames.has('confidence')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_persona_social_hints ADD COLUMN confidence INTEGER NOT NULL DEFAULT 50`);
+    }
+    if (hintNames.size && !hintNames.has('social_signal')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_persona_social_hints ADD COLUMN social_signal TEXT NOT NULL DEFAULT 'neutral'`);
     }
   } catch {
     // ignore

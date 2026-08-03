@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '27';
+export const FUN_SCHEMA_VERSION = '28';
 
 export const PERSONA_MEMORY_TYPES = Object.freeze(['thread', 'episodic', 'semantic', 'social']);
 export const PERSONA_MEMORY_EVIDENCE = Object.freeze(['explicit', 'corroborated', 'inferred']);
@@ -518,6 +518,8 @@ export const PERSONA_WINDOW_SIZE = 100;
 export const PERSONA_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const PERSONA_TIMEOUT_MS = 15_000;
 export const PERSONA_MAX_CHARS = 400;
+/** Intervalo mínimo entre derivações do perfil de voz por grupo (evita write a cada msg). */
+export const PERSONA_DERIVE_INTERVAL_MS = 5 * 60_000;
 
 /** Defaults do bot Fun standalone (não herda config do TMB). */
 export const DEFAULT_FUN_CONFIG = Object.freeze({
@@ -891,6 +893,13 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   personaWindowMs: PERSONA_WINDOW_MS,
   personaTimeoutMs: PERSONA_TIMEOUT_MS,
   personaMaxChars: PERSONA_MAX_CHARS,
+  personaDeriveIntervalMs: PERSONA_DERIVE_INTERVAL_MS,
+  // Inferência social assíncrona por lote para a persona.
+  personaSocialHintsEnabled: true,
+  personaSocialHintsBatchSize: 50,
+  personaSocialHintsFlushIntervalMs: 10 * 60_000,
+  personaSocialHintsMinMessages: 8,
+  personaSocialHintsMaxChars: 600,
   // 10 Minutos de Crime — evento diário de caos
   chaosEventEnabled: true,
   chaosEventHour: 23,
