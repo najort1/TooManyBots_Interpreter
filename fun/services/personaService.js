@@ -14,6 +14,7 @@
 import { sanitizeFlavor, looksLikeScoreboardEcho } from '../llm/flavorService.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { PERSONA_DERIVE_INTERVAL_MS } from '../constants.js';
 
 /** Chamadas textuais inequívocas ao bot; menções @ e replies são tratados separadamente. */
 const MENTION_RE = /^\s*(?:bot(?:\s|[?!,.:;]|$)|ei\s+bot(?:\s|[?!,.:;]|$))/iu;
@@ -75,6 +76,7 @@ export function createPersonaService({
   personaRepository,
   groupRepository,
   threadContextService = null,
+  personaSocialHintService = null,
   getLogger = () => null,
   random = Math.random,
 } = {}) {
@@ -100,6 +102,7 @@ export function createPersonaService({
       windowMs: Number(funConfig.personaWindowMs) || 24 * 60 * 60 * 1000,
       timeoutMs: Number(funConfig.personaTimeoutMs) || 15_000,
       maxChars: Number(funConfig.personaMaxChars) || 400,
+      deriveIntervalMs: Number(funConfig.personaDeriveIntervalMs) || PERSONA_DERIVE_INTERVAL_MS,
     };
   }
 
@@ -228,7 +231,7 @@ export function createPersonaService({
 
     for (const m of w.msgs.slice(-3)) sampleLines.push(anonymizeLine(m.text));
 
-    return personaRepository.upsertProfile({
+    const persisted = personaRepository.upsertProfile({
       scopeKey: s,
       topTokens,
       emojis,
@@ -237,6 +240,23 @@ export function createPersonaService({
       sampleTs: t,
       now: t,
     });
+    if (persisted.ok) w.lastDeriveAt = t;
+    return persisted;
+  }
+
+  /**
+   * Versão com debounce do deriveAndPersistProfile, usada no fluxo real (por mensagem).
+   * Só deriva quando a janela tem amostra suficiente e o intervalo mínimo passou.
+   */
+  function maybeDeriveProfile(scopeKey, funConfig = {}, now = Date.now()) {
+    const s = String(scopeKey || '');
+    if (!s.endsWith('@g.us')) return { ok: false, reason: 'invalid' };
+    const w = windows.get(s);
+    if (!w || w.msgs.length < 5) return { ok: false, reason: 'insufficient' };
+    const t = Number(now) || Date.now();
+    const intervalMs = opts(funConfig).deriveIntervalMs;
+    if (w.lastDeriveAt && t - w.lastDeriveAt < intervalMs) return { ok: false, reason: 'debounced' };
+    return deriveAndPersistProfile(s, funConfig, t);
   }
 
   function buildStyleBlock(scopeKey) {
@@ -277,10 +297,15 @@ export function createPersonaService({
     return parts.join('\n');
   }
 
-  async function generateResponse({ text, scopeKey, funConfig, threadContext, responseContextPack }) {
+  async function generateResponse({ text, scopeKey, funConfig, threadContext, responseContextPack, participantJids = [] }) {
     const o = opts(funConfig);
     const identityStyle = responseContextPack?.groupIdentity?.voiceStyle?.join(', ') || '';
-    const styleBlock = [buildStyleBlock(scopeKey), identityStyle].filter(Boolean).join('\n');
+    const socialHints = (personaSocialHintService?.getHints?.(scopeKey, participantJids, { limit: 6 }) || [])
+      .filter((hint) => hint.socialSignal !== 'negative' && Number(hint.confidence) >= 60);
+    const socialHintBlock = socialHints.length
+      ? `Pistas sociais inferidas e incertas (não são fatos; não as declare como verdade):\n${socialHints.map((hint) => `- ${hint.hintText}`).join('\n')}`
+      : '';
+    const styleBlock = [buildStyleBlock(scopeKey), identityStyle, socialHintBlock].filter(Boolean).join('\n');
     const contextTurns = responseContextPack?.threadContext?.topicSummary
       ? [...(threadContext || []), { role: 'contexto', text: responseContextPack.threadContext.topicSummary }]
       : threadContext;
@@ -358,7 +383,14 @@ export function createPersonaService({
       if (thread?.context?.length) threadContext = thread.context;
 
       inFlightScopes.add(scopeKey);
-      let response = await generateResponse({ text: ctx.text, scopeKey, funConfig: ctx.funConfig, threadContext, responseContextPack: ctx.responseContextPack });
+      let response = await generateResponse({
+        text: ctx.text,
+        scopeKey,
+        funConfig: ctx.funConfig,
+        threadContext,
+        responseContextPack: ctx.responseContextPack,
+        participantJids: [authorJid, ...(ctx.mentionedJids || []), quotedRaw].filter(Boolean),
+      });
       let usedFallback = false;
       if (!response) {
         response = fallbackResponse(now);
@@ -419,6 +451,7 @@ export function createPersonaService({
     tryRespond,
     observeMessage,
     deriveAndPersistProfile,
+    maybeDeriveProfile,
     detectTrigger,
     isInCooldown,
     buildStyleBlock,
