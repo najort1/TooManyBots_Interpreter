@@ -139,6 +139,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     qmpService,
     casinoRepository,
     groupMemoryService,
+    personaSocialHintService,
     personaService,
     personaContextService,
     threadContextService,
@@ -612,6 +613,17 @@ export async function handleFunIncomingMessage(deps, ctx) {
     }
   }
 
+  // Inferência social roda em lote e nunca aguarda o LLM no caminho da mensagem.
+  if (isGroup && personaSocialHintService?.observeMessage && scope.scopeKey) {
+    try {
+      personaSocialHintService.observeMessage({
+        scopeKey: scope.scopeKey, userJid, text, messageType, funConfig, now: Date.now(), isGroup: true,
+      });
+    } catch {
+      // pistas sociais nunca quebram o fluxo
+    }
+  }
+
   // Persona (Bot Membro Vivo): observa estilo do grupo e tenta responder passivamente
   // após o roteamento de comandos. Nunca quebra o pipeline.
   if (isGroup && personaService && scope.scopeKey) {
@@ -625,6 +637,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
           funConfig,
           now: Date.now(),
         });
+        // Deriva/persiste o perfil de voz do grupo com debounce interno (não grava a cada msg).
+        personaService.maybeDeriveProfile?.(scope.scopeKey, funConfig, Date.now());
       }
       const memoryEvent = {
         scopeKey: scope.scopeKey, authorJid: userJid, text, messageId, quotedMessageId,
