@@ -40,6 +40,13 @@ pt-BR, sem inventar nomes que não estejam nos fatos. Máx 450 caracteres. Sem m
 
 const PERSONA_CACHE_TTL_MS = 30 * 60_000;
 
+/**
+ * Abaixo deste Jaccard entre o summary gravado e o novo, o reforço NÃO sobrescreve
+ * o texto nem infla o score — texto muito divergente pode ser erro de atribuição
+ * da LLM, e sobrescrever consolidaria o erro na lore.
+ */
+const TEXT_CONFLICT_THRESHOLD = 0.35;
+
 function numOr(v, fb) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fb;
@@ -655,24 +662,31 @@ export function createGroupMemoryService({
 
         const hit = findSimilar(existing, fact);
         if (hit) {
+          // Anti-consolidação de erro: texto muito divergente do gravado não
+          // sobrescreve o summary nem infla o score — reforço convergindo pra média.
+          const textSim = jaccard(tokenSet(hit.summary), tokenSet(fact.summary));
+          const compatible = textSim >= TEXT_CONFLICT_THRESHOLD;
           memoryRepository.reinforceFact(hit.id, {
             summary: fact.summary.slice(0, o.summaryMax),
-            score: fact.score,
+            score: compatible ? fact.score : Math.round((hit.score + fact.score) / 2),
             keywords: fact.keywords,
-            overwriteSummary: true,
+            overwriteSummary: compatible,
             now,
           });
           reinforced += 1;
           const idx = existing.findIndex((e) => e.id === hit.id);
           if (idx >= 0) {
+            const prev = existing[idx];
             existing[idx] = {
-              ...existing[idx],
-              summary: fact.summary.slice(0, o.summaryMax),
-              score: Math.max(existing[idx].score, fact.score),
+              ...prev,
+              summary: compatible ? fact.summary.slice(0, o.summaryMax) : prev.summary,
+              score: compatible
+                ? Math.max(prev.score, fact.score)
+                : Math.max(prev.score, Math.round((prev.score + fact.score) / 2)),
               keywords: [
-                ...new Set([...(existing[idx].keywords || []), ...(fact.keywords || [])]),
+                ...new Set([...(prev.keywords || []), ...(fact.keywords || [])]),
               ].slice(0, 12),
-              hits: (existing[idx].hits || 1) + 1,
+              hits: (prev.hits || 1) + 1,
               lastSeenAt: now,
             };
           }
@@ -751,40 +765,50 @@ export function createGroupMemoryService({
     const fKw = new Set((fact.keywords || []).map(normalizeKey).filter(Boolean));
     const fSubjects = new Set((fact.subjects || []).map(String));
 
+    // Anti-fusão de autoria: só trata como "mesmo fato" o que envolve a MESMA pessoa.
+    // Sem subject em comum, dois resumos parecidos NUNCA se fundem — evita que um
+    // erro de atribuição da LLM sobrescreva/consolide o fato de outra pessoa.
+    const overlapsSubject = (e) => (e.subjects || []).some((x) => fSubjects.has(String(x)));
+
     // 1) assinatura barata (top-3 tokens)
     if (fSig) {
       for (const e of existing) {
         const eSig = keywordSignature(e.keywords, e.summary);
-        if (eSig && eSig === fSig) return e;
+        if (eSig && eSig === fSig && overlapsSubject(e)) return e;
       }
     }
 
     let best = null;
     let bestScore = 0;
     for (const e of existing) {
+      // Anti-fusão de autoria: sem subject em comum, o fato NUNCA casa — dois
+      // eventos de pessoas diferentes não se fundem nem sobrescrevem (evita
+      // consolidar erro de atribuição da LLM, ex.: trocar o autor de um mico).
+      if (!overlapsSubject(e)) continue;
+
       const eTokens = tokenSet(e.summary);
       const sim = jaccard(fTokens, eTokens);
       const kwSim = jaccard(fKw, new Set((e.keywords || []).map(normalizeKey)));
       let s = Math.max(sim, kwSim * 0.9);
 
-      // mesma kind + subjects sobrepostos → limiar mais baixo (overwrite)
+      // mesma kind + subject em comum → limiar mais baixo (overwrite)
       const sameKind = e.kind === fact.kind;
-      const subjOverlap = (e.subjects || []).some((x) => fSubjects.has(String(x)));
-      if (sameKind && subjOverlap) {
+      if (sameKind) {
         s = Math.max(s, sim + 0.08);
         if (sim >= 0.3) s = Math.max(s, 0.45);
       }
 
-      if (s > bestScore) {
+      if (s >= 0.42 && s > bestScore) {
         bestScore = s;
         best = e;
       }
     }
-    if (bestScore >= 0.42) return best;
+    if (best) return best;
 
     const n = normalizeKey(fact.summary);
     for (const e of existing) {
       const en = normalizeKey(e.summary);
+      if (!overlapsSubject(e)) continue;
       if (n && en && (n.includes(en) || en.includes(n)) && Math.min(n.length, en.length) >= 20) {
         return e;
       }

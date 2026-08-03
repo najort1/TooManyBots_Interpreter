@@ -652,6 +652,132 @@ test('groupMemoryService: dedup reforça e sobrescreve summary', async () => {
   }
 });
 
+test('groupMemoryService: anti-fusão — fatos de pessoas diferentes nunca se fundem', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const repo = createFunMemoryRepository({ getDatabase: getDb });
+    const scope = uniqueGroup();
+    const fulano = uniqueJid('5511');
+    const sicrano = uniqueJid('5522');
+    const names = { [fulano]: 'Fulano', [sicrano]: 'Sicrano' };
+    let round = 0;
+    const mem = createGroupMemoryService({
+      memoryRepository: repo,
+      getContactDisplayName: (j) => names[j] || j.split('@')[0],
+      generateZen: async () => {
+        round += 1;
+        return JSON.stringify({
+          facts: [
+            {
+              kind: 'epic_fail',
+              summary:
+                round === 1
+                  ? 'Fulano perdeu tudo no cassino ontem'
+                  : 'Sicrano perdeu tudo no cassino ontem',
+              subjects: [0],
+              keywords: ['cassino'],
+              score: 80,
+            },
+          ],
+        });
+      },
+      generateOllama: async () => '{"facts":[]}',
+    });
+    const cfg = resolveFunConfig({ memoryMinScore: 20, zenEnabled: true });
+
+    // flush 1: mico do Fulano
+    for (let i = 0; i < 3; i += 1) {
+      mem._pushRaw(scope, {
+        userJid: fulano,
+        name: 'Fulano',
+        text: `perdi tudo no cassino ${i}`,
+        at: Date.now(),
+      });
+    }
+    await mem.forceFlush(scope, cfg);
+
+    // flush 2: texto quase idêntico, mas autor é o Sicrano
+    for (let i = 0; i < 3; i += 1) {
+      mem._pushRaw(scope, {
+        userJid: sicrano,
+        name: 'Sicrano',
+        text: `perdi tudo no cassino ${i}`,
+        at: Date.now(),
+      });
+    }
+    await mem.forceFlush(scope, cfg);
+
+    const facts = repo.listFacts(scope, { limit: 20, minScore: 0 });
+    assert.equal(facts.length, 2, 'eventos de pessoas diferentes ficam separados');
+    assert.ok(facts.every((f) => f.hits === 1), 'não reforçou um com o texto do outro');
+    assert.ok(facts.some((f) => f.subjects.includes(fulano)));
+    assert.ok(facts.some((f) => f.subjects.includes(sicrano)));
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});
+
+test('groupMemoryService: reforço com texto divergente não sobrescreve summary nem infla score', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const repo = createFunMemoryRepository({ getDatabase: getDb });
+    const scope = uniqueGroup();
+    const u = uniqueJid('5544');
+    let round = 0;
+    const mem = createGroupMemoryService({
+      memoryRepository: repo,
+      getContactDisplayName: () => 'Gabriel',
+      generateZen: async () => {
+        round += 1;
+        return JSON.stringify({
+          facts: [
+            {
+              kind: 'running_gag',
+              summary:
+                round === 1
+                  ? 'Gabriel admitiu ter tido uma queda pela Fada Madrinha e Eduardo cravou: comedor de furry'
+                  : 'Gabriel chamou Eduardo de comedor de furry',
+              subjects: [0],
+              keywords: ['furry', 'comedor'],
+              score: round === 1 ? 88 : 72,
+            },
+          ],
+        });
+      },
+      generateOllama: async () => '{"facts":[]}',
+    });
+    const cfg = resolveFunConfig({ memoryMinScore: 20, zenEnabled: true });
+
+    for (let r = 0; r < 2; r += 1) {
+      for (let i = 0; i < 3; i += 1) {
+        mem._pushRaw(scope, {
+          userJid: u,
+          name: 'Gabriel',
+          text: `meme do furry round ${r}-${i}`,
+          at: Date.now(),
+        });
+      }
+      await mem.forceFlush(scope, cfg);
+    }
+
+    const facts = repo.listFacts(scope, { limit: 20, minScore: 0 });
+    assert.equal(facts.length, 1, 'mesma pessoa + keywords iguais → reforça (1 fato)');
+    assert.equal(facts[0].hits, 2);
+    assert.match(
+      facts[0].summary,
+      /Fada Madrinha/,
+      'summary original preservado — texto conflitante não sobrescreve'
+    );
+    assert.equal(facts[0].score, 88, 'score não infla com texto divergente');
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});
+
 test('handlers: /lore e /esquecelore tudo sim', async () => {
   const repo = createFunMemoryRepository({ getDatabase: getDb });
   const scope = uniqueGroup();

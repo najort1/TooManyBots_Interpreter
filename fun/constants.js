@@ -851,7 +851,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   achievementsEnabled: true,
   // Memória persistente por grupo (lore seletiva)
   memoryEnabled: true,
-  memoryMaxFacts: 50,
+  memoryMaxFacts: 120,
   memorySummaryMaxChars: 160,
   memoryPersonaMaxChars: 500,
   // Modelo grande (~40k chars): manda contexto de conversa de verdade, não 8 linhas
@@ -861,7 +861,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   memoryMinMsgChars: 12,
   memoryExtractTimeoutMs: 45_000,
   memoryTtlDays: 45,
-  memoryMinScore: 35,
+  memoryMinScore: 60,
   /** Teto do bloco de mensagens no prompt de extract (chars). System+regras cabem à parte. */
   memoryExtractMaxChars: 36_000,
   /** Quantos fatos “já sabemos” cabem no prompt. */
