@@ -48,6 +48,7 @@ import { createFunNsfwVoteRepository } from './db/funNsfwVoteRepository.js';
 import { createFunNsfwService } from './services/funNsfwService.js';
 import { createFunMemoryRepository } from './db/funMemoryRepository.js';
 import { createFunPersonaRepository } from './db/funPersonaRepository.js';
+import { createFunPersonaSocialHintRepository } from './db/funPersonaSocialHintRepository.js';
 import { createFunProfileRepository } from './db/funProfileRepository.js';
 import { createFunCardRepository } from './db/funCardRepository.js';
 import { createFunQmpRepository } from './db/funQmpRepository.js';
@@ -55,6 +56,7 @@ import { createFunDailyChallengeRepository } from './db/funDailyChallengeReposit
 import { createDailyChallengeService } from './services/dailyChallengeService.js';
 import { createGroupMemoryService } from './services/groupMemoryService.js';
 import { createPersonaService } from './services/personaService.js';
+import { createPersonaSocialHintService } from './services/personaSocialHintService.js';
 import { createFunConversationMemoryRepository } from './db/funConversationMemoryRepository.js';
 import { createFunThreadContextRepository } from './db/funThreadContextRepository.js';
 import { createFunPersonaIdentityRepository } from './db/funPersonaIdentityRepository.js';
@@ -289,6 +291,13 @@ export function createFunModule(deps = {}) {
       generateOllama: deps.ollamaGenerate || deps.generate,
       getNewsService: () => newsService,
     });
+  const personaSocialHintRepository = deps.personaSocialHintRepository || createFunPersonaSocialHintRepository({ getDatabase });
+  const personaSocialHintService = deps.personaSocialHintService || createPersonaSocialHintService({
+    repository: personaSocialHintRepository,
+    getContactDisplayName: resolveContactName,
+    getLogger,
+    generateZen: deps.openaiChatComplete || deps.zenGenerate,
+  });
   const conversationMemoryRepository = deps.conversationMemoryRepository || createFunConversationMemoryRepository({ getDatabase });
   const threadContextRepository = deps.threadContextRepository || createFunThreadContextRepository({ getDatabase });
   const personaIdentityRepository = deps.personaIdentityRepository || createFunPersonaIdentityRepository({ getDatabase });
@@ -305,6 +314,7 @@ export function createFunModule(deps = {}) {
       personaRepository,
       groupRepository,
       threadContextService,
+      personaSocialHintService,
       getLogger,
     });
   const flavorService =
@@ -475,12 +485,14 @@ export function createFunModule(deps = {}) {
         qmpService,
         casinoRepository,
         groupMemoryService,
+        personaSocialHintService,
         personaService,
         personaContextService,
         threadContextService,
         memoryIngestionService,
         memoryDecayService,
         personaIdentityService,
+        socialMemoryService,
         profileService,
         socialHooks,
         flavorService,
@@ -587,6 +599,15 @@ export function createFunModule(deps = {}) {
           ok: false,
           reason: err?.message || 'memory-tick-error',
         });
+      }
+    }
+
+    if (personaSocialHintService?.flushDueScopes) {
+      try {
+        const socialHints = await personaSocialHintService.flushDueScopes(funConfig, now);
+        if (socialHints?.results?.length) results.push(...socialHints.results);
+      } catch (err) {
+        results.push({ kind: 'persona-social-hints', ok: false, reason: err?.message || 'persona-social-hints-tick-error' });
       }
     }
 
