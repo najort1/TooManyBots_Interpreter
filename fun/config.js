@@ -957,6 +957,21 @@ export function normalizeFunConfig(input) {
     ),
     personaEnabled: normalizeBoolean(raw.personaEnabled, DEFAULT_FUN_CONFIG.personaEnabled),
     personaMemoryEnabled: normalizeBoolean(raw.personaMemoryEnabled, DEFAULT_FUN_CONFIG.personaMemoryEnabled),
+    personaSocialHintsEnabled: normalizeBoolean(raw.personaSocialHintsEnabled, DEFAULT_FUN_CONFIG.personaSocialHintsEnabled),
+    personaSocialHintsBatchSize: normalizeInt(raw.personaSocialHintsBatchSize, DEFAULT_FUN_CONFIG.personaSocialHintsBatchSize, {
+      min: 8, max: 200, rounding: 'floor', clamp: true,
+    }),
+    personaSocialHintsFlushIntervalMs: normalizeInt(
+      raw.personaSocialHintsFlushIntervalMs,
+      DEFAULT_FUN_CONFIG.personaSocialHintsFlushIntervalMs,
+      { min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    personaSocialHintsMinMessages: normalizeInt(raw.personaSocialHintsMinMessages, DEFAULT_FUN_CONFIG.personaSocialHintsMinMessages, {
+      min: 3, max: 100, rounding: 'floor', clamp: true,
+    }),
+    personaSocialHintsMaxChars: normalizeInt(raw.personaSocialHintsMaxChars, DEFAULT_FUN_CONFIG.personaSocialHintsMaxChars, {
+      min: 120, max: 2000, rounding: 'floor', clamp: true,
+    }),
     personaMemoryMaxContextItems: normalizeInt(raw.personaMemoryMaxContextItems, DEFAULT_FUN_CONFIG.personaMemoryMaxContextItems, {
       min: 1, max: 20, rounding: 'floor', clamp: true,
     }),
