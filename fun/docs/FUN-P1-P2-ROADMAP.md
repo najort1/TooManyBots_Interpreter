@@ -5,6 +5,20 @@
 
 ---
 
+## Auto-aprimoramento de dados (implementado incrementalmente)
+
+O sistema de self-healing registra evidências de mensagens e propostas em trilha de auditoria, sempre isoladas por `scope_key`. A LLM só sugere achados estruturados; validadores determinísticos e repositórios de domínio controlam qualquer efeito.
+
+| Fase | Cobertura | Política |
+|---|---|---|
+| 1 | Lore/memória do grupo | Corrige autoria e texto com evidência; fatos sem fonte ficam `unverified`. |
+| 2 | Memórias de conversa | Promoções e deduplicações de baixo risco; rebaixamento/supressão exigem revisão. |
+| 3 | Economia e perfis | Anomalias são reportadas; reparos estruturais ficam pendentes para revisão. |
+
+O painel **Auto-aprimorar** permite consultar varreduras e auditorias, alternar `dry-run`/habilitação e revisar pendências. As flags são persistidas em `fun/config.user.json` e entram em vigor quando o runtime recarrega a configuração. Detalhes de estado anterior/posterior não são expostos na listagem padrão da API.
+
+---
+
 ## Estado do P0 (referência)
 
 | Feature | Comandos | Tabelas |

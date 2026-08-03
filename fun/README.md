@@ -55,6 +55,30 @@ Detalhes da UI: [`fun_dashboard/README.md`](../fun_dashboard/README.md).
 
 A persona preserva os gatilhos e fallback existentes, mas agora observa mensagens de grupo para manter threads por reply, fatos explícitos e uma identidade local. A recuperação é sempre isolada por `scope_key`: fatos confirmados são separados de sinais inferidos, e registros sensíveis, suprimidos ou expirados não entram no prompt. Configure `personaMemoryEnabled` e `personaMemoryMaxContextItems` em `fun/config.user.json` para desativar ou limitar essa camada.
 
+## Auto-aprimoramento de dados
+
+O auto-aprimoramento audita periodicamente dados do grupo. A LLM apenas propõe achados estruturados; ela não recebe escrita no banco. A camada determinística valida schema, escopo e evidência antes de aplicar qualquer correção.
+
+- **Evidência**: mensagens elegíveis são normalizadas, recebem hash e ficam em retenção configurável. Não persiste mídia, comandos ou conteúdo sensível.
+- **Autonomia com guardrails**: correções comprovadas de baixo risco (autoria, texto, deduplicação) podem ser aplicadas; exclusões, economia, perfis sensíveis e supressões viram pendência de revisão administrativa.
+- **Segurança operacional**: cada ação, rejeição ou simulação fica em auditoria; a varredura respeita `scope_key`, quiet hours, orçamento e falhas de LLM sem bloquear o bot.
+- **Admin**: no dashboard, a seção **Auto-aprimoramento** permite habilitar/desabilitar, executar varredura manual, usar dry-run, consultar histórico e decidir pendências de alto risco.
+
+Configuração recomendada em `fun/config.user.json`:
+
+```json
+{
+  "selfHealEnabled": true,
+  "selfHealDryRun": true,
+  "selfHealIntervalMs": 600000,
+  "selfHealEvidenceRetentionDays": 60,
+  "selfHealMaxItemsPerRun": 50,
+  "selfHealMaxCallsPerRun": 10
+}
+```
+
+Comece com `selfHealDryRun: true`. Nesse modo o relatório e a trilha de auditoria são gravados, mas fatos, memórias, economia e perfis não sofrem alterações. Após revisar os achados, desative o dry-run para permitir somente ações de baixo risco comprovadas. A cobertura é incremental: lore do grupo, memórias de conversa, e verificações de economia/perfis.
+
 ## Configuração
 
 | Arquivo | Função |
@@ -88,10 +112,9 @@ Campos úteis (exemplo):
 Cascata de sabor / eventos / zoeira:
 
 1. **Zen** (`zenBaseUrl`, default `http://127.0.0.1:3000`)
-2. **Ollama** (`ollamaBaseUrl`, default `http://127.0.0.1:11434`)
-3. **Templates** locais se ambos falharem
+2. **Templates** locais se o Zen estiver indisponível ou se chamadas reais estiverem desabilitadas
 
-Testes setam `FUN_DISABLE_LIVE_LLM=1` para não bater rede.
+O fallback Ollama está descontinuado no runtime. Testes setam `FUN_DISABLE_LIVE_LLM=1` para não bater rede.
 
 ### Dados e isolamento
 
