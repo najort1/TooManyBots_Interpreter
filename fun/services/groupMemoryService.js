@@ -481,6 +481,7 @@ export function createGroupMemoryService({
   generateZen = openaiChatComplete,
   generateOllama = ollamaGenerate,
   getNewsService = null,
+  evidenceRepository = null,
 } = {}) {
   if (!memoryRepository) throw new Error('[fun/groupMemoryService] memoryRepository required');
 
@@ -575,6 +576,7 @@ export function createGroupMemoryService({
     userJid,
     text,
     messageType = 'text',
+    messageId = '',
     funConfig = {},
     now = Date.now(),
     isGroup = true,
@@ -590,6 +592,16 @@ export function createGroupMemoryService({
     if (looksSensitive(body)) return { observed: false, reason: 'sensitive' };
     if (!body && messageType && messageType !== 'text') {
       return { observed: false, reason: 'media-empty' };
+    }
+    if (evidenceRepository && messageId) {
+      evidenceRepository.insertEvidence({
+        scopeKey,
+        messageId,
+        authorJid: userJid,
+        text: body,
+        now,
+        retentionDays: funConfig.selfHealEvidenceRetentionDays,
+      });
     }
 
     const buf = getBuf(scopeKey);

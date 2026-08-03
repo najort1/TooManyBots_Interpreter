@@ -579,6 +579,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
         userJid,
         text,
         messageType,
+        messageId,
         funConfig,
         now: Date.now(),
         isGroup: true,

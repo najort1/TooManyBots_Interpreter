@@ -47,6 +47,9 @@ import { createAchievementService } from './services/achievementService.js';
 import { createFunNsfwVoteRepository } from './db/funNsfwVoteRepository.js';
 import { createFunNsfwService } from './services/funNsfwService.js';
 import { createFunMemoryRepository } from './db/funMemoryRepository.js';
+import { createFunEvidenceRepository } from './db/funEvidenceRepository.js';
+import { createFunSelfHealRepository } from './db/funSelfHealRepository.js';
+import { createSelfHealingService } from './services/selfHealingService.js';
 import { createFunPersonaRepository } from './db/funPersonaRepository.js';
 import { createFunPersonaSocialHintRepository } from './db/funPersonaSocialHintRepository.js';
 import { createFunProfileRepository } from './db/funProfileRepository.js';
@@ -279,6 +282,20 @@ export function createFunModule(deps = {}) {
     });
   const memoryRepository =
     deps.memoryRepository || createFunMemoryRepository({ getDatabase });
+  const evidenceRepository =
+    deps.evidenceRepository || createFunEvidenceRepository({ getDatabase });
+  const selfHealRepository =
+    deps.selfHealRepository || createFunSelfHealRepository({ getDatabase });
+  const selfHealingService =
+    deps.selfHealingService ||
+    createSelfHealingService({
+      selfHealRepository,
+      evidenceRepository,
+      memoryRepository,
+      getLogger,
+      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      getConfig: () => resolveFunConfig(getConfig() || {}),
+    });
   const personaRepository =
     deps.personaRepository || createFunPersonaRepository({ getDatabase });
   const groupMemoryService =
@@ -290,6 +307,7 @@ export function createFunModule(deps = {}) {
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
       generateOllama: deps.ollamaGenerate || deps.generate,
       getNewsService: () => newsService,
+      evidenceRepository,
     });
   const personaSocialHintRepository = deps.personaSocialHintRepository || createFunPersonaSocialHintRepository({ getDatabase });
   const personaSocialHintService = deps.personaSocialHintService || createPersonaSocialHintService({
@@ -425,6 +443,7 @@ export function createFunModule(deps = {}) {
     });
 
   let initialized = false;
+  let lastSelfHealAt = 0;
 
   function init() {
     repository.ensureFunSchema();
@@ -572,6 +591,18 @@ export function createFunModule(deps = {}) {
     const nameResolver = nameFn || resolveContactName;
     const results = [];
     const quiet = isWorldQuietHours(funConfig, now);
+
+    if (funConfig.selfHealEnabled && !quiet && now - lastSelfHealAt >= funConfig.selfHealIntervalMs) {
+      lastSelfHealAt = now;
+      const maxCalls = Math.min(groups.length, funConfig.selfHealMaxCallsPerRun);
+      for (const scopeKey of groups.slice(0, maxCalls)) {
+        try {
+          results.push(await selfHealingService.runSweep({ scopeKey, now }));
+        } catch (error) {
+          results.push({ kind: 'self-heal', ok: false, reason: error?.message || 'self-heal-error' });
+        }
+      }
+    }
 
     // Memória seletiva: flush por timer do mundo (não depende de “bater 40 msgs”
     // no mesmo processo). Roda mesmo em quiet hours — só extrai buffer em RAM.
@@ -1188,6 +1219,9 @@ export function createFunModule(deps = {}) {
       chaosEventService,
       groupMemoryService,
       memoryRepository,
+      evidenceRepository,
+      selfHealRepository,
+      selfHealingService,
       profileService,
       profileRepository,
       socialHooks,

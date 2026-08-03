@@ -546,6 +546,7 @@ export function buildFunSchemaSql() {
       score         INTEGER NOT NULL DEFAULT 50,
       hits          INTEGER NOT NULL DEFAULT 1,
       source        TEXT    NOT NULL DEFAULT 'chat',
+      evidence_status TEXT NOT NULL DEFAULT 'pending',
       created_at    INTEGER NOT NULL,
       last_seen_at  INTEGER NOT NULL
     );
@@ -555,6 +556,45 @@ export function buildFunSchemaSql() {
 
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_group_memories_scope_seen
       ON fun_group_memories(scope_key, last_seen_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_evidence_log (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope_key TEXT NOT NULL,
+      message_id TEXT NOT NULL,
+      author_jid TEXT NOT NULL,
+      text_normalized TEXT NOT NULL,
+      text_hash TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expires_at INTEGER NOT NULL,
+      UNIQUE(scope_key, message_id)
+    );
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_evl_scope_hash ON fun_evidence_log(scope_key, text_hash);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_evl_author_scope ON fun_evidence_log(scope_key, author_jid);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_evl_expires ON fun_evidence_log(expires_at);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_self_heal_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id TEXT NOT NULL,
+      scope_key TEXT NOT NULL,
+      domain TEXT NOT NULL,
+      target_table TEXT NOT NULL,
+      target_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      risk_level TEXT NOT NULL,
+      status TEXT NOT NULL,
+      before_json TEXT,
+      after_json TEXT,
+      reason TEXT NOT NULL,
+      evidence_ref TEXT,
+      llm_confidence INTEGER,
+      mode TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      decided_at INTEGER,
+      decided_by TEXT
+    );
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_sha_run_scope ON fun_self_heal_audit(run_id, scope_key);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_sha_status ON fun_self_heal_audit(status);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_sha_domain ON fun_self_heal_audit(domain);
 
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_group_persona (
       scope_key     TEXT PRIMARY KEY,
@@ -931,6 +971,16 @@ export function ensureFunSchema(db) {
       db.exec(
         `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_settings ADD COLUMN persona_enabled INTEGER NOT NULL DEFAULT 1`
       );
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const memoryCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_group_memories)`).all();
+    const memoryNames = new Set(memoryCols.map(c => String(c.name || '')));
+    if (memoryNames.size && !memoryNames.has('evidence_status')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_memories ADD COLUMN evidence_status TEXT NOT NULL DEFAULT 'pending'`);
     }
   } catch {
     // ignore
