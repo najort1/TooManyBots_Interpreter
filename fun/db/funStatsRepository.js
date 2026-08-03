@@ -1049,7 +1049,31 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     return [...byUser.values()];
   }
 
+  function listBalanceInvariants(scopeKey, limit = 100) {
+    ensureFunSchema();
+    return getDatabase().prepare(
+      `SELECT user_jid, coins FROM ${ANALYTICS_SCHEMA}.fun_user_stats
+       WHERE scope_key = ? AND coins < 0 LIMIT ?`
+    ).all(String(scopeKey || ''), Math.max(1, Math.min(500, Number(limit) || 100))).map((row) => ({
+      id: String(row.user_jid), reason: 'negative-balance', coins: Number(row.coins),
+    }));
+  }
+
+  function listProfileOrphans(scopeKey, limit = 100) {
+    ensureFunSchema();
+    return getDatabase().prepare(
+      `SELECT p.user_jid FROM ${ANALYTICS_SCHEMA}.fun_user_profiles p
+       LEFT JOIN ${ANALYTICS_SCHEMA}.fun_user_stats s
+         ON s.scope_key = p.scope_key AND s.user_jid = p.user_jid
+       WHERE p.scope_key = ? AND s.user_jid IS NULL LIMIT ?`
+    ).all(String(scopeKey || ''), Math.max(1, Math.min(500, Number(limit) || 100))).map((row) => ({
+      id: String(row.user_jid), reason: 'orphan-profile',
+    }));
+  }
+
   return {
+    listBalanceInvariants,
+    listProfileOrphans,
     ensureFunSchema,
     getUserStats,
     ensureUserRow,

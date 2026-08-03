@@ -39,6 +39,7 @@ function mapFact(row) {
     score: Number(row.score) || 0,
     hits: Number(row.hits) || 1,
     source: String(row.source || 'chat'),
+    evidenceStatus: String(row.evidence_status || 'pending'),
     createdAt: Number(row.created_at) || 0,
     lastSeenAt: Number(row.last_seen_at) || 0,
   };
@@ -148,6 +149,33 @@ export function createFunMemoryRepository({ getDatabase = getDb } = {}) {
       )
       .run(nextSummary, nextScore, JSON.stringify(nextKeywords), ts, String(id));
     return getFact(id);
+  }
+
+  function updateFactAuthor(id, scopeKey, authorJid) {
+    ensureSchema();
+    const fact = getFact(id);
+    if (!fact || fact.scopeKey !== String(scopeKey || '') || !authorJid) return null;
+    const subjects = [...new Set([String(authorJid), ...fact.subjects.filter(subject => subject !== String(authorJid))])].slice(0, 8);
+    getDatabase().prepare(`UPDATE ${ANALYTICS_SCHEMA}.fun_group_memories SET subjects_json = ? WHERE id = ? AND scope_key = ?`)
+      .run(JSON.stringify(subjects), String(id), String(scopeKey));
+    return getFact(id);
+  }
+
+  function updateFactSummary(id, scopeKey, summary) {
+    ensureSchema();
+    const text = String(summary || '').trim().slice(0, 200);
+    if (!text) return null;
+    const result = getDatabase().prepare(`UPDATE ${ANALYTICS_SCHEMA}.fun_group_memories SET summary = ? WHERE id = ? AND scope_key = ?`)
+      .run(text, String(id), String(scopeKey));
+    return result.changes ? getFact(id) : null;
+  }
+
+  function setFactEvidenceStatus(id, scopeKey, status) {
+    ensureSchema();
+    const next = new Set(['verified', 'unverified', 'pending']).has(status) ? status : 'pending';
+    const result = getDatabase().prepare(`UPDATE ${ANALYTICS_SCHEMA}.fun_group_memories SET evidence_status = ? WHERE id = ? AND scope_key = ?`)
+      .run(next, String(id), String(scopeKey));
+    return result.changes ? getFact(id) : null;
   }
 
   function deleteFact(id) {
@@ -271,6 +299,9 @@ export function createFunMemoryRepository({ getDatabase = getDb } = {}) {
     listFacts,
     countFacts,
     reinforceFact,
+    updateFactAuthor,
+    updateFactSummary,
+    setFactEvidenceStatus,
     deleteFact,
     deleteByScope,
     deleteBySubject,

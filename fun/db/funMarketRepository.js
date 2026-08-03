@@ -749,7 +749,18 @@ export function createFunMarketRepository({ getDatabase = getDb } = {}) {
     return { events, total, page: p, limit: lim, totalPages };
   }
 
+  function listPriceInvariants(scopeKey, limit = 100) {
+    ensureSchema();
+    return getDatabase().prepare(
+      `SELECT item_id, price FROM ${ANALYTICS_SCHEMA}.fun_market_prices
+       WHERE scope_key = ? AND price < 1 LIMIT ?`
+    ).all(String(scopeKey || ''), Math.max(1, Math.min(500, Number(limit) || 100))).map((row) => ({
+      id: String(row.item_id), reason: 'price-out-of-range', price: Number(row.price),
+    }));
+  }
+
   return {
+    listPriceInvariants,
     getMeta,
     setMeta,
     ensurePrices,
