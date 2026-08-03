@@ -6,6 +6,7 @@
 import http from 'http';
 import { URL } from 'url';
 import { getDefaultOutboundGuard } from '../../engine/outboundGuard.js';
+import { normalizeFunConfig, saveFunUserConfig } from '../config.js';
 
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
@@ -104,6 +105,28 @@ export function startFunDashboardServer(deps = {}) {
   const host = String(config.dashboardHost || '127.0.0.1');
   const port = Number(config.dashboardPort) || 8790;
   const uiPort = Number(process.env.FUN_DASHBOARD_UI_PORT || 3001);
+  const dashboardApiKey = String(process.env.FUN_DASHBOARD_API_KEY || '').trim();
+
+  function requireAdmin(req, res) {
+    if (!dashboardApiKey) return true;
+    const headerKey = String(req.headers['x-api-key'] || '').trim();
+    const cookieKey = String(req.headers.cookie || '').match(/(?:^|;\s*)fun_dash_key=([^;]+)/)?.[1] || '';
+    if (headerKey === dashboardApiKey || decodeURIComponent(cookieKey) === dashboardApiKey) return true;
+    sendJson(res, 401, { error: 'unauthorized' });
+    return false;
+  }
+
+  function selfHealConfig(cfg = getConfig()) {
+    return {
+      enabled: cfg.selfHealEnabled !== false,
+      intervalMs: cfg.selfHealIntervalMs,
+      dryRun: cfg.selfHealDryRun !== false,
+      evidenceRetentionDays: cfg.selfHealEvidenceRetentionDays,
+      maxItemsPerRun: cfg.selfHealMaxItemsPerRun,
+      maxCallsPerRun: cfg.selfHealMaxCallsPerRun,
+      quietHoursRespected: true,
+    };
+  }
 
   const server = http.createServer(async (req, res) => {
     try {
@@ -823,6 +846,86 @@ export function startFunDashboardServer(deps = {}) {
           return;
         }
         sendJson(res, result.ok || dryRun ? 200 : 207, result);
+        return;
+      }
+
+      if (path.startsWith('/api/fun/selfheal/') && !requireAdmin(req, res)) return;
+
+      const selfHealService = funModule._services.selfHealingService;
+      const selfHealRepository = funModule._services.selfHealRepository;
+      const evidenceRepository = funModule._services.evidenceRepository;
+      if (req.method === 'GET' && path === '/api/fun/selfheal/config') {
+        sendJson(res, 200, selfHealConfig());
+        return;
+      }
+      if (req.method === 'POST' && path === '/api/fun/selfheal/config') {
+        const body = await readBody(req);
+        const current = getConfig();
+        const next = normalizeFunConfig({
+          ...current,
+          ...(Object.hasOwn(body, 'enabled') ? { selfHealEnabled: body.enabled } : {}),
+          ...(Object.hasOwn(body, 'dryRun') ? { selfHealDryRun: body.dryRun } : {}),
+          ...(Object.hasOwn(body, 'intervalMs') ? { selfHealIntervalMs: body.intervalMs } : {}),
+          ...(Object.hasOwn(body, 'evidenceRetentionDays') ? { selfHealEvidenceRetentionDays: body.evidenceRetentionDays } : {}),
+          ...(Object.hasOwn(body, 'maxItemsPerRun') ? { selfHealMaxItemsPerRun: body.maxItemsPerRun } : {}),
+          ...(Object.hasOwn(body, 'maxCallsPerRun') ? { selfHealMaxCallsPerRun: body.maxCallsPerRun } : {}),
+        });
+        saveFunUserConfig(next);
+        sendJson(res, 200, { ok: true, config: selfHealConfig(next), persisted: true, appliesAfterConfigReload: true });
+        return;
+      }
+      if (req.method === 'POST' && path === '/api/fun/selfheal/run') {
+        if (!selfHealService?.runSweep) {
+          sendJson(res, 503, { error: 'selfheal-indisponivel' });
+          return;
+        }
+        const body = await readBody(req);
+        const domain = body.domain ? String(body.domain) : 'memory_lore';
+        const requestedScope = resolveScopeKey(body.scopeKey);
+        if (requestedScope && !isScopeAllowed(requestedScope)) {
+          sendJson(res, 403, { error: 'scope-not-allowed' });
+          return;
+        }
+        const scopes = requestedScope ? [requestedScope] : (getConfig().groupWhitelistJids || []);
+        if (!scopes.length) {
+          sendJson(res, 400, { error: 'scope-obrigatorio-ou-whitelist-vazia' });
+          return;
+        }
+        const results = [];
+        for (const scopeKey of scopes) results.push(await selfHealService.runSweep({ scopeKey, domain, ...(typeof body.dryRun === 'boolean' ? { dryRun: body.dryRun } : {}) }));
+        const first = results[0] || {};
+        sendJson(res, first.ok ? 200 : 409, { ok: results.every(result => result.ok), runId: first.runId, mode: first.mode, results, reason: first.reason });
+        return;
+      }
+      if (req.method === 'GET' && path === '/api/fun/selfheal/runs') {
+        const runs = selfHealRepository?.listRuns?.({ domain: url.searchParams.get('domain'), scopeKey: resolveScopeKey(url.searchParams.get('scope')), from: url.searchParams.get('from'), to: url.searchParams.get('to') }) || [];
+        sendJson(res, 200, { runs });
+        return;
+      }
+      if (req.method === 'GET' && path === '/api/fun/selfheal/audit') {
+        const entries = selfHealRepository?.listAudit?.({ runId: url.searchParams.get('runId'), scopeKey: resolveScopeKey(url.searchParams.get('scope')), status: url.searchParams.get('status'), domain: url.searchParams.get('domain'), action: url.searchParams.get('action') }) || [];
+        const includeBeforeAfter = url.searchParams.get('includeBeforeAfter') === 'true';
+        sendJson(res, 200, { entries: entries.map(({ before, after, ...entry }) => includeBeforeAfter ? { ...entry, before, after } : entry) });
+        return;
+      }
+      if (req.method === 'POST' && path === '/api/fun/selfheal/review') {
+        const body = await readBody(req);
+        const result = selfHealRepository?.reviewFinding?.(body.findingId, { decision: body.decision, adminJid: String(req.headers['x-admin-jid'] || 'dashboard') }) || { ok: false, reason: 'selfheal-indisponivel' };
+        sendJson(res, result.ok ? 200 : result.reason === 'already-decided' ? 409 : 400, result.ok ? { ok: true, entry: result.finding } : result);
+        return;
+      }
+      if (req.method === 'GET' && path === '/api/fun/selfheal/summary') {
+        const rows = selfHealRepository?.getSummary?.() || [];
+        const totals = { runs: selfHealRepository?.listRuns?.().length || 0, applied: 0, pendingReview: 0, rejected: 0, simulated: 0, errors: 0 };
+        const byDomain = {};
+        for (const row of rows) {
+          const key = row.status === 'pending_review' ? 'pendingReview' : row.status === 'error' ? 'errors' : row.status;
+          if (Object.hasOwn(totals, key)) totals[key] += Number(row.count) || 0;
+          if (!byDomain[row.domain]) byDomain[row.domain] = {};
+          if (Object.hasOwn(totals, key)) byDomain[row.domain][key] = Number(row.count) || 0;
+        }
+        const evidenceRows = (getConfig().groupWhitelistJids || []).reduce((total, scopeKey) => total + (evidenceRepository?.countByScope?.(scopeKey) || 0), 0);
+        sendJson(res, 200, { totals, byDomain, evidence: { rows: evidenceRows, retentionDays: getConfig().selfHealEvidenceRetentionDays } });
         return;
       }
 

@@ -150,6 +150,7 @@ export const config = {
     "/bolsa/:path*",
     "/groups/:path*",
     "/settings/:path*",
+    "/selfheal/:path*",
     "/api/fun/:path*",
   ],
 };

@@ -104,6 +104,14 @@ export const funApi = {
       config?: Record<string, unknown>;
     }>("/api/fun/outbound"),
 
+  selfHealConfig: () => request<{ enabled: boolean; dryRun: boolean; intervalMs: number; evidenceRetentionDays: number; maxItemsPerRun: number; maxCallsPerRun: number }>("/api/fun/selfheal/config"),
+  saveSelfHealConfig: (body: Record<string, unknown>) => request<{ ok: boolean; config: { enabled: boolean; dryRun: boolean; intervalMs: number; evidenceRetentionDays: number; maxItemsPerRun: number; maxCallsPerRun: number } }>("/api/fun/selfheal/config", { method: "POST", body: JSON.stringify(body) }),
+  selfHealRuns: () => request<{ runs: Array<{ runId: string; domain: string; status: string; itemsAudited: number; applied: number; pendingReview: number; simulated: number }> }>("/api/fun/selfheal/runs"),
+  selfHealAudit: () => request<{ entries: Array<{ id: number; domain: string; action: string; status: string; reason: string; mode: string; created_at: number }> }>("/api/fun/selfheal/audit"),
+  selfHealSummary: () => request<{ totals: Record<string, number>; byDomain: Record<string, Record<string, number>>; evidence: { rows: number; retentionDays: number } }>("/api/fun/selfheal/summary"),
+  runSelfHeal: (body: { domain: string; scopeKey?: string; dryRun: boolean }) => request<{ ok: boolean; runId?: string; mode?: string; results?: Array<{ ok: boolean; reason?: string }> }>("/api/fun/selfheal/run", { method: "POST", body: JSON.stringify(body) }),
+  reviewSelfHeal: (findingId: number, decision: "apply" | "reject") => request<{ ok: boolean }>("/api/fun/selfheal/review", { method: "POST", body: JSON.stringify({ findingId, decision }) }),
+
   changelog: (limit = 20) =>
     request<ChangelogPayload>(`/api/fun/changelog?limit=${limit}`),
 
