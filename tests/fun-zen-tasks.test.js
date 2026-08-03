@@ -39,7 +39,7 @@ test('resolveZenTaskParams: invent vs extract vs flavor', () => {
   assert.ok(invent.timeoutMs >= 90_000, `invent timeout ${invent.timeoutMs}`);
   assert.deepEqual(
     Object.keys(ZEN_TASK_DEFAULTS).sort(),
-    ['assault', 'chaos', 'extract', 'flavor', 'invent', 'journalist', 'persona', 'tarot'].sort()
+    ['assault', 'chaos', 'extract', 'flavor', 'invent', 'journalist', 'persona', 'selfheal', 'tarot'].sort()
   );
 });
 
