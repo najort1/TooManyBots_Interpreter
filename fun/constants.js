@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '28';
+export const FUN_SCHEMA_VERSION = '29';
 
 export const PERSONA_MEMORY_TYPES = Object.freeze(['thread', 'episodic', 'semantic', 'social']);
 export const PERSONA_MEMORY_EVIDENCE = Object.freeze(['explicit', 'corroborated', 'inferred']);
@@ -614,6 +614,12 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   worldQuietHourStart: 1,
   worldQuietHourEnd: 6,
   worldTimezone: 'America/Sao_Paulo',
+  selfHealEnabled: true,
+  selfHealDryRun: true,
+  selfHealIntervalMs: 10 * 60_000,
+  selfHealEvidenceRetentionDays: 60,
+  selfHealMaxItemsPerRun: 50,
+  selfHealMaxCallsPerRun: 10,
   // Flavor LLM — OpenCode Zen (principal) → Ollama (fallback) → template
   // OpenCode Zen Proxy (OpenAI-compatible)
   zenEnabled: true,

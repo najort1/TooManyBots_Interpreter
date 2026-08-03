@@ -179,6 +179,32 @@ export function normalizeFunConfig(input) {
     worldTimezone:
       toText(raw.worldTimezone, DEFAULT_FUN_CONFIG.worldTimezone) ||
       DEFAULT_FUN_CONFIG.worldTimezone,
+    selfHealEnabled: normalizeBoolean(raw.selfHealEnabled, DEFAULT_FUN_CONFIG.selfHealEnabled),
+    selfHealDryRun: normalizeBoolean(raw.selfHealDryRun, DEFAULT_FUN_CONFIG.selfHealDryRun),
+    selfHealIntervalMs: normalizeInt(raw.selfHealIntervalMs, DEFAULT_FUN_CONFIG.selfHealIntervalMs, {
+      min: 1,
+      max: 24 * 60 * 60_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    selfHealEvidenceRetentionDays: normalizeInt(raw.selfHealEvidenceRetentionDays, DEFAULT_FUN_CONFIG.selfHealEvidenceRetentionDays, {
+      min: 1,
+      max: 365,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    selfHealMaxItemsPerRun: normalizeInt(raw.selfHealMaxItemsPerRun, DEFAULT_FUN_CONFIG.selfHealMaxItemsPerRun, {
+      min: 1,
+      max: 500,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    selfHealMaxCallsPerRun: normalizeInt(raw.selfHealMaxCallsPerRun, DEFAULT_FUN_CONFIG.selfHealMaxCallsPerRun, {
+      min: 1,
+      max: 500,
+      rounding: 'floor',
+      clamp: true,
+    }),
     eventHappyWeight: Number.isFinite(Number(raw.eventHappyWeight))
       ? Math.max(0, Number(raw.eventHappyWeight))
       : DEFAULT_FUN_CONFIG.eventHappyWeight,
@@ -1239,6 +1265,12 @@ export function saveFunUserConfig(input) {
     reactionUserAgent: normalized.reactionUserAgent,
     tenorApiKey: normalized.tenorApiKey,
     tenorClientKey: normalized.tenorClientKey,
+    selfHealEnabled: normalized.selfHealEnabled,
+    selfHealDryRun: normalized.selfHealDryRun,
+    selfHealIntervalMs: normalized.selfHealIntervalMs,
+    selfHealEvidenceRetentionDays: normalized.selfHealEvidenceRetentionDays,
+    selfHealMaxItemsPerRun: normalized.selfHealMaxItemsPerRun,
+    selfHealMaxCallsPerRun: normalized.selfHealMaxCallsPerRun,
   };
   fs.writeFileSync(FUN_USER_CONFIG_PATH, JSON.stringify(payload, null, 2), 'utf-8');
   return normalizeFunConfig(payload);
