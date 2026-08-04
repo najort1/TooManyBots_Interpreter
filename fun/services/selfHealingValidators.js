@@ -1,6 +1,8 @@
 const ACTIONS = new Set(['fix_author', 'fix_text', 'merge_duplicates', 'promote_confidence', 'flag_unverifiable', 'delete', 'downgrade', 'suppress', 'integrity_fix', 'report']);
 const DOMAIN_ACTIONS = {
-  memory_lore: new Set(['fix_author', 'fix_text', 'merge_duplicates', 'flag_unverifiable', 'delete', 'report']),
+  // memory_lore é lore do grupo: a auditoria valida veracidade/autoria/duplicidade,
+  // nunca propõe exclusão (delete) — conteúdo pesado/humor BR é cultura do grupo.
+  memory_lore: new Set(['fix_author', 'fix_text', 'merge_duplicates', 'flag_unverifiable', 'report']),
   conversation_memory: new Set(['promote_confidence', 'downgrade', 'suppress', 'merge_duplicates', 'delete', 'report']),
   economy: new Set(['integrity_fix', 'report', 'delete']),
   profile: new Set(['integrity_fix', 'report', 'delete']),

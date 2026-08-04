@@ -43,9 +43,20 @@ export function createSelfHealingService({ selfHealRepository, evidenceRepositor
       get_stats: () => ({ items: state.items.length, evidenceRows: evidenceRepository.countByScope(scopeKey) }),
     };
     if (typeof generateZen !== 'function') return { ok: false, reason: 'llm-unavailable', runId, tools };
+    const prompt = [
+      'Audite somente os dados públicos e auditáveis abaixo. Não há escrita nesta chamada.',
+      `Retorne APENAS JSON válido: {"domain":"${domain}","findings":[...]}.`,
+      'Cada finding deve respeitar o contrato selfheal: targetId, action, confidence (0-100), reason e campos exigidos pela action. Não invente dados nem fatos.',
+      'PAPEL DA AUDITORIA: validar VERACIDADE, AUTORIA, CONSISTÊNCIA e DUPLICIDADE dos fatos da lore do grupo. NÃO é curadoria de conteúdo.',
+      'A lore vem de grupos de WhatsApp BR: gírias, palavrões, duplo sentido e humor pesado são a cultura normal do grupo e NUNCA são motivo para nenhum finding (delete, downgrade ou flag). Conteúdo vulgar ou ofensivo não é defeito de dado.',
+      'Só proponha ações para problemas reais de integridade: fato que contradiz outro fato do mesmo grupo, autoria claramente trocada, fato duplicado, ou texto que não é lore (spam, dado pessoal, comando de bot, instrução técnica).',
+      'Sem certeza sobre um fato, prefira flag_unverifiable (baixo risco) ou report em vez de ações destrutivas.',
+      'Se tudo estiver íntegro, retorne {"findings":[]}. Não force achados: inventar problemas é pior do que não achar nenhum.',
+      `Dados selecionados: ${JSON.stringify(state.items)}`,
+    ].join('\n');
     let payload;
     try {
-      payload = await generateZen({ ...resolveZenTaskParams('selfheal', config), tools, domain, facts: domain === 'memory_lore' ? state.items : undefined, memories: domain === 'conversation_memory' ? state.items : undefined, invariants: domain === 'economy' || domain === 'profile' ? state.items : undefined });
+      payload = await generateZen({ ...resolveZenTaskParams('selfheal', config), prompt, tools, domain, facts: domain === 'memory_lore' ? state.items : undefined, memories: domain === 'conversation_memory' ? state.items : undefined, invariants: domain === 'economy' || domain === 'profile' ? state.items : undefined });
       if (typeof payload === 'string') payload = JSON.parse(payload);
     } catch (error) {
       selfHealRepository.insertAudit({ runId, scopeKey, domain, targetTable: state.targetTable, targetId: '0', action: 'report', riskLevel: 'low', status: 'error', reason: error?.message || 'llm-error', mode, createdAt: now });

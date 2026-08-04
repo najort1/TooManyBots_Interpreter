@@ -5,7 +5,8 @@
 
 function joinUrl(baseUrl, path) {
   const base = String(baseUrl || 'http://127.0.0.1:3300').replace(/\/+$/, '');
-  const p = path.startsWith('/') ? path : `/${path}`;
+  let p = path.startsWith('/') ? path : `/${path}`;
+  if (/\/v1$/i.test(base) && /^\/v1\//i.test(p)) p = p.slice(3);
   return `${base}${p}`;
 }
 

@@ -113,6 +113,85 @@ test('C1/C2 HTTP selfheal: autenticação, config, dry-run e auditoria sem befor
   }
 });
 
+test('FIX# self-healing: fallback usa configuração Zen normalizada e envia prompt JSON', async () => {
+  const scope = group();
+  const originalFetch = globalThis.fetch;
+  const previousDisabled = process.env.FUN_DISABLE_LIVE_LLM;
+  let url;
+  let request;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  globalThis.fetch = async (receivedUrl, options) => {
+    url = receivedUrl;
+    request = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: '{"domain":"memory_lore","findings":[]}' } }] }),
+    };
+  };
+  try {
+    const funModule = createFunModule({
+      getConfig: () => ({ enabled: true, worldQuietHoursEnabled: false, selfHealDryRun: true }),
+    });
+    await funModule.init();
+    const result = await funModule._services.selfHealingService.runSweep({ scopeKey: scope });
+    assert.equal(result.ok, true);
+    assert.equal(url, 'http://localhost:20128/v1/chat/completions');
+    assert.equal(request.model, 'bot-zap');
+    assert.equal(request.response_format.type, 'json_object');
+    assert.match(request.messages.at(-1).content, /APENAS JSON válido/);
+    assert.match(request.messages.at(-1).content, /"domain":"memory_lore"/);
+    assert.match(request.messages.at(-1).content, /Não há escrita nesta chamada/);
+    assert.match(request.messages.at(-1).content, /PAPEL DA AUDITORIA/);
+    assert.match(request.messages.at(-1).content, /NÃO é curadoria de conteúdo/);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousDisabled === undefined) delete process.env.FUN_DISABLE_LIVE_LLM;
+    else process.env.FUN_DISABLE_LIVE_LLM = previousDisabled;
+  }
+});
+
+test('FIX# self-healing: DI vence fallback e flags que desabilitam LLM não fazem rede', async () => {
+  const scope = group();
+  const originalFetch = globalThis.fetch;
+  const previousDisabled = process.env.FUN_DISABLE_LIVE_LLM;
+  let fetchCalls = 0;
+  let injectedCalls = 0;
+  globalThis.fetch = async () => {
+    fetchCalls += 1;
+    throw new Error('fetch não deveria executar');
+  };
+  try {
+    const injected = createFunModule({
+      getConfig: () => ({ enabled: true, worldQuietHoursEnabled: false, selfHealDryRun: true, zenEnabled: false }),
+      openaiChatComplete: async () => {
+        injectedCalls += 1;
+        return '{"domain":"memory_lore","findings":[]}';
+      },
+    });
+    await injected.init();
+    const injectedResult = await injected._services.selfHealingService.runSweep({ scopeKey: scope });
+    assert.equal(injectedResult.ok, true);
+    assert.equal(injectedCalls, 1);
+    assert.equal(fetchCalls, 0);
+
+    process.env.FUN_DISABLE_LIVE_LLM = '1';
+    const disabled = createFunModule({
+      getConfig: () => ({ enabled: true, worldQuietHoursEnabled: false, selfHealDryRun: true, zenEnabled: false }),
+    });
+    await disabled.init();
+    const disabledResult = await disabled._services.selfHealingService.runSweep({ scopeKey: group() });
+    assert.deepEqual(
+      { ok: disabledResult.ok, reason: disabledResult.reason },
+      { ok: false, reason: 'llm-error' }
+    );
+    assert.equal(fetchCalls, 0);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousDisabled === undefined) delete process.env.FUN_DISABLE_LIVE_LLM;
+    else process.env.FUN_DISABLE_LIVE_LLM = previousDisabled;
+  }
+});
+
 test('C1: captura evidência elegível sem duplicar message_id', () => {
   const { memory, evidence } = setup(); const scope = group(); const author = jid();
   const service = createGroupMemoryService({ memoryRepository: memory, evidenceRepository: evidence });
@@ -125,6 +204,13 @@ test('validador rejeita schema inválido e classifica risco deterministicamente'
   const fact = { id: 'fact-1' }; const factsById = new Map([[fact.id, fact]]);
   assert.equal(validateFindingsPayload({ domain: 'memory_lore', findings: [{ targetId: fact.id, action: 'delete', confidence: 101 }] }, { factsById }).findings.length, 0);
   assert.equal(riskForAction('fix_author'), 'low'); assert.equal(riskForAction('delete'), 'high');
+});
+
+test('memory_lore não aceita delete: auditoria valida veracidade, não faz curadoria de conteúdo', () => {
+  const fact = { id: 'fact-1' }; const factsById = new Map([[fact.id, fact]]);
+  const payload = validateFindingsPayload({ domain: 'memory_lore', findings: [{ targetId: fact.id, action: 'delete', confidence: 90, reason: 'descrição explícita de ato sexual' }] }, { factsById });
+  assert.equal(payload.ok, true);
+  assert.equal(payload.findings.length, 0);
 });
 
 test('C2: dry-run não altera lore e registra proposta simulada', async () => {
