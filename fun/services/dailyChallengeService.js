@@ -501,16 +501,29 @@ export function createDailyChallengeService(deps = {}) {
 
   /* ---------- Guess the Game ---------- */
 
-  async function tryLlmGuessGame() {
+  async function tryLlmGuessGame(recentGames = []) {
+    const recentList = Array.isArray(recentGames) ? recentGames.slice(0, 40) : [];
+    const recentTxt = recentList.length
+      ? `\n\nNUNCA repita um jogo desta lista de recentes (normalize sem acentos/maiúsculas):\n${recentList.map((g) => `  - ${g}`).join('\n')}\n`
+      : '';
     const system =
-      'Voce e um assistente de jogos. Gere UM jogo (eletronico ou de tabuleiro) ' +
-      'conhecido e 3 dicas sobre ele em portugues brasileiro. ' +
-      'REGRAS: o campo "game" deve conter o nome PRINCIPAL (sem ano, sem subtitulo). ' +
-      'O campo "aliases" deve listar 2-5 formas alternativas como os brasileiros chamam. ' +
-      'hint1: sutil; hint2: media; hint3: obvia. NUNCA inclua o nome do jogo nas dicas. ' +
-      'Responda APENAS no formato JSON: ' +
-      '{"game":"Nome","aliases":["a1","a2"],"hints":["h1","h2","h3"]}';
-    const user = 'Gere um jogo popular agora.';
+      'Voce e um curador de jogos para um desafio diário de WhatsApp em português brasileiro. ' +
+      'Gere UM jogo (eletrônico, de tabuleiro, indie, retrô, AAA, cult, brasileiro ou nicho). ' +
+      'REQUSITOS DE VARIEDADE:' +
+      '  - Fuja dos óbvios (Minecraft, Fortnite, Call of Duty, GTA, FIFA, Free Fire) salvo raríssima exceção.' +
+      '  - Varie o gênero (RPG, plataforma, puzzle, corrida, luta, simulador, estratégia, party, survival, horror, metroidvania, roguelike, visual novel).' +
+      '  - Varie a plataforma (PC, console, mobile, arcade, tabletop).' +
+      '  - Varie a época (anos 80, 90, 2000, 2010, 2020).' +
+      '  - Inclua indies, cult, e jogos brasileiros quando possível.' +
+      '  - Seja criativo: jogos incomuns, pouco conhecidos e aclamados pela crítica são BEM-VINDOS.' +
+      'REGRAS TÉCNICAS:' +
+      '  - O campo "game" deve conter o nome PRINCIPAL (sem ano, sem subtitulo).' +
+      '  - O campo "aliases" deve listar 2-5 formas alternativas como os brasileiros chamam.' +
+      '  - hint1: sutil; hint2: media; hint3: obvia.' +
+      '  - NUNCA inclua o nome do jogo nas dicas.' +
+      'Responda APENAS no formato JSON:' +
+      ' {"game":"Nome","aliases":["a1","a2"],"hints":["h1","h2","h3"]}' + recentTxt;
+    const user = 'Gere um jogo variado e criativo agora. Evite o óbvio.';
     return await tryLlmJson(system, user, 45000);
   }
 
@@ -529,17 +542,33 @@ export function createDailyChallengeService(deps = {}) {
 
   async function launchGuessGame(scopeKey, now) {
     const memoryLimit = cfg().dailyChallengeContentMemory?.game || 30;
-    const llmGame = await tryLlmGuessGame();
+    const recent = repository.getRecentContent(scopeKey, 'game', memoryLimit);
+    const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
+
+    const llmGame = await tryLlmGuessGame(recent);
     let game = null;
     if (llmGame?.game) {
       const filtered = filterGameName(llmGame.game);
-      game = {
-        game: filtered,
-        aliases: (llmGame.aliases || []).map((a) => filterGameName(a) || a).filter(Boolean),
-        hints: Array.isArray(llmGame.hints) ? llmGame.hints.slice(0, MAX_HINTS) : [],
-      };
+      const filteredNorm = normalizeAnswer(filtered);
+      /* Se o LLM retornar um jogo que já saiu recentemente, tenta uma 2a chamada
+         antes de cair no fallback local — evita repetição imediata. */
+      let candidate = { game: filtered, aliases: (llmGame.aliases || []).map((a) => filterGameName(a) || a).filter(Boolean), hints: Array.isArray(llmGame.hints) ? llmGame.hints.slice(0, MAX_HINTS) : [] };
+      if (recentSet.has(filteredNorm)) {
+        const retry = await tryLlmGuessGame(recent);
+        if (retry?.game) {
+          const rNorm = normalizeAnswer(filterGameName(retry.game));
+          if (!recentSet.has(rNorm)) {
+            candidate = {
+              game: filterGameName(retry.game),
+              aliases: (retry.aliases || []).map((a) => filterGameName(a) || a).filter(Boolean),
+              hints: Array.isArray(retry.hints) ? retry.hints.slice(0, MAX_HINTS) : [],
+            };
+          }
+        }
+      }
+      game = candidate;
     }
-    if (!game || !game.game) {
+    if (!game || !game.game || recentSet.has(normalizeAnswer(game.game))) {
       const pick = pickNonRepeating(
         scopeKey,
         'game',
