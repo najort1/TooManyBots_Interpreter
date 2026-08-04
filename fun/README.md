@@ -40,6 +40,44 @@ npm run fun:dev
 2. No wizard, escolha os **grupos liberados** (whitelist).
 3. No grupo: `/ajuda`.
 
+### TUI — painel de auditoria (TTY)
+
+Ao rodar `npm run fun` em um terminal interativo, ao fim do boot (após QR/wizard)
+a tela vira um **painel full-screen** com 5 abas. Pino/Baileys foram para o `stderr`
+para não corromper o painel.
+
+| Tecla | Ação |
+|-------|------|
+| `Tab` | alterna entre abas |
+| `↑` / `↓` | rola a lista |
+| `q` | sai (restaura terminal e libera lock) |
+
+| Aba | O que mostra |
+|-----|--------------|
+| Auditoria | histórico dos eventos do mundo por categoria (market, news, self-heal, chaos, etc.) |
+| Saúde | conexão, filas (cmd/output), reconexão, último tick do mundo |
+| Economia | últimos `economy-tick` (changed/stockChanged/scheduledApplied/reason) + total acumulado |
+| LLM | contadores por tarefa×provider, taxa `invent` (zen vs template), alerta de `templateRate ≥ 40%` |
+| Grupos | grupos whitelist, top comandos por escopo, top players |
+
+> **Fallback plain**: quando o stdout **não é TTY** (redirecionamento, CI, serviço)
+> o painel **não inicia** e os eventos caem como `[fun] HH:MM:SS [categoria] ok|falha
+> scope? detalhe?` no stdout — mesmo formato_legacy do `runtime.js`.
+
+#### Configuração (`fun/config.user.json`)
+
+```json
+{
+  "tuiEnabled": true,        // false desliga o painel (fallback plain sempre)
+  "tuiRefreshMs": 1000,      // intervalo de refresh (200–10_000)
+  "tuiMaxHistory": 200       // histórico em anel (20–2000)
+}
+```
+
+- `tuiEnabled: false` → só fallback plain (logs no stdout).
+- `tuiRefreshMs` baixo ⇒ mais responsivo, mais CPU; baixo demais pode piscar.
+- `tuiMaxHistory` alto ⇒ retém mais contexto, mais RAM.
+
 ### Dashboard
 
 | Superfície | Como | URL default |
