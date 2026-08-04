@@ -925,6 +925,13 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   chaosEventAssaultCooldownMs: 30_000,
   /** Só pode ser vítima da Purga se mandou msg nos últimos N ms (padrão 3 min). */
   chaosEventActivityWindowMs: 3 * 60_000,
+  // TUI (painel full-screen de auditoria no `npm run fun`)
+  /** Liga/desliga a TUI interativa; false cai para log plain `[fun] ...`. */
+  tuiEnabled: true,
+  /** Intervalo de refresh do painel em ms (mín. 200, máx. 10_000). */
+  tuiRefreshMs: 1000,
+  /** Limite do histórico em anel (mín. 20, máx. 2000). */
+  tuiMaxHistory: 200,
   // Filas de processamento (command queue + output queue)
   commandMaxConcurrency: 8,
   commandFastConcurrency: 4,

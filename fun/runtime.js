@@ -99,6 +99,16 @@ import { runFunSetupWizard, shouldRunFunWizard } from './wizard.js';
 import { startFunDashboardServer } from './dashboard/server.js';
 import { extractMentionedJids } from './utils/mentions.js';
 import { loadGroupIdentity } from './utils/identity.js';
+import { createAuditBus } from './tui/auditBus.js';
+import { createRenderer } from './tui/renderer.js';
+import { createFunTui } from './tui/index.js';
+import { renderAuditPanel } from './tui/panels/auditPanel.js';
+import { renderHealthPanel } from './tui/panels/healthPanel.js';
+import { renderEconomyPanel } from './tui/panels/economyPanel.js';
+import { renderLlmPanel } from './tui/panels/llmPanel.js';
+import { renderGroupsPanel } from './tui/panels/groupsPanel.js';
+import { getFunCommandCountersByScope } from './commands/router.js';
+import { getLlmMetrics, inventTemplateAlert } from './llm/llmMetrics.js';
 
 function resolveDisconnectReasonName(statusCode) {
   const entry = Object.entries(DisconnectReason).find(([, code]) => Number(code) === Number(statusCode));
@@ -248,7 +258,11 @@ export async function startFunBot(options = {}) {
   });
 
   // Baileys no console polui o inquirer — só erros
-  const baileysLogger = pino({ level: config.debugMode ? 'info' : 'error' });
+  // Pino em stderr: evita corromper o painel da TUI no stdout (research.md §3)
+  const baileysLogger = pino(
+    { level: config.debugMode ? 'info' : 'error' },
+    pino.destination(2)
+  );
   const logger = baileysLogger;
 
   await initDb();
@@ -302,6 +316,100 @@ export async function startFunBot(options = {}) {
   /** @type {ReturnType<typeof createConnectionOpenGate> | null} */
   let openGate = null;
 
+  // ─── TUI: estado de conexão + audit bus ───────────────────────
+  let connectionState = 'offline';
+  let connectionLastReason = null;
+  let connectionLastStatusCode = null;
+  let dashboardInfo = { enabled: config.dashboardEnabled !== false, started: false, url: null };
+
+  /** Composição do snapshot de conexão consumido pelo renderer. */
+  function getConnectionSnapshot() {
+    const reconnect = reconnectController.getSnapshot?.() || {};
+    return {
+      state: connectionState,
+      lastReason: connectionLastReason,
+      lastStatusCode: connectionLastStatusCode,
+      reconnect: {
+        pending: Boolean(reconnect.pending),
+        nextReconnectAt: reconnect.nextReconnectAt || null,
+        currentAttempt: Number(reconnect.currentAttempt) || 0,
+        lastDelayMs: reconnect.lastDelayMs || null,
+      },
+    };
+  }
+  function getQueuesSnapshot() {
+    return {
+      command: commandQueue.getSnapshot?.() || {
+        totalQueued: 0, totalRunning: 0, totalAccepted: 0, totalRejected: 0, totalCompleted: 0, totalFailed: 0,
+      },
+      output: outputQueue.getSnapshot?.() || {
+        queued: 0, running: 0, accepted: 0, sent: 0, coalesced: 0, failed: 0,
+        avgWaitMs: 0, p95WaitMs: 0, acceptedPerSecond: 0,
+      },
+    };
+  }
+  function getLlmSnapshot() {
+    const m = getLlmMetrics();
+    const alert = inventTemplateAlert();
+    return {
+      byTask: groupByTask(m.counts),
+      invent: m.invent,
+      alert: alert ? { templateRate: alert.templateRate } : null,
+      lastByTask: m.lastByTask,
+    };
+  }
+  function groupByTask(counts) {
+    const byTask = {};
+    for (const [key, n] of Object.entries(counts || {})) {
+      const [task, provider] = key.split(':');
+      if (!task) continue;
+      byTask[task] = byTask[task] || {};
+      byTask[task][provider || 'unknown'] = (byTask[task][provider || 'unknown'] || 0) + n;
+    }
+    return byTask;
+  }
+
+  /**
+   * Snapshot de grupos para o painel Grupos — não consulta DB a cada refresh.
+   * Usa apenas a whitelist em memória + os contadores de comandos por escopo.
+   * @returns {Array<{jid, name, memberCount, topCommands}>}
+   */
+  function getGroupsSnapshot() {
+    const jids = Array.isArray(config.groupWhitelistJids) ? config.groupWhitelistJids : [];
+    const counters = getFunCommandCountersByScope();
+    return jids.map((jid) => ({
+      jid: String(jid),
+      name: null, // sem nome amigável aqui — renderer exibe JID truncado
+      memberCount: 0,
+      topCommands: (counters[jid] || []).slice(0, 5),
+    }));
+  }
+
+  const auditBus = createAuditBus({
+    maxHistory: Number(config.tuiMaxHistory) || 200,
+    startedAt: Date.now(),
+    sources: {
+      getConnection: getConnectionSnapshot,
+      getQueues: getQueuesSnapshot,
+      getLlm: getLlmSnapshot,
+      getDashboard: () => dashboardInfo,
+      getGroups: getGroupsSnapshot,
+    },
+  });
+
+  const tuiRenderer = createRenderer({
+    audit: renderAuditPanel,
+    health: renderHealthPanel,
+    economy: renderEconomyPanel,
+    llm: renderLlmPanel,
+    groups: renderGroupsPanel,
+  });
+  const tui = createFunTui({
+    bus: auditBus,
+    renderer: tuiRenderer,
+    funConfig: config,
+  });
+
   /**
    * Relógio do mundo: mercado / happy hour / trégua / restock sem precisar de msg.
    */
@@ -321,6 +429,7 @@ export async function startFunBot(options = {}) {
       if (!sock || !isSocketReady(sock)) return;
 
       worldTickRunning = true;
+      const tickStartedAt = Date.now();
       try {
         // atualiza config em memória (whitelist etc.)
         try {
@@ -333,6 +442,18 @@ export async function startFunBot(options = {}) {
           sendText: sendTextMessage,
           getContactDisplayName,
         });
+        // Tempo de execução (milis) — alimentado no auditor (FR-003, FR-016)
+        const tookMs = Date.now() - tickStartedAt;
+        const enriched = {
+          ...result,
+          tookMs,
+          skipped: result?.reason === 'quiet-hours' || result?.skipped === true,
+        };
+        try {
+          auditBus.recordWorldTick(enriched, tickStartedAt);
+        } catch {
+          // erros de auditoria nunca podem derrubar o tick
+        }
         if (result?.fired > 0) {
           console.log(
             `[fun] Mundo: ${result.fired} anúncio(s) autônomo(s) · ${result.results
@@ -343,6 +464,14 @@ export async function startFunBot(options = {}) {
         }
       } catch (err) {
         console.warn('[fun] World tick falhou:', String(err?.message || err));
+        auditBus.emit({
+          category: 'system',
+          level: 'error',
+          kind: 'world-tick-error',
+          scope: null,
+          ok: false,
+          detail: { reason: String(err?.message || err) },
+        });
       } finally {
         worldTickRunning = false;
       }
@@ -392,8 +521,29 @@ export async function startFunBot(options = {}) {
         isSocketReady: () => isSocketReady(currentSocket),
       });
       dashboardStarted = true;
+      dashboardInfo = {
+        enabled: true,
+        started: true,
+        url: `http://${config.dashboardHost || '127.0.0.1'}:${config.dashboardPort || 8790}`,
+      };
+      auditBus.emit({
+        category: 'system',
+        level: 'info',
+        kind: 'dashboard',
+        scope: null,
+        ok: true,
+        detail: { url: dashboardInfo.url },
+      });
     } catch (err) {
       console.warn('[fun] Dashboard nao iniciou:', String(err?.message || err));
+      auditBus.emit({
+        category: 'system',
+        level: 'warn',
+        kind: 'dashboard',
+        scope: null,
+        ok: false,
+        detail: { reason: String(err?.message || err) },
+      });
     }
   }
 
@@ -599,9 +749,11 @@ export async function startFunBot(options = {}) {
       }
 
       if (connection === 'connecting') {
+        connectionState = 'connecting';
         if (!isReconnect) {
           console.log('[fun] Conectando…');
         }
+        auditBus.emit({ category: 'connection', level: 'info', kind: 'connecting', scope: null, ok: null });
       }
 
       if (connection === 'close') {
@@ -612,6 +764,9 @@ export async function startFunBot(options = {}) {
         if (currentSocket === sock) currentSocket = null;
 
         if (shouldReconnect) {
+          connectionState = 'reconnecting';
+          connectionLastReason = String(reasonName);
+          connectionLastStatusCode = Number(statusCode) || 0;
           const scheduleResult = reconnectController.schedule({
             reason: reasonName,
             statusCode: Number(statusCode) || 0,
@@ -624,20 +779,35 @@ export async function startFunBot(options = {}) {
               `[fun] Conexao fechada (${statusCode}/${reasonName}). Reconectando em ${scheduleResult.delayMs}ms.`
             );
           }
+          auditBus.emit({
+            category: 'connection',
+            level: 'warn',
+            kind: 'reconnect',
+            scope: null,
+            ok: false,
+            detail: { reason: reasonName, statusCode: Number(statusCode) || 0, delayMs: scheduleResult?.delayMs || null },
+          });
         } else {
+          connectionState = 'logged-out';
+          connectionLastReason = 'logged-out';
           reconnectController.close?.();
           console.log(
             '[fun] Desconectado (logged out). Apague data/fun/runtime.db (auth) para reautenticar.'
           );
+          auditBus.emit({ category: 'connection', level: 'error', kind: 'logged-out', scope: null, ok: false });
         }
         return;
       }
 
       if (connection === 'open') {
         reconnectController.reset?.();
+        connectionState = 'online';
+        connectionLastReason = null;
+        connectionLastStatusCode = null;
         console.log('[fun] Conectado ao WhatsApp.\n');
         messagesEnabled = true;
         openGate?.signalOpen('connection-open');
+        auditBus.emit({ category: 'connection', level: 'ok', kind: 'open', scope: null, ok: true });
       }
 
       // Alguns estados multi-device marcam user sem emitir open de novo
@@ -746,11 +916,32 @@ export async function startFunBot(options = {}) {
   // Eventos do mundo sem “gatilho” de mensagem humana
   startWorldClock();
 
+  // TUI: entra no alternate screen buffer quando TTY + tuiEnabled
+  // (QR/wizard já terminaram; agora a tela é do painel)
+  if (config.tuiEnabled !== false && process.stdout.isTTY) {
+    try {
+      tui.start();
+      // SIGINT já restaurava o lock; adiciona stop da TUI antes do exit
+      const stopTuiAndExit = () => {
+        try { tui.stop(); } catch { /* ignore */ }
+        releaseLock();
+        process.exit(0);
+      };
+      process.prependOnceListener('SIGINT', stopTuiAndExit);
+      process.prependOnceListener('SIGTERM', stopTuiAndExit);
+      process.once('exit', () => { try { tui.stop(); } catch { /* ignore */ } });
+    } catch (err) {
+      console.warn('[fun] TUI não iniciou:', String(err?.message || err));
+    }
+  } else if (config.tuiEnabled === false) {
+    console.log('[fun] TUI desligada (tuiEnabled=false) — fallback plain logs');
+  }
+
   console.log(
     messagesEnabled
       ? '[fun] Pronto. /help · /cf · /bingo · /tarot · /loja · relógio do mundo ON\n'
       : '[fun] API dashboard ativa. Escaneie o QR quando o ban acabar.\n'
   );
 
-  return { config, getSocket: () => currentSocket, funModule, stopWorldClock };
+  return { config, getSocket: () => currentSocket, funModule, stopWorldClock, tui, auditBus };
 }

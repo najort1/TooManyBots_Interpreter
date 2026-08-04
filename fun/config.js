@@ -1111,6 +1111,20 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.chaosEventActivityWindowMs,
       { min: 60_000, max: 60 * 60_000, rounding: 'floor', clamp: true }
     ),
+    // TUI (painel full-screen de auditoria)
+    tuiEnabled: normalizeBoolean(raw.tuiEnabled, DEFAULT_FUN_CONFIG.tuiEnabled),
+    tuiRefreshMs: normalizeInt(raw.tuiRefreshMs, DEFAULT_FUN_CONFIG.tuiRefreshMs, {
+      min: 200,
+      max: 10_000,
+      rounding: 'floor',
+      clamp: true,
+    }),
+    tuiMaxHistory: normalizeInt(raw.tuiMaxHistory, DEFAULT_FUN_CONFIG.tuiMaxHistory, {
+      min: 20,
+      max: 2000,
+      rounding: 'floor',
+      clamp: true,
+    }),
     // Filas de processamento
     commandMaxConcurrency: normalizeInt(
       raw.commandMaxConcurrency,
@@ -1271,6 +1285,10 @@ export function saveFunUserConfig(input) {
     selfHealEvidenceRetentionDays: normalized.selfHealEvidenceRetentionDays,
     selfHealMaxItemsPerRun: normalized.selfHealMaxItemsPerRun,
     selfHealMaxCallsPerRun: normalized.selfHealMaxCallsPerRun,
+    // TUI (painel full-screen de auditoria)
+    tuiEnabled: normalized.tuiEnabled,
+    tuiRefreshMs: normalized.tuiRefreshMs,
+    tuiMaxHistory: normalized.tuiMaxHistory,
   };
   fs.writeFileSync(FUN_USER_CONFIG_PATH, JSON.stringify(payload, null, 2), 'utf-8');
   return normalizeFunConfig(payload);

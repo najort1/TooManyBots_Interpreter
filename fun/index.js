@@ -36,6 +36,7 @@ import { createFunSnapshotRepository } from './db/funSnapshotRepository.js';
 import { createGroupMembershipService } from './utils/groupMembership.js';
 import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
+import { openaiChatComplete } from './llm/openaiClient.js';
 import { createReactionMediaService } from './services/reactionMediaService.js';
 import { createChaosService } from './services/chaosService.js';
 import { createChaosEventService } from './services/chaosEventService.js';
@@ -286,6 +287,22 @@ export function createFunModule(deps = {}) {
     deps.evidenceRepository || createFunEvidenceRepository({ getDatabase });
   const selfHealRepository =
     deps.selfHealRepository || createFunSelfHealRepository({ getDatabase });
+  const generateSelfHealingZen =
+    deps.openaiChatComplete ||
+    deps.zenGenerate ||
+    (async (params) => {
+      const config = resolveFunConfig(getConfig() || {});
+      if (config.zenEnabled === false || process.env.FUN_DISABLE_LIVE_LLM === '1') {
+        throw new Error('llm-disabled');
+      }
+      return openaiChatComplete({
+        ...params,
+        baseUrl: config.zenBaseUrl,
+        model: config.zenModel,
+        apiKey: config.zenApiKey,
+        sendSamplingParams: config.zenSendSamplingParams,
+      });
+    });
   const selfHealingService =
     deps.selfHealingService ||
     createSelfHealingService({
@@ -293,7 +310,7 @@ export function createFunModule(deps = {}) {
       evidenceRepository,
       memoryRepository,
       getLogger,
-      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateZen: generateSelfHealingZen,
       getConfig: () => resolveFunConfig(getConfig() || {}),
     });
   const personaRepository =
@@ -810,7 +827,21 @@ export function createFunModule(deps = {}) {
         // tick de preços / regulador (silencioso) — independente de anúncios
         if (marketService?.tickEconomy && funConfig.economyEnabled !== false) {
           try {
-            marketService.tickEconomy(scopeKey, funConfig, now);
+            const econTick = marketService.tickEconomy(scopeKey, funConfig, now);
+            // Captura resultado do tick de economia para a TUI (FR-017 US3)
+            if (econTick && typeof econTick === 'object') {
+              results.push({
+                scopeKey,
+                kind: 'economy-tick',
+                ok: econTick.ok !== false,
+                reason: econTick.ok === false ? econTick.reason : null,
+                changed: Array.isArray(econTick.changed) ? econTick.changed.length : 0,
+                stockChanged: Array.isArray(econTick.stockChanged) ? econTick.stockChanged.length : 0,
+                scheduledApplied: Number(econTick.scheduledApplied) || 0,
+                nextInMs: econTick.nextInMs || null,
+                propertyTick: econTick.propertyTick || null,
+              });
+            }
           } catch {
             /* ignore tick errors */
           }

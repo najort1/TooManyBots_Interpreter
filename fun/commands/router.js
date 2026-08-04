@@ -131,6 +131,25 @@ export function isFunCommandText(text, prefix = '/') {
   return parseFunCommand(text, prefix) != null;
 }
 
+export const funCommandCounters = new Map();
+
+/**
+ * Retorna um snapshot dos top-N comandos por escopo.
+ * @returns {Record<string, { command: string, count: number }[]>}
+ */
+export function getFunCommandCountersByScope() {
+  const byScope = {};
+  for (const [key, count] of funCommandCounters.entries()) {
+    const [scope, command] = String(key).split(':');
+    if (!scope || !command) continue;
+    (byScope[scope] ||= []).push({ command, count });
+  }
+  for (const scope of Object.keys(byScope)) {
+    byScope[scope].sort((a, b) => b.count - a.count);
+  }
+  return byScope;
+}
+
 export async function routeFunCommand(ctx) {
   const {
     text,
@@ -201,6 +220,14 @@ export async function routeFunCommand(ctx) {
 
   const parsed = parseFunCommand(text, funConfig.prefix);
   if (!parsed) return { handled: false };
+
+  // Contador por (scope, command) — Observabilidade p/ painel Grupos (FR-017 US5)
+  try {
+    const key = `${scopeKey || 'dm'}:${parsed.command}`;
+    funCommandCounters.set(key, (funCommandCounters.get(key) || 0) + 1);
+  } catch {
+    // contador nunca pode derrubar o roteamento
+  }
 
   const base = {
     text,
