@@ -5,6 +5,7 @@
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
+import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
 import {
@@ -165,9 +166,10 @@ export function createTarotService({
       for (let attempt = 1; attempt <= totalTries; attempt += 1) {
         try {
           const task = resolveZenTaskParams('tarot', funConfig);
+          const ep = resolveZenEndpoint(funConfig);
           const raw = await generateZen({
-            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-            model: funConfig.zenModel || 'glm_5_2',
+            baseUrl: ep.baseUrl,
+            model: ep.model,
             system,
             prompt,
             timeoutMs: Math.max(o.timeoutMs, task.timeoutMs),
@@ -175,7 +177,7 @@ export function createTarotService({
             temperature: Number.isFinite(Number(funConfig.tarotTemperature))
               ? o.temperature
               : task.temperature,
-            apiKey: funConfig.zenApiKey || '',
+            apiKey: ep.apiKey,
             sendSamplingParams: funConfig.zenSendSamplingParams === true,
           });
           const clean = sanitizeTarotText(raw, o.maxChars);

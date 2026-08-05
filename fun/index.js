@@ -1,4 +1,5 @@
 import { resolveFunConfig, getFunGroupWhitelistSet } from './config.js';
+import { resolveZenEndpoint } from './llm/zenEndpoint.js';
 import { createFunStatsRepository } from './db/funStatsRepository.js';
 import { createFunGroupRepository } from './db/funGroupRepository.js';
 import { createFunRelationshipRepository } from './db/funRelationshipRepository.js';
@@ -295,11 +296,12 @@ export function createFunModule(deps = {}) {
       if (config.zenEnabled === false || process.env.FUN_DISABLE_LIVE_LLM === '1') {
         throw new Error('llm-disabled');
       }
+      const endpoint = resolveZenEndpoint(config);
       return openaiChatComplete({
         ...params,
-        baseUrl: config.zenBaseUrl,
-        model: config.zenModel,
-        apiKey: config.zenApiKey,
+        baseUrl: endpoint.baseUrl,
+        model: endpoint.model,
+        apiKey: endpoint.apiKey,
         sendSamplingParams: config.zenSendSamplingParams,
       });
     });

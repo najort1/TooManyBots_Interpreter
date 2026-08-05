@@ -7,6 +7,7 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
 
 const VALID_KINDS = new Set([
@@ -1032,15 +1033,16 @@ export function createGroupMemoryService({
       for (let attempt = 1; attempt <= totalTries; attempt += 1) {
         try {
           const task = resolveZenTaskParams('extract', funConfig);
+          const ep = resolveZenEndpoint(funConfig);
           const raw = await generateZen({
-            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-            model: funConfig.zenModel || 'glm_5_2',
+            baseUrl: ep.baseUrl,
+            model: ep.model,
             system: EXTRACT_SYSTEM,
             prompt,
             timeoutMs: Math.max(o.extractTimeout, task.timeoutMs, 45_000),
             maxTokens: Math.max(task.maxTokens, 700),
             temperature: task.temperature,
-            apiKey: funConfig.zenApiKey || '',
+            apiKey: ep.apiKey,
             jsonMode: true,
             jsonOnly: true,
             sendSamplingParams: funConfig.zenSendSamplingParams === true,
@@ -1099,15 +1101,16 @@ export function createGroupMemoryService({
       for (let attempt = 1; attempt <= totalTries; attempt += 1) {
         try {
           const task = resolveZenTaskParams('persona', funConfig);
+          const ep = resolveZenEndpoint(funConfig);
           text = await generateZen({
-            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-            model: funConfig.zenModel || 'glm_5_2',
+            baseUrl: ep.baseUrl,
+            model: ep.model,
             system: PERSONA_SYSTEM,
             prompt: `Fatos do grupo:\n${list}\n\nResuma o clima em 3–5 bullets (≤${o.personaMax} chars). NÃO invente fatos novos. Só os bullets:`,
             timeoutMs: Math.max(o.extractTimeout, task.timeoutMs),
             maxTokens: task.maxTokens,
             temperature: task.temperature,
-            apiKey: funConfig.zenApiKey || '',
+            apiKey: ep.apiKey,
             sendSamplingParams: funConfig.zenSendSamplingParams === true,
           });
           if (text) {

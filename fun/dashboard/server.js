@@ -7,6 +7,7 @@ import http from 'http';
 import { URL } from 'url';
 import { getDefaultOutboundGuard } from '../../engine/outboundGuard.js';
 import { normalizeFunConfig, saveFunUserConfig } from '../config.js';
+import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
@@ -177,6 +178,7 @@ export function startFunDashboardServer(deps = {}) {
 
       if (req.method === 'GET' && path === '/api/fun/config') {
         const cfg = getConfig();
+        const zenEndpoint = resolveZenEndpoint(cfg);
         sendJson(res, 200, {
           prefix: cfg.prefix || '/',
           groupWhitelistJids: cfg.groupWhitelistJids || [],
@@ -191,8 +193,8 @@ export function startFunDashboardServer(deps = {}) {
           replyQuoted: cfg.replyQuoted !== false,
           replyCommandsInPrivate: cfg.replyCommandsInPrivate !== false,
           zenEnabled: cfg.zenEnabled !== false,
-          zenBaseUrl: cfg.zenBaseUrl || '',
-          zenModel: cfg.zenModel || '',
+          zenBaseUrl: zenEndpoint.baseUrl,
+          zenModel: zenEndpoint.model,
           ollamaEnabled: cfg.ollamaEnabled !== false,
           ollamaModel: cfg.ollamaModel || '',
           tarotEnabled: cfg.tarotEnabled !== false,

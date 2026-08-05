@@ -13,6 +13,7 @@
 
 import { sanitizeFlavor, looksLikeScoreboardEcho } from '../llm/flavorService.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
+import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { PERSONA_DERIVE_INTERVAL_MS } from '../constants.js';
 
@@ -411,16 +412,17 @@ export function createPersonaService({
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') return '';
 
     const zen = resolveZenTaskParams('persona', funConfig);
+    const ep = resolveZenEndpoint(funConfig);
     try {
       const raw = await openaiChatComplete({
-        baseUrl: funConfig.zenBaseUrl,
-        model: funConfig.zenModel,
+        baseUrl: ep.baseUrl,
+        model: ep.model,
         prompt,
         system,
         timeoutMs: Math.min(o.timeoutMs, zen.timeoutMs || 15_000),
         maxTokens: zen.maxTokens,
         temperature: zen.temperature,
-        apiKey: funConfig.zenApiKey || '',
+        apiKey: ep.apiKey,
         sendSamplingParams: funConfig.zenSendSamplingParams !== false,
       });
       if (!raw) return '';

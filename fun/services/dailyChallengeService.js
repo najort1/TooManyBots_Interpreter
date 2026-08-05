@@ -20,6 +20,7 @@
 import { RIDDLES } from './data/riddles.js';
 import { FALLBACK_GAMES } from './data/guessGameFallback.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
+import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 
 const CHALLENGE_TYPES = ['guess_game', 'riddle', 'pokemon'];
 const LOCAL_CHALLENGE_TYPES = ['guess_game', 'riddle'];
@@ -191,9 +192,7 @@ export function createDailyChallengeService(deps = {}) {
 
   async function tryLlmJson(system, userPrompt, timeoutMs = 45000) {
     const c = cfg();
-    const baseUrl = c.zenBaseUrl || 'http://127.0.0.1:3300';
-    const model = c.zenModel || 'gpt-oss:latest';
-    const apiKey = c.zenApiKey || '';
+    const { baseUrl, model, apiKey } = resolveZenEndpoint(c);
     if (typeof generateZen !== 'function' || c.dailyChallengeEnabled === false || c.zenEnabled === false) return null;
     if (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete) return null;
     try {
@@ -242,16 +241,17 @@ export function createDailyChallengeService(deps = {}) {
     }
     if (typeof generateZen !== 'function') return null;
     if (process.env.FUN_DISABLE_LIVE_LLM === '1' && typeof generateZen === 'function' && generateZen.name === 'openaiChatComplete') return null;
+    const { baseUrl, model, apiKey } = resolveZenEndpoint(c);
     try {
       const raw = await generateZen({
-        baseUrl: c.zenBaseUrl || 'http://127.0.0.1:3300',
-        model: c.zenModel || 'glm_5_2',
+        baseUrl,
+        model,
         system,
         prompt: userPrompt,
         timeoutMs,
         maxTokens: 180,
         temperature: 0.8,
-        apiKey: c.zenApiKey || '',
+        apiKey,
         sendSamplingParams: c.zenSendSamplingParams === true,
       });
       const txt = raw ? String(raw).trim() : '';

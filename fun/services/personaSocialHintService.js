@@ -1,4 +1,5 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
+import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 
 const SYSTEM = `Você infere APENAS pistas sociais leves e temporárias de participantes de um grupo de WhatsApp.
@@ -100,11 +101,12 @@ export function createPersonaSocialHintService({
     try {
       if (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete) return { ok: true, saved: 0, batchSize: batch.length, reason: 'llm-disabled' };
       const task = resolveZenTaskParams('extract', funConfig);
+      const ep = resolveZenEndpoint(funConfig);
       const prompt = batch.map((message, index) => `[${index}] ${message.name}: ${message.text}`).join('\n');
       const raw = await generateZen({
-        baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300', model: funConfig.zenModel || 'glm_5_2',
+        baseUrl: ep.baseUrl, model: ep.model,
         system: SYSTEM, prompt, timeoutMs: task.timeoutMs, maxTokens: task.maxTokens,
-        temperature: task.temperature, apiKey: funConfig.zenApiKey || '', jsonMode: true, jsonOnly: true,
+        temperature: task.temperature, apiKey: ep.apiKey, jsonMode: true, jsonOnly: true,
         sendSamplingParams: funConfig.zenSendSamplingParams === true,
       });
       const hints = parseHints(raw, batch, o.maxChars);

@@ -697,8 +697,8 @@ test('ollama config defaults + flavorService fallback', async () => {
   assert.equal(cfg.ollamaModel, 'gemma4:latest');
   assert.ok(cfg.ollamaBaseUrl.includes('11434'));
   assert.equal(cfg.zenEnabled, true);
-  assert.ok(String(cfg.zenBaseUrl || '').includes('3300'));
-  assert.equal(cfg.zenModel, 'glm_5_2');
+  assert.equal(cfg.zenBaseUrl, 'http://localhost:20128/v1');
+  assert.equal(cfg.zenModel, 'bot-zap');
   assert.equal(cfg.zenSendSamplingParams, false);
 
   const { createFlavorService } = await import('../fun/llm/flavorService.js');

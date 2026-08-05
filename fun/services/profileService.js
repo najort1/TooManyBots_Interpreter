@@ -5,6 +5,7 @@
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
+import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
 
@@ -640,15 +641,16 @@ export function createProfileService({
         for (let attempt = 1; attempt <= totalTries; attempt += 1) {
           try {
             const task = resolveZenTaskParams('extract', funConfig);
+            const ep = resolveZenEndpoint(funConfig);
             const out = await generateZen({
-              baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-              model: funConfig.zenModel || 'glm_5_2',
+              baseUrl: ep.baseUrl,
+              model: ep.model,
               system: EXTRACT_SYSTEM,
               prompt,
               timeoutMs: Math.max(o.timeout, task.timeoutMs),
               maxTokens: task.maxTokens,
               temperature: task.temperature,
-              apiKey: funConfig.zenApiKey || '',
+              apiKey: ep.apiKey,
               jsonMode: true,
               jsonOnly: true,
               sendSamplingParams: funConfig.zenSendSamplingParams === true,

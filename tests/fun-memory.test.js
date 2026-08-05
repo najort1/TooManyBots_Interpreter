@@ -39,12 +39,12 @@ function uniqueGroup() {
   return `120363${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 90 + 10)}@g.us`;
 }
 
-test('default zen model é glm_5_2 no proxy 3300', () => {
-  assert.equal(DEFAULT_FUN_CONFIG.zenModel, 'glm_5_2');
-  assert.equal(DEFAULT_FUN_CONFIG.zenBaseUrl, 'http://127.0.0.1:3300');
+test('default Zen usa bot-zap no endpoint padronizado', () => {
+  assert.equal(DEFAULT_FUN_CONFIG.zenModel, 'bot-zap');
+  assert.equal(DEFAULT_FUN_CONFIG.zenBaseUrl, 'http://localhost:20128/v1');
   assert.equal(DEFAULT_FUN_CONFIG.zenSendSamplingParams, false);
   const cfg = resolveFunConfig({});
-  assert.equal(cfg.zenModel, 'glm_5_2');
+  assert.equal(cfg.zenModel, 'bot-zap');
   assert.equal(cfg.zenSendSamplingParams, false);
   assert.equal(cfg.memoryEnabled, true);
   assert.equal(cfg.memoryMaxFacts, 50);

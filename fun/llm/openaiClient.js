@@ -3,8 +3,10 @@
  * POST /v1/chat/completions
  */
 
+import { DEFAULT_FUN_CONFIG } from '../constants.js';
+
 function joinUrl(baseUrl, path) {
-  const base = String(baseUrl || 'http://127.0.0.1:3300').replace(/\/+$/, '');
+  const base = String(baseUrl || DEFAULT_FUN_CONFIG.zenBaseUrl).replace(/\/+$/, '');
   let p = path.startsWith('/') ? path : `/${path}`;
   if (/\/v1$/i.test(base) && /^\/v1\//i.test(p)) p = p.slice(3);
   return `${base}${p}`;
@@ -263,7 +265,7 @@ export function extractChatText(data) {
 
 /**
  * @param {object} opts
- * @param {string} [opts.baseUrl] — ex. http://127.0.0.1:3000
+ * @param {string} [opts.baseUrl] — ex. http://localhost:20128/v1
  * @param {string} [opts.model]
  * @param {string} opts.prompt
  * @param {string} [opts.system]
@@ -275,12 +277,12 @@ export function extractChatText(data) {
  * @returns {Promise<string>}
  */
 /**
- * Proxies com modelo pré-configurado (ex. glm_5_2 em :3300) ignoram sampling.
+ * Proxies com modelo pré-configurado podem ignorar sampling.
  * sendSamplingParams=false → body só model+messages (+ response_format se jsonMode).
  */
 export async function openaiChatComplete({
-  baseUrl = 'http://127.0.0.1:3300',
-  model = 'glm_5_2',
+  baseUrl = DEFAULT_FUN_CONFIG.zenBaseUrl,
+  model = DEFAULT_FUN_CONFIG.zenModel,
   prompt,
   system = '',
   timeoutMs = 20_000,
@@ -295,7 +297,7 @@ export async function openaiChatComplete({
    */
   jsonOnly = false,
   /**
-   * false = não envia temperature/top_p (modelo fixo no proxy, ex. glm :3300).
+   * false = não envia temperature/top_p (proxy com knobs fixos).
    * max_tokens ainda é enviado (orçamento de saída da completion, não “criatividade”).
    * default true; Fun passa false via config.zenSendSamplingParams.
    */
@@ -330,7 +332,7 @@ export async function openaiChatComplete({
 
   try {
     const body = {
-      model: String(model || 'glm_5_2'),
+      model: String(model || DEFAULT_FUN_CONFIG.zenModel),
       messages,
       stream: false,
     };
@@ -380,7 +382,7 @@ export async function openaiChatComplete({
  * Health check do proxy Zen.
  */
 export async function openaiPing({
-  baseUrl = 'http://127.0.0.1:3300',
+  baseUrl = DEFAULT_FUN_CONFIG.zenBaseUrl,
   timeoutMs = 3_000,
   fetchImpl,
 } = {}) {

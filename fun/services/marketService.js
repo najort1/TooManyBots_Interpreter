@@ -7,6 +7,7 @@ import { getDb } from '../../db/context.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { recordLlmHit, inventTemplateAlert } from '../llm/llmMetrics.js';
 import {
   COLLECTIBLES,
@@ -533,17 +534,18 @@ export function createMarketService({
       let parsed = null;
       let source = '';
       let lastErr = null;
+      const ep = resolveZenEndpoint(funConfig);
       for (let attempt = 1; attempt <= totalTries; attempt += 1) {
         try {
           const raw = await generateZen({
-            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-            model: funConfig.zenModel || 'glm_5_2',
+            baseUrl: ep.baseUrl,
+            model: ep.model,
             system: inventSystem,
             prompt,
             timeoutMs: inventTimeoutMs,
             maxTokens: task.maxTokens,
             temperature: task.temperature,
-            apiKey: funConfig.zenApiKey || '',
+            apiKey: ep.apiKey,
             jsonMode: true,
             jsonOnly: true,
             sendSamplingParams: funConfig.zenSendSamplingParams === true,
@@ -555,7 +557,7 @@ export function createMarketService({
             log?.info?.(
               {
                 source,
-                model: funConfig.zenModel,
+                model: ep.model,
                 title: parsed.title,
                 attempt,
                 timeoutMs: inventTimeoutMs,
@@ -571,7 +573,7 @@ export function createMarketService({
           }
           log?.warn?.(
             {
-              model: funConfig.zenModel,
+              model: ep.model,
               attempt,
               preview: String(raw || '').slice(0, 160),
             },
@@ -590,7 +592,7 @@ export function createMarketService({
       }
       if (parsed && (!parsed?.title || !parsed?.body)) {
         console.warn(
-          `[fun/market] zen invent esgotou ${totalTries} tentativas (modelo=${funConfig.zenModel || 'glm_5_2'}) → template`
+          `[fun/market] zen invent esgotou ${totalTries} tentativas (modelo=${ep.model}) → template`
         );
       } else if (lastErr) {
         console.warn(
@@ -656,16 +658,17 @@ export function createMarketService({
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') return null;
     if (funConfig.zenEnabled === false) return null;
     const task = resolveZenTaskParams('journalist', funConfig);
+    const ep = resolveZenEndpoint(funConfig);
     try {
       const raw = await generateZen({
-        baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-        model: funConfig.zenModel || 'glm_5_2',
+        baseUrl: ep.baseUrl,
+        model: ep.model,
         system: JOURNALIST_SYSTEM,
         prompt: buildJournalistUserPrompt(facts),
         timeoutMs: task.timeoutMs,
         maxTokens: task.maxTokens,
         temperature: task.temperature,
-        apiKey: funConfig.zenApiKey || '',
+        apiKey: ep.apiKey,
         jsonMode: true,
         jsonOnly: true,
         sendSamplingParams: funConfig.zenSendSamplingParams === true,

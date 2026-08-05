@@ -109,6 +109,7 @@ import { renderLlmPanel } from './tui/panels/llmPanel.js';
 import { renderGroupsPanel } from './tui/panels/groupsPanel.js';
 import { getFunCommandCountersByScope } from './commands/router.js';
 import { getLlmMetrics, inventTemplateAlert } from './llm/llmMetrics.js';
+import { resolveZenEndpoint } from './llm/zenEndpoint.js';
 
 function resolveDisconnectReasonName(statusCode) {
   const entry = Object.entries(DisconnectReason).find(([, code]) => Number(code) === Number(statusCode));
@@ -553,8 +554,9 @@ export async function startFunBot(options = {}) {
   // Flavor: Zen (principal). Ollama (fallback local) foi descontinuado.
   const zenOn = config.zenEnabled !== false;
   if (zenOn) {
+    const zenEndpoint = resolveZenEndpoint(config);
     console.log(
-      `[fun] Flavor LLM: Zen principal → ${config.zenBaseUrl || 'http://127.0.0.1:3300'} · model=${config.zenModel || 'glm_5_2'}${config.zenSendSamplingParams === false ? ' · sampling=off' : ''} · retries=${Number(config.zenMaxRetries ?? 3)}`
+      `[fun] Flavor LLM: Zen principal → ${zenEndpoint.baseUrl} · model=${zenEndpoint.model}${config.zenSendSamplingParams === false ? ' · sampling=off' : ''} · retries=${Number(config.zenMaxRetries ?? 3)}`
     );
   } else {
     console.log('[fun] Flavor LLM desligado — só templates estáticos');

@@ -623,9 +623,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // Flavor LLM — OpenCode Zen (principal) → Ollama (fallback) → template
   // OpenCode Zen Proxy (OpenAI-compatible)
   zenEnabled: true,
-  /** Proxy OpenAI-compat com modelos pré-configurados (glm_5_2 em :3300). */
+  /** Proxy OpenAI-compatible Zen padronizado para todas as tarefas de chat. */
   zenBaseUrl: 'http://localhost:20128/v1',
-  // glm_5_2: melhor invent/flavor na bateria de comparação (Jul/2026)
   zenModel: 'bot-zap',
   // timeout de rede global (tarefas longas usam zen*TimeoutMs próprio)
   zenTimeoutMs: 90_000,
@@ -636,7 +635,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   flavorTimeoutMs: 55_000,
   zenTemperature: 0.85,
   /**
-   * false = NÃO envia temperature/max_tokens (proxy com knobs fixos, ex. :3300).
+   * false = NÃO envia temperature/max_tokens (proxy com knobs fixos).
    * true = OpenAI-compat completo (OpenCode Zen etc.).
    */
   zenSendSamplingParams: false,
@@ -825,11 +824,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   qmpTimeoutMs: 18_000,
   qmpMaxTokens: 220,
   qmpTemperature: 0.95,
-  /**
-   * Modelo Zen só pro QMP (mais humano nos probes).
-   * Vazio = cai no zenModel global do bot.
-   */
-  qmpZenModel: 'grok45medium',
+  /** Modelo Zen opcional só para QMP; vazio usa o zenModel global do bot. */
+  qmpZenModel: '',
   happyHourDurationMs: 45 * 60_000,
   happyHourPayoutMult: 1.12,
   happyHourCooldownMs: 4 * 60 * 60_000,

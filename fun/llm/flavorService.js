@@ -1,5 +1,6 @@
 import { ollamaGenerate, ollamaWarmup, ollamaTouch } from './ollamaClient.js';
 import { openaiChatComplete } from './openaiClient.js';
+import { resolveZenEndpoint } from './zenEndpoint.js';
 import {
   resolveZenTaskParams,
   overlapsRecent,
@@ -942,15 +943,12 @@ function resolveOllamaEndpoint(cfg) {
   };
 }
 
-function resolveZenEndpoint(cfg) {
+function resolveZenSettings(cfg) {
   return {
-    baseUrl: String(cfg.zenBaseUrl || 'http://127.0.0.1:3300').trim(),
-    model: String(cfg.zenModel || 'glm_5_2').trim() || 'glm_5_2',
+    ...resolveZenEndpoint(cfg),
     timeoutMs: Math.max(500, Math.floor(Number(cfg.zenTimeoutMs) || 20_000)),
     maxTokens: Math.max(64, Math.floor(Number(cfg.zenMaxTokens) || 400)),
     temperature: Number.isFinite(Number(cfg.zenTemperature)) ? Number(cfg.zenTemperature) : 0.85,
-    apiKey: String(cfg.zenApiKey || '').trim(),
-    // default false: proxy glm com knobs fixos
     sendSamplingParams: cfg.zenSendSamplingParams === true,
   };
 }
@@ -1290,7 +1288,7 @@ ${banHint}`.trim();
     if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
     const taskName = assault ? 'assault' : chaos ? 'chaos' : 'flavor';
     const task = resolveZenTaskParams(taskName, cfg);
-    const ep = resolveZenEndpoint(cfg);
+    const ep = resolveZenSettings(cfg);
     const scopeKey = scopeKeyOf(vars);
     const enriched = { ...vars };
     const { prompt, system, maxChars, maxTokens } = buildPromptParts(cfg, key, enriched, simple, {

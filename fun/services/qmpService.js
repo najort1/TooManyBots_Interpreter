@@ -5,6 +5,7 @@
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
+import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
 import { getWeekKey } from '../db/funSocialRepository.js';
 
@@ -367,11 +368,8 @@ export function createQmpService({
       temperature: Number.isFinite(Number(funConfig.qmpTemperature))
         ? Number(funConfig.qmpTemperature)
         : 0.95,
-      /** grok45medium por padrão no QMP; override via qmpZenModel / zenModel. */
-      zenModel:
-        String(funConfig.qmpZenModel || '').trim() ||
-        String(funConfig.zenModel || '').trim() ||
-        'grok45medium',
+      /** Override explícito por task; vazio mantém o modelo Zen global. */
+      zenModel: String(funConfig.qmpZenModel || '').trim(),
     };
   }
 
@@ -477,15 +475,16 @@ export function createQmpService({
 
       if (zenOn(funConfig)) {
         try {
+          const ep = resolveZenEndpoint(funConfig);
           const raw = await generateZen({
-            baseUrl: funConfig.zenBaseUrl || 'http://127.0.0.1:3300',
-            model: o.zenModel,
+            baseUrl: ep.baseUrl,
+            model: o.zenModel || ep.model,
             system,
             prompt: userPrompt + nudge,
             timeoutMs: o.timeoutMs,
             maxTokens: o.maxTokens,
             temperature: Math.min(1.3, o.temperature + attempt * 0.08),
-            apiKey: funConfig.zenApiKey || '',
+            apiKey: ep.apiKey,
             sendSamplingParams: funConfig.zenSendSamplingParams === true,
           });
           const hit = tryClean(raw, 'zen');
