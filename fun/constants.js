@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '29';
+export const FUN_SCHEMA_VERSION = '30';
 
 export const PERSONA_MEMORY_TYPES = Object.freeze(['thread', 'episodic', 'semantic', 'social']);
 export const PERSONA_MEMORY_EVIDENCE = Object.freeze(['explicit', 'corroborated', 'inferred']);
@@ -517,7 +517,7 @@ export const PERSONA_THREAD_TTL_MS = 30 * 60_000;
 export const PERSONA_WINDOW_SIZE = 100;
 export const PERSONA_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const PERSONA_TIMEOUT_MS = 15_000;
-export const PERSONA_MAX_CHARS = 400;
+export const PERSONA_MAX_CHARS = 200;
 /** Intervalo mínimo entre derivações do perfil de voz por grupo (evita write a cada msg). */
 export const PERSONA_DERIVE_INTERVAL_MS = 5 * 60_000;
 

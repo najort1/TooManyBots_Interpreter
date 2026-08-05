@@ -342,7 +342,7 @@ export function createFunModule(deps = {}) {
   const memoryDecayService = deps.memoryDecayService || createMemoryDecayService({ conversationMemoryRepository });
   const personaIdentityService = deps.personaIdentityService || createPersonaIdentityService({ personaIdentityRepository });
   const socialMemoryService = deps.socialMemoryService || createSocialMemoryService();
-  const personaContextService = deps.personaContextService || createPersonaContextService({ threadContextService, memoryRetrievalService, personaIdentityService, getLogger });
+  const personaContextService = deps.personaContextService || createPersonaContextService({ threadContextService, memoryRetrievalService, personaIdentityService, groupMemoryService, getLogger });
   const personaService =
     deps.personaService ||
     createPersonaService({

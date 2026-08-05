@@ -58,13 +58,87 @@ function extractTokens(text) {
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter((w) => w.length >= 3 && !STOPWORDS.has(w));
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w))
+    .map(normalizeToken)
+    .filter((w) => w.length >= 3);
   return words;
 }
 
 function extractEmojis(text) {
   const matches = String(text || '').match(EMOJI_RE);
   return matches || [];
+}
+
+const LAUGH_ONLY_RE = /^k+$/i;
+const REPEAT_RE = /(.)\1{3,}/g;
+const TONE_CMD_RE = /^\s*(?:[/!])/;
+const TONE_URL_RE = /(?:https?:\/\/|www\.)/i;
+
+function normalizeToken(token) {
+  const t = String(token || '');
+  if (LAUGH_ONLY_RE.test(t)) return 'kkk';
+  return t.replace(REPEAT_RE, '$1$1');
+}
+
+function toneScore(line) {
+  let score = 0;
+  const len = line.length;
+  if (len >= 6 && len <= 60) score += 1;
+  if (/[!?…]/.test(line)) score += 1;
+  if (/[aeiouàáâãéêíóôõú]/i.test(line)) score += 1;
+  score += Math.min(2, (line.match(/\bk+\b/gi) || []).length);
+  if (/[A-Z]{2,}/.test(line)) score += 1;
+  return score;
+}
+
+function isNoiseToneLine(line) {
+  const trimmed = String(line || '').trim();
+  if (!trimmed) return true;
+  if (TONE_CMD_RE.test(trimmed)) return true;
+  if (TONE_URL_RE.test(trimmed)) return true;
+  if (/^[k\s!?.,]+$/i.test(trimmed)) return true;
+  return false;
+}
+
+function pickToneSamples(msgs, count = 4) {
+  const seen = new Set();
+  const candidates = [];
+  for (const m of msgs) {
+    const text = String(m?.text || '').trim();
+    if (!text || seen.has(text) || isNoiseToneLine(text)) continue;
+    seen.add(text);
+    candidates.push({ text, userJid: String(m.userJid || ''), score: toneScore(text) });
+  }
+  candidates.sort((a, b) => b.score - a.score || (a.text < b.text ? -1 : 1));
+  const chosen = [];
+  const authors = new Set();
+  for (const c of candidates) {
+    if (chosen.length >= count) break;
+    if (authors.has(c.userJid)) continue;
+    authors.add(c.userJid);
+    chosen.push(c);
+  }
+  for (const c of candidates) {
+    if (chosen.length >= count) break;
+    if (chosen.includes(c)) continue;
+    chosen.push(c);
+  }
+  return chosen.map((c) => anonymizeLine(c.text));
+}
+
+function buildToneBlock(identity) {
+  const allowed = Array.isArray(identity?.allowedTones) && identity.allowedTones.length
+    ? identity.allowedTones.join(', ')
+    : '';
+  const forbidden = Array.isArray(identity?.forbiddenTones) && identity.forbiddenTones.length
+    ? identity.forbiddenTones.join(', ')
+    : '';
+  const parts = [
+    'Humor: acompanhe a zoação do grupo — se a galera é ácida/debochada, seja ácido na medida deles (é normal no Brasil), sem passar dos limites do que o próprio grupo aceita.',
+  ];
+  if (allowed) parts.push(`Tom de base do grupo: ${allowed} (mas a zoeira pode subir de tom quando o assunto pedir).`);
+  if (forbidden) parts.push(`Evite soar: ${forbidden}.`);
+  return parts.join(' ');
 }
 
 function pickRotation(i, arr) {
@@ -101,7 +175,7 @@ export function createPersonaService({
       windowSize: Number(funConfig.personaWindowSize) || 100,
       windowMs: Number(funConfig.personaWindowMs) || 24 * 60 * 60 * 1000,
       timeoutMs: Number(funConfig.personaTimeoutMs) || 15_000,
-      maxChars: Number(funConfig.personaMaxChars) || 400,
+      maxChars: Number(funConfig.personaMaxChars) || 200,
       deriveIntervalMs: Number(funConfig.personaDeriveIntervalMs) || PERSONA_DERIVE_INTERVAL_MS,
     };
   }
@@ -188,6 +262,8 @@ export function createPersonaService({
       }
       const body = String(text || '').trim();
       if (!body || body.length < 3) return { observed: false, reason: 'short' };
+      const cmdPrefix = String(funConfig.prefix || '/');
+      if (cmdPrefix && body.startsWith(cmdPrefix)) return { observed: false, reason: 'command' };
 
       const w = getWindow(s, o.windowSize, o.windowMs, Number(now) || Date.now());
       w.msgs.push({
@@ -215,28 +291,30 @@ export function createPersonaService({
     const tokenCounts = new Map();
     let totalLen = 0;
     const emojiCounts = new Map();
-    const sampleLines = [];
 
     for (const m of w.msgs) {
-      const tokens = extractTokens(m.text);
-      for (const tk of tokens) tokenCounts.set(tk, (tokenCounts.get(tk) || 0) + 1);
+      const seenTokens = new Set(extractTokens(m.text));
+      for (const tk of seenTokens) tokenCounts.set(tk, (tokenCounts.get(tk) || 0) + 1);
       totalLen += String(m.text).length;
       const em = extractEmojis(m.text);
       for (const e of em) emojiCounts.set(e, (emojiCounts.get(e) || 0) + 1);
     }
 
-    const topTokens = [...tokenCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30).map(([w2]) => w2);
+    const topTokens = [...tokenCounts.entries()]
+      .filter(([, c]) => c >= 2)
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 30)
+      .map(([w2]) => w2);
     const emojis = [...emojiCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([e, c]) => ({ emoji: e, count: c }));
     const avgLen = totalLen / w.msgs.length;
-
-    for (const m of w.msgs.slice(-3)) sampleLines.push(anonymizeLine(m.text));
+    const styleLines = pickToneSamples(w.msgs);
 
     const persisted = personaRepository.upsertProfile({
       scopeKey: s,
       topTokens,
       emojis,
       avgLen,
-      styleLines: sampleLines,
+      styleLines,
       sampleTs: t,
       now: t,
     });
@@ -269,15 +347,17 @@ export function createPersonaService({
       parts.push(`Exemplos de tom (anonimizados):`);
       for (const l of profile.styleLines) parts.push(`- "${l}"`);
     }
-    if (profile.avgLen > 0) parts.push(`Tamanho médio das mensagens: ~${Math.round(profile.avgLen)} chars.`);
+    if (profile.avgLen > 0) parts.push(`Tamanho médio das mensagens: ~${Math.round(profile.avgLen)} chars (use como referência de ritmo, não de tamanho — desenvolva a resposta).`);
     return parts.join('\n');
   }
 
   function buildSystemPrompt({ styleBlock, threadContext, maxChars }) {
     const parts = [
       'Você é um membro comum de um grupo de WhatsApp. Está respondendo naturalmente, como um participante qualquer — não como assistente.',
-      'Escreva em português do Brasil, 1 a 3 frases curtas, no estilo de fala do grupo.',
+      'Você É o "bot" do grupo: quando alguém chama "bot" ou te marca, é com você. Fale SEMPRE em primeira pessoa (eu, meu, minha) — jamais se refira a si mesmo como "o bot", "esse bot", "a máquina" ou pelo seu nome.',
+      'Escreva em português do Brasil, 1 a 3 frases completas, no estilo de fala do grupo.',
       'Varie o tom: às vezes debochado, às vezes empático, às vezes breve.',
+      `Comprimento: desenvolva a resposta em ${Math.min(80, Math.max(40, Math.round(maxChars * 0.4)))} a ${maxChars} caracteres — não responda a cada assunto com uma frase seca, mas também não vire um texto.`,
       'NUNCA mencione que é um bot, IA ou assistente.',
       'NUNCA mencione coins, XP, level, placar ou saldo — isso é proibido.',
       'NUNCA revele dados pessoais, nomes reais, números de telefone ou conteúdo privado.',
@@ -299,18 +379,33 @@ export function createPersonaService({
 
   async function generateResponse({ text, scopeKey, funConfig, threadContext, responseContextPack, participantJids = [] }) {
     const o = opts(funConfig);
-    const identityStyle = responseContextPack?.groupIdentity?.voiceStyle?.join(', ') || '';
+    const groupIdentity = responseContextPack?.groupIdentity || {};
+    const identityStyle = (groupIdentity.voiceStyle || []).filter(Boolean).join(', ') || '';
+    const toneBlock = buildToneBlock(groupIdentity);
+    const loreBlock = String(groupIdentity.groupLoreSummary || '').trim()
+      ? `Contexto do grupo (lore extraída dos fatos):\n${String(groupIdentity.groupLoreSummary).trim().slice(0, 320)}`
+      : '';
     const socialHints = (personaSocialHintService?.getHints?.(scopeKey, participantJids, { limit: 6 }) || [])
       .filter((hint) => hint.socialSignal !== 'negative' && Number(hint.confidence) >= 60);
     const socialHintBlock = socialHints.length
       ? `Pistas sociais inferidas e incertas (não são fatos; não as declare como verdade):\n${socialHints.map((hint) => `- ${hint.hintText}`).join('\n')}`
       : '';
-    const styleBlock = [buildStyleBlock(scopeKey), identityStyle, socialHintBlock].filter(Boolean).join('\n');
+    const styleBlock = [
+      buildStyleBlock(scopeKey),
+      identityStyle ? `Voz observada do grupo: ${identityStyle}.` : '',
+      toneBlock,
+      loreBlock,
+      socialHintBlock,
+    ].filter(Boolean).join('\n');
     const contextTurns = responseContextPack?.threadContext?.topicSummary
       ? [...(threadContext || []), { role: 'contexto', text: responseContextPack.threadContext.topicSummary }]
       : threadContext;
     const facts = responseContextPack?.confirmedFacts?.map((m) => m.factText).slice(0, 4) || [];
-    const system = `${buildSystemPrompt({ styleBlock, threadContext: contextTurns, maxChars: o.maxChars })}${facts.length ? `\nFatos confirmados relevantes (não invente além deles):\n${facts.map((fact) => `- ${fact}`).join('\n')}` : ''}\nSinais inferidos são apenas pistas: jamais os apresente como fato.`;
+    const system = [
+      buildSystemPrompt({ styleBlock, threadContext: contextTurns, maxChars: o.maxChars }),
+      facts.length ? `Fatos confirmados relevantes (não invente além deles):\n${facts.map((fact) => `- ${fact}`).join('\n')}` : '',
+      'Sinais inferidos são apenas pistas: jamais os apresente como fato.',
+    ].filter(Boolean).join('\n');
     const prompt = String(text || '').slice(0, o.maxChars);
 
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') return '';

@@ -590,3 +590,40 @@ test('maybeDeriveProfile: janela insuficiente não deriva', () => {
   assert.equal(svc.maybeDeriveProfile(scope, baseConfig).reason, 'insufficient');
   assert.equal(personaRepository.getProfile(scope), null, 'não deve criar perfil sem amostra suficiente');
 });
+
+test('perfil: risada gigante colapsa para "kkk" e token de tópico único não entra', () => {
+  const { svc, cfg, personaRepository } = setup();
+  const scope = uniqueGroup();
+  const bigLaugh = 'k'.repeat(47);
+  const msgs = [`${bigLaugh} mane`, 'que isso ai', 'kkkk e tal', 'iamos embora', 'so pra testar, valeu'];
+  for (const t of msgs) svc.observeMessage({ scopeKey: scope, userJid: uniqueJid(), text: t, funConfig: cfg });
+  svc.deriveAndPersistProfile(scope, cfg);
+  const profile = personaRepository.getProfile(scope);
+  assert.ok(profile.topTokens.includes('kkk'), 'risada deve colapsar para o token canônico kkk');
+  assert.equal(profile.topTokens.find((t) => t.length > 8), undefined, 'não deve incluir token gigante de risada');
+  assert.ok(!profile.topTokens.includes('mane'), 'token presente em 1 só mensagem é tópico, não estilo');
+  assert.ok(!profile.topTokens.includes('pra'), 'stopword/sinal sem cobertura não deve entrar');
+});
+
+test('observeMessage: comandos com prefixo não alimentam janela', () => {
+  const { svc, cfg } = setup();
+  const scope = uniqueGroup();
+  const r1 = svc.observeMessage({ scopeKey: scope, userJid: uniqueJid(), text: '/trabalhar', funConfig: cfg });
+  const r2 = svc.observeMessage({ scopeKey: scope, userJid: uniqueJid(), text: '/sorte', funConfig: cfg });
+  assert.equal(r1.reason, 'command');
+  assert.equal(r2.reason, 'command');
+  assert.equal(svc._windows.get(scope), undefined, 'só comandos não devem criar janela de aprendizado');
+});
+
+test('perfil: style_lines excluem comandos e amostram autores distintos', () => {
+  const { svc, cfg, personaRepository } = setup();
+  const scope = uniqueGroup();
+  const msgs = ['/trabalhar', 'bora galera kkk', 'esse dia foi bom demais!', 'kkkkkk vivemos', 'nunca mais volto nesse lugar', 'amanha tem mais um dia'];
+  for (const t of msgs) svc.observeMessage({ scopeKey: scope, userJid: uniqueJid(), text: t, funConfig: cfg });
+  svc.deriveAndPersistProfile(scope, cfg);
+  const profile = personaRepository.getProfile(scope);
+  assert.ok(profile.styleLines.length > 0, 'deve ter amostras de tom');
+  for (const line of profile.styleLines) {
+    assert.ok(!line.startsWith('/'), `style_line não deve ser comando: ${line}`);
+  }
+});

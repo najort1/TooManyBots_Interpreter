@@ -1325,6 +1325,7 @@ export function createGroupMemoryService({
     forgetAll,
     forgetSubject,
     refreshPersona,
+    getPersonaCached,
     parseFactsJson,
     validateExtractedFact,
     findSimilar,

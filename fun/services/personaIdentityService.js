@@ -4,7 +4,7 @@ export function createPersonaIdentityService({ personaIdentityRepository } = {})
   function refresh({ scopeKey, voiceStyle, groupLoreSummary, now = Date.now() } = {}) {
     const current = get(scopeKey);
     const style = Array.isArray(voiceStyle) && voiceStyle.length ? voiceStyle : current.voiceStyle;
-    return personaIdentityRepository.upsert({ scopeKey, voiceStyle: style, allowedTones: current.allowedTones.length ? current.allowedTones : ['leve', 'respeitoso'], forbiddenTones: current.forbiddenTones.length ? current.forbiddenTones : ['invasivo'], signatureTraits: style.slice(0, 3), groupLoreSummary: String(groupLoreSummary || current.groupLoreSummary || ''), now });
+    return personaIdentityRepository.upsert({ scopeKey, voiceStyle: style, allowedTones: current.allowedTones, forbiddenTones: current.forbiddenTones, signatureTraits: style.slice(0, 3), groupLoreSummary: String(groupLoreSummary || current.groupLoreSummary || ''), now });
   }
   return { get, refresh };
 }
