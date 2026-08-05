@@ -1,5 +1,5 @@
 /**
- * Parâmetros Zen por tarefa (invent / extract / flavor / chaos / tarot / assault / persona).
+ * Parâmetros Zen por tarefa (invent / extract / flavor / chaos / tarot / assault / persona / dailyGuess / dailyHint).
  * Evita um único temperature/maxTokens para tudo.
  */
 
@@ -64,6 +64,20 @@ export const ZEN_TASK_DEFAULTS = Object.freeze({
     jsonMode: false,
     jsonOnly: false,
   }),
+  dailyguess: Object.freeze({
+    temperature: 0.9,
+    maxTokens: 400,
+    timeoutMs: 45_000,
+    jsonMode: true,
+    jsonOnly: true,
+  }),
+  dailyhint: Object.freeze({
+    temperature: 0.8,
+    maxTokens: 180,
+    timeoutMs: 30_000,
+    jsonMode: false,
+    jsonOnly: false,
+  }),
   journalist: Object.freeze({
     temperature: 0.7,
     maxTokens: 700,
@@ -90,7 +104,7 @@ export function resolveZenTaskParams(task, funConfig = {}) {
   const base = ZEN_TASK_DEFAULTS[key] || ZEN_TASK_DEFAULTS.flavor;
   const nested =
     funConfig?.zenTasks && typeof funConfig.zenTasks === 'object'
-      ? funConfig.zenTasks[key] || {}
+      ? funConfig.zenTasks[key] || funConfig.zenTasks[task] || {}
       : {};
 
   // flat overrides legados + por tarefa
@@ -133,6 +147,16 @@ export function resolveZenTaskParams(task, funConfig = {}) {
       temperature: funConfig.zenPersonaTemperature,
       maxTokens: funConfig.zenPersonaMaxTokens,
       timeoutMs: funConfig.zenPersonaTimeoutMs,
+    },
+    dailyguess: {
+      temperature: funConfig.zenDailyGuessTemperature,
+      maxTokens: funConfig.zenDailyGuessMaxTokens,
+      timeoutMs: funConfig.zenDailyGuessTimeoutMs,
+    },
+    dailyhint: {
+      temperature: funConfig.zenDailyHintTemperature,
+      maxTokens: funConfig.zenDailyHintMaxTokens,
+      timeoutMs: funConfig.zenDailyHintTimeoutMs,
     },
     journalist: {
       temperature: funConfig.zenJournalistTemperature,

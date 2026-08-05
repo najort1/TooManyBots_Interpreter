@@ -648,7 +648,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   zenMaxRetries: 3,
   /**
    * Knobs por tarefa (override de zenTemperature/zenMaxTokens globais).
-   * Ver fun/llm/zenTaskParams.js — invent/extract/flavor/chaos/tarot/assault/persona/journalist
+   * Ver fun/llm/zenTaskParams.js — invent/extract/flavor/chaos/tarot/assault/persona/dailyGuess/dailyHint/journalist
    */
   zenInventTemperature: 0.75,
   zenInventMaxTokens: 1600,
@@ -666,6 +666,12 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   assaultStoryMaxTokens: 550,
   zenPersonaTemperature: 0.7,
   zenPersonaMaxTokens: 360,
+  zenDailyGuessTemperature: 0.9,
+  zenDailyGuessMaxTokens: 400,
+  zenDailyGuessTimeoutMs: 45_000,
+  zenDailyHintTemperature: 0.8,
+  zenDailyHintMaxTokens: 180,
+  zenDailyHintTimeoutMs: 30_000,
   zenJournalistTemperature: 0.7,
   zenJournalistMaxTokens: 700,
   /** Se true: após motor de %, reescreve title/body com FACTS (anti-alucinação de direção). */

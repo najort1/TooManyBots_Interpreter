@@ -21,12 +21,47 @@ import { RIDDLES } from './data/riddles.js';
 import { FALLBACK_GAMES } from './data/guessGameFallback.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
+import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 
 const CHALLENGE_TYPES = ['guess_game', 'riddle', 'pokemon'];
 const LOCAL_CHALLENGE_TYPES = ['guess_game', 'riddle'];
 const MAX_HINTS = 3;
 const HINT_COOLDOWN_DEFAULT_MS = 10 * 60 * 1000;
 const POKEMON_FETCH_TIMEOUT_MS = 5000;
+
+const POKEMON_TYPE_PT = Object.freeze({
+  normal: 'normal', fire: 'fogo', water: 'água', electric: 'elétrico', grass: 'planta', ice: 'gelo',
+  fighting: 'lutador', poison: 'venenoso', ground: 'terra', flying: 'voador', psychic: 'psíquico',
+  bug: 'inseto', rock: 'pedra', ghost: 'fantasma', dragon: 'dragão', dark: 'sombrio', steel: 'aço', fairy: 'fada',
+});
+const POKEMON_HABITAT_PT = Object.freeze({
+  cave: 'caverna', forest: 'floresta', grassland: 'campo', mountain: 'montanha', rare: 'habitat raro',
+  rough_terrain: 'terreno acidentado', sea: 'mar', urban: 'cidade', waters_edge: 'beira d’água',
+});
+const POKEMON_COLOR_PT = Object.freeze({
+  black: 'preto', blue: 'azul', brown: 'marrom', gray: 'cinza', green: 'verde', pink: 'rosa',
+  purple: 'roxo', red: 'vermelho', white: 'branco', yellow: 'amarelo',
+});
+
+function translatePokemonType(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return POKEMON_TYPE_PT[key] || '';
+}
+
+function translatePokemonHabitat(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return POKEMON_HABITAT_PT[key] || '';
+}
+
+function translatePokemonColor(value) {
+  const key = String(value || '').trim().toLowerCase();
+  return POKEMON_COLOR_PT[key] || '';
+}
+
+function formatPokemonGeneration(value) {
+  const roman = String(value || '').match(/generation-([ivxlcdm]+)/i)?.[1];
+  return roman ? `Geração ${roman.toUpperCase()}` : '';
+}
 
 const REWARD_EMOJI = {
   boost_xp: '⭐',
@@ -157,7 +192,6 @@ function formatSolveTime(sec) {
  * @param {object} deps.repository        funDailyChallengeRepository
  * @param {object} deps.statsRepository    funStatsRepository (awardXp/addCoins)
  * @param {object} [deps.effectsRepository] funEffectsRepository (setTimedEffect)
- * @param {object} [deps.flavorService]   flavorService (dicas LLM)
  * @param {function} [deps.generateZen]   openai/zen generation
  * @param {function} [deps.generateOllama] ollama generation
  * @param {() => object} deps.getConfig   resolveFunConfig
@@ -171,8 +205,9 @@ export function createDailyChallengeService(deps = {}) {
 
   const statsRepository = deps.statsRepository;
   const effectsRepository = deps.effectsRepository;
-  const flavorService = deps.flavorService;
+  const groupMemoryService = deps.groupMemoryService || null;
   const generateZen = deps.generateZen || openaiChatComplete;
+  const pokemonDataCache = new Map();
   const getConfig = deps.getConfig || (() => ({}));
   const getContactDisplayName = deps.getContactDisplayName || (() => 'alguem');
   const logger = deps.getLogger?.() || null;
@@ -188,10 +223,25 @@ export function createDailyChallengeService(deps = {}) {
     return getConfig() || {};
   }
 
+  function buildGroupLore(scopeKey, { limit = 4, maxChars = 600 } = {}) {
+    if (!scopeKey || !groupMemoryService?.buildLoreContext) return '';
+    try {
+      return String(
+        groupMemoryService.buildLoreContext(scopeKey, {
+          limit,
+          funConfig: cfg(),
+        }) || ''
+      ).trim().slice(0, maxChars);
+    } catch {
+      return '';
+    }
+  }
+
   /* ---------- LLM helpers ---------- */
 
-  async function tryLlmJson(system, userPrompt, timeoutMs = 45000) {
+  async function tryLlmJson(taskName, system, userPrompt) {
     const c = cfg();
+    const task = resolveZenTaskParams(taskName, c);
     const { baseUrl, model, apiKey } = resolveZenEndpoint(c);
     if (typeof generateZen !== 'function' || c.dailyChallengeEnabled === false || c.zenEnabled === false) return null;
     if (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete) return null;
@@ -201,12 +251,13 @@ export function createDailyChallengeService(deps = {}) {
         model,
         system,
         prompt: userPrompt,
-        timeoutMs,
-        maxTokens: 400,
-        temperature: 0.9,
+        timeoutMs: task.timeoutMs,
+        maxTokens: task.maxTokens,
+        temperature: task.temperature,
         apiKey,
         sendSamplingParams: c.zenSendSamplingParams === true,
-        jsonMode: true,
+        jsonMode: task.jsonMode,
+        jsonOnly: task.jsonOnly,
       });
       if (!raw) return null;
       const text = String(raw).trim();
@@ -219,28 +270,16 @@ export function createDailyChallengeService(deps = {}) {
         return null;
       }
     } catch (err) {
-      log({ err: err?.message }, 'dailyChallenge llm json fail');
+      log({ err: err?.message, task: task.task }, 'dailyChallenge llm json fail');
       return null;
     }
   }
 
-  async function llmText(system, userPrompt, timeoutMs = 30000) {
+  async function llmText(system, userPrompt) {
     const c = cfg();
-    if (c.dailyChallengeEnabled === false || c.zenEnabled === false) return null;
-    // prioriza flavorService se disposer de line
-    if (flavorService && typeof flavorService.line === 'function') {
-      try {
-        const out = await flavorService.line('daily_challenge_hint', {
-          system,
-          userPrompt,
-          scopeKey: null,
-        });
-        const txt = (out || '').toString().trim();
-        if (txt && !/^\[.+\]$/.test(txt)) return txt;
-      } catch { /* cai pra generateZen */ }
-    }
-    if (typeof generateZen !== 'function') return null;
-    if (process.env.FUN_DISABLE_LIVE_LLM === '1' && typeof generateZen === 'function' && generateZen.name === 'openaiChatComplete') return null;
+    const task = resolveZenTaskParams('dailyhint', c);
+    if (c.dailyChallengeEnabled === false || c.zenEnabled === false || typeof generateZen !== 'function') return null;
+    if (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete) return null;
     const { baseUrl, model, apiKey } = resolveZenEndpoint(c);
     try {
       const raw = await generateZen({
@@ -248,16 +287,16 @@ export function createDailyChallengeService(deps = {}) {
         model,
         system,
         prompt: userPrompt,
-        timeoutMs,
-        maxTokens: 180,
-        temperature: 0.8,
+        timeoutMs: task.timeoutMs,
+        maxTokens: task.maxTokens,
+        temperature: task.temperature,
         apiKey,
         sendSamplingParams: c.zenSendSamplingParams === true,
       });
       const txt = raw ? String(raw).trim() : '';
       return txt || null;
     } catch (err) {
-      log({ err: err?.message }, 'dailyChallenge llm text fail');
+      log({ err: err?.message, task: task.task }, 'dailyChallenge llm text fail');
       return null;
     }
   }
@@ -496,11 +535,36 @@ export function createDailyChallengeService(deps = {}) {
 
   /* ---------- Guess the Game ---------- */
 
-  async function tryLlmGuessGame(recentGames = []) {
+  function fallbackGameDiversity(recentGames = []) {
+    const labels = new Set();
+    for (const value of recentGames || []) {
+      const game = FALLBACK_GAMES.find((entry) => normalizeAnswer(entry.game) === normalizeAnswer(value));
+      if (!game) continue;
+      const hints = Array.isArray(game.hints) ? game.hints.join(' ').toLowerCase() : '';
+      if (/rpg|dungeon|aventura|herói|heroi/.test(hints)) labels.add('RPG/aventura');
+      if (/corrida|carro|velocidade/.test(hints)) labels.add('corrida');
+      if (/luta|combate|fatalit/.test(hints)) labels.add('luta');
+      if (/puzzle|enigma|cartas/.test(hints)) labels.add('puzzle/cartas');
+      if (/terror|horror|assombrad/.test(hints)) labels.add('terror');
+      if (/tabuleiro|meeple|cartas/.test(hints)) labels.add('tabuleiro');
+      if (/arcade|fliperama/.test(hints)) labels.add('arcade');
+      if (/mobile|celular/.test(hints)) labels.add('mobile');
+      if (/pc|computador|steam/.test(hints)) labels.add('PC');
+      if (/xbox|playstation|nintendo|game boy|console/.test(hints)) labels.add('console');
+    }
+    return [...labels].slice(0, 8);
+  }
+
+  async function tryLlmGuessGame(scopeKey, recentGames = []) {
     const recentList = Array.isArray(recentGames) ? recentGames.slice(0, 40) : [];
     const recentTxt = recentList.length
       ? `\n\nNUNCA repita um jogo desta lista de recentes (normalize sem acentos/maiúsculas):\n${recentList.map((g) => `  - ${g}`).join('\n')}\n`
       : '';
+    const diversity = fallbackGameDiversity(recentList);
+    const diversityTxt = diversity.length
+      ? `\nGêneros/plataformas reconhecidos entre os recentes: ${diversity.join(', ')}. Escolha outro universo quando possível.\n`
+      : '';
+    const lore = buildGroupLore(scopeKey, { limit: 4, maxChars: 600 });
     const system =
       'Voce e um curador de jogos para um desafio diário de WhatsApp em português brasileiro. ' +
       'Gere UM jogo (eletrônico, de tabuleiro, indie, retrô, AAA, cult, brasileiro ou nicho). ' +
@@ -517,12 +581,15 @@ export function createDailyChallengeService(deps = {}) {
       '  - hint1: sutil; hint2: media; hint3: obvia.' +
       '  - NUNCA inclua o nome do jogo nas dicas.' +
       'Responda APENAS no formato JSON:' +
-      ' {"game":"Nome","aliases":["a1","a2"],"hints":["h1","h2","h3"]}' + recentTxt;
-    const user = 'Gere um jogo variado e criativo agora. Evite o óbvio.';
-    return await tryLlmJson(system, user, 45000);
+      ' {"game":"Nome","aliases":["a1","a2"],"hints":["h1","h2","h3"]}' + recentTxt + diversityTxt;
+    const user = [
+      'Gere um jogo variado e criativo agora. Evite o óbvio.',
+      lore ? `Clima do grupo para calibrar só o tom das dicas (não revele nem invente fatos):\n${lore}` : '',
+    ].filter(Boolean).join('\n\n');
+    return tryLlmJson('dailyguess', system, user);
   }
 
-  async function tryLlmRiddle() {
+  async function tryLlmRiddle(scopeKey) {
     const system =
       'Voce e um criador de enigmas para WhatsApp. Gere UM enigma curto e inteligente em portugues brasileiro. ' +
       'REGRAS: o campo "riddle" deve conter o enigma completo, pronto para ser enviado ao grupo. ' +
@@ -531,8 +598,12 @@ export function createDailyChallengeService(deps = {}) {
       'Evite repetir enigmas muito classicos de forma identica; varie o estilo e o objeto. ' +
       'Responda APENAS no formato JSON: ' +
       '{"riddle":"O que e, o que e?...","answers":["resposta1","resposta2"]}';
-    const user = 'Gere um enigma popular, claro e respondível agora.';
-    return await tryLlmJson(system, user, 45000);
+    const lore = buildGroupLore(scopeKey, { limit: 4, maxChars: 450 });
+    const user = [
+      'Gere um enigma popular, claro e respondível agora.',
+      lore ? `Clima do grupo para calibrar só o tom (não inclua nomes nem fatos do lore no enigma):\n${lore}` : '',
+    ].filter(Boolean).join('\n\n');
+    return tryLlmJson('dailyguess', system, user);
   }
 
   async function launchGuessGame(scopeKey, now) {
@@ -540,7 +611,7 @@ export function createDailyChallengeService(deps = {}) {
     const recent = repository.getRecentContent(scopeKey, 'game', memoryLimit);
     const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
 
-    const llmGame = await tryLlmGuessGame(recent);
+    const llmGame = await tryLlmGuessGame(scopeKey, recent);
     let game = null;
     if (llmGame?.game) {
       const filtered = filterGameName(llmGame.game);
@@ -549,7 +620,7 @@ export function createDailyChallengeService(deps = {}) {
          antes de cair no fallback local — evita repetição imediata. */
       let candidate = { game: filtered, aliases: (llmGame.aliases || []).map((a) => filterGameName(a) || a).filter(Boolean), hints: Array.isArray(llmGame.hints) ? llmGame.hints.slice(0, MAX_HINTS) : [] };
       if (recentSet.has(filteredNorm)) {
-        const retry = await tryLlmGuessGame(recent);
+        const retry = await tryLlmGuessGame(scopeKey, recent);
         if (retry?.game) {
           const rNorm = normalizeAnswer(filterGameName(retry.game));
           if (!recentSet.has(rNorm)) {
@@ -603,7 +674,7 @@ export function createDailyChallengeService(deps = {}) {
 
   async function launchRiddle(scopeKey, now) {
     const memoryLimit = cfg().dailyChallengeContentMemory?.riddle || 50;
-    const llmRiddle = await tryLlmRiddle();
+    const llmRiddle = await tryLlmRiddle(scopeKey);
     let riddle = null;
     if (llmRiddle?.riddle) {
       const answers = Array.isArray(llmRiddle.answers)
@@ -663,17 +734,49 @@ export function createDailyChallengeService(deps = {}) {
     return null;
   }
 
-  async function fetchPokemonName(id) {
-    try {
-      const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${id}`, {
-        signal: AbortSignal.timeout(POKEMON_FETCH_TIMEOUT_MS),
-      });
-      if (!res.ok) return null;
-      const json = await res.json();
-      return json?.name ? String(json.name) : null;
-    } catch {
-      return null;
-    }
+  async function fetchPokemonData(id) {
+    const key = Math.max(1, Math.floor(Number(id) || 0));
+    if (pokemonDataCache.has(key)) return pokemonDataCache.get(key);
+
+    const promise = (async () => {
+      try {
+        const res = await fetch(`https://pokeapi.co/api/v2/pokemon/${key}`, {
+          signal: AbortSignal.timeout(POKEMON_FETCH_TIMEOUT_MS),
+        });
+        if (!res.ok) return null;
+        const pokemon = await res.json();
+        const speciesUrl = String(pokemon?.species?.url || '').trim();
+        let species = null;
+        if (speciesUrl) {
+          try {
+            const speciesRes = await fetch(speciesUrl, {
+              signal: AbortSignal.timeout(POKEMON_FETCH_TIMEOUT_MS),
+            });
+            if (speciesRes.ok) species = await speciesRes.json();
+          } catch {
+            // Metadados extras são opcionais; o nome e os tipos ainda servem à dica.
+          }
+        }
+        const typeNames = (pokemon?.types || [])
+          .sort((a, b) => Number(a?.slot) - Number(b?.slot))
+          .map((entry) => translatePokemonType(entry?.type?.name))
+          .filter(Boolean);
+        return {
+          id: key,
+          name: String(pokemon?.name || '').trim(),
+          types: typeNames,
+          generation: formatPokemonGeneration(species?.generation?.name),
+          habitat: translatePokemonHabitat(species?.habitat?.name),
+          color: translatePokemonColor(species?.color?.name),
+        };
+      } catch {
+        return null;
+      }
+    })();
+    pokemonDataCache.set(key, promise);
+    const data = await promise;
+    if (!data) pokemonDataCache.delete(key);
+    return data;
   }
 
   /**
@@ -789,11 +892,11 @@ export function createDailyChallengeService(deps = {}) {
     let buf = null;
     for (let attempt = 0; attempt < 8; attempt++) {
       const candidate = randomInt(1, Math.max(1, maxGen), random);
-      const cachedName = null;
       if (recentSet.has(normalizeAnswer(String(candidate)))) continue;
       const sprite = await fetchPokemonSprite(candidate);
       if (!sprite) continue;
-      const fetchedName = await fetchPokemonName(candidate);
+      const pokemonData = await fetchPokemonData(candidate);
+      const fetchedName = pokemonData?.name || '';
       if (fetchedName && recentSet.has(normalizeAnswer(fetchedName))) continue;
       id = candidate;
       name = fetchedName || `pokemon-${candidate}`;
@@ -813,8 +916,17 @@ export function createDailyChallengeService(deps = {}) {
       }
     }
 
+    const pokemonData = await fetchPokemonData(id);
     const answer = normalizeAnswer(name);
-    const data = { pokemonId: id, name, hints: [] };
+    const data = {
+      pokemonId: id,
+      name,
+      types: pokemonData?.types || [],
+      generation: pokemonData?.generation || '',
+      habitat: pokemonData?.habitat || '',
+      color: pokemonData?.color || '',
+      hints: [],
+    };
 
     return {
       answer,
@@ -1198,6 +1310,7 @@ export function createDailyChallengeService(deps = {}) {
         '- Responda apenas com a dica, sem prefixos como "Dica:" ou "Resposta:".\n' +
         '- Responda em portugues brasileiro.\n' +
         '- ANTES de responder, verifique mentalmente: minha dica contém a palavra resposta ou um sinonimo obvio? Se sim, reescreva.';
+      const lore = buildGroupLore(challenge.scopeKey, { limit: 3, maxChars: 400 });
       const user =
         `Enigma: ${data.riddle || ''}\n` +
         `Resposta correta (para voce saber, NUNCA revele): ${answer}\n` +
@@ -1205,6 +1318,7 @@ export function createDailyChallengeService(deps = {}) {
         (prior.length
           ? `Dicas JA dadas (NAO repita nem use conteudo similar):\n${prior.map((h) => `  - ${h.text}`).join('\n')}\n`
           : 'Nenhuma dica dada ainda.\n') +
+        (lore ? `Clima do grupo para calibrar somente o tom (não revele nomes/fatos):\n${lore}\n` : '') +
         `De a ${hintIndex + 1}a dica:`;
       const llmHint = await llmText(system, user);
       if (llmHint) return llmHint;
@@ -1226,8 +1340,15 @@ export function createDailyChallengeService(deps = {}) {
         '- Responda apenas com a dica, sem prefixos como "Dica:" ou "Pokemon:".\n' +
         '- Responda em portugues brasileiro.\n' +
         '- ANTES de responder, verifique mentalmente: minha dica contém o nome ou um sinonimo obvio? Se sim, reescreva.';
+      const metadata = [
+        data.types?.length ? `Tipos reais: ${data.types.join(' e ')}` : '',
+        data.generation ? `Geração: ${data.generation}` : '',
+        data.habitat ? `Habitat: ${data.habitat}` : '',
+        data.color ? `Cor registrada: ${data.color}` : '',
+      ].filter(Boolean);
       const user =
         `Pokemon sorteado (para voce saber, NUNCA revele o nome): ${answer}\n` +
+        (metadata.length ? `Metadados reais para orientar a dica (não invente além deles):\n${metadata.map((item) => `- ${item}`).join('\n')}\n` : '') +
         `Numero desta dica: ${hintIndex + 1}\n` +
         (prior.length
           ? `Dicas JA dadas (NAO repita nem use conteudo similar):\n${prior.map((h) => `  - ${h.text}`).join('\n')}\n`

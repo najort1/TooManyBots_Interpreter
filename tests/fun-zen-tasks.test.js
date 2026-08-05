@@ -39,8 +39,37 @@ test('resolveZenTaskParams: invent vs extract vs flavor', () => {
   assert.ok(invent.timeoutMs >= 90_000, `invent timeout ${invent.timeoutMs}`);
   assert.deepEqual(
     Object.keys(ZEN_TASK_DEFAULTS).sort(),
-    ['assault', 'chaos', 'extract', 'flavor', 'invent', 'journalist', 'persona', 'selfheal', 'tarot'].sort()
+    ['assault', 'chaos', 'dailyguess', 'dailyhint', 'extract', 'flavor', 'invent', 'journalist', 'persona', 'selfheal', 'tarot'].sort()
   );
+});
+
+test('resolveZenTaskParams: dailyGuess e dailyHint usam perfis dedicados', () => {
+  const guess = resolveZenTaskParams('dailyGuess', {
+    zenDailyGuessTemperature: 0.61,
+    zenDailyGuessMaxTokens: 444,
+    zenDailyGuessTimeoutMs: 46_000,
+  });
+  const hint = resolveZenTaskParams('dailyHint', {
+    zenDailyHintTemperature: 0.71,
+    zenDailyHintMaxTokens: 222,
+    zenDailyHintTimeoutMs: 31_000,
+  });
+  assert.deepEqual(guess, {
+    temperature: 0.61,
+    maxTokens: 444,
+    timeoutMs: 46_000,
+    jsonMode: true,
+    jsonOnly: true,
+    task: 'dailyguess',
+  });
+  assert.deepEqual(hint, {
+    temperature: 0.71,
+    maxTokens: 222,
+    timeoutMs: 31_000,
+    jsonMode: false,
+    jsonOnly: false,
+    task: 'dailyhint',
+  });
 });
 
 test('resolveZenTaskParams: invent timeout não é esmagado pelo zenTimeoutMs global curto', () => {

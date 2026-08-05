@@ -405,6 +405,7 @@ export function createFunModule(deps = {}) {
       statsRepository: repository,
       effectsRepository,
       flavorService,
+      groupMemoryService,
       getContactDisplayName: resolveContactName,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
       generateOllama: deps.ollamaGenerate || deps.generate,

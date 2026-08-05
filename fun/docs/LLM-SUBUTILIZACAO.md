@@ -56,19 +56,18 @@ HOTSPOTS por impacto (alto → baixo): `personaService` → `groupMemoryService`
 `fun/services/dailyChallengeService.js` · `tryLlmJson` (l.192), `llmText` (l.228).
 
 ### CONSISTÊNCIA / BUG
-- **Parâmetros hard-coded** (l.206-210 temp 0.9/maxTokens 400; l.252-256 temp 0.8/180) — **ignora `resolveZenTaskParams`**. Inconsistente com o resto do codebase; não respeita overrides de config. Criar task `dailyGuess`/`dailyHint` em `zenTaskParams.js`.
-- **`tryLlmJson` sem retry verdadeiro** — só há 2ª chamada se o jogo repete nos recentes (l.552); falha de parse/timeout → fallback local direto.
+- **Concluído na Fase B**: `dailyGuess` e `dailyHint` agora usam `resolveZenTaskParams`, com overrides flat de temperatura, tokens e timeout.
+- **`tryLlmJson` sem retry verdadeiro** — só há 2ª chamada se o jogo repete nos recentes; falha de parse/timeout continua caindo no conteúdo local de forma segura.
 
 ### INJETAR CONTEXTO
-- **Guess game não injeta gêneros/plataformas já saídos** — só nomes de jogos no anti-eco; pode sair 3 RPG seguidos com jogos diferentes.
-- **Guess game/riddle não injetam perfil/lore do grupo** — o desafio é global; poderia personalizar ("inclua jogos que a galera já mencionou no chat" via memoryService).
+- **Concluído na Fase B**: guess game recebe os jogos recentes, categorias inferidas do catálogo e lore limitada do grupo para calibrar somente o tom.
+- **Concluído na Fase B**: riddle recebe lore limitada para calibrar tom, sem revelar nomes ou fatos do grupo.
 - **Riddle não injeta dificuldade preferida** — sem feedback de acertos/erros para calibrar.
-- **Hint pokémon não recebe tipo/habitat/geração/cor** — só o nome; o modelo alucina metadados que já existem na PokeAPI (buscada em `fetchPokemonName`).
-- **Pokémon não usa LLM** — só sorteio de sprite + silhueta. Dicas poderiam ser geradas via LLM com metadados.
+- **Concluído na Fase B**: dados Pokémon agora carregam tipos, geração, habitat e cor da PokeAPI, ficam em cache e são passados ao LLM das dicas.
+- **Pokémon usa LLM só nas dicas**, com metadados reais; sorteio e imagem continuam determinísticos.
 
 ### LIBERAR MODELO
-- **`maxTokens 400` no JSON de guess** pode truncar aliases/hints longos.
-- **Hint `maxTokens 180`** pode truncar 2 frases.
+- Guess mantém 400 tokens e hint 180 tokens, ambos configuráveis pelas tasks dedicadas.
 
 ---
 

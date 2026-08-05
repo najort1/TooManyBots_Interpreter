@@ -304,6 +304,32 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.zenPersonaMaxTokens,
       { min: 64, max: 800, rounding: 'floor', clamp: true }
     ),
+    zenDailyGuessTemperature: Number.isFinite(Number(raw.zenDailyGuessTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.zenDailyGuessTemperature)))
+      : DEFAULT_FUN_CONFIG.zenDailyGuessTemperature,
+    zenDailyGuessMaxTokens: normalizeInt(
+      raw.zenDailyGuessMaxTokens,
+      DEFAULT_FUN_CONFIG.zenDailyGuessMaxTokens,
+      { min: 64, max: 1200, rounding: 'floor', clamp: true }
+    ),
+    zenDailyGuessTimeoutMs: normalizeInt(
+      raw.zenDailyGuessTimeoutMs,
+      DEFAULT_FUN_CONFIG.zenDailyGuessTimeoutMs,
+      { min: 5_000, max: 120_000, rounding: 'floor', clamp: true }
+    ),
+    zenDailyHintTemperature: Number.isFinite(Number(raw.zenDailyHintTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.zenDailyHintTemperature)))
+      : DEFAULT_FUN_CONFIG.zenDailyHintTemperature,
+    zenDailyHintMaxTokens: normalizeInt(
+      raw.zenDailyHintMaxTokens,
+      DEFAULT_FUN_CONFIG.zenDailyHintMaxTokens,
+      { min: 64, max: 800, rounding: 'floor', clamp: true }
+    ),
+    zenDailyHintTimeoutMs: normalizeInt(
+      raw.zenDailyHintTimeoutMs,
+      DEFAULT_FUN_CONFIG.zenDailyHintTimeoutMs,
+      { min: 5_000, max: 120_000, rounding: 'floor', clamp: true }
+    ),
     zenJournalistTemperature: Number.isFinite(Number(raw.zenJournalistTemperature))
       ? Math.min(1.5, Math.max(0, Number(raw.zenJournalistTemperature)))
       : DEFAULT_FUN_CONFIG.zenJournalistTemperature,
