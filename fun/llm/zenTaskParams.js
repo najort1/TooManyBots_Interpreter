@@ -59,7 +59,7 @@ export const ZEN_TASK_DEFAULTS = Object.freeze({
   }),
   persona: Object.freeze({
     temperature: 0.7,
-    maxTokens: 280,
+    maxTokens: 360,
     timeoutMs: 35_000,
     jsonMode: false,
     jsonOnly: false,

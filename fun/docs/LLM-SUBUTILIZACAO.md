@@ -16,20 +16,19 @@ HOTSPOTS por impacto (alto → baixo): `personaService` → `groupMemoryService`
 `fun/services/personaService.js` · chamada em `generateResponse` (l.415).
 
 ### INJETAR CONTEXTO
-- **Quem falou**: o `prompt` (user) é só o texto da mensagem (l.409). Não injeta nome do autor, mencionados, nem texto da mensagem citada (reply). O modelo responde "cego". — `participantJids` é computado (l.487) e usado só em `getHints`, não vira prompt.
-- **`loreBlock` truncado a 320 chars** (l.386) — o `groupMemoryService` produz ~0.8–2k chars de lore; corta agressivamente. Há espaço.
-- **`facts` limitado a 4** (`slice(0,4)` l.403) — fatos disponíveis são truncados.
-- **`socialHints` filtrado a 6 e só conf≥60 não-negative** (l.389) — descarta dicas neutras/baixa confiança.
-- **Identidade rica do perfil** (`profileService.buildIdentityBlock`: nick/bio/niver/título) **não é chamada**. Só chega `groupIdentity` (voiceStyle/lore), não a identidade dos participantes.
-- **`threadContext` só 4 turnos** (l.373) sem incluir texto citado de reply.
+- **Concluído na Fase A**: o prompt recebe o nome do autor, o texto citado em reply e o bloco de identidade do perfil dos participantes.
+- **Concluído na Fase A**: lore pode ocupar até 800 caracteres e os sinais inferidos/sociais chegam identificados como pistas, nunca como fatos.
+- **`facts` limitado a 4** — mantém contexto confirmado curto e verificável.
+- **`socialHints` filtrado a 6 e só conf≥60 não-negative** — descarta pistas de desconforto e ruído de baixa confiança.
+- **`threadContext` só 4 turnos** — o texto explicitamente citado agora também entra no prompt, cobrindo a continuidade direta do reply.
 
 ### LIBERAR MODELO
-- **`maxChars` recém reduzido p/ 200** (`PERSONA_MAX_CHARS`) e o prompt ainda diz "1 a 3 frases" + "até maxChars caracteres". Se o objetivo é member "natural", o teto de 200 chars corta respostas com desenvolvimento. Considerar relaxar p/ ~280–320 e instruir "frases completas, desenvolva".
-- **Sem retry** (l.431) — único serviço sem `zenMaxRetries`; falha única → fallback estático de 9 frases. Inconsistente com flavor/market/extract (4 tentativas).
-- **Sem JSON mode** — texto puro sanitizado; `{reply:"..."}` evitaria meta leakage e simplificaria `sanitizeFlavor`.
+- **Concluído na Fase A**: `maxChars` passou de 200 para 280, com 1–4 frases e orçamento da task persona de 360 tokens.
+- **Concluído na Fase A**: a persona tenta `1 + zenMaxRetries` antes do fallback estático.
+- **Sem JSON mode** — texto puro sanitizado; a decisão atual limita JSON mode a `assault` e `group_times`.
 
 ### CONSISTÊNCIA
-- **`sendSamplingParams: !== false`** (l.424) vs resto `=== true` — personifica envia sampling por default, os outros não. Confirmar intenção.
+- `sendSamplingParams` permanece fora de escopo por decisão do projeto.
 - **timeoutMs 15s efetivo** (`Math.min(15s, 35s)`) menor que o task default 35s — pode abortar respostas.
 
 ---

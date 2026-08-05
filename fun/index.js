@@ -352,7 +352,9 @@ export function createFunModule(deps = {}) {
       groupRepository,
       threadContextService,
       personaSocialHintService,
+      profileService,
       getLogger,
+      generateZen: deps.openaiChatComplete || deps.zenGenerate,
     });
   const flavorService =
     deps.flavorService ||
@@ -562,6 +564,7 @@ export function createFunModule(deps = {}) {
         messageId: ctx.messageId ?? ctx.parsed?.id ?? '',
         messageKey: ctx.messageKey ?? ctx.parsed?.messageKey,
         quotedMessageId: ctx.quotedMessageId ?? '',
+        quotedText: ctx.quotedText ?? '',
         mentionedJids: ctx.mentionedJids || ctx.parsed?.mentionedJids || [],
         quotedParticipant: ctx.quotedParticipant || '',
         rawMessage: ctx.rawMessage || ctx.msg || null,

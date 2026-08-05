@@ -129,6 +129,45 @@ function extractQuotedMessageId(msg) {
   } return '';
 }
 
+export function extractQuotedText(msg) {
+  const queue = [msg?.message || {}];
+  const seen = new Set();
+
+  while (queue.length) {
+    const node = queue.shift();
+    if (!node || typeof node !== 'object' || seen.has(node)) continue;
+    seen.add(node);
+
+    const contexts = [
+      node.contextInfo,
+      node.extendedTextMessage?.contextInfo,
+      node.imageMessage?.contextInfo,
+      node.videoMessage?.contextInfo,
+      node.documentMessage?.contextInfo,
+      node.documentWithCaptionMessage?.message?.documentMessage?.contextInfo,
+    ];
+    for (const context of contexts) {
+      const quoted = context?.quotedMessage;
+      if (!quoted || typeof quoted !== 'object') continue;
+      const text = [
+        quoted.conversation,
+        quoted.extendedTextMessage?.text,
+        quoted.imageMessage?.caption,
+        quoted.videoMessage?.caption,
+        quoted.documentMessage?.caption,
+        quoted.documentWithCaptionMessage?.message?.documentMessage?.caption,
+      ].find((value) => String(value || '').trim());
+      if (text) return String(text).replace(/[\r\n]+/g, ' ').trim().slice(0, 500);
+    }
+
+    for (const value of Object.values(node)) {
+      if (value && typeof value === 'object') queue.push(value);
+    }
+  }
+
+  return '';
+}
+
 function extractQuotedParticipant(msg) {
   const queue = [msg?.message || {}];
   const seen = new Set();
@@ -654,6 +693,7 @@ export async function startFunBot(options = {}) {
     let mentionedJids = extractMentionedJids(msg);
     let quotedParticipant = extractQuotedParticipant(msg);
     const quotedMessageId = extractQuotedMessageId(msg);
+    const quotedText = extractQuotedText(msg);
     const identityMap = funModule.identityMap;
 
     // #region debug-point persona-runtime-A
@@ -702,6 +742,7 @@ export async function startFunBot(options = {}) {
       mentionedJids,
       quotedParticipant,
       quotedMessageId,
+      quotedText,
       parsed,
       rawMessage: msg,
     });

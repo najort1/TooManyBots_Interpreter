@@ -33,7 +33,7 @@ function makeSock(botJid) {
   return { user: { id: `${botLocal}:0` } };
 }
 
-function setup(cfg = baseConfig, botJid, threadContextService = null) {
+function setup(cfg = baseConfig, botJid, threadContextService = null, deps = {}) {
   const personaRepository = createFunPersonaRepository({ getDatabase: getDb });
   const groupRepository = createFunGroupRepository({ getDatabase: getDb });
   const botJ = botJid || uniqueJid('5599');
@@ -43,6 +43,8 @@ function setup(cfg = baseConfig, botJid, threadContextService = null) {
     personaRepository,
     groupRepository,
     threadContextService,
+    profileService: deps.profileService,
+    generateZen: deps.generateZen,
     getLogger: () => null,
     random: () => 0.5,
   });
@@ -293,6 +295,95 @@ test('tryRespond: fallback sem LLM (FUN_DISABLE_LIVE_LLM=1)', async () => {
   assert.equal(r.responded, true);
   assert.equal(r.usedFallback, true);
   assert.ok(r.response.length > 0);
+});
+
+test('persona: prompt recebe autor, reply, identidade e pistas de contexto', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const authorJid = uniqueJid('5512');
+    const profileService = {
+      displayName: () => 'Nina',
+      buildIdentityBlock: () => '<user_identity>\n- Nina: cinéfila · título: Crítica\n</user_identity>',
+    };
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      profileService,
+      generateZen: async (input) => {
+        request = input;
+        return 'Nina, esse filme é tua cara. Vai sem medo kkk.';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-ctx-1' } });
+
+    const response = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: 'bot, esse filme presta?',
+      quotedText: 'o filme antigo é melhor',
+      authorJid,
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_000_000,
+      responseContextPack: {
+        groupIdentity: { groupLoreSummary: 'Nina sempre puxa discussão de cinema.' },
+        confirmedFacts: [{ factText: 'Nina coleciona DVDs antigos.' }],
+        inferredSignals: [{ factText: 'Nina prefere terror.', riskFlags: [] }],
+        socialSignals: [{ factText: 'Nina entra na zoeira sobre filme.', riskFlags: [] }],
+        riskFlags: [],
+      },
+    });
+
+    assert.equal(response.responded, true);
+    assert.equal(response.usedFallback, false);
+    assert.equal(request.prompt, '[Nina]: bot, esse filme presta?\n\nEm resposta a: "o filme antigo é melhor"');
+    assert.match(request.system, /<user_identity>/);
+    assert.match(request.system, /Nina sempre puxa discussão de cinema/);
+    assert.match(request.system, /Nina prefere terror/);
+    assert.match(request.system, /Nina entra na zoeira sobre filme/);
+    assert.equal(request.maxTokens, 360);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona: repete o Zen até zenMaxRetries antes do fallback', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let calls = 0;
+    const { svc, sock, identityMap, cfg } = setup(
+      { ...baseConfig, zenMaxRetries: 3 },
+      undefined,
+      null,
+      {
+        generateZen: async () => {
+          calls += 1;
+          if (calls < 4) throw new Error('zen-indisponível');
+          return 'Na quarta foi, agora fala sério kkk.';
+        },
+      }
+    );
+    sock.sendMessage = async () => ({ key: { id: 'persona-retry-1' } });
+
+    const response = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: 'bot, insiste aí',
+      authorJid: uniqueJid(),
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_100_000,
+    });
+
+    assert.equal(calls, 4);
+    assert.equal(response.responded, true);
+    assert.equal(response.usedFallback, false);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
 });
 
 test('tryRespond: sem gatilho (texto neutro)', async () => {

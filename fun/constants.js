@@ -517,7 +517,7 @@ export const PERSONA_THREAD_TTL_MS = 30 * 60_000;
 export const PERSONA_WINDOW_SIZE = 100;
 export const PERSONA_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const PERSONA_TIMEOUT_MS = 15_000;
-export const PERSONA_MAX_CHARS = 200;
+export const PERSONA_MAX_CHARS = 280;
 /** Intervalo mínimo entre derivações do perfil de voz por grupo (evita write a cada msg). */
 export const PERSONA_DERIVE_INTERVAL_MS = 5 * 60_000;
 
@@ -665,7 +665,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   assaultStoryMaxChars: 900,
   assaultStoryMaxTokens: 550,
   zenPersonaTemperature: 0.7,
-  zenPersonaMaxTokens: 280,
+  zenPersonaMaxTokens: 360,
   zenJournalistTemperature: 0.7,
   zenJournalistMaxTokens: 700,
   /** Se true: após motor de %, reescreve title/body com FACTS (anti-alucinação de direção). */

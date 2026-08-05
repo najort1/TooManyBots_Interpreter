@@ -147,11 +147,23 @@ function pickRotation(i, arr) {
   return arr[i % arr.length];
 }
 
+function cleanPromptText(value, maxChars = 500) {
+  return String(value || '').replace(/[\r\n]+/g, ' ').trim().slice(0, maxChars);
+}
+
+function memorySignalText(signal) {
+  if (!signal || typeof signal !== 'object') return '';
+  if (Array.isArray(signal.riskFlags) && signal.riskFlags.length) return '';
+  return cleanPromptText(signal.factText || signal.summary || signal.text, 220);
+}
+
 export function createPersonaService({
   personaRepository,
   groupRepository,
   threadContextService = null,
   personaSocialHintService = null,
+  profileService = null,
+  generateZen = openaiChatComplete,
   getLogger = () => null,
   random = Math.random,
 } = {}) {
@@ -176,7 +188,7 @@ export function createPersonaService({
       windowSize: Number(funConfig.personaWindowSize) || 100,
       windowMs: Number(funConfig.personaWindowMs) || 24 * 60 * 60 * 1000,
       timeoutMs: Number(funConfig.personaTimeoutMs) || 15_000,
-      maxChars: Number(funConfig.personaMaxChars) || 200,
+      maxChars: Number(funConfig.personaMaxChars) || 280,
       deriveIntervalMs: Number(funConfig.personaDeriveIntervalMs) || PERSONA_DERIVE_INTERVAL_MS,
     };
   }
@@ -356,7 +368,7 @@ export function createPersonaService({
     const parts = [
       'Você é um membro comum de um grupo de WhatsApp. Está respondendo naturalmente, como um participante qualquer — não como assistente.',
       'Você É o "bot" do grupo: quando alguém chama "bot" ou te marca, é com você. Fale SEMPRE em primeira pessoa (eu, meu, minha) — jamais se refira a si mesmo como "o bot", "esse bot", "a máquina" ou pelo seu nome.',
-      'Escreva em português do Brasil, 1 a 3 frases completas, no estilo de fala do grupo.',
+      'Escreva em português do Brasil, 1 a 4 frases completas, no estilo de fala do grupo.',
       'Varie o tom: às vezes debochado, às vezes empático, às vezes breve.',
       `Comprimento: desenvolva a resposta em ${Math.min(80, Math.max(40, Math.round(maxChars * 0.4)))} a ${maxChars} caracteres — não responda a cada assunto com uma frase seca, mas também não vire um texto.`,
       'NUNCA mencione que é um bot, IA ou assistente.',
@@ -378,61 +390,92 @@ export function createPersonaService({
     return parts.join('\n');
   }
 
-  async function generateResponse({ text, scopeKey, funConfig, threadContext, responseContextPack, participantJids = [] }) {
+  async function generateResponse({
+    text,
+    scopeKey,
+    funConfig,
+    threadContext,
+    responseContextPack,
+    participantJids = [],
+    authorLabel = '',
+    quotedText = '',
+  }) {
     const o = opts(funConfig);
     const groupIdentity = responseContextPack?.groupIdentity || {};
     const identityStyle = (groupIdentity.voiceStyle || []).filter(Boolean).join(', ') || '';
     const toneBlock = buildToneBlock(groupIdentity);
-    const loreBlock = String(groupIdentity.groupLoreSummary || '').trim()
-      ? `Contexto do grupo (lore extraída dos fatos):\n${String(groupIdentity.groupLoreSummary).trim().slice(0, 320)}`
+    const lore = cleanPromptText(groupIdentity.groupLoreSummary, 800);
+    const loreBlock = lore ? `Contexto do grupo (lore extraída dos fatos):\n${lore}` : '';
+    const identityBlock = profileService?.buildIdentityBlock
+      ? profileService.buildIdentityBlock(scopeKey, participantJids, funConfig)
       : '';
     const socialHints = (personaSocialHintService?.getHints?.(scopeKey, participantJids, { limit: 6 }) || [])
       .filter((hint) => hint.socialSignal !== 'negative' && Number(hint.confidence) >= 60);
     const socialHintBlock = socialHints.length
       ? `Pistas sociais inferidas e incertas (não são fatos; não as declare como verdade):\n${socialHints.map((hint) => `- ${hint.hintText}`).join('\n')}`
       : '';
+    const contextHasRisk = Array.isArray(responseContextPack?.riskFlags) && responseContextPack.riskFlags.length > 0;
+    const inferredSignals = contextHasRisk
+      ? []
+      : (responseContextPack?.inferredSignals || []).map(memorySignalText).filter(Boolean).slice(0, 4);
+    const socialSignals = contextHasRisk
+      ? []
+      : (responseContextPack?.socialSignals || []).map(memorySignalText).filter(Boolean).slice(0, 4);
+    const inferredBlock = [...inferredSignals, ...socialSignals].length
+      ? `Pistas de memória incertas (use apenas para calibrar a resposta; nunca afirme como fato):\n${[...inferredSignals, ...socialSignals].map((signal) => `- ${signal}`).join('\n')}`
+      : '';
     const styleBlock = [
       buildStyleBlock(scopeKey),
       identityStyle ? `Voz observada do grupo: ${identityStyle}.` : '',
       toneBlock,
       loreBlock,
+      identityBlock,
       socialHintBlock,
+      inferredBlock,
     ].filter(Boolean).join('\n');
     const contextTurns = responseContextPack?.threadContext?.topicSummary
       ? [...(threadContext || []), { role: 'contexto', text: responseContextPack.threadContext.topicSummary }]
       : threadContext;
-    const facts = responseContextPack?.confirmedFacts?.map((m) => m.factText).slice(0, 4) || [];
+    const facts = responseContextPack?.confirmedFacts?.map((m) => cleanPromptText(m.factText, 220)).filter(Boolean).slice(0, 4) || [];
     const system = [
       buildSystemPrompt({ styleBlock, threadContext: contextTurns, maxChars: o.maxChars }),
       facts.length ? `Fatos confirmados relevantes (não invente além deles):\n${facts.map((fact) => `- ${fact}`).join('\n')}` : '',
       'Sinais inferidos são apenas pistas: jamais os apresente como fato.',
     ].filter(Boolean).join('\n');
-    const prompt = String(text || '').slice(0, o.maxChars);
+    const author = cleanPromptText(authorLabel, 80) || 'membro';
+    const quoted = cleanPromptText(quotedText, 500);
+    const prompt = [
+      `[${author}]: ${cleanPromptText(text, o.maxChars)}`,
+      quoted ? `Em resposta a: "${quoted}"` : '',
+    ].filter(Boolean).join('\n\n');
 
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') return '';
 
     const zen = resolveZenTaskParams('persona', funConfig);
     const ep = resolveZenEndpoint(funConfig);
-    try {
-      const raw = await openaiChatComplete({
-        baseUrl: ep.baseUrl,
-        model: ep.model,
-        prompt,
-        system,
-        timeoutMs: Math.min(o.timeoutMs, zen.timeoutMs || 15_000),
-        maxTokens: zen.maxTokens,
-        temperature: zen.temperature,
-        apiKey: ep.apiKey,
-        sendSamplingParams: funConfig.zenSendSamplingParams !== false,
-      });
-      if (!raw) return '';
-      const clean = sanitizeFlavor(raw, o.maxChars);
-      if (!clean || looksLikeScoreboardEcho(clean)) return '';
-      return clean.slice(0, o.maxChars);
-    } catch (err) {
-      logger?.warn?.('[personaService] geração LLM falhou: %s', String(err?.message || err));
-      return '';
+    const retries = Number(funConfig?.zenMaxRetries);
+    const totalTries = Math.max(1, Math.min(8, Number.isFinite(retries) ? Math.floor(retries) + 1 : 4));
+    for (let attempt = 1; attempt <= totalTries; attempt += 1) {
+      try {
+        const raw = await generateZen({
+          baseUrl: ep.baseUrl,
+          model: ep.model,
+          prompt,
+          system,
+          timeoutMs: Math.min(o.timeoutMs, zen.timeoutMs || 15_000),
+          maxTokens: zen.maxTokens,
+          temperature: zen.temperature,
+          apiKey: ep.apiKey,
+          sendSamplingParams: funConfig.zenSendSamplingParams !== false,
+        });
+        const clean = sanitizeFlavor(raw, o.maxChars);
+        if (clean && !looksLikeScoreboardEcho(clean)) return clean.slice(0, o.maxChars);
+        logger?.debug?.('[personaService] geração LLM vazia/inválida (tentativa %d/%d)', attempt, totalTries);
+      } catch (err) {
+        logger?.warn?.('[personaService] geração LLM falhou (tentativa %d/%d): %s', attempt, totalTries, String(err?.message || err));
+      }
     }
+    return '';
   }
 
   function fallbackResponse(rotationIndex) {
@@ -479,6 +522,11 @@ export function createPersonaService({
       let threadContext = [];
       if (thread?.context?.length) threadContext = thread.context;
 
+      const participantJids = [authorJid, ...(ctx.mentionedJids || []), quotedRaw].filter(Boolean);
+      const authorLabel = profileService?.displayName
+        ? profileService.displayName(authorJid, scopeKey)
+        : authorJid.split('@')[0] || 'membro';
+
       inFlightScopes.add(scopeKey);
       let response = await generateResponse({
         text: ctx.text,
@@ -486,7 +534,9 @@ export function createPersonaService({
         funConfig: ctx.funConfig,
         threadContext,
         responseContextPack: ctx.responseContextPack,
-        participantJids: [authorJid, ...(ctx.mentionedJids || []), quotedRaw].filter(Boolean),
+        participantJids,
+        authorLabel,
+        quotedText: ctx.quotedText,
       });
       let usedFallback = false;
       if (!response) {

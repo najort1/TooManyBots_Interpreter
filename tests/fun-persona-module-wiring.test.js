@@ -63,6 +63,7 @@ test('REGRESSAO persona: propaga menção e reply extended-text para tryRespond'
     messageType: 'extended-text',
     mentionedJids,
     quotedParticipant,
+    quotedText: 'texto da mensagem citada',
     rawMessage: null,
   });
   await tryRespondCalled;
@@ -72,4 +73,5 @@ test('REGRESSAO persona: propaga menção e reply extended-text para tryRespond'
   assert.equal(calls[0].messageType, 'extended-text');
   assert.deepEqual(calls[0].mentionedJids, mentionedJids);
   assert.equal(calls[0].quotedParticipant, quotedParticipant);
+  assert.equal(calls[0].quotedText, 'texto da mensagem citada');
 });

@@ -180,6 +180,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     mentionedJids = [],
     quotedParticipant = '',
     quotedMessageId = '',
+    quotedText = '',
     messageId = '',
     rawMessage = null,
   } = ctx;
@@ -691,6 +692,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           mentionedJids,
           quotedParticipant,
           quotedMessageId,
+          quotedText,
           responseContextPack,
           authorJid: userJid,
           messageType,
