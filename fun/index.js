@@ -748,6 +748,8 @@ export function createFunModule(deps = {}) {
               scopeKey,
               now,
               sendText: async (to, msg) => postWithMentions(to, msg, userFmt),
+              sendImage: async (to, image, opts) => sendImage(sock, to, image, opts?.caption || ''),
+              sharp: await import('sharp').then((m) => m.default || m).catch(() => null),
             });
             if (exp?.ok) {
               results.push({
@@ -1049,14 +1051,8 @@ export function createFunModule(deps = {}) {
               // sharp indisponível — pokémon será pulado, mas guess_game/riddle funcionam
             }
             const sendTextFn = async (to, msg) => postWithMentions(to, msg, userFmt);
-            const sendImageFn = async (to, buf, opts) => {
-              try {
-                await sendImage(sock, to, buf, opts?.caption || '');
-              } catch {
-                // fallback pra texto se imagem falhar
-                if (opts?.caption) await postWithMentions(to, opts.caption, userFmt);
-              }
-            };
+            const sendImageFn = async (to, buf, opts) =>
+              sendImage(sock, to, buf, opts?.caption || '');
             const launched = await dailyChallengeService.tryLaunchToday({
               scopeKey,
               now,
@@ -1165,13 +1161,8 @@ export function createFunModule(deps = {}) {
           type,
           now,
           sendText: async (to, message) => sendTextFn(sock, to, message),
-          sendImage: async (to, image, imageOpts) => {
-            try {
-              await sendImageFn(sock, to, image, imageOpts?.caption || '');
-            } catch {
-              if (imageOpts?.caption) await sendTextFn(sock, to, imageOpts.caption);
-            }
-          },
+          sendImage: async (to, image, imageOpts) =>
+            sendImageFn(sock, to, image, imageOpts?.caption || ''),
           sharp: sharpFn,
         });
         if (challenge?.ok) {

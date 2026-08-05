@@ -351,9 +351,10 @@ test('dailyChallenge service: processExpired expira e anuncia resposta', async (
   const scope = uniqueGroup();
   const now = Date.now();
   const messages = [];
-  repository.createChallenge({
+  const id = repository.createChallenge({
     ...makeChallenge({ scopeKey: scope, launchedAt: now - 4000, expiresAt: now - 1000, dateStr: '2099-01-07' }),
   });
+  repository.markLaunchPublished(id, now - 4000, now - 1000);
 
   const out = await service.processExpired({
     scopeKey: scope,
@@ -386,6 +387,72 @@ test('dailyChallenge service: tryLaunchToday agenda e lança desafio do dia', as
   assert.ok(out.challenge);
   assert.ok(messages.length >= 1);
   assert.ok(repository.getActiveChallenge(scope));
+});
+
+test('dailyChallenge service: falha de imagem e texto mantém lançamento pendente sem expirar', async () => {
+  const now = new Date('2099-01-09T12:00:00.000Z').getTime();
+  const { service, repository } = createServiceHarness({
+    config: createConfig({ dailyChallengeStartHour: 0, dailyChallengeEndHour: 23 }),
+    random: () => 0,
+  });
+  const scope = uniqueGroup();
+  const out = await service.tryLaunchToday({
+    scopeKey: scope,
+    now,
+    sendText: async () => { throw new Error('texto indisponível'); },
+    sendImage: async () => { throw new Error('imagem indisponível'); },
+  });
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'publish-failed');
+  const active = repository.getActiveChallenge(scope);
+  assert.equal(active.launchPublishedAt, 0);
+  assert.equal(repository.getLaunchSchedule(scope, '2099-01-09').launched, false);
+  const expired = await service.processExpired({ scopeKey: scope, now: now + 10 * 3600_000, sendText: async () => { throw new Error('não deve anunciar'); } });
+  assert.deepEqual(expired, { ok: false, reason: 'pending-publication' });
+  assert.equal(repository.getActiveChallenge(scope).id, active.id);
+});
+
+test('dailyChallenge service: retry pendente publica uma vez e recalcula o prazo', async () => {
+  const now = new Date('2099-01-11T12:00:00.000Z').getTime();
+  const { service, repository } = createServiceHarness({ config: createConfig({ dailyChallengeStartHour: 0, dailyChallengeEndHour: 23 }), random: () => 0 });
+  const scope = uniqueGroup();
+  repository.setLaunchSchedule(scope, '2099-01-11', 0);
+  const id = repository.createChallenge(makeChallenge({ scopeKey: scope, launchedAt: now - 1000, expiresAt: now, dateStr: '2099-01-11' }));
+  const messages = [];
+  const out = await service.tryLaunchToday({ scopeKey: scope, now, sendText: async (_to, text) => messages.push(text) });
+  assert.equal(out.ok, true);
+  assert.equal(messages.length, 1);
+  const active = repository.getActiveChallenge(scope);
+  assert.equal(active.id, id);
+  assert.equal(active.launchPublishedAt, now);
+  assert.equal(active.expiresAt, now + 4 * 3600_000);
+  assert.equal(repository.getLaunchSchedule(scope, '2099-01-11').launched, true);
+  assert.deepEqual(await service.tryLaunchToday({ scopeKey: scope, now: now + 1, sendText: async () => messages.push('duplicada') }), { ok: false, reason: 'already-launched' });
+  assert.equal(messages.length, 1);
+});
+
+test('dailyChallenge service: skipped é falha e retry Pokemon recompõe imagem e caption', async () => {
+  const previousFetch = global.fetch;
+  try {
+    global.fetch = async (url) => ({ ok: /sprites\/pokemon\//.test(String(url)), async arrayBuffer() { return new Uint8Array([1, 2, 3]).buffer; } });
+    const now = new Date('2099-01-12T12:00:00.000Z').getTime();
+    const { service, repository } = createServiceHarness({ config: createConfig({ dailyChallengeStartHour: 0, dailyChallengeEndHour: 23 }) });
+    const scope = uniqueGroup();
+    repository.setLaunchSchedule(scope, '2099-01-12', 0);
+    const id = repository.createChallenge(makeChallenge({ scopeKey: scope, type: 'pokemon', data: { pokemonId: 25, name: 'pikachu', hints: [] }, answer: 'pikachu', launchedAt: now - 1, expiresAt: now, dateStr: '2099-01-12' }));
+    const skipped = await service.tryLaunchToday({ scopeKey: scope, now, sendText: async () => ({ skipped: true, reason: 'queue' }) });
+    assert.equal(skipped.reason, 'publish-failed');
+    assert.equal(repository.getActiveChallenge(scope).launchPublishedAt, 0);
+    const images = [];
+    const retried = await service.tryLaunchToday({ scopeKey: scope, now: now + 1000, sendText: async () => { throw new Error('texto não deve ser usado'); }, sendImage: async (_to, image, opts) => images.push({ image, opts }) });
+    assert.equal(retried.ok, true);
+    assert.equal(retried.challenge.id, id);
+    assert.equal(images.length, 1);
+    assert.ok(Buffer.isBuffer(images[0].image));
+    assert.match(images[0].opts.caption, /POKEMON/i);
+  } finally {
+    global.fetch = previousFetch;
+  }
 });
 
 test('dailyChallenge service: tryLaunchToday usa fallback local se Pokemon automático falhar', async () => {
@@ -427,6 +494,52 @@ test('dailyChallenge service: tryLaunchToday usa fallback local se Pokemon autom
   }
 });
 
+test('dailyChallenge service: falha de publicação do Pokemon não cria fallback local', async () => {
+  const previousFetch = global.fetch;
+  try {
+    global.fetch = async (url) => {
+      const target = String(url);
+      if (/sprites\/pokemon\/1\.png/.test(target)) {
+        return { ok: true, async arrayBuffer() { return new Uint8Array([1, 2, 3]).buffer; } };
+      }
+      if (/api\/v2\/pokemon\/1/.test(target)) {
+        return { ok: true, async json() { return { name: 'bulbasaur' }; } };
+      }
+      throw new Error(`URL inesperada: ${target}`);
+    };
+
+    const randomValues = [0, 0.99, 0];
+    const { service, repository } = createServiceHarness({
+      config: createConfig({ dailyChallengeStartHour: 0, dailyChallengeEndHour: 23 }),
+      random: () => randomValues.shift() ?? 0,
+    });
+    const scope = uniqueGroup();
+    const now = new Date('2099-01-13T12:00:00.000Z').getTime();
+
+    const out = await service.tryLaunchToday({
+      scopeKey: scope,
+      now,
+      sendImage: async () => { throw new Error('imagem indisponível'); },
+      sendText: async () => { throw new Error('texto indisponível'); },
+      sharp: null,
+    });
+
+    assert.equal(out.ok, false);
+    assert.equal(out.reason, 'publish-failed');
+    assert.equal(out.challenge.challengeType, 'pokemon');
+    const active = repository.getActiveChallenge(scope);
+    assert.equal(active.challengeType, 'pokemon');
+    assert.equal(active.launchPublishedAt, 0);
+    const localChallenges = getDb().prepare(
+      `SELECT COUNT(*) AS total FROM analytics.fun_daily_challenges
+       WHERE scope_key = ? AND challenge_type IN ('guess_game', 'riddle')`
+    ).get(scope);
+    assert.equal(localChallenges.total, 0);
+  } finally {
+    global.fetch = previousFetch;
+  }
+});
+
 test('dailyChallenge service: tryLaunchToday não relança quando já existe ativo', async () => {
   const now = new Date('2099-01-09T12:00:00.000Z').getTime();
   const { service, repository } = createServiceHarness({
@@ -434,9 +547,10 @@ test('dailyChallenge service: tryLaunchToday não relança quando já existe ati
     random: () => 0,
   });
   const scope = uniqueGroup();
-  repository.createChallenge({
+  const id = repository.createChallenge({
     ...makeChallenge({ scopeKey: scope, launchedAt: now, expiresAt: now + 3600_000, dateStr: '2099-01-09' }),
   });
+  repository.markLaunchPublished(id, now, now + 3600_000);
   const out = await service.tryLaunchToday({ scopeKey: scope, now, sendText: async () => {}, sendImage: null, sharp: null });
   assert.equal(out.ok, false);
   assert.equal(out.reason, 'exists');
@@ -730,7 +844,7 @@ test('dailyChallenge service: processExpired revela imagem colorida do pokemon a
     const sendImage = async (_to, buf, opts) => images.push({ buf, opts });
     const sendText = async () => {};
 
-    repository.createChallenge({
+    const id = repository.createChallenge({
       scopeKey: scope,
       type: 'pokemon',
       data: { pokemonId: 7, name: 'squirtle', hints: [] },
@@ -739,6 +853,7 @@ test('dailyChallenge service: processExpired revela imagem colorida do pokemon a
       expiresAt: now + 1000,
       dateStr: '2099-02-03',
     });
+    repository.markLaunchPublished(id, now, now + 1000);
 
     const out = await service.processExpired({
       scopeKey: scope,

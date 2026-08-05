@@ -402,7 +402,14 @@ export function createDailyChallengeService(deps = {}) {
     if (!sched || sched.launched) return { ok: false, reason: 'already-launched' };
 
     const existing = repository.getActiveChallenge(scopeKey);
-    if (existing) return { ok: false, reason: 'exists' };
+    if (existing) {
+      if (existing.launchPublishedAt === 0) {
+        const result = await retryPendingLaunch({ scopeKey, challenge: existing, now, sendText, sendImage, sharp });
+        if (result.ok) repository.markScheduleLaunched(scopeKey, ds);
+        return result;
+      }
+      return { ok: false, reason: 'exists' };
+    }
 
     const minutesNow = minutesOfDay(now);
     if (minutesNow < sched.targetMinute) return { ok: false, reason: 'not-window' };
@@ -416,7 +423,7 @@ export function createDailyChallengeService(deps = {}) {
       sendImage,
       sharp,
     });
-    if (!result?.ok && type === 'pokemon') {
+    if (!result?.ok && type === 'pokemon' && !result?.challenge?.id) {
       for (const localType of LOCAL_CHALLENGE_TYPES) {
         result = await launchChallenge({
           scopeKey,
@@ -467,14 +474,8 @@ export function createDailyChallengeService(deps = {}) {
     });
     if (!id) return { ok: false, reason: 'insert-failed' };
 
-    if (payload.recordContent) {
-      try {
-        payload.recordContent();
-      } catch { /* noop */ }
-    }
-
     const challenge = repository.getActiveChallenge(scopeKey);
-    await publishLaunchMessage({
+    const published = await publishLaunchMessage({
       scopeKey,
       type,
       ch: challenge,
@@ -484,18 +485,12 @@ export function createDailyChallengeService(deps = {}) {
       sendImage,
       image: payload.image || null,
     });
-
-    /* guess_game: a primeira dica e exibida na mensagem de lancamento.
-       Registra-la como liberada para que o proximo /dica avance para a dica 2
-       (respeitando o cooldown de 10 min), evitando duplicacao. */
-    if (type === 'guess_game' && challenge?.id && Array.isArray(payload?.data?.hints) && payload.data.hints[0]) {
-      try {
-        repository.recordHint(challenge.id, 0, launchedAt, String(payload.data.hints[0]));
-      } catch (err) {
-        log({ err: err?.message }, 'dailyChallenge releaseFirstHint fail');
-      }
+    if (!published.ok) {
+      log({ scopeKey, challengeId: id, type, channel: published.channel || null, reason: published.reason }, 'dailyChallenge launch publish failed');
+      return { ok: false, reason: 'publish-failed', challenge: { id, type, challengeType: type } };
     }
-
+    repository.markLaunchPublished(id, launchedAt, expiresAt);
+    recordPublishedLaunch(challenge, payload, launchedAt);
     return { ok: true, challenge: { id, type, challengeType: type } };
   }
 
@@ -833,6 +828,50 @@ export function createDailyChallengeService(deps = {}) {
     };
   }
 
+  function payloadFromChallenge(challenge, image = null) {
+    const data = challenge?.challengeData || {};
+    const type = challenge?.challengeType;
+    if (type === 'guess_game') return { data, image, title: 'DESAFIO DO DIA — ADIVINHE O JOGO' };
+    if (type === 'riddle') return { data, image, title: 'DESAFIO DO DIA — ENIGMA' };
+    return { data, image, title: 'DESAFIO DO DIA — QUEM E ESSE POKEMON?' };
+  }
+
+  function recordPublishedLaunch(challenge, payload, launchedAt) {
+    try {
+      payload.recordContent?.();
+      if (challenge?.challengeType === 'guess_game' && challenge.id && payload?.data?.hints?.[0]) {
+        repository.recordHint(challenge.id, 0, launchedAt, String(payload.data.hints[0]));
+      }
+    } catch (err) {
+      log({ err: err?.message }, 'dailyChallenge record published launch fail');
+    }
+  }
+
+  async function retryPendingLaunch({ scopeKey, challenge, now, sendText, sendImage, sharp }) {
+    let image = null;
+    if (challenge.challengeType === 'pokemon') {
+      const sprite = await fetchPokemonSprite(challenge.challengeData?.pokemonId);
+      if (sprite) {
+        image = sprite;
+        if (typeof sharp === 'function') {
+          try { image = await buildPokemonSilhouetteScene(sprite, sharp); } catch { image = sprite; }
+        }
+      }
+    }
+    const launchedAt = Number(now) || Date.now();
+    const expiresAt = launchedAt + (Number(cfg().dailyChallengeDurationMs) || 4 * 3600_000);
+    const payload = payloadFromChallenge(challenge, image);
+    const published = await publishLaunchMessage({ scopeKey, type: challenge.challengeType, ch: { ...challenge, launchedAt }, payload, expiresAt, sendText, sendImage, image });
+    if (!published.ok) {
+      log({ scopeKey, challengeId: challenge.id, type: challenge.challengeType, channel: published.channel || null, attempt: 'retry', reason: published.reason }, 'dailyChallenge pending launch publish failed');
+      return { ok: false, reason: 'publish-failed', challenge: { id: challenge.id, type: challenge.challengeType, challengeType: challenge.challengeType } };
+    }
+    const marked = repository.markLaunchPublished(challenge.id, launchedAt, expiresAt);
+    if (!marked.changes) return { ok: false, reason: 'publish-race' };
+    recordPublishedLaunch(challenge, payload, launchedAt);
+    return { ok: true, challenge: { id: challenge.id, type: challenge.challengeType, challengeType: challenge.challengeType } };
+  }
+
   /* ---------- mensagem de lancamento ---------- */
 
   async function publishLaunchMessage({
@@ -845,7 +884,7 @@ export function createDailyChallengeService(deps = {}) {
     sendImage,
     image,
   }) {
-    if (!sendText && (!sendImage || !image)) return;
+    if (!sendText && (!sendImage || !image)) return { ok: false, reason: 'no-transport' };
     const durationMin = Math.max(1, Math.round(((expiresAt || 0) - (ch?.launchedAt || 0)) / 60000));
     let body = '';
     if (type === 'guess_game') {
@@ -872,20 +911,24 @@ export function createDailyChallengeService(deps = {}) {
         `💬 *Responda:* /responder <nome>\n💡 *Dica:* /dica\n🔄 *Pular (3 votos):* /trocar desafio`;
       if (sendImage && image) {
         try {
-          await sendImage(scopeKey, image, { caption });
-          return;
+          const result = await sendImage(scopeKey, image, { caption });
+          if (!result?.skipped) return { ok: true, channel: 'image' };
+          log({ scopeKey, type, channel: 'image', reason: result.reason }, 'dailyChallenge sendImage skipped');
         } catch (err) {
-          log({ err: err?.message }, 'dailyChallenge sendImage fail, caindo pra texto');
+          log({ scopeKey, type, channel: 'image', reason: err?.message }, 'dailyChallenge sendImage fail, caindo pra texto');
         }
       }
       body = caption;
     }
-    if (sendText) {
-      try {
-        await sendText(scopeKey, body);
-      } catch (err) {
-        log({ err: err?.message }, 'dailyChallenge sendText fail');
-      }
+    if (!sendText) return { ok: false, reason: 'no-text-transport' };
+    try {
+      const result = await sendText(scopeKey, body);
+      if (!result?.skipped) return { ok: true, channel: 'text' };
+      log({ scopeKey, type, channel: 'text', reason: result.reason }, 'dailyChallenge sendText skipped');
+      return { ok: false, reason: result.reason || 'text-skipped', channel: 'text' };
+    } catch (err) {
+      log({ scopeKey, type, channel: 'text', reason: err?.message }, 'dailyChallenge sendText fail');
+      return { ok: false, reason: err?.message || 'text-failed', channel: 'text' };
     }
   }
 
@@ -898,6 +941,7 @@ export function createDailyChallengeService(deps = {}) {
     if (!scopeKey) return { ok: false, reason: 'no-scope' };
     const challenge = repository.getActiveChallenge(scopeKey);
     if (!challenge) return { ok: false, reason: 'no-active' };
+    if (challenge.launchPublishedAt === 0) return { ok: false, reason: 'pending-publication' };
     if (Number(challenge.expiresAt || 0) > Number(now || Date.now())) {
       return { ok: false, reason: 'not-yet' };
     }

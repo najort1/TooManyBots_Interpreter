@@ -15,6 +15,7 @@ const DAILY_CHALLENGE_SCHEMA_BLOCKS = `
       status TEXT NOT NULL DEFAULT 'active',
       launched_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,
+      launch_published_at INTEGER,
       completed_at INTEGER,
       completed_by_jid TEXT,
       solve_time_sec INTEGER,
@@ -1289,6 +1290,17 @@ export function ensureFunSchema(db) {
           ELSE ${ANALYTICS_SCHEMA}.fun_user_profiles.title
         END
     `);
+  } catch {
+    // ignore
+  }
+
+  // Migra estado de publicação do lançamento do desafio diário.
+  try {
+    const dcCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_daily_challenges)`).all();
+    const dcNames = new Set(dcCols.map((c) => String(c.name || '')));
+    if (dcNames.size && !dcNames.has('launch_published_at')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_daily_challenges ADD COLUMN launch_published_at INTEGER`);
+    }
   } catch {
     // ignore
   }

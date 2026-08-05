@@ -25,6 +25,9 @@ function mapChallenge(row) {
     status: String(row.status || 'active'),
     launchedAt: Number(row.launched_at) || 0,
     expiresAt: Number(row.expires_at) || 0,
+    launchPublishedAt: row.launch_published_at === null || row.launch_published_at === undefined
+      ? null
+      : Number(row.launch_published_at) || 0,
     completedAt: Number(row.completed_at) || 0,
     completedByJid: String(row.completed_by_jid || ''),
     solveTimeSec: Number(row.solve_time_sec) || 0,
@@ -88,8 +91,8 @@ export function createFunDailyChallengeRepository({ getDatabase = getDb } = {}) 
       .prepare(
         `INSERT INTO ${ANALYTICS_SCHEMA}.fun_daily_challenges
             (scope_key, challenge_type, challenge_date, challenge_data, answer,
-             status, launched_at, expires_at)
-         VALUES (?, ?, ?, ?, ?, 'active', ?, ?)`
+             status, launched_at, expires_at, launch_published_at)
+         VALUES (?, ?, ?, ?, ?, 'active', ?, ?, 0)`
       )
       .run(
         String(scopeKey || ''),
@@ -101,6 +104,22 @@ export function createFunDailyChallengeRepository({ getDatabase = getDb } = {}) 
         Number(expiresAt) || 0
       );
     return Number(info.lastInsertRowid) || null;
+  }
+
+  /** Marca publicação de lançamento e ajusta o prazo apenas uma vez. */
+  function markLaunchPublished(id, launchedAt, expiresAt) {
+    ensureSchema();
+    const db = getDatabase();
+    return db.prepare(
+      `UPDATE ${ANALYTICS_SCHEMA}.fun_daily_challenges
+          SET launch_published_at = ?, launched_at = ?, expires_at = ?
+        WHERE id = ? AND status = 'active' AND launch_published_at = 0`
+    ).run(
+      Number(launchedAt) || Date.now(),
+      Number(launchedAt) || Date.now(),
+      Number(expiresAt) || 0,
+      Number(id) || 0
+    );
   }
 
   /** Marca como completo com tempo de resolução e recompensa. */
@@ -437,6 +456,7 @@ export function createFunDailyChallengeRepository({ getDatabase = getDb } = {}) 
     getActiveChallenge,
     getTodayChallenge,
     createChallenge,
+    markLaunchPublished,
     completeChallenge,
     expireChallenge,
     skipChallenge,
