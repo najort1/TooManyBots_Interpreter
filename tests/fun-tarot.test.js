@@ -74,6 +74,47 @@ test('sanitizeTarotText: corta em 3k e limpa meta', () => {
   assert.ok(!/^claro/i.test(meta));
 });
 
+test('tarotService: injeta identidade e lore do consulente', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  let input = null;
+  const scope = uniqueGroup();
+  const userJid = uniqueJid('5590');
+  const tarot = createTarotService({
+    random: () => 0.01,
+    profileService: {
+      buildIdentityBlock: (group, users) =>
+        group === scope && users.includes(userJid)
+          ? '<user_identity>\n- Nando: nick: Nando · fã de café\n</user_identity>'
+          : '',
+    },
+    groupMemoryService: {
+      buildLoreContext: () => '<group_lore>\n- [running_gag] Nando perde a hora do café\n</group_lore>',
+    },
+    generateZen: async (opts) => {
+      input = opts;
+      return 'O Louco pede café antes de decidir. Vai leve, mas vai.';
+    },
+  });
+
+  try {
+    const result = await tarot.reading({
+      userJid,
+      scopeKey: scope,
+      question: 'devo aceitar o convite?',
+      funConfig: resolveFunConfig({ zenEnabled: true, tarotMaxTokens: 1400 }),
+    });
+    assert.equal(result.provider, 'zen');
+    assert.match(input.prompt, /<user_identity>/);
+    assert.match(input.prompt, /Nando/);
+    assert.match(input.prompt, /<group_lore>/);
+    assert.equal(input.maxTokens, 1400);
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else delete process.env.FUN_DISABLE_LIVE_LLM;
+  }
+});
+
 test('tarotService: reading com mock zen + cooldown', async () => {
   const prev = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;

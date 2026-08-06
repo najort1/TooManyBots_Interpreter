@@ -522,6 +522,8 @@ export async function handleAssaultCommand({
   listContacts,
   reply,
   flavorService,
+  groupMemoryService = null,
+  profileService = null,
   achievementService = null,
   newsService = null,
   args = [],
@@ -768,6 +770,28 @@ export async function handleAssaultCommand({
     : (pvpName || displayNameOnly(getContactDisplayName, result.targetJid || ''));
   const weaponLabel = [result.weapon?.emoji, result.weapon?.name].filter(Boolean).join(' ').trim();
 
+  const inventoryDetails = [
+    result.weapon?.name ? `arma usada: ${result.weapon.name}` : '',
+    result.weapon?.requires === 'municao' ? 'munição usada: sim' : '',
+    result.mode === 'bank' ? 'lockpick usado: sim' : '',
+    result.usedGas ? 'veículo usado: sim; gasolina usada: sim' : '',
+  ].filter(Boolean).join(' · ');
+  let groupLore = '';
+  try {
+    groupLore = groupMemoryService?.buildLoreContext?.(scopeKey, {
+      userJids: [userJid, result.targetJid].filter(Boolean),
+      limit: 4,
+      funConfig,
+    }) || '';
+    const identityBlock = profileService?.buildIdentityBlock?.(
+      scopeKey,
+      [userJid, result.targetJid].filter(Boolean),
+      funConfig
+    ) || '';
+    if (identityBlock) groupLore = groupLore ? `${groupLore}\n${identityBlock}` : identityBlock;
+  } catch {
+    groupLore = '';
+  }
   const story = await assaultFlavor(flavorService, assaultScenario(result), {
     attacker: attackerStoryName,
     target: targetStoryName,
@@ -775,6 +799,9 @@ export async function handleAssaultCommand({
     mode: result.mode || 'player',
     success: result.success ? 'sim' : 'nao',
     gas: result.usedGas ? 'sim' : 'nao',
+    inventoryDetails,
+    groupLore,
+    scopeKey,
   });
 
   const wantedStars =

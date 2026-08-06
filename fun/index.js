@@ -178,17 +178,21 @@ export function createFunModule(deps = {}) {
     eventRepository,
     getDatabase,
   });
+  let profileService = null;
+  let groupMemoryService = null;
   const tarotService =
     deps.tarotService ||
     createTarotService({
       casinoRepository,
       getLogger,
+      getProfileService: () => profileService,
+      getGroupMemoryService: () => groupMemoryService,
       generateZen: deps.openaiChatComplete,
       generateOllama: deps.ollamaGenerate,
     });
   const profileRepository =
     deps.profileRepository || createFunProfileRepository({ getDatabase });
-  const profileService =
+  profileService =
     deps.profileService ||
     createProfileService({
       profileRepository,
@@ -213,6 +217,7 @@ export function createFunModule(deps = {}) {
     deps.qmpService ||
     createQmpService({
       qmpRepository,
+      profileService,
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
       generateOllama: deps.ollamaGenerate || deps.generate,
@@ -249,6 +254,8 @@ export function createFunModule(deps = {}) {
       stockService,
       propertyService,
       achievementRepository,
+      profileService,
+      getGroupMemoryService: () => groupMemoryService,
       getLogger,
       generateZen: deps.openaiChatComplete,
       generateOllama: deps.ollamaGenerate,
@@ -317,10 +324,11 @@ export function createFunModule(deps = {}) {
     });
   const personaRepository =
     deps.personaRepository || createFunPersonaRepository({ getDatabase });
-  const groupMemoryService =
+  groupMemoryService =
     deps.groupMemoryService ||
     createGroupMemoryService({
       memoryRepository,
+      profileService,
       getContactDisplayName: resolveContactName,
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
@@ -440,6 +448,7 @@ export function createFunModule(deps = {}) {
       marketService,
       flavorService,
       dailyChallengeService,
+      groupMemoryService,
       getContactDisplayName: resolveContactName,
     });
 
@@ -754,7 +763,10 @@ export function createFunModule(deps = {}) {
               scopeKey,
               now,
               sendText: async (to, msg) => postWithMentions(to, msg, userFmt),
-              sendImage: async (to, image, opts) => sendImage(sock, to, image, opts?.caption || ''),
+              sendImage: async (to, image, opts) => sendImage(sock, to, {
+                imageBuffer: image,
+                caption: opts?.caption || '',
+              }),
               sharp: await import('sharp').then((m) => m.default || m).catch(() => null),
             });
             if (exp?.ok) {
@@ -1058,7 +1070,10 @@ export function createFunModule(deps = {}) {
             }
             const sendTextFn = async (to, msg) => postWithMentions(to, msg, userFmt);
             const sendImageFn = async (to, buf, opts) =>
-              sendImage(sock, to, buf, opts?.caption || '');
+              sendImage(sock, to, {
+                imageBuffer: buf,
+                caption: opts?.caption || '',
+              });
             const launched = await dailyChallengeService.tryLaunchToday({
               scopeKey,
               now,
@@ -1168,7 +1183,10 @@ export function createFunModule(deps = {}) {
           now,
           sendText: async (to, message) => sendTextFn(sock, to, message),
           sendImage: async (to, image, imageOpts) =>
-            sendImageFn(sock, to, image, imageOpts?.caption || ''),
+            sendImageFn(sock, to, {
+              imageBuffer: image,
+              caption: imageOpts?.caption || '',
+            }),
           sharp: sharpFn,
         });
         if (challenge?.ok) {

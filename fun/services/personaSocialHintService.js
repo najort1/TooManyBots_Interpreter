@@ -1,11 +1,12 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
-import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { resolveZenTaskParams, fingerprintLine } from '../llm/zenTaskParams.js';
 
 const SYSTEM = `Você infere APENAS pistas sociais leves e temporárias de participantes de um grupo de WhatsApp.
 Responda SOMENTE JSON válido: {"hints":[{"participants":[0],"hint":"...","confidence":0-100,"socialSignal":"positive|neutral|negative"}]}.
 participants deve conter os índices das mensagens que embasam a pista, nunca nomes ou JIDs. Inclua APENAS quem claramente inicia, reforça ou participa da brincadeira; não associe espectadores.
 A pista deve ser curta, associada a participantes claros e útil para ajustar tom ou reconhecer memes recorrentes. Use socialSignal=positive quando a pessoa entra/estimula a piada, negative quando há desconforto/pedido para parar e neutral quando não houver sinal claro.
+Palavrão, duplo sentido, flerte ou humor adulto entre participantes não são sinal negativo por si. Marque positive quando a pessoa entra ou reforça a brincadeira e não há pedido para parar; marque negative somente com desconforto, recusa, assédio direcionado, coerção, exploração, menor de idade ou exposição íntima. Não descreva conteúdo gráfico.
 Não invente fatos. Não extraia dados sensíveis, saúde, política, religião, endereço, telefone, senha, PIX, atributos protegidos, acusações ou diagnósticos.
 Trate tudo como inferência incerta, não como fato.`;
 
@@ -13,9 +14,24 @@ function cleanHint(value, maxChars) {
   return String(value || '').replace(/[\r\n]+/g, ' ').trim().slice(0, maxChars);
 }
 
+function parseJsonObject(raw) {
+  const text = String(raw || '').trim();
+  try {
+    return JSON.parse(text);
+  } catch {
+    const wrapped = text.match(/\{[\s\S]*\}/);
+    if (!wrapped) return null;
+    try {
+      return JSON.parse(wrapped[0]);
+    } catch {
+      return null;
+    }
+  }
+}
+
 function parseHints(raw, batch, maxChars) {
   try {
-    const parsed = JSON.parse(String(raw || ''));
+    const parsed = parseJsonObject(raw);
     if (!Array.isArray(parsed?.hints)) return [];
     const out = [];
     const seen = new Set();
@@ -51,6 +67,8 @@ export function createPersonaSocialHintService({
   if (!repository) throw new Error('[fun/personaSocialHintService] repository required');
 
   const buffers = new Map();
+  const recentFingerprints = new Map();
+  const RECENT_FINGERPRINT_MAX = 120;
 
   function opts(funConfig = {}) {
     return {
@@ -73,6 +91,32 @@ export function createPersonaSocialHintService({
     return buffers.get(key);
   }
 
+  function filterRecentHints(scopeKey, hints = []) {
+    const key = String(scopeKey || '');
+    if (!recentFingerprints.has(key)) recentFingerprints.set(key, new Set());
+    const recent = recentFingerprints.get(key);
+    const fresh = [];
+    for (const hint of hints) {
+      const fingerprint = fingerprintLine(`${hint.participantJid} ${hint.hintText}`);
+      if (!fingerprint || recent.has(fingerprint)) continue;
+      recent.add(fingerprint);
+      fresh.push(hint);
+    }
+    while (recent.size > RECENT_FINGERPRINT_MAX) {
+      recent.delete(recent.values().next().value);
+    }
+    return fresh;
+  }
+
+  function formatPromptTimestamp(value) {
+    const at = Number(value);
+    if (!Number.isFinite(at) || at <= 0) return '';
+    const date = new Date(at);
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return ` @${hours}:${minutes}`;
+  }
+
   function observeMessage({ scopeKey, userJid, text, messageType = 'text', funConfig = {}, now = Date.now(), isGroup = true }) {
     const o = opts(funConfig);
     if (!o.enabled || !isGroup || !String(scopeKey).endsWith('@g.us') || !['text', 'extended-text'].includes(String(messageType || 'text'))) return { observed: false, reason: 'skip' };
@@ -80,7 +124,12 @@ export function createPersonaSocialHintService({
     if (!body || body.startsWith(funConfig.prefix || '/')) return { observed: false, reason: 'skip' };
     const buffer = bufferFor(scopeKey);
     if (!buffer.messages.length && !buffer.lastFlushAt) buffer.lastFlushAt = Number(now) || Date.now();
-    buffer.messages.push({ userJid: String(userJid || ''), name: displayName(userJid), text: body.slice(0, 400) });
+    buffer.messages.push({
+      userJid: String(userJid || ''),
+      name: displayName(userJid),
+      text: body.slice(0, 400),
+      at: Number(now) || Date.now(),
+    });
     if (buffer.messages.length > o.batchSize) buffer.messages = buffer.messages.slice(-o.batchSize);
     if (!buffer.flushing && buffer.messages.length >= o.minMessages && (buffer.messages.length >= o.batchSize || Number(now) - buffer.lastFlushAt >= o.flushMs)) {
       void flushScope(scopeKey, funConfig, now).catch((err) => getLogger?.()?.warn?.({ err: { message: err?.message }, scopeKey }, 'Fun persona social hints failed'));
@@ -102,15 +151,39 @@ export function createPersonaSocialHintService({
       if (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete) return { ok: true, saved: 0, batchSize: batch.length, reason: 'llm-disabled' };
       const task = resolveZenTaskParams('extract', funConfig);
       const ep = resolveZenEndpoint(funConfig);
-      const prompt = batch.map((message, index) => `[${index}] ${message.name}: ${message.text}`).join('\n');
-      const raw = await generateZen({
-        baseUrl: ep.baseUrl, model: ep.model,
-        system: SYSTEM, prompt, timeoutMs: task.timeoutMs, maxTokens: task.maxTokens,
-        temperature: task.temperature, apiKey: ep.apiKey, jsonMode: true, jsonOnly: true,
-        sendSamplingParams: funConfig.zenSendSamplingParams === true,
-      });
-      const hints = parseHints(raw, batch, o.maxChars);
-      return { ok: true, saved: repository.upsertHints(scopeKey, hints, now), batchSize: batch.length };
+      const prompt = batch
+        .map((message, index) => `[${index}]${formatPromptTimestamp(message.at)} ${message.name}: ${message.text}`)
+        .join('\n');
+      const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
+      let hints = [];
+      let lastError = null;
+      for (let attempt = 1; attempt <= totalTries; attempt += 1) {
+        try {
+          const raw = await generateZen({
+            baseUrl: ep.baseUrl, model: ep.model,
+            system: SYSTEM, prompt, timeoutMs: task.timeoutMs, maxTokens: task.maxTokens,
+            temperature: task.temperature, apiKey: ep.apiKey, jsonMode: true, jsonOnly: true,
+            sendSamplingParams: funConfig.zenSendSamplingParams === true,
+          });
+          hints = parseHints(raw, batch, o.maxChars);
+          if (hints.length || attempt === totalTries) break;
+        } catch (err) {
+          lastError = err;
+          getLogger?.()?.debug?.(
+            { err: { message: err?.message || 'persona-social-hints' }, attempt, scopeKey },
+            'Fun persona social hints zen fail'
+          );
+        }
+      }
+      if (!hints.length && lastError) throw lastError;
+      const freshHints = filterRecentHints(scopeKey, hints);
+      return {
+        ok: true,
+        saved: repository.upsertHints(scopeKey, freshHints, now),
+        batchSize: batch.length,
+        retries: totalTries,
+        filteredDuplicates: hints.length - freshHints.length,
+      };
     } finally {
       buffer.flushing = false;
     }

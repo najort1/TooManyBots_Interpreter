@@ -12,6 +12,7 @@ import {
   ensureActorMention,
 } from '../utils/userLabel.js';
 import { tryPassiveQmpVote } from '../commands/handlers/qmp.js';
+import { listCanonicalGroupParticipantJids } from '../utils/identity.js';
 
 const reportDebug = (hypothesisId, location, msg, data = {}) => { void Promise.resolve().then(() => fetch(process.env.DEBUG_SERVER_URL || 'http://127.0.0.1:7777/event', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: process.env.DEBUG_SESSION_ID || 'persona-runtime-signals', runId: 'pre-fix', hypothesisId, location, msg: `[DEBUG] ${msg}`, data, ts: Date.now() }) })).catch(() => {}); };
 const jidDomain = (jid) => String(jid || '').includes('@') ? `@${String(jid).split('@').pop()}` : '';
@@ -555,6 +556,14 @@ export async function handleFunIncomingMessage(deps, ctx) {
         scopeKey: scope.scopeKey,
         funConfig,
         now,
+        getParticipantJids: async () => {
+          const members = await listCanonicalGroupParticipantJids(
+            sock,
+            scope.scopeKey,
+            identityMap
+          );
+          return [...new Set([...members, userJid])];
+        },
       });
       if (!hit?.ok || !hit.question) return hit;
       const msg = qmpService.formatQuestionAnnouncement(hit.question, {

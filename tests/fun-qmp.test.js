@@ -41,12 +41,13 @@ function uniqueGroup() {
   return `120363${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 90 + 10)}@g.us`;
 }
 
-function makeService({ random = () => 0.99, generateZen, generateOllama } = {}) {
+function makeService({ random = () => 0.99, generateZen, generateOllama, profileService } = {}) {
   const repo = createFunStatsRepository({ getDatabase: getDb });
   repo.ensureFunSchema();
   const qmpRepository = createFunQmpRepository({ getDatabase: getDb });
   const qmpService = createQmpService({
     qmpRepository,
+    profileService,
     random,
     generateZen:
       generateZen ||
@@ -141,6 +142,46 @@ test('config: qmpAutoTriggerChance default e env QMP_AUTO_TRIGGER_CHANCE', () =>
   } finally {
     if (prev == null) delete process.env.QMP_AUTO_TRIGGER_CHANCE;
     else process.env.QMP_AUTO_TRIGGER_CHANCE = prev;
+  }
+});
+
+test('qmpService: injeta elenco ativo e perfil de task no prompt Zen', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  let opts;
+  const { qmpService } = makeService({
+    profileService: {
+      displayName: (jid) => ({
+        'ana@s.whatsapp.net': 'Ana',
+        'bia@s.whatsapp.net': 'Bia',
+      })[jid] || jid,
+    },
+    generateZen: async (input) => {
+      opts = input;
+      return 'Quem é mais provável de guardar pote de sorvete com feijão?';
+    },
+  });
+
+  try {
+    const result = await qmpService.inventPrompt({
+      zenEnabled: true,
+      zenQmpTemperature: 0.73,
+      zenQmpMaxTokens: 432,
+      zenQmpTimeoutMs: 22_000,
+    }, {
+      scopeKey: 'grupo@g.us',
+      participantJids: ['ana@s.whatsapp.net', 'bia@s.whatsapp.net'],
+    });
+    assert.equal(result.provider, 'zen');
+    assert.match(opts.prompt, /<cast>/);
+    assert.match(opts.prompt, /Ana, Bia/);
+    assert.match(opts.prompt, /não cite nomes/i);
+    assert.equal(opts.temperature, 0.73);
+    assert.equal(opts.maxTokens, 432);
+    assert.equal(opts.timeoutMs, 22_000);
+  } finally {
+    if (prev == null) delete process.env.FUN_DISABLE_LIVE_LLM;
+    else process.env.FUN_DISABLE_LIVE_LLM = prev;
   }
 });
 

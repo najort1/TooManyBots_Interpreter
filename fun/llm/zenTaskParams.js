@@ -78,6 +78,13 @@ export const ZEN_TASK_DEFAULTS = Object.freeze({
     jsonMode: false,
     jsonOnly: false,
   }),
+  qmp: Object.freeze({
+    temperature: 0.95,
+    maxTokens: 320,
+    timeoutMs: 18_000,
+    jsonMode: false,
+    jsonOnly: false,
+  }),
   journalist: Object.freeze({
     temperature: 0.7,
     maxTokens: 700,
@@ -157,6 +164,11 @@ export function resolveZenTaskParams(task, funConfig = {}) {
       temperature: funConfig.zenDailyHintTemperature,
       maxTokens: funConfig.zenDailyHintMaxTokens,
       timeoutMs: funConfig.zenDailyHintTimeoutMs,
+    },
+    qmp: {
+      temperature: funConfig.zenQmpTemperature ?? funConfig.qmpTemperature,
+      maxTokens: funConfig.zenQmpMaxTokens ?? funConfig.qmpMaxTokens,
+      timeoutMs: funConfig.zenQmpTimeoutMs ?? funConfig.qmpTimeoutMs,
     },
     journalist: {
       temperature: funConfig.zenJournalistTemperature,

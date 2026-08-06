@@ -67,6 +67,7 @@ export function createNewsService({
   marketService = null,
   flavorService = null,
   dailyChallengeService = null,
+  groupMemoryService = null,
   getContactDisplayName = null,
   random = Math.random,
 } = {}) {
@@ -106,7 +107,14 @@ export function createNewsService({
     };
 
     const facts = collectDayFacts({ scopeKey, now, deps, timeZone: tz });
-    const llmBits = await composeLlmBits(facts, flavorService, scopeKey, random);
+    const llmBits = await composeLlmBits(
+      facts,
+      flavorService,
+      scopeKey,
+      random,
+      groupMemoryService,
+      funConfig
+    );
 
     const dayLabel =
       dayKeyInTz(now, tz) +

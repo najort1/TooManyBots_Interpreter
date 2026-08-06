@@ -48,11 +48,71 @@ test('pistas sociais: lote LLM mapeia índices para JIDs e recupera seletivament
   assert.equal(calls.length, 1);
   assert.match(calls[0].prompt, /Alice Real/);
   assert.match(calls[0].prompt, /Bob Real/);
+  assert.match(calls[0].prompt, /@\d{2}:\d{2}/);
   const aliceHints = service.getHints(scope, [alice]);
   assert.deepEqual(aliceHints.map((hint) => hint.participantJid), [alice]);
   assert.equal(aliceHints[0].confidence, 88);
   assert.equal(aliceHints[0].socialSignal, 'positive');
   assert.equal(service.getHints(scope, ['5511999999999@s.whatsapp.net']).length, 0);
+});
+
+test('pistas sociais: prompt aceita humor adulto contextual e preserva sinais de desconforto', async () => {
+  const repository = createFunPersonaSocialHintRepository({ getDatabase: getDb });
+  let input = null;
+  const service = createPersonaSocialHintService({
+    repository,
+    generateZen: async (request) => {
+      input = request;
+      return JSON.stringify({
+        hints: [{
+          participants: [0],
+          hint: 'entra na zoeira do date ruim',
+          confidence: 82,
+          socialSignal: 'positive',
+        }],
+      });
+    },
+  });
+  const scope = uniqueGroup();
+  for (const text of ['esse date foi caótico kkk', 'eu conto essa novela até hoje', 'a piada do date voltou']) {
+    service.observeMessage({ scopeKey: scope, userJid: alice, text, funConfig: cfg, now: Date.now() });
+  }
+
+  const result = await service.flushScope(scope, cfg, Date.now());
+  assert.equal(result.saved, 1);
+  assert.match(input.system, /humor adulto entre participantes não são sinal negativo/i);
+  assert.match(input.system, /pedido para parar/i);
+  assert.match(input.system, /menor de idade ou exposição íntima/i);
+});
+
+test('pistas sociais: salva JSON embrulhado após retry e evita eco no mesmo scope', async () => {
+  let calls = 0;
+  const repository = createFunPersonaSocialHintRepository({ getDatabase: getDb });
+  const service = createPersonaSocialHintService({
+    repository,
+    generateZen: async () => {
+      calls += 1;
+      if (calls === 1) throw new Error('proxy-temporario');
+      return 'Resposta:\n{"hints":[{"participants":[0],"hint":"puxa o meme da pizza","confidence":85,"socialSignal":"positive"}]}\nFim.';
+    },
+  });
+  const scope = uniqueGroup();
+  const retryCfg = { ...cfg, zenMaxRetries: 1 };
+
+  for (const text of ['pizza de novo', 'quem pediu pizza?', 'pizza é debate sério']) {
+    service.observeMessage({ scopeKey: scope, userJid: alice, text, funConfig: retryCfg, now: 60_000 });
+  }
+  const first = await service.flushScope(scope, retryCfg, 61_000);
+  assert.equal(calls, 2);
+  assert.equal(first.saved, 1);
+  assert.equal(first.filteredDuplicates, 0);
+
+  for (const text of ['mais pizza', 'a pizza voltou', 'pizza eterna']) {
+    service.observeMessage({ scopeKey: scope, userJid: alice, text, funConfig: retryCfg, now: 120_000 });
+  }
+  const second = await service.flushScope(scope, retryCfg, 121_000);
+  assert.equal(second.saved, 0);
+  assert.equal(second.filteredDuplicates, 1);
 });
 
 test('pistas sociais: observação agenda lote sem aguardar LLM', async () => {

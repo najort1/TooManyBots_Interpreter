@@ -348,6 +348,39 @@ test('persona: prompt recebe autor, reply, identidade e pistas de contexto', asy
   }
 });
 
+test('persona: system permite acompanhar humor adulto contextual com limites', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      generateZen: async (input) => {
+        request = input;
+        return 'Isso virou lenda do grupo, deixa a novela render kkk.';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-adult-humor-1' } });
+
+    const response = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: 'bot, aquele date ainda rende piada demais',
+      authorJid: uniqueJid(),
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_050_000,
+    });
+
+    assert.equal(response.responded, true);
+    assert.match(request.system, /humor adulto contextual/i);
+    assert.match(request.system, /nunca sexualize menores/i);
+    assert.match(request.system, /pedido para parar/i);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
 test('persona: repete o Zen até zenMaxRetries antes do fallback', async () => {
   const previous = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;

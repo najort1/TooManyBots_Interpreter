@@ -6,6 +6,7 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
+import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
 import { getWeekKey } from '../db/funSocialRepository.js';
 
@@ -329,6 +330,7 @@ export function resolveQmpTone(existingCount, heavyEvery = 5, forceTone = null) 
 
 export function createQmpService({
   qmpRepository,
+  profileService = null,
   generateZen = openaiChatComplete,
   generateOllama = ollamaGenerate,
   random = Math.random,
@@ -361,13 +363,7 @@ export function createQmpService({
         ? Math.min(0.9, Math.max(0.2, Number(funConfig.qmpAntiEchoMaxOverlap)))
         : 0.42,
       inventRetries: Math.max(1, Math.min(8, Math.floor(numOr(funConfig.qmpInventRetries, 4)))),
-      timeoutMs: Math.max(3000, Math.floor(numOr(funConfig.qmpTimeoutMs, 18_000))),
-      // 320 (era 220): dá espaço pro brainstorm de 3 ideias dentro de <think></think>
-      // antes da pergunta final — sanitizeQmpPrompt já descarta esse bloco.
-      maxTokens: Math.max(64, Math.min(500, Math.floor(numOr(funConfig.qmpMaxTokens, 320)))),
-      temperature: Number.isFinite(Number(funConfig.qmpTemperature))
-        ? Number(funConfig.qmpTemperature)
-        : 0.95,
+      ...resolveZenTaskParams('qmp', funConfig),
       /** Override explícito por task; vazio mantém o modelo Zen global. */
       zenModel: String(funConfig.qmpZenModel || '').trim(),
     };
@@ -391,7 +387,26 @@ export function createQmpService({
     return pick(list, random) || list[0];
   }
 
-  function buildInventUserPrompt({ tone, recent, maxChars }) {
+  function buildCastBlock(scopeKey, participantJids = []) {
+    if (!profileService?.displayName || !scopeKey) return '';
+    const members = [...new Set(
+      (Array.isArray(participantJids) ? participantJids : [])
+        .map((jid) => String(jid || '').trim())
+        .filter(Boolean)
+    )];
+    if (!members.length) return '';
+
+    const listed = members.slice(0, 15).map((jid) => profileService.displayName(jid, scopeKey));
+    const overflow = members.length - listed.length;
+    return [
+      '<cast>',
+      `Elenco ativo do grupo: ${listed.join(', ')}${overflow > 0 ? ` (+${overflow} outros)` : ''}.`,
+      'Use só como referência de convivência; não cite nomes na pergunta nem invente fatos sobre alguém.',
+      '</cast>',
+    ].join('\n');
+  }
+
+  function buildInventUserPrompt({ tone, recent, maxChars, scopeKey = '', participantJids = [] }) {
     const example = fallbackPrompt(tone, recent);
     const recentBlock =
       recent?.length > 0
@@ -401,29 +416,24 @@ export function createQmpService({
             'Mude de universo (casa/trampo/dinheiro/vaidade/preguiça/amizade — não o mesmo loop).',
           ].join('\n')
         : 'Sem histórico ainda — invente com detalhe de vida real.';
-
-    if (tone === 'heavy') {
-      return [
-        'Bora, modo PESADO agora: solta a pergunta que queima o grupo com cena bem humana.',
-        `Até ${maxChars} caracteres. Pode ser 1–2 frases. Lembra do brainstorm de 3 e escolhe a melhor. Só a pergunta.`,
-        `Clima parecido com (não repita): ${example}`,
-        '',
-        recentBlock,
-      ].join('\n');
-    }
+    const castBlock = buildCastBlock(scopeKey, participantJids);
+    const intro = tone === 'heavy'
+      ? 'Bora, modo PESADO agora: solta a pergunta que queima o grupo com cena bem humana.'
+      : 'Bora, solta UMA pergunta de "Quem é mais provável?" agora, no clima de sempre.';
 
     return [
-      'Bora, solta UMA pergunta de "Quem é mais provável?" agora, no clima de sempre.',
+      intro,
       `Até ${maxChars} caracteres. Pode ser 1–2 frases. Lembra do brainstorm de 3 e escolhe a melhor. Só a pergunta.`,
       `Clima parecido com (não repita): ${example}`,
       '',
       recentBlock,
-    ].join('\n');
+      castBlock ? `\n${castBlock}` : '',
+    ].filter(Boolean).join('\n');
   }
 
   /**
    * @param {object} funConfig
-   * @param {{ scopeKey?: string, tone?: 'normal'|'heavy', recentPrompts?: string[] }} [ctx]
+   * @param {{ scopeKey?: string, tone?: 'normal'|'heavy', recentPrompts?: string[], participantJids?: string[] }} [ctx]
    */
   async function inventPrompt(funConfig = {}, ctx = {}) {
     const o = opts(funConfig);
@@ -466,6 +476,8 @@ export function createQmpService({
           ...(lastClean ? [lastClean] : []),
         ],
         maxChars: o.maxPromptLen,
+        scopeKey: ctx.scopeKey,
+        participantJids: ctx.participantJids,
       });
       // segunda tentativa: temperatura um pouco maior via prompt nudge
       const nudge =
@@ -530,6 +542,8 @@ export function createQmpService({
     force = false,
     /** @type {'normal'|'heavy'|null} */
     forceTone = null,
+    participantJids = [],
+    getParticipantJids = null,
   }) {
     const o = opts(funConfig);
     if (!o.enabled) return { ok: false, reason: 'disabled' };
@@ -564,7 +578,15 @@ export function createQmpService({
       if (!prompt) return { ok: false, reason: 'empty-prompt' };
       provider = 'custom';
     } else {
-      const invented = await inventPrompt(funConfig, { scopeKey, tone });
+      let cast = participantJids;
+      if (typeof getParticipantJids === 'function') {
+        try {
+          cast = await getParticipantJids();
+        } catch {
+          // Elenco é contexto opcional; não bloqueia a rodada.
+        }
+      }
+      const invented = await inventPrompt(funConfig, { scopeKey, tone, participantJids: cast });
       prompt = invented.prompt;
       provider = invented.provider === 'template' ? 'fallback' : invented.provider;
       if (source === 'auto') provider = 'auto';
@@ -749,6 +771,8 @@ export function createQmpService({
     scopeKey,
     funConfig = {},
     now = Date.now(),
+    participantJids = [],
+    getParticipantJids = null,
   }) {
     const o = opts(funConfig);
     if (!o.enabled) return { ok: false, reason: 'disabled' };
@@ -774,6 +798,8 @@ export function createQmpService({
       source: 'auto',
       funConfig,
       now,
+      participantJids,
+      getParticipantJids,
     });
   }
 

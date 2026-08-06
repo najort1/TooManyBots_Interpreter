@@ -1,8 +1,24 @@
-export async function composeLlmBits(facts, flavorService, scopeKey, random = Math.random) {
+export async function composeLlmBits(
+  facts,
+  flavorService,
+  scopeKey,
+  random = Math.random,
+  groupMemoryService = null,
+  funConfig = {}
+) {
   const out = { capa: null, intro: null, foreshadow: null };
   if (!flavorService || typeof flavorService.line !== 'function') return out;
 
   const ctx = buildLlmContext(facts);
+  let groupLore = '';
+  try {
+    groupLore = groupMemoryService?.buildLoreContext?.(scopeKey, {
+      limit: 8,
+      funConfig,
+    }) || '';
+  } catch {
+    groupLore = '';
+  }
   const vars = {
     mood: ctx.mood,
     totals: ctx.totals,
@@ -12,6 +28,7 @@ export async function composeLlmBits(facts, flavorService, scopeKey, random = Ma
     events: ctx.events,
     count: facts.eventsCount || 0,
     scopeKey: String(scopeKey || ''),
+    groupLore,
   };
 
   try {

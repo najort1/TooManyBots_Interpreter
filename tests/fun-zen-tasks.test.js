@@ -39,8 +39,33 @@ test('resolveZenTaskParams: invent vs extract vs flavor', () => {
   assert.ok(invent.timeoutMs >= 90_000, `invent timeout ${invent.timeoutMs}`);
   assert.deepEqual(
     Object.keys(ZEN_TASK_DEFAULTS).sort(),
-    ['assault', 'chaos', 'dailyguess', 'dailyhint', 'extract', 'flavor', 'invent', 'journalist', 'persona', 'selfheal', 'tarot'].sort()
+    ['assault', 'chaos', 'dailyguess', 'dailyhint', 'extract', 'flavor', 'invent', 'journalist', 'persona', 'qmp', 'selfheal', 'tarot'].sort()
   );
+});
+
+test('resolveZenTaskParams: qmp usa perfil dedicado e preserva compatibilidade legada', () => {
+  const qmp = resolveZenTaskParams('qmp', {
+    zenQmpTemperature: 0.81,
+    zenQmpMaxTokens: 444,
+    zenQmpTimeoutMs: 19_000,
+  });
+  assert.deepEqual(qmp, {
+    temperature: 0.81,
+    maxTokens: 444,
+    timeoutMs: 19_000,
+    jsonMode: false,
+    jsonOnly: false,
+    task: 'qmp',
+  });
+
+  const legacy = resolveZenTaskParams('qmp', {
+    qmpTemperature: 0.72,
+    qmpMaxTokens: 333,
+    qmpTimeoutMs: 21_000,
+  });
+  assert.equal(legacy.temperature, 0.72);
+  assert.equal(legacy.maxTokens, 333);
+  assert.equal(legacy.timeoutMs, 21_000);
 });
 
 test('resolveZenTaskParams: dailyGuess e dailyHint usam perfis dedicados', () => {
@@ -156,6 +181,18 @@ test('sanitizeFlavor rejeita inglês e fragmento incompleto', () => {
   );
 });
 
+test('sanitizers de assalto e jornal aceitam {line} e texto legado', async () => {
+  const { sanitizeAssaultStory, sanitizeGroupTimes } = await import('../fun/llm/flavorService.js');
+  const assault = sanitizeAssaultStory(JSON.stringify({
+    line: '🎬 TÍTULO: TESTE\nCENA 1 — PREPARAÇÃO\nPlano torto, café frio e coragem duvidosa.\nCENA 2 — AÇÃO\nEntrou na lojinha fazendo pose.\nCENA 3 — FUGA / CONSEQUÊNCIA\nSaiu correndo.\nEPÍLOGO\nO grupo nunca esqueceu.',
+  }), 900);
+  assert.match(assault, /TÍTULO: TESTE/);
+  const journal = sanitizeGroupTimes(JSON.stringify({
+    line: 'CAPA: Dia caótico\nINTRO: O grupo tentou sobreviver ao próprio histórico.\nFORESHADOW: Amanhã tem mais.',
+  }), 1800);
+  assert.match(journal, /CAPA: Dia caótico/);
+});
+
 test('sanitizeAssaultStory remove preâmbulo e mantém cenas', async () => {
   const { sanitizeAssaultStory } = await import('../fun/llm/flavorService.js');
   const raw = `Aqui vai um roteiro curto de assalto no tom pastelão que você pediu.
@@ -177,6 +214,30 @@ Quer que eu escreva uma variação mais malandra?`;
   assert.ok(!/aqui vai|pastel[aã]o que voc/i.test(clean));
   assert.ok(!/quer que eu escreva|varia[cç][aã]o mais/i.test(clean));
   assert.match(clean, /CENA 1/i);
+});
+
+test('assault e group_times pedem JSON line ao Zen', async () => {
+  const { createFlavorService } = await import('../fun/llm/flavorService.js');
+  const inputs = [];
+  const flavor = createFlavorService({
+    getConfig: () => ({ zenEnabled: true, ollamaEnabled: false, assaultStoryTimeoutMs: 5_000 }),
+    allowLiveLlm: true,
+    zenGenerate: async (opts) => {
+      inputs.push(opts);
+      if (opts.jsonMode) {
+        return opts.prompt.includes('The Group Times')
+          ? JSON.stringify({ line: 'CAPA: Dia caótico\nINTRO: O grupo tentou sobreviver ao próprio histórico.\nFORESHADOW: Amanhã tem mais.' })
+          : JSON.stringify({ line: '🎬 TÍTULO: TESTE\nCENA 1 — PREPARAÇÃO\nPlano torto, café frio e coragem duvidosa.\nCENA 2 — AÇÃO\nEntrou na lojinha fazendo pose.\nCENA 3 — FUGA / CONSEQUÊNCIA\nSaiu correndo.\nEPÍLOGO\nO grupo nunca esqueceu.' });
+      }
+      return '';
+    },
+  });
+  const story = await flavor.assaultStory('assault_shop_win', { attacker: 'Nina', target: 'Lojinha', weapon: 'Faca' });
+  const news = await flavor.chaosLine('group_times', { scopeKey: 'teste@g.us', events: 'slot_win', count: 1 });
+  assert.match(story, /TÍTULO: TESTE/);
+  assert.match(news, /CAPA/);
+  assert.ok(inputs.every((opts) => opts.jsonMode === true && opts.jsonOnly === true));
+  assert.ok(inputs.every((opts) => /{"line":"texto final"}/.test(opts.system)));
 });
 
 test('assault prompt exige nome do attacker e bloqueia JID', async () => {
@@ -238,7 +299,7 @@ test('config expose knobs e defaults', () => {
   const cfg = resolveFunConfig({});
   assert.equal(cfg.zenInventTemperature, DEFAULT_FUN_CONFIG.zenInventTemperature);
   assert.equal(cfg.flavorAlways, true);
-  assert.equal(cfg.marketJournalistEnabled, false);
+  assert.equal(cfg.marketJournalistEnabled, true);
   assert.ok(cfg.flavorRecentMax >= 1);
 });
 

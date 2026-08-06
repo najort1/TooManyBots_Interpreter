@@ -35,6 +35,8 @@ async function runAssaultScenario({
   targetNickname = '',
   // Mention on/off no formatter do request:
   mentionUsers = true,
+  groupMemoryService = null,
+  profileService = null,
 }) {
   const capturedVars = {};
   const calls = { story: 0 };
@@ -95,6 +97,8 @@ async function runAssaultScenario({
       listContacts: () => [],
       reply,
       flavorService,
+      groupMemoryService,
+      profileService,
       args: [`@${targetJid}`],
       mentionedJids: [targetJid],
       quotedParticipant: '',
@@ -153,6 +157,24 @@ test('PvP assault: alvo COM nickname de grupo → nickname vence (perfil custom)
 
   // nameOf → resolveNickname tem prioridade (definido no store ALS).
   assert.equal(capturedVars.target, 'Coelho');
+});
+
+test('PvP assault: passa inventário, lore e identidade ao roteiro', async () => {
+  const attacker = '5511000000040@s.whatsapp.net';
+  const target = '5511666555444@s.whatsapp.net';
+  const { capturedVars } = await runAssaultScenario({
+    attackerJid: attacker,
+    targetJid: target,
+    groupMemoryService: {
+      buildLoreContext: () => '<group_lore>\n- [event] Nina ama café\n</group_lore>',
+    },
+    profileService: {
+      buildIdentityBlock: () => '<user_identity>\n- Nina: nick: Nina\n</user_identity>',
+    },
+  });
+  assert.match(capturedVars.inventoryDetails, /arma usada: Rifle serrado/i);
+  assert.match(capturedVars.groupLore, /<group_lore>/);
+  assert.match(capturedVars.groupLore, /<user_identity>/);
 });
 
 test('PvP assault: attacker sempre usa nome do contact (não JID cru)', async () => {

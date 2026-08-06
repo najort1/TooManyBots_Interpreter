@@ -720,12 +720,37 @@ export function sanitizeFlavor(raw, maxLen = 160) {
   return s;
 }
 
+/** Extrai o campo `line` de respostas em JSON, preservando texto legado inválido. */
+function unwrapLineJson(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  try {
+    const parsed = JSON.parse(text);
+    if (parsed && typeof parsed === 'object' && typeof parsed.line === 'string') {
+      return parsed.line;
+    }
+  } catch {
+    const wrapped = text.match(/\{[\s\S]*\}/);
+    if (wrapped) {
+      try {
+        const parsed = JSON.parse(wrapped[0]);
+        if (parsed && typeof parsed === 'object' && typeof parsed.line === 'string') {
+          return parsed.line;
+        }
+      } catch {
+        // mantém o texto bruto para os sanitizers legados.
+      }
+    }
+  }
+  return text;
+}
+
 /**
  * The Group Times: multi-linha (MANCHETE/ECONOMIA/FOFOCA).
  * sanitizeFlavor colapsava tudo e matava a edição.
  */
 export function sanitizeGroupTimes(raw, maxLen = 1800) {
-  let t = String(raw || '')
+  let t = unwrapLineJson(raw)
     .replace(/\r/g, '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
     .replace(/```(?:json|text)?/gi, '')
@@ -858,7 +883,7 @@ ${shape}`;
 
 /** Sanitiza roteiro longo de assalto — mantém parágrafos/cenas. */
 export function sanitizeAssaultStory(raw, maxLen = 900) {
-  let text = String(raw || '')
+  let text = unwrapLineJson(raw)
     .replace(/\r/g, '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '\n')
     .replace(/```[\s\S]*?```/g, '\n')
@@ -887,7 +912,8 @@ export function sanitizeAssaultStory(raw, maxLen = 900) {
       if (!t) return true; // keep blank for paragraph breaks
       if (/^(thinking|raciocínio|step\s*\d|contexto:|regras?:)/i.test(t)) return false;
       if (/^(aqui vai|segue o|roteiro besteirol|no tom que)/i.test(t)) return false;
-      if (looksLikeMetaReasoning(t) && t.length < 160) return false;
+      const isScriptHeading = /^(?:🎬\s*)?(?:T[IÍ]TULO|CENA\s*\d|EP[IÍ]LOGO)\b/i.test(t);
+      if (!isScriptHeading && looksLikeMetaReasoning(t) && t.length < 160) return false;
       return true;
     });
 
@@ -1177,7 +1203,7 @@ Total de eventos: ${vars?.count ?? '?'}.`,
         key !== 'russian_start'
           ? `Contexto: ${facts}.`
           : null,
-        key !== 'group_times' && groupLore
+        groupLore
           ? String(groupLore).includes('<group_lore>')
             ? groupLore.slice(0, LORE_MAX_CHAOS)
             : `<group_lore>\nUse só se encaixar; NÃO troque autores; NÃO invente.\n${groupLore.slice(0, LORE_MAX_CHAOS)}\n</group_lore>`
@@ -1296,6 +1322,10 @@ ${banHint}`.trim();
       assault,
       chaos,
     });
+    const jsonLineMode = assault || key === 'group_times';
+    const jsonSystem = jsonLineMode
+      ? `${system}\n\nResponda SOMENTE JSON válido no formato {"line":"texto final"}. Não use markdown nem campos extras.`
+      : system;
     const scopeBan = recentBanList(cfg, scopeKey);
     const assaultPrompt = assault
       ? `${prompt}
@@ -1322,7 +1352,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
       const raw = await generateZen({
         baseUrl: ep.baseUrl,
         model: ep.model,
-        system,
+        system: jsonSystem,
         prompt: assault ? assaultPrompt : prompt,
         timeoutMs,
         maxTokens: Math.max(
@@ -1337,6 +1367,8 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         ),
         temperature: task.temperature,
         apiKey: ep.apiKey,
+        jsonMode: jsonLineMode,
+        jsonOnly: jsonLineMode,
         sendSamplingParams: ep.sendSamplingParams,
       });
       const clean = assault

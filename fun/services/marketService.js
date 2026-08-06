@@ -86,6 +86,9 @@ export function createMarketService({
   stockService = null,
   propertyService = null,
   achievementRepository = null,
+  profileService = null,
+  groupMemoryService = null,
+  getGroupMemoryService = null,
   chaosEventService = null,
   policeService = null,
   random = Math.random,
@@ -474,7 +477,7 @@ export function createMarketService({
    * Código já decidiu archetype/category/companyId (skeleton).
    * Ordem: 1) Zen (3 retentativas)  2) fallback sintético do skeleton. Ollama descontinuado.
    */
-  async function inventEvent(funConfig = {}, reg = null, { overheat = 0 } = {}) {
+  async function inventEvent(funConfig = {}, reg = null, { overheat = 0, scopeKey = '', targetJid = '' } = {}) {
     const log = getLogger?.();
     const regulator = reg || clampKnobs(defaultRegulatorKnobs());
     const { reg: regAfterSeed, seed } = popNarrativeSeed({ ...regulator });
@@ -500,10 +503,30 @@ export function createMarketService({
             ? 'queda / sobra / desconto'
             : 'lateral / sem drama',
     };
-    const prompt = buildInventUserPrompt({
-      facts,
-      recentFingerprints: regulator.recentFingerprints || [],
-    });
+    const memories = groupMemoryService || getGroupMemoryService?.();
+    let loreContext = '';
+    let identityBlock = '';
+    try {
+      loreContext = memories?.buildLoreContext?.(scopeKey, {
+        userJids: targetJid ? [targetJid] : [],
+        limit: 4,
+        funConfig,
+      }) || '';
+      identityBlock = targetJid
+        ? profileService?.buildIdentityBlock?.(scopeKey, [targetJid], funConfig) || ''
+        : '';
+    } catch {
+      loreContext = '';
+      identityBlock = '';
+    }
+    const prompt = [
+      buildInventUserPrompt({
+        facts,
+        recentFingerprints: regulator.recentFingerprints || [],
+      }),
+      loreContext,
+      identityBlock,
+    ].filter(Boolean).join('\n\n');
     const inventSystem = EVENT_INVENT_SYSTEM;
     const task = resolveZenTaskParams('invent', funConfig);
     const inventTimeoutMs = Math.max(
@@ -650,11 +673,11 @@ export function createMarketService({
   }
 
   /**
-   * Opcional: reescreve title/body com FACTS oficiais (direction/%) — anti-alucinação.
-   * Desligado por default (marketJournalistEnabled).
+   * Reescreve title/body com FACTS oficiais (direction/%) — anti-alucinação.
+   * Ligado por padrão; `marketJournalistEnabled: false` faz opt-out explícito.
    */
   async function maybeJournalistRewrite(facts, funConfig = {}) {
-    if (funConfig.marketJournalistEnabled !== true) return null;
+    if (funConfig.marketJournalistEnabled === false) return null;
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') return null;
     if (funConfig.zenEnabled === false) return null;
     const task = resolveZenTaskParams('journalist', funConfig);
@@ -916,7 +939,7 @@ export function createMarketService({
       };
     }
 
-    const draft = await inventEvent(funConfig, reg, { overheat: heat });
+    const draft = await inventEvent(funConfig, reg, { overheat: heat, scopeKey });
     if (draft._regAfterSeed) reg = clampKnobs({ ...draft._regAfterSeed, marketOverheat: heat });
     // seed do regulador volta como bias de arquétipo (foi popado no invent)
     if (draft._seed) {
@@ -1029,8 +1052,8 @@ export function createMarketService({
       }
     }
 
-    // Opcional: jornalista reescreve com FACTS (direction + %) — marketJournalistEnabled
-    if (funConfig.marketJournalistEnabled === true) {
+    // Jornalista reescreve com FACTS (direction + %); opt-out explícito no config.
+    if (funConfig.marketJournalistEnabled !== false) {
       const j = await maybeJournalistRewrite(
         {
           direction,

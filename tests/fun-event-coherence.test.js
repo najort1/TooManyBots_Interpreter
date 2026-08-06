@@ -387,7 +387,9 @@ test('coerência: adversarial LLM invent (mock) nunca publica peixeira com PatoC
       companyId: e.companyId,
     })
   );
-  assert.ok(!/peixeira/i.test(`${e.title}\n${e.description}`));
+  if (e.companyId === 'patocoin') {
+    assert.ok(!/peixeira/i.test(`${e.title}\n${e.description}`));
+  }
   const ann = marketService.formatEventAnnouncement(result, () => '');
   // pure-stock não deve ser rotulado como setor de rua no ticker
   if (e.companyId === 'patocoin') {

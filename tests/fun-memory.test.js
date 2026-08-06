@@ -47,7 +47,7 @@ test('default Zen usa bot-zap no endpoint padronizado', () => {
   assert.equal(cfg.zenModel, 'bot-zap');
   assert.equal(cfg.zenSendSamplingParams, false);
   assert.equal(cfg.memoryEnabled, true);
-  assert.equal(cfg.memoryMaxFacts, 50);
+  assert.equal(cfg.memoryMaxFacts, DEFAULT_FUN_CONFIG.memoryMaxFacts);
 });
 
 test('parseFunCommand: lore / esquecelore', () => {
@@ -204,6 +204,136 @@ test('looseParseFacts: extrai mesmo com vírgula trailing e aspas escapadas', ()
   assert.deepEqual(out[0].subjects, [0]);
   assert.deepEqual(out[0].keywords, ['golpe', 'link']);
   assert.equal(out[0].score, 55);
+});
+
+test('groupMemoryService: extract recebe clima atual e identidade do lote', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const repo = createFunMemoryRepository({ getDatabase: getDb });
+    const scope = uniqueGroup();
+    const ana = uniqueJid('5517');
+    let input = null;
+    repo.setPersona(scope, '• O grupo transforma toda pizza em debate nacional.', 1);
+    const mem = createGroupMemoryService({
+      memoryRepository: repo,
+      profileService: {
+        buildIdentityBlock: (group, ids) =>
+          group === scope && ids.includes(ana)
+            ? '<user_identity>\n- Aninha: nick: Aninha · rainha da pizza\n</user_identity>'
+            : '',
+      },
+      generateZen: async (opts) => {
+        if (opts?.jsonMode) {
+          input = opts;
+          return JSON.stringify({
+            facts: [{
+              kind: 'running_gag',
+              summary: 'Aninha abriu outra discussão séria sobre pizza no grupo',
+              subjects: [0],
+              keywords: ['pizza'],
+              score: 74,
+            }],
+          });
+        }
+        return '• Pizza sempre vira tese de doutorado no grupo';
+      },
+    });
+    const cfg = resolveFunConfig({ memoryEnabled: true, memoryMinScore: 20, zenEnabled: true });
+    for (let i = 0; i < 3; i += 1) {
+      mem._pushRaw(scope, {
+        userJid: ana,
+        name: 'Ana',
+        text: `pizza de novo ${i}`,
+        at: Date.now() + i,
+      });
+    }
+    await mem.forceFlush(scope, cfg);
+    assert.match(input.prompt, /Clima atual consolidado/);
+    assert.match(input.prompt, /pizza em debate nacional/i);
+    assert.match(input.prompt, /<user_identity>/);
+    assert.match(input.prompt, /Aninha/);
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});
+
+test('groupMemoryService: prompt preserva humor adulto contextual sem detalhes gráficos', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const repo = createFunMemoryRepository({ getDatabase: getDb });
+    const scope = uniqueGroup();
+    const ana = uniqueJid('5519');
+    let input = null;
+    const mem = createGroupMemoryService({
+      memoryRepository: repo,
+      generateZen: async (opts) => {
+        if (!opts?.jsonMode) return '• A piada do date ruim segue viva no grupo';
+        input = opts;
+        return JSON.stringify({
+          facts: [{
+            kind: 'running_gag',
+            summary: 'Ana sempre puxa a piada interna do date ruim',
+            subjects: [0],
+            keywords: ['date', 'piada'],
+            score: 72,
+          }],
+        });
+      },
+    });
+    const cfg = resolveFunConfig({ memoryMinScore: 20, zenEnabled: true });
+    for (const text of ['aquele date foi uma novela kkk', 'a piada do date voltou', 'a Ana puxou o bordão de novo']) {
+      mem._pushRaw(scope, { userJid: ana, name: 'Ana', text, at: Date.now() });
+    }
+
+    const result = await mem.forceFlush(scope, cfg);
+    assert.equal(result.ok, true);
+    assert.equal(result.inserted, 1);
+    assert.match(input.system, /humor adulto entre participantes/i);
+    assert.match(input.system, /menor de idade, coerção, exploração, assédio direcionado/i);
+    assert.match(input.prompt, /humor adulto entre participantes não invalidam/i);
+    assert.match(repo.listFacts(scope, { limit: 1 })[0].summary, /date ruim/i);
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});
+
+test('groupMemoryService: persona respeita o limite configurado no prompt e no resultado', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const repo = createFunMemoryRepository({ getDatabase: getDb });
+    const scope = uniqueGroup();
+    let input = null;
+    repo.insertFact({
+      scopeKey: scope,
+      kind: 'running_gag',
+      summary: 'O grupo discute pizza como se fosse assunto de Estado',
+      subjects: [uniqueJid('5518')],
+      score: 75,
+    });
+    const mem = createGroupMemoryService({
+      memoryRepository: repo,
+      generateZen: async (opts) => {
+        input = opts;
+        return `• ${'x'.repeat(600)}`;
+      },
+    });
+    const cfg = resolveFunConfig({ memoryPersonaMaxChars: 500, zenEnabled: true });
+    const result = await mem.refreshPersona(scope, cfg);
+
+    assert.equal(result.ok, true);
+    assert.match(input.system, /limite de caracteres informado/i);
+    assert.doesNotMatch(input.system, /450 caracteres/i);
+    assert.match(input.prompt, /≤500 chars/);
+    assert.equal(result.text.length, 500);
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
 });
 
 test('groupMemoryService: extrai fato de JSON quebrado do Zen (anti-perda)', async () => {
@@ -498,7 +628,7 @@ test('groupMemoryService: observe ignora comando/curto; flush com mock Zen + IDs
   }
 });
 
-test('groupMemoryService: Zen falha → Ollama no extract com format json', async () => {
+test('groupMemoryService: Zen falha → extract retorna vazio sem chamar Ollama', async () => {
   const prev = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
   try {
@@ -549,13 +679,9 @@ test('groupMemoryService: Zen falha → Ollama no extract com format json', asyn
     }
     const r = await mem.forceFlush(scope, cfg);
     assert.equal(r.ok, true);
-    assert.ok(ollama >= 1, `ollama fallback esperado, got ${ollama}`);
-    assert.ok(
-      ollamaOptsLog.some((o) => o.format === 'json'),
-      `format json no extract; opts=${JSON.stringify(ollamaOptsLog)}`
-    );
-    assert.ok(repo.countFacts(scope) >= 1);
-    assert.ok(repo.listFacts(scope, { limit: 1 })[0].subjects.includes(u));
+    assert.equal(ollama, 0, 'Ollama está descontinuado como fallback do extract');
+    assert.equal(ollamaOptsLog.length, 0);
+    assert.equal(repo.countFacts(scope), 0);
   } finally {
     if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
     else process.env.FUN_DISABLE_LIVE_LLM = '1';

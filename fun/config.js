@@ -330,6 +330,19 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.zenDailyHintTimeoutMs,
       { min: 5_000, max: 120_000, rounding: 'floor', clamp: true }
     ),
+    zenQmpTemperature: Number.isFinite(Number(raw.zenQmpTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.zenQmpTemperature)))
+      : DEFAULT_FUN_CONFIG.zenQmpTemperature,
+    zenQmpMaxTokens: normalizeInt(
+      raw.zenQmpMaxTokens,
+      DEFAULT_FUN_CONFIG.zenQmpMaxTokens,
+      { min: 64, max: 1200, rounding: 'floor', clamp: true }
+    ),
+    zenQmpTimeoutMs: normalizeInt(
+      raw.zenQmpTimeoutMs,
+      DEFAULT_FUN_CONFIG.zenQmpTimeoutMs,
+      { min: 3_000, max: 120_000, rounding: 'floor', clamp: true }
+    ),
     zenJournalistTemperature: Number.isFinite(Number(raw.zenJournalistTemperature))
       ? Math.min(1.5, Math.max(0, Number(raw.zenJournalistTemperature)))
       : DEFAULT_FUN_CONFIG.zenJournalistTemperature,

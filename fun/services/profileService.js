@@ -1,6 +1,6 @@
 /**
  * Perfil social por grupo: nick, bio, aniversário, título.
- * Entrada principal: texto livre → LLM (Zen→Ollama) + fallback regex.
+ * Entrada principal: texto livre → Zen para bio/extras + fallback regex.
  */
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
@@ -9,19 +9,17 @@ import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
 
-const EXTRACT_SYSTEM = `Você extrai dados de perfil social de um texto livre em pt-BR (grupo WhatsApp).
+const EXTRACT_SYSTEM = `Você extrai apenas bio e extras de um texto livre em pt-BR (grupo WhatsApp).
 
 Responda SOMENTE JSON válido (sem markdown):
-{"nickname":string|null,"bio":string|null,"birthday":string|null,"title":string|null,"extras":string|null}
+{"bio":string|null,"extras":string|null}
 
 Regras:
-- nickname: apelido curto (2–24 chars), como as pessoas chamam a pessoa no grupo. null se não houver.
+- Os campos estruturados (apelido, aniversário e título) já foram extraídos por regras determinísticas. Nunca os altere, reextraia ou invente.
 - bio: "conhecido por" / o que a pessoa é no grupo (1 frase ≤160). null se não houver.
-- birthday: data dia/mês (ex "15/03", "12 de agosto"). SEM ano. null se não houver.
-- title: flair/título cosmético (ex "Lenda"). null se não houver.
-- extras: resto inútil/fofoca que NÃO entrou em nick/bio/niver/title (ex. "proano que nunca pisou no Fábio", "sou negro", time, gosto aleatório). 1–2 frases curtas ≤280. null se não sobrar nada.
-- NÃO repita em extras o que já foi em nickname/bio/birthday/title.
-- NÃO invente. Se o texto não traz o campo, use null (não invente).
+- extras: resto útil/fofoca que não entrou nos campos estruturados nem na bio (ex. "proano que nunca pisou no Fábio", time, gosto aleatório). 1–2 frases curtas ≤280. null se não sobrar nada.
+- NÃO repita em extras o que já está no perfil conhecido.
+- NÃO invente. Se o texto não traz o campo, use null.
 - NÃO salve telefone, PIX, senha, endereço.
 Só o JSON.`;
 
@@ -366,10 +364,7 @@ function parseExtractJson(raw) {
   }
   if (!parsed || typeof parsed !== 'object') return null;
   return {
-    nickname: parsed.nickname != null ? String(parsed.nickname) : null,
     bio: parsed.bio != null ? String(parsed.bio) : null,
-    birthday: parsed.birthday != null ? String(parsed.birthday) : null,
-    title: parsed.title != null ? String(parsed.title) : null,
     extras:
       parsed.extras != null
         ? String(parsed.extras)
@@ -631,9 +626,18 @@ export function createProfileService({
     // 1) manual always as baseline
     let fields = parseProfileManual(raw);
 
-    // 2) AI if enabled
+    // 2) Zen só complementa bio/extras; campos estruturados permanecem determinísticos.
     if (o.ai && process.env.FUN_DISABLE_LIVE_LLM !== '1') {
-      const prompt = `Texto do usuário:\n"""${raw.slice(0, 800)}"""\n\nExtraia nickname, bio, birthday, title e extras (resto) em JSON.`;
+      const knownProfile = {
+        nickname: fields.nickname || null,
+        birthday: fields.birthday || null,
+        title: fields.title || null,
+      };
+      const prompt = [
+        `Texto do usuário:\n"""${raw.slice(0, 800)}"""`,
+        `Campos estruturados já extraídos por regras (preserve como estão):\n${JSON.stringify(knownProfile)}`,
+        'Extraia somente bio e extras em JSON; use o texto como fonte de verdade.',
+      ].join('\n\n');
 
       if (funConfig.zenEnabled !== false) {
         const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
@@ -660,10 +664,8 @@ export function createProfileService({
               fields = finalizeFields(
                 raw,
                 {
-                  nickname: parsed.nickname ?? fields.nickname,
+                  ...fields,
                   bio: parsed.bio ?? fields.bio,
-                  birthday: parsed.birthday ?? fields.birthday,
-                  title: parsed.title ?? fields.title,
                   extras: parsed.extras ?? fields.extras,
                 },
                 o.extrasMax

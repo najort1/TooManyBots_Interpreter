@@ -205,6 +205,26 @@ export async function loadGroupIdentity(sock, groupJid, identityMap) {
 }
 
 /**
+ * Lista membros de um grupo com JIDs canônicos. Carrega metadata uma vez e
+ * reaproveita o mapa LID→PN para não mandar identificadores opacos aos serviços.
+ */
+export async function listCanonicalGroupParticipantJids(sock, groupJid, identityMap) {
+  const participants = await loadGroupIdentity(sock, groupJid, identityMap);
+  const ids = [];
+  for (const participant of participants) {
+    const candidates = [participant?.jid, participant?.id, participant?.lid];
+    for (const raw of candidates) {
+      const value = String(raw || '').trim();
+      const resolved = identityMap?.resolve?.(value) || value;
+      if (!isCanonicalUserJid(resolved)) continue;
+      ids.push(resolved);
+      break;
+    }
+  }
+  return [...new Set(ids)];
+}
+
+/**
  * Resolve um raw jid (pn, lid, ou lid@s.whatsapp.net) para PN canônico.
  */
 export async function resolveCanonicalUserJid(raw, {

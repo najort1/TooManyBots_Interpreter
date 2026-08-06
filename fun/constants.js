@@ -675,7 +675,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   zenJournalistTemperature: 0.7,
   zenJournalistMaxTokens: 700,
   /** Se true: após motor de %, reescreve title/body com FACTS (anti-alucinação de direção). */
-  marketJournalistEnabled: false,
+  marketJournalistEnabled: true,
   /** Sempre anexa flavor (template) se LLM vazio; false = omite linha. */
   flavorAlways: true,
   /** Quantas frases recentes lembrar p/ anti-eco (flavor/chaos). */
@@ -762,7 +762,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   bolsaMinQty: 1,
   bolsaDividendPeriodMs: 24 * 60 * 60_000,
   bolsaDividendCapPerTick: 80,
-  assaultCooldownMs: 60 * 60_000,
+  assaultCooldownMs: 5 * 60_000,
   assaultMinSteal: 8,
   /** PvP: ganho real mas menor que banco/lojinha */
   assaultMaxStealRatio: 0.12,
@@ -773,21 +773,21 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   jobTokenSecret: '',
   jobLinkTtlMs: 15 * 60_000,
   dashboardUiPort: 3001,
-  /** Multa de falha: % do saldo progressiva (5% · piso 10 · teto 200) */
-  assaultFailFinePct: 0.05,
+  /** Multa de falha PvP desativada por padrão (piso/teto não forçam cobrança). */
+  assaultFailFinePct: 0,
   assaultFailFineMin: 10,
   assaultFailFineMax: 200,
   /** Heists NPC — fonte principal de coin do loop de armas */
   heistShopMin: 48,
   heistShopMax: 100,
   heistShopBaseChance: 0.5,
-  /** Multa de falha em heist de loja: 10% do saldo (piso 10 · teto 200). */
-  heistShopFailFinePct: 0.10,
+  /** Multa de falha em heist de loja: 5% do saldo (piso 10 · teto 200). */
+  heistShopFailFinePct: 0.05,
   heistBankMin: 150,
   heistBankMax: 340,
   heistBankBaseChance: 0.34,
-  /** Multa de falha em heist de banco: 20% do saldo (piso 10 · teto 200). */
-  heistBankFailFinePct: 0.20,
+  /** Multa de falha em heist de banco: 10% do saldo (piso 10 · teto 200). */
+  heistBankFailFinePct: 0.10,
   /** Penalidade de chance quando se usa arma em assalto a banco (armas corpo a corpo/fogo são ineficazes contra cofre). */
   heistBankWeaponPenalty: 0.10,
   heistBankCooldownMs: 60 * 60_000,
@@ -799,7 +799,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   tarotMaxChars: 3000,
   tarotCardCount: 3,
   tarotTimeoutMs: 25_000,
-  tarotMaxTokens: 900,
+  tarotMaxTokens: 1400,
   tarotTemperature: 0.9,
   // Quem é Mais Provável? (QMP)
   qmpEnabled: true,
@@ -828,8 +828,11 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
    *  Fallback Ollama descontinuado. */
   qmpInventRetries: 4,
   qmpTimeoutMs: 18_000,
-  qmpMaxTokens: 220,
+  qmpMaxTokens: 320,
   qmpTemperature: 0.95,
+  zenQmpTemperature: 0.95,
+  zenQmpMaxTokens: 320,
+  zenQmpTimeoutMs: 18_000,
   /** Modelo Zen opcional só para QMP; vazio usa o zenModel global do bot. */
   qmpZenModel: '',
   happyHourDurationMs: 45 * 60_000,

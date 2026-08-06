@@ -465,7 +465,7 @@ test('findBestWeapon: usa rifle em vez da faca', () => {
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
 
-test('market invent: Zen inválido não dispara segunda chamada real antes do fallback', async () => {
+test('market invent: Zen inválido usa todas as retentativas antes do fallback', async () => {
   delete process.env.FUN_DISABLE_LIVE_LLM;
   const repo = createFunStatsRepository({ getDatabase: getDb });
   repo.ensureFunSchema();
@@ -494,8 +494,8 @@ test('market invent: Zen inválido não dispara segunda chamada real antes do fa
   }));
 
   assert.ok(out, 'evento deve existir');
-  assert.equal(zenCalls, 1, 'Zen deve ser chamado exatamente uma vez');
-  assert.equal(ollamaCalls, 1, 'Ollama deve ser chamado exatamente uma vez');
+  assert.equal(zenCalls, 4, 'Zen deve usar a chamada inicial e três retentativas');
+  assert.equal(ollamaCalls, 0, 'Ollama foi descontinuado como fallback');
 });
 
 test('gasolina no bazar: dependência carro', () => {

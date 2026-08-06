@@ -33,11 +33,13 @@ REGRAS OBRIGATÓRIAS:
 7. summary em pt-BR, como alguém contaria no grupo depois (tom de zap), sem aspas externas.
 8. THREADS DISTINTOS: o batch pode misturar threads de conversa diferentes. Marcadores "--- [GAP: Xm] ---" entre mensagens mostram onde acabou um assunto e começou outro (gap >= 15min). Mensagens separadas por um GAP são de assuntos DIFERENTES — NÃO conecte uma resposta ao thread errado só porque está fisicamente perto. Se não dá pra saber com certeza a qual thread uma fala se refere, descarte o fato ({"facts":[]}).
 9. Em caso de dúvida, prefira descartar a inventar conexão entre threads.
+10. Palavrão, duplo sentido, flerte ou humor adulto entre participantes não são motivo de descarte automático. Quando o chat não indicar menor de idade, coerção, exploração, assédio direcionado, imagem íntima ou pedido para parar, trate como zoeira contextual e, se for recorrente ou marcante, extraia o running_gag/evento.
+11. Ao registrar esse tipo de humor, resuma sem descrição gráfica e sem afirmar ato íntimo como fato; guarde o bordão, a dinâmica ou a piada interna. Não presuma consentimento fora do que o próprio contexto mostra.
 Só o JSON.`;
 
 const PERSONA_SYSTEM = `Resuma o clima de um grupo WhatsApp BR em 3 a 5 bullets curtos de lore cômica, com base nos fatos dados.
 Cada bullet: observação específica (você inventa o ângulo), tom de quem vive o chat.
-pt-BR, sem inventar nomes que não estejam nos fatos. Máx 450 caracteres. Sem markdown pesado. Só o texto.`;
+pt-BR, sem inventar nomes que não estejam nos fatos. Respeite o limite de caracteres informado no pedido. Sem markdown pesado. Só o texto.`;
 
 const PERSONA_CACHE_TTL_MS = 30 * 60_000;
 
@@ -476,6 +478,7 @@ export function parseFactsJson(
 
 export function createGroupMemoryService({
   memoryRepository,
+  profileService = null,
   getContactDisplayName = null,
   random = Math.random,
   getLogger = () => null,
@@ -665,7 +668,7 @@ export function createGroupMemoryService({
         limit: o.maxFacts,
         minScore: 0,
       });
-      const extracted = await extractFacts(batch, existing, funConfig, o, maxExtract);
+      const extracted = await extractFacts(scopeKey, batch, existing, funConfig, o, maxExtract);
       let inserted = 0;
       let reinforced = 0;
 
@@ -952,7 +955,7 @@ export function createGroupMemoryService({
     return selected;
   }
 
-  async function extractFacts(batch, existing, funConfig, o, maxExtract = 2) {
+  async function extractFacts(scopeKey, batch, existing, funConfig, o, maxExtract = 2) {
     // usa versão com timestamps + marcadores de GAP para a LLM detectar thread-breaks
     const lines = formatBatchLinesWithContext(batch);
     const knownLimit = o.knownFactsInPrompt || 24;
@@ -975,8 +978,20 @@ export function createGroupMemoryService({
       ? 'O batch contém MÚLTIPLOS threads separados por marcadores "--- [GAP: Xm] ---". Mensagens em threads diferentes são de assuntos DIFERENTES. NÃO conecte uma resposta ao thread errado só porque está fisicamente perto.'
       : 'Leia o trecho como conversa contínua (contexto importa — quem responde a quem).';
 
+    const personaText = String(getPersonaCached(scopeKey)?.personaText || '').trim();
+    const batchUserJids = [...new Set(batch.map((message) => String(message?.userJid || '').trim()).filter(Boolean))];
+    const identityBlock = profileService?.buildIdentityBlock
+      ? profileService.buildIdentityBlock(scopeKey, batchUserJids, funConfig)
+      : '';
+    const contextBlocks = [
+      personaText ? `Clima atual consolidado (use só como contexto; não reextraia nem contradiga sem evidência):\n${personaText.slice(0, 300)}` : '',
+      identityBlock,
+    ].filter(Boolean);
+
     const prompt = [
       `Analise as seguintes mensagens do grupo (${batch.length} msgs, IDs entre colchetes).`,
+      ...contextBlocks,
+      contextBlocks.length ? '' : null,
       continuidadeLine,
       lines,
       '',
@@ -985,8 +1000,10 @@ export function createGroupMemoryService({
       '2. Em subjects use OBRIGATORIAMENTE os IDs numéricos das mensagens (ex: 0, 2). Nunca nomes. SEMPRE como array: [4] — nunca 4, nunca [] quando há autor claro.',
       '3. subjects = índice da mensagem que contém o CONTEÚDO do fato (a fala engraçada/útil), não o índice de quem é o assunto da mensagem.',
       '4. NÃO invente. Se não souber o sujeito com ID claro, não extraia o fato.',
-      '5. Use o contexto das mensagens vizinhas pra entender o fato, MAS não conecte mensagens separadas por [GAP: ...].',
-      '6. Retorne JSON: {"facts":[...]}',
+      '5. Palavrão, duplo sentido, flerte ou humor adulto entre participantes não invalidam um fato. Só descarte quando houver sinal de menor de idade, coerção, exploração, assédio direcionado, imagem íntima ou pedido para parar. Nesse caso, não salve detalhes.',
+      '6. Para humor adulto permitido, registre a dinâmica/bordão interno sem descrição gráfica nem alegação de ato íntimo como fato.',
+      '7. Use o contexto das mensagens vizinhas pra entender o fato, MAS não conecte mensagens separadas por [GAP: ...].',
+      '8. Retorne JSON: {"facts":[...]}',
       '',
       known
         ? `Já sabemos (NÃO repita; se for o MESMO fato, a gente reforça no backend):\n${known}`

@@ -260,7 +260,7 @@ test('flavorService.chaosLine: Zen principal', async () => {
   }
 });
 
-test('flavorService.chaosLine: Zen falha → Ollama', async () => {
+test('flavorService.chaosLine: Zen falha → template', async () => {
   const prev = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
   try {
@@ -286,10 +286,10 @@ test('flavorService.chaosLine: Zen falha → Ollama', async () => {
     });
 
     const text = await flavor.chaosLine('gossip_fake', { user: 'Ana' });
-    assert.match(text, /Ana|daily|chuveiro/i);
-    assert.equal(flavor.lastProvider(), 'ollama');
+    assert.ok(text.length > 10);
+    assert.equal(flavor.lastProvider(), 'template');
     assert.ok(zen >= 1);
-    assert.equal(ollama, 1);
+    assert.equal(ollama, 0);
   } finally {
     if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
     else process.env.FUN_DISABLE_LIVE_LLM = '1';

@@ -93,7 +93,7 @@ export function sanitizeTarotText(raw, maxChars = 3000) {
   return `${cut.trim()}…`;
 }
 
-function buildTarotUserPrompt({ question, cards, maxChars }) {
+function buildTarotUserPrompt({ question, cards, maxChars, identityBlock = '', loreContext = '' }) {
   const q = String(question || '').trim() || '(sem pergunta — leitura geral do clima atual)';
   const cardBlock = (cards || [])
     .map((c, i) => {
@@ -109,6 +109,8 @@ function buildTarotUserPrompt({ question, cards, maxChars }) {
 
   return [
     `Pergunta do consulente: ${q}`,
+    identityBlock,
+    loreContext,
     '',
     'Tiragem (use só estas cartas):',
     cardBlock,
@@ -120,6 +122,10 @@ function buildTarotUserPrompt({ question, cards, maxChars }) {
 
 export function createTarotService({
   casinoRepository = null,
+  profileService = null,
+  groupMemoryService = null,
+  getProfileService = null,
+  getGroupMemoryService = null,
   random = Math.random,
   generateZen = openaiChatComplete,
   generateOllama = ollamaGenerate,
@@ -135,7 +141,7 @@ export function createTarotService({
         3000,
         Math.floor(numOr(funConfig.tarotTimeoutMs, funConfig.zenTimeoutMs || 25_000))
       ),
-      maxTokens: Math.max(128, Math.min(2000, Math.floor(numOr(funConfig.tarotMaxTokens, 900)))),
+      maxTokens: Math.max(128, Math.min(2000, Math.floor(numOr(funConfig.tarotMaxTokens, 1400)))),
       temperature: Number.isFinite(Number(funConfig.tarotTemperature))
         ? Number(funConfig.tarotTemperature)
         : 0.9,
@@ -152,12 +158,26 @@ export function createTarotService({
     return false;
   }
 
-  async function narrate({ question, cards, funConfig = {} }) {
+  async function narrate({ question, cards, userJid = '', scopeKey = '', funConfig = {} }) {
     const o = opts(funConfig);
+    const profiles = profileService || getProfileService?.();
+    const memories = groupMemoryService || getGroupMemoryService?.();
+    const identityBlock = profiles?.buildIdentityBlock
+      ? profiles.buildIdentityBlock(scopeKey, [userJid], funConfig)
+      : '';
+    const loreContext = memories?.buildLoreContext
+      ? memories.buildLoreContext(scopeKey, {
+          userJids: [userJid],
+          limit: 3,
+          funConfig,
+        }).slice(0, 900)
+      : '';
     const prompt = buildTarotUserPrompt({
       question,
       cards,
       maxChars: o.maxChars,
+      identityBlock,
+      loreContext,
     });
     const system = TAROT_SYSTEM_PROMPT;
 
@@ -246,7 +266,13 @@ export function createTarotService({
 
     const cards = drawTarotCards(random, o.cardCount);
     const drawText = formatTarotDraw(cards);
-    const narrated = await narrate({ question: q, cards, funConfig });
+    const narrated = await narrate({
+      question: q,
+      cards,
+      userJid,
+      scopeKey,
+      funConfig,
+    });
 
     if (casinoRepository && o.cooldownMs > 0) {
       casinoRepository.touchCooldown(userJid, scopeKey, 'tarot', now);

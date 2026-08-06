@@ -1,11 +1,20 @@
 import { resolveUserTarget } from '../../utils/mentions.js';
-import { isCanonicalUserJid } from '../../utils/identity.js';
+import { isCanonicalUserJid, listCanonicalGroupParticipantJids } from '../../utils/identity.js';
 import { nameOf, displayNameOnly } from '../../utils/userLabel.js';
 import { parseQmpSubcommand } from '../../services/qmpService.js';
 import { formatQmpWeeklyLeaderboard } from '../../formatters/rankCard.js';
 import { renderLeaderboardPng } from '../../formatters/rankCardImage.js';
 import { parseFunCommand } from '../router.js';
 import { FUN_COMMANDS } from '../../constants.js';
+
+async function resolveQmpParticipants({ sock, scopeKey, identityMap, userJid }) {
+  const members = await listCanonicalGroupParticipantJids(sock, scopeKey, identityMap);
+  return [...new Set([...members, String(userJid || '').trim()].filter(Boolean))];
+}
+
+function buildQmpParticipantLoader({ sock, scopeKey, identityMap, userJid }) {
+  return () => resolveQmpParticipants({ sock, scopeKey, identityMap, userJid });
+}
 
 async function resolveVoteTarget({
   mentionedJids,
@@ -185,6 +194,7 @@ export async function handleQmpCommand({
         source: customFromRest ? 'custom' : 'llm',
         funConfig,
         forceTone,
+        getParticipantJids: buildQmpParticipantLoader({ sock, scopeKey, identityMap, userJid }),
       });
       if (!started.ok) {
         if (started.reason === 'active-exists' && started.question) {
@@ -305,6 +315,7 @@ export async function handleQmpCommand({
     source: sub.kind === 'custom' ? 'custom' : 'llm',
     funConfig,
     forceTone: null,
+    getParticipantJids: buildQmpParticipantLoader({ sock, scopeKey, identityMap, userJid }),
   });
 
   if (!started.ok) {

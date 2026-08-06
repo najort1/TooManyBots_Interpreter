@@ -165,11 +165,57 @@ test('profileService applyFreeText com mock Zen', async () => {
       funConfig: cfg,
     });
     assert.equal(r.ok, true, JSON.stringify(r));
-    assert.equal(r.profile.nickname, 'Zé');
+    assert.equal(r.profile.nickname, 'Ze');
     assert.equal(r.profile.birthdayMd, '03-15');
     assert.match(r.profile.bio, /atras/i);
     assert.match(String(r.profile.extras || ''), /café|time/i);
     assert.ok(r.changed.includes('extras'));
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});
+
+test('profileService preserva campos estruturados e usa Zen apenas para bio/extras', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const repo = createFunProfileRepository({ getDatabase: getDb });
+    const requests = [];
+    const svc = createProfileService({
+      profileRepository: repo,
+      generateZen: async (request) => {
+        requests.push(request);
+        return JSON.stringify({
+          nickname: 'Nome inventado',
+          birthday: '01/01',
+          title: 'Outro título',
+          bio: 'a pessoa que sempre chega com café',
+          extras: 'torce pro time B',
+        });
+      },
+    });
+    const userJid = uniqueJid('5598');
+    const scopeKey = uniqueGroup();
+
+    const result = await svc.applyFreeText({
+      userJid,
+      scopeKey,
+      text: 'apelido: Nina, niver: 15/03, título: Lenda',
+      funConfig: resolveFunConfig({ profileAiExtract: true, zenEnabled: true }),
+    });
+
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.profile.nickname, 'Nina');
+    assert.equal(result.profile.birthdayMd, '03-15');
+    assert.equal(result.profile.title, 'Lenda');
+    assert.match(result.profile.bio, /café/i);
+    assert.match(result.profile.extras, /time B/i);
+    assert.equal(requests.length, 1);
+    assert.ok(requests[0].prompt.includes('"nickname":"Nina"'));
+    assert.ok(requests[0].prompt.includes('"birthday":"15/03"'));
+    assert.ok(!requests[0].system.includes('"nickname":string'));
+    assert.ok(!requests[0].system.includes('"birthday":string'));
   } finally {
     if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
     else process.env.FUN_DISABLE_LIVE_LLM = '1';
