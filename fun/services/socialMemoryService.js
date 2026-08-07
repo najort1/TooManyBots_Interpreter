@@ -7,12 +7,25 @@ const TOPIC_STOPWORDS = new Set([
   'foi', 'ser', 'ter', 'dos', 'das', 'nos', 'sao', 'sou', 'dele',
 ]);
 
-const STYLE_HUMOROUS = ['kkkk', 'haha', 'meme', 'zoeira'];
-const STYLE_HELPFUL = ['ajuda', 'dúvida', 'duvida', 'obrigado'];
+const STYLE_HUMOROUS = [
+  'kk', 'kkk', 'kkkk', 'kkkkk', 'kkkkkk', 'rs', 'rss', 'hue', 'haha', 'hehe',
+  'kkj', 'sla', 'mano', 'zoeira', 'zoeção', 'meme', 'piada',
+];
+const STYLE_HELPFUL = ['ajuda', 'dúvida', 'duvida', 'obrigado', 'obrigada', 'valeu', 'vlw', 'obg', 'sucesso', 'dica'];
+// buckets extras para capturar a zoeira real do grupo (heurística só — sem LLM aqui).
+const STYLE_ACID = ['viado', 'arrombado', 'puta', 'caralho', 'fdp', 'mlk', 'bct', 'teh'];
+const STYLE_AFFECTIONATE = ['saudade', 'saudades', 'amorzinho', 'mozão', 'crush'];
+/**
+ * Labels das vozes observadas. 'neutral' (sem gatilho claro) mapeia para []
+ * — assim o prompt da persona NÃO afirma "direto, respeitoso" sem evidência
+ * e a linha "Voz observada do grupo" some quando não há sinal real.
+ */
 const STYLE_MAP = {
   humorous: ['bem-humorado', 'leve'],
   helpful: ['prestativo', 'respeitoso'],
-  direct: ['direto', 'respeitoso'],
+  acid: ['ácido', 'debochado'],
+  affectionate: ['carinhoso'],
+  neutral: [],
 };
 
 const TOPIC_MIN_COVERAGE = 2;
@@ -22,7 +35,9 @@ const MAX_SCOPES = 500;
 function styleOf(vocabulary) {
   if (vocabulary.some((word) => STYLE_HUMOROUS.includes(word))) return 'humorous';
   if (vocabulary.some((word) => STYLE_HELPFUL.includes(word))) return 'helpful';
-  return 'direct';
+  if (vocabulary.some((word) => STYLE_ACID.includes(word))) return 'acid';
+  if (vocabulary.some((word) => STYLE_AFFECTIONATE.includes(word))) return 'affectionate';
+  return 'neutral';
 }
 
 function topicOf(counts, total) {
@@ -56,7 +71,7 @@ export function createSocialMemoryService({ maxScopes = MAX_SCOPES } = {}) {
 
     let win = windows.get(scopeKey);
     if (!win) {
-      win = { counts: new Map(), styleCounts: { humorous: 0, helpful: 0, direct: 0 }, total: 0 };
+      win = { counts: new Map(), styleCounts: { humorous: 0, helpful: 0, acid: 0, affectionate: 0, neutral: 0 }, total: 0 };
       windows.set(scopeKey, win);
     }
     if (windows.size > maxScopes) windows.delete(windows.keys().next().value);

@@ -37,9 +37,12 @@ REGRAS OBRIGATÓRIAS:
 11. Ao registrar esse tipo de humor, resuma sem descrição gráfica e sem afirmar ato íntimo como fato; guarde o bordão, a dinâmica ou a piada interna. Não presuma consentimento fora do que o próprio contexto mostra.
 Só o JSON.`;
 
-const PERSONA_SYSTEM = `Resuma o clima de um grupo WhatsApp BR em 3 a 5 bullets curtos de lore cômica, com base nos fatos dados.
+/** Constrói o system do "clima" (persona) com o número de bullets configurado. */
+function buildPersonaSystem(bullets) {
+  return `Resuma o clima de um grupo WhatsApp BR em ${bullets} bullets curtos de lore cômica, com base nos fatos dados.
 Cada bullet: observação específica (você inventa o ângulo), tom de quem vive o chat.
 pt-BR, sem inventar nomes que não estejam nos fatos. Respeite o limite de caracteres informado no pedido. Sem markdown pesado. Só o texto.`;
+}
 
 const PERSONA_CACHE_TTL_MS = 30 * 60_000;
 
@@ -500,6 +503,7 @@ export function createGroupMemoryService({
       maxFacts: Math.max(10, Math.min(120, Math.floor(numOr(funConfig.memoryMaxFacts, 50)))),
       summaryMax: Math.max(80, Math.min(200, Math.floor(numOr(funConfig.memorySummaryMaxChars, 160)))),
       personaMax: Math.max(200, Math.min(800, Math.floor(numOr(funConfig.memoryPersonaMaxChars, 500)))),
+      personaBullets: Math.max(3, Math.min(15, Math.floor(numOr(funConfig.memoryPersonaBullets, 8)))),
       // modelo grande: default ~100 msgs; clamp alto pra caber no orçamento de chars
       bufferSize: Math.max(8, Math.min(200, Math.floor(numOr(funConfig.memoryBufferSize, 100)))),
       flushMin: Math.max(3, Math.min(120, Math.floor(numOr(funConfig.memoryFlushMinMessages, 40)))),
@@ -1095,8 +1099,9 @@ export function createGroupMemoryService({
   }
 
   async function refreshPersona(scopeKey, funConfig = {}, o = opts(funConfig)) {
+    // Alimenta fatos suficientes para os bullets configurados (ex.: 8 bullets → 32 fatos)
     const facts = memoryRepository.listFacts(scopeKey, {
-      limit: 15,
+      limit: Math.max(15, Math.min(60, o.personaBullets * 4)),
       minScore: o.minScore,
     });
     if (!facts.length) {
@@ -1122,8 +1127,8 @@ export function createGroupMemoryService({
           text = await generateZen({
             baseUrl: ep.baseUrl,
             model: ep.model,
-            system: PERSONA_SYSTEM,
-            prompt: `Fatos do grupo:\n${list}\n\nResuma o clima em 3–5 bullets (≤${o.personaMax} chars). NÃO invente fatos novos. Só os bullets:`,
+            system: buildPersonaSystem(o.personaBullets),
+            prompt: `Fatos do grupo:\n${list}\n\nResuma o clima em ${o.personaBullets} bullets (≤${o.personaMax} chars). NÃO invente fatos novos. Só os bullets:`,
             timeoutMs: Math.max(o.extractTimeout, task.timeoutMs),
             maxTokens: task.maxTokens,
             temperature: task.temperature,

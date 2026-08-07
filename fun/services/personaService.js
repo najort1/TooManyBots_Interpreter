@@ -15,7 +15,7 @@ import { sanitizeFlavor, looksLikeScoreboardEcho } from '../llm/flavorService.js
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
-import { PERSONA_DERIVE_INTERVAL_MS } from '../constants.js';
+import { PERSONA_DERIVE_INTERVAL_MS, PERSONA_TOKEN_HALF_LIFE_MS, PERSONA_TOP_TOKENS } from '../constants.js';
 
 /** Chamadas textuais inequívocas ao bot; menções @ e replies são tratados separadamente. */
 const MENTION_RE = /^\s*(?:bot(?:\s|[?!,.:;]|$)|ei\s+bot(?:\s|[?!,.:;]|$))/iu;
@@ -31,6 +31,13 @@ const STOPWORDS = new Set([
 ]);
 
 const EMOJI_RE = /\p{Extended_Pictographic}/gu;
+
+/**
+ * factText genéricos produzidos pelo memoryIngestionService (episódicos/sociais
+ * sem conteúdo útil). Descartados no prompt da persona para não encher "Pistas de
+ * memória incertas" com placeholders iguais ("evento recente do grupo" ×4).
+ */
+const PLACEHOLDER_FACTS = new Set(['evento recente do grupo', 'interação social no grupo']);
 
 const FALLBACK_LINES = [
   'kkkkk relaxa',
@@ -59,9 +66,10 @@ function extractTokens(text) {
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, ' ')
     .split(/\s+/)
-    .filter((w) => w.length >= 3 && !STOPWORDS.has(w))
+    // d\u00edgitos puros (IDs/timestamps/pre\u00e7os sem unidade) n\u00e3o dizem "como o grupo fala" \u2192 descarta
+    .filter((w) => w.length >= 3 && !STOPWORDS.has(w) && !/^\d+$/.test(w))
     .map(normalizeToken)
-    .filter((w) => w.length >= 3);
+    .filter((w) => w.length >= 3 && !/^\d+$/.test(w));
   return words;
 }
 
@@ -154,7 +162,10 @@ function cleanPromptText(value, maxChars = 500) {
 function memorySignalText(signal) {
   if (!signal || typeof signal !== 'object') return '';
   if (Array.isArray(signal.riskFlags) && signal.riskFlags.length) return '';
-  return cleanPromptText(signal.factText || signal.summary || signal.text, 220);
+  const text = cleanPromptText(signal.factText || signal.summary || signal.text, 220);
+  // descarta placeholders genéricos do memoryIngestionService (zero valor p/ o prompt)
+  if (text && PLACEHOLDER_FACTS.has(text.toLowerCase().trim())) return '';
+  return text;
 }
 
 export function createPersonaService({
@@ -182,14 +193,17 @@ export function createPersonaService({
   function opts(funConfig = {}) {
     return {
       enabled: funConfig.personaEnabled !== false,
-      cooldownMs: Number(funConfig.personaCooldownMs) || 60_000,
-      maxTurns: Math.min(4, Math.max(2, Number(funConfig.personaMaxTurns) || 3)),
+      cooldownMs: Number(funConfig.personaCooldownMs) || 0,
+      maxTurns: Number(funConfig.personaMaxTurns) || 0,
       threadTtlMs: Number(funConfig.personaThreadTtlMs) || 30 * 60_000,
       windowSize: Number(funConfig.personaWindowSize) || 100,
       windowMs: Number(funConfig.personaWindowMs) || 24 * 60 * 60 * 1000,
       timeoutMs: Number(funConfig.personaTimeoutMs) || 15_000,
       maxChars: Number(funConfig.personaMaxChars) || 280,
       deriveIntervalMs: Number(funConfig.personaDeriveIntervalMs) || PERSONA_DERIVE_INTERVAL_MS,
+      tokenHalfLifeMs: Number(funConfig.personaTokenHalfLifeMs) || PERSONA_TOKEN_HALF_LIFE_MS,
+      topTokens: Number(funConfig.personaTopTokens) || PERSONA_TOP_TOKENS,
+      personaSocialHintsMinConfidence: Number(funConfig.personaSocialHintsMinConfidence) || 45,
     };
   }
 
@@ -301,26 +315,69 @@ export function createPersonaService({
     if (!w || w.msgs.length < 5) return { ok: false, reason: 'insufficient' };
 
     const t = Number(now) || Date.now();
-    const tokenCounts = new Map();
+    const o = opts(funConfig);
+
+    // Contagem do batch atual (por mensagem única, igual ao comportamento anterior).
+    const batchCounts = new Map();
     let totalLen = 0;
     const emojiCounts = new Map();
-
     for (const m of w.msgs) {
       const seenTokens = new Set(extractTokens(m.text));
-      for (const tk of seenTokens) tokenCounts.set(tk, (tokenCounts.get(tk) || 0) + 1);
+      for (const tk of seenTokens) batchCounts.set(tk, (batchCounts.get(tk) || 0) + 1);
       totalLen += String(m.text).length;
       const em = extractEmojis(m.text);
       for (const e of em) emojiCounts.set(e, (emojiCounts.get(e) || 0) + 1);
     }
-
-    const topTokens = [...tokenCounts.entries()]
-      .filter(([, c]) => c >= 2)
-      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-      .slice(0, 30)
-      .map(([w2]) => w2);
     const emojis = [...emojiCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([e, c]) => ({ emoji: e, count: c }));
-    const avgLen = totalLen / w.msgs.length;
+    const batchAvgLen = w.msgs.length ? totalLen / w.msgs.length : 0;
     const styleLines = pickToneSamples(w.msgs);
+
+    // Acumula com decay exponencial sobre contagens acumuladas NA JANELA EM MEMÓRIA.
+    // Usar w.accTokenCounts (em memória) como fonte primária evita cross-contamination
+    // entre grupos em DBs de teste compartilhados quando scope_keys colidem.
+    // O DB (token_counts_json) serve só para bootstrap frio após reinício do processo.
+    const halfLifeMs = Math.max(60_000, Number(o.tokenHalfLifeMs) || PERSONA_TOKEN_HALF_LIFE_MS);
+    let prevCounts = w.accTokenCounts; // Map<token, weight> ou undefined
+    let prevAvgLen = w.accAvgLen || 0;
+
+    if (!prevCounts) {
+      // Bootstrap: primeira deriva desta instância — ler do DB se disponível.
+      const existing = personaRepository.getProfile(s);
+      if (existing?.tokenCounts && typeof existing.tokenCounts === 'object') {
+        prevCounts = new Map(Object.entries(existing.tokenCounts).map(([k, v]) => [k, Number(v) || 0]));
+      } else {
+        prevCounts = new Map();
+      }
+      prevAvgLen = Number(existing?.avgLen) || 0;
+    }
+
+    const dtRaw = w.lastDeriveAt != null ? t - Number(w.lastDeriveAt) : 0;
+    const dt = Number.isFinite(dtRaw) && dtRaw > 0 ? dtRaw : 0;
+    const decay = dt <= 0 ? 1 : Math.exp(-dt / halfLifeMs);
+
+    // Aplicar decay ao histórico acumulado.
+    const tokenCounts = new Map();
+    for (const [tk, weight] of prevCounts.entries()) {
+      const w2 = weight * decay;
+      if (w2 > 0) tokenCounts.set(tk, w2);
+    }
+    // Só termos recorrentes no batch (c>=2) entram: token único num batch é
+    // tópico/passagem, não estilo da fala — preserva o teste "risada gigante"/"mane".
+    for (const [tk, c] of batchCounts.entries()) {
+      if (c < 2) continue;
+      tokenCounts.set(tk, (tokenCounts.get(tk) || 0) + c);
+    }
+
+    const topCap = Math.max(10, Math.min(120, Number(o.topTokens) || PERSONA_TOP_TOKENS));
+    const topTokens = [...tokenCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, topCap)
+      .map(([w2]) => w2);
+
+    // Média móvel ponderada do avgLen.
+    const avgLen = prevAvgLen > 0
+      ? decay * prevAvgLen + (1 - decay) * batchAvgLen
+      : batchAvgLen;
 
     const persisted = personaRepository.upsertProfile({
       scopeKey: s,
@@ -330,8 +387,14 @@ export function createPersonaService({
       styleLines,
       sampleTs: t,
       now: t,
+      tokenCounts: Object.fromEntries(tokenCounts.entries()),
     });
-    if (persisted.ok) w.lastDeriveAt = t;
+    if (persisted.ok) {
+      w.lastDeriveAt = t;
+      // Armazenar contagens acumuladas na janela em memória para a próxima deriva.
+      w.accTokenCounts = tokenCounts;
+      w.accAvgLen = avgLen;
+    }
     return persisted;
   }
 
@@ -410,8 +473,9 @@ export function createPersonaService({
     const identityBlock = profileService?.buildIdentityBlock
       ? profileService.buildIdentityBlock(scopeKey, participantJids, funConfig)
       : '';
+    const minHintConfidence = Number(o.personaSocialHintsMinConfidence) || 45;
     const socialHints = (personaSocialHintService?.getHints?.(scopeKey, participantJids, { limit: 6 }) || [])
-      .filter((hint) => hint.socialSignal !== 'negative' && Number(hint.confidence) >= 60);
+      .filter((hint) => hint.socialSignal !== 'negative' && Number(hint.confidence) >= minHintConfidence);
     const socialHintBlock = socialHints.length
       ? `Pistas sociais inferidas e incertas (não são fatos; não as declare como verdade):\n${socialHints.map((hint) => `- ${hint.hintText}`).join('\n')}`
       : '';
@@ -517,8 +581,8 @@ export function createPersonaService({
       let thread = personaRepository.getActiveThread(scopeKey, { now, ttlMs: o.threadTtlMs });
       const isContinuation = !mention && !atMention && quotedIsBot && thread;
       if (!mention && !atMention && !isContinuation) return { responded: false, reason: 'no-trigger' };
-      if (!isContinuation && isInCooldown(scopeKey, now, o.cooldownMs)) return { responded: false, reason: 'cooldown' };
-      if (isContinuation && thread && thread.turnCount >= thread.maxTurns) return { responded: false, reason: 'thread-limit' };
+      if (o.cooldownMs > 0 && !isContinuation && isInCooldown(scopeKey, now, o.cooldownMs)) return { responded: false, reason: 'cooldown' };
+      if (o.maxTurns > 0 && isContinuation && thread && thread.turnCount >= thread.maxTurns) return { responded: false, reason: 'thread-limit' };
 
       let threadContext = [];
       if (thread?.context?.length) threadContext = thread.context;
