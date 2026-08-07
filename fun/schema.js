@@ -881,7 +881,8 @@ export function buildFunSchemaSql() {
       avg_len      REAL NOT NULL DEFAULT 0,
       style_lines  TEXT NOT NULL DEFAULT '[]',
       sample_ts    INTEGER NOT NULL DEFAULT 0,
-      updated_at   INTEGER NOT NULL DEFAULT 0
+      updated_at   INTEGER NOT NULL DEFAULT 0,
+      token_counts_json TEXT NOT NULL DEFAULT '{}'
     );
 
     -- Thread de conversa contínua da persona com o grupo (FR-006/FR-007/FR-015).
@@ -889,7 +890,7 @@ export function buildFunSchemaSql() {
       id               INTEGER PRIMARY KEY AUTOINCREMENT,
       scope_key        TEXT    NOT NULL,
       turn_count      INTEGER NOT NULL DEFAULT 0,
-      max_turns       INTEGER NOT NULL DEFAULT 3,
+      max_turns       INTEGER NOT NULL DEFAULT 0,
       last_activity_at INTEGER NOT NULL DEFAULT 0,
       context          TEXT    NOT NULL DEFAULT '[]',
       created_at       INTEGER NOT NULL DEFAULT 0
@@ -1001,6 +1002,18 @@ export function ensureFunSchema(db) {
     }
     if (!statsNames.has('title')) {
       db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_user_stats ADD COLUMN title TEXT NOT NULL DEFAULT ''`);
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const personaCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_persona_profile)`).all();
+    const personaNames = new Set(personaCols.map((c) => String(c.name || '')));
+    if (personaNames.size && !personaNames.has('token_counts_json')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_persona_profile ADD COLUMN token_counts_json TEXT NOT NULL DEFAULT '{}'`
+      );
     }
   } catch {
     // ignore

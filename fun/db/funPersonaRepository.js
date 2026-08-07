@@ -13,6 +13,16 @@ function parseJsonArray(raw) {
   }
 }
 
+function parseJsonObject(raw) {
+  if (!raw) return {};
+  try {
+    const v = JSON.parse(raw);
+    return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
+  } catch {
+    return {};
+  }
+}
+
 function mapProfileRow(row) {
   if (!row) return null;
   return {
@@ -23,6 +33,8 @@ function mapProfileRow(row) {
     styleLines: parseJsonArray(row.style_lines),
     sampleTs: Number(row.sample_ts) || 0,
     updatedAt: Number(row.updated_at) || 0,
+    // contagens ponderadas acumuladas { token: weight } — raw, ainda sem decay aplicado.
+    tokenCounts: parseJsonObject(row.token_counts_json),
   };
 }
 
@@ -32,7 +44,7 @@ function mapThreadRow(row) {
     id: Number(row.id) || 0,
     scopeKey: String(row.scope_key || ''),
     turnCount: Number(row.turn_count) || 0,
-    maxTurns: Number(row.max_turns) || 3,
+    maxTurns: Number(row.max_turns) || 0,
     lastActivityAt: Number(row.last_activity_at) || 0,
     context: parseJsonArray(row.context),
     createdAt: Number(row.created_at) || 0,
@@ -57,28 +69,30 @@ export function createFunPersonaRepository({ getDatabase = getDb } = {}) {
     return mapProfileRow(row);
   }
 
-  function upsertProfile({ scopeKey, topTokens = [], emojis = [], avgLen = 0, styleLines = [], sampleTs = 0, now = Date.now() }) {
+  function upsertProfile({ scopeKey, topTokens = [], emojis = [], avgLen = 0, styleLines = [], sampleTs = 0, now = Date.now(), tokenCounts = null } = {}) {
     ensureSchema();
     const db = getDatabase();
     const s = String(scopeKey || '');
     if (!s.endsWith('@g.us')) return { ok: false, reason: 'invalid' };
 
-    const tt = JSON.stringify(Array.isArray(topTokens) ? topTokens.slice(0, 30) : []);
+    const tt = JSON.stringify(Array.isArray(topTokens) ? topTokens.slice(0, 60) : []);
     const em = JSON.stringify(Array.isArray(emojis) ? emojis.slice(0, 10) : []);
     const sl = JSON.stringify(Array.isArray(styleLines) ? styleLines.slice(0, 3) : []);
+    const tc = JSON.stringify(tokenCounts && typeof tokenCounts === 'object' && !Array.isArray(tokenCounts) ? tokenCounts : {});
 
     db.prepare(
       `INSERT INTO ${ANALYTICS_SCHEMA}.fun_persona_profile (
-        scope_key, top_tokens, emojis, avg_len, style_lines, sample_ts, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        scope_key, top_tokens, emojis, avg_len, style_lines, sample_ts, updated_at, token_counts_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(scope_key) DO UPDATE SET
         top_tokens = excluded.top_tokens,
         emojis = excluded.emojis,
         avg_len = excluded.avg_len,
         style_lines = excluded.style_lines,
         sample_ts = excluded.sample_ts,
+        token_counts_json = excluded.token_counts_json,
         updated_at = excluded.updated_at`
-    ).run(s, tt, em, Number(avgLen) || 0, sl, Number(sampleTs) || 0, Number(now) || Date.now());
+    ).run(s, tt, em, Number(avgLen) || 0, sl, Number(sampleTs) || 0, Number(now) || Date.now(), tc);
 
     return { ok: true, profile: getProfile(s) };
   }
@@ -102,7 +116,8 @@ export function createFunPersonaRepository({ getDatabase = getDb } = {}) {
     return thread;
   }
 
-  function openThread({ scopeKey, maxTurns = 3, context = [], now = Date.now() }) {
+  // maxTurns 0 = sem limite de turnos (chat infinito).
+  function openThread({ scopeKey, maxTurns = 0, context = [], now = Date.now() }) {
     ensureSchema();
     const db = getDatabase();
     const s = String(scopeKey || '');
@@ -115,7 +130,7 @@ export function createFunPersonaRepository({ getDatabase = getDb } = {}) {
           scope_key, turn_count, max_turns, last_activity_at, context, created_at
         ) VALUES (?, 0, ?, ?, ?, ?)`
       )
-      .run(s, Math.min(4, Math.max(2, Number(maxTurns) || 3)), Number(now) || Date.now(), ctxJson, Number(now) || Date.now());
+      .run(s, Number(maxTurns) || 0, Number(now) || Date.now(), ctxJson, Number(now) || Date.now());
 
     return getThreadById(Number(result.lastInsertRowid));
   }
@@ -128,7 +143,7 @@ export function createFunPersonaRepository({ getDatabase = getDb } = {}) {
 
     const existing = getThreadById(id);
     if (!existing) return { ok: false, reason: 'not_found' };
-    if (existing.turnCount >= existing.maxTurns) return { ok: false, reason: 'limit' };
+    if (existing.maxTurns > 0 && existing.turnCount >= existing.maxTurns) return { ok: false, reason: 'limit' };
 
     const ctxJson = JSON.stringify(Array.isArray(context) ? context : []);
     db.prepare(

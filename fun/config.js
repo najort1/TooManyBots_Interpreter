@@ -927,6 +927,11 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.memoryPersonaMaxChars,
       { min: 200, max: 800, rounding: 'floor', clamp: true }
     ),
+    memoryPersonaBullets: normalizeInt(
+      raw.memoryPersonaBullets,
+      DEFAULT_FUN_CONFIG.memoryPersonaBullets,
+      { min: 3, max: 15, rounding: 'floor', clamp: true }
+    ),
     memoryBufferSize: normalizeInt(raw.memoryBufferSize, DEFAULT_FUN_CONFIG.memoryBufferSize, {
       min: 8,
       max: 200,
@@ -1037,16 +1042,30 @@ export function normalizeFunConfig(input) {
     personaSocialHintsMaxChars: normalizeInt(raw.personaSocialHintsMaxChars, DEFAULT_FUN_CONFIG.personaSocialHintsMaxChars, {
       min: 120, max: 2000, rounding: 'floor', clamp: true,
     }),
+    personaSocialHintsMinConfidence: normalizeInt(
+      raw.personaSocialHintsMinConfidence,
+      DEFAULT_FUN_CONFIG.personaSocialHintsMinConfidence,
+      { min: 0, max: 100, rounding: 'floor', clamp: true }
+    ),
+    personaTokenHalfLifeMs: normalizeInt(
+      raw.personaTokenHalfLifeMs,
+      DEFAULT_FUN_CONFIG.personaTokenHalfLifeMs,
+      { min: 60 * 60_000, max: 365 * 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    personaTopTokens: normalizeInt(raw.personaTopTokens, DEFAULT_FUN_CONFIG.personaTopTokens, {
+      min: 10, max: 120, rounding: 'floor', clamp: true,
+    }),
     personaMemoryMaxContextItems: normalizeInt(raw.personaMemoryMaxContextItems, DEFAULT_FUN_CONFIG.personaMemoryMaxContextItems, {
       min: 1, max: 20, rounding: 'floor', clamp: true,
     }),
     personaCooldownMs: normalizeInt(
       raw.personaCooldownMs,
       DEFAULT_FUN_CONFIG.personaCooldownMs,
-      { min: 10_000, max: 600_000, rounding: 'floor', clamp: true }
+      { min: 0, max: 600_000, rounding: 'floor', clamp: true }
     ),
+    // 0 = sem limite de turnos (chat infinito); valores positivos mantêm teto 2-4.
     personaMaxTurns: normalizeInt(raw.personaMaxTurns, DEFAULT_FUN_CONFIG.personaMaxTurns, {
-      min: 2,
+      min: 0,
       max: 4,
       rounding: 'floor',
       clamp: true,

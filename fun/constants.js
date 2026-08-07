@@ -511,8 +511,9 @@ export const BLACKJACK_TTL_MS = 3 * 60_000;
 export const TOURNAMENT_SIZE = 4;
 
 /** Persona (Bot Membro Vivo) — constantes de guarda e janela (spec 001). */
-export const PERSONA_COOLDOWN_MS = 60_000;
-export const PERSONA_MAX_TURNS = 3;
+// 0 = guarda desabilitada (chat sem limite): sem cooldown e sem teto de turnos.
+export const PERSONA_COOLDOWN_MS = 0;
+export const PERSONA_MAX_TURNS = 0;
 export const PERSONA_THREAD_TTL_MS = 30 * 60_000;
 export const PERSONA_WINDOW_SIZE = 100;
 export const PERSONA_WINDOW_MS = 24 * 60 * 60 * 1000;
@@ -520,6 +521,14 @@ export const PERSONA_TIMEOUT_MS = 15_000;
 export const PERSONA_MAX_CHARS = 280;
 /** Intervalo mínimo entre derivações do perfil de voz por grupo (evita write a cada msg). */
 export const PERSONA_DERIVE_INTERVAL_MS = 5 * 60_000;
+/**
+ * Meia-vida do decaimento exponencial das contagens de vocabulário acumuladas no
+ * perfil persistido. Histórico mais antigo pesa menos; termos recentes ponderam mais,
+ * mas o vocabulário do grupo nunca é sobrescrito por só a última janela.
+ */
+export const PERSONA_TOKEN_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Teto de tokens mais frequentes exibidos no prompt do perfil de voz. */
+export const PERSONA_TOP_TOKENS = 50;
 
 /** Defaults do bot Fun standalone (não herda config do TMB). */
 export const DEFAULT_FUN_CONFIG = Object.freeze({
@@ -867,6 +876,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   memoryMaxFacts: 120,
   memorySummaryMaxChars: 160,
   memoryPersonaMaxChars: 500,
+  /** Quantos bullets o "clima" (persona) do grupo deve ter. */
+  memoryPersonaBullets: 8,
   // Modelo grande (~40k chars): manda contexto de conversa de verdade, não 8 linhas
   memoryBufferSize: 100,
   memoryFlushMinMessages: 40,
@@ -905,12 +916,18 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   personaTimeoutMs: PERSONA_TIMEOUT_MS,
   personaMaxChars: PERSONA_MAX_CHARS,
   personaDeriveIntervalMs: PERSONA_DERIVE_INTERVAL_MS,
+  /** Meia-vida (ms) do decay das contagens de vocabulário acumuladas no perfil. */
+  personaTokenHalfLifeMs: PERSONA_TOKEN_HALF_LIFE_MS,
+  /** Quantos tokens mais frequentes persistir (e mostrar) no perfil de voz. */
+  personaTopTokens: PERSONA_TOP_TOKENS,
   // Inferência social assíncrona por lote para a persona.
   personaSocialHintsEnabled: true,
   personaSocialHintsBatchSize: 50,
   personaSocialHintsFlushIntervalMs: 10 * 60_000,
   personaSocialHintsMinMessages: 8,
   personaSocialHintsMaxChars: 600,
+  /** Confiança mínima (0-100) de uma pista social p/ entrar no prompt da persona. */
+  personaSocialHintsMinConfidence: 45,
   // 10 Minutos de Crime — evento diário de caos
   chaosEventEnabled: true,
   chaosEventHour: 23,
