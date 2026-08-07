@@ -65,3 +65,27 @@ test('style do grupo é maioria da janela, não última mensagem', () => {
   const last = service.observe({ scopeKey: 'a@g.us', authorJid: 'bia@s.whatsapp.net', text: 'obrigado pela ajuda na dúvida' });
   assert.deepEqual(service.toIdentityInput(last).voiceStyle, ['bem-humorado', 'leve'], 'zoeira recorrente domina mesmo com última msg neutra');
 });
+
+test('F2: grupo sem gatilhos não afirma "direto, respeitoso" (voiceStyle vazio)', () => {
+  const service = createSocialMemoryService();
+  const scope = `neutral-${Date.now()}@g.us`;
+  for (const text of ['bom dia pessoal', 'vou almoçar agora', 'reunião às três', 'ainda bem que é sexta']) {
+    service.observe({ scopeKey: scope, authorJid: 'ana@s.whatsapp.net', text });
+  }
+  const observed = service.observe({ scopeKey: scope, authorJid: 'ana@s.whatsapp.net', text: 'tô indo embora' });
+  assert.deepEqual(service.toIdentityInput(observed).voiceStyle, [], 'sem sinal de tom → não inventa "direto, respeitoso"');
+});
+
+test('F2: zoeira ácida (palavrão recorrente) vira bucket ácido/debochado', () => {
+  const service = createSocialMemoryService();
+  const scope = `acid-${Date.now()}@g.us`;
+  for (let i = 0; i < 4; i += 1) {
+    service.observe({ scopeKey: scope, authorJid: 'ana@s.whatsapp.net', text: 'seu doido viado para com isso' });
+  }
+  const observed = service.observe({ scopeKey: scope, authorJid: 'bia@s.whatsapp.net', text: 'puta que pariu o cara' });
+  const style = service.toIdentityInput(observed).voiceStyle;
+  assert.ok(
+    style.includes('ácido') || style.includes('debochado'),
+    `bucket acid captura a zoeira, atual=${JSON.stringify(style)}`
+  );
+});

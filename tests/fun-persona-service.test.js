@@ -246,7 +246,7 @@ test('REGRESSAO Spec 002: ancora a resposta da persona pelo ID retornado pelo so
   assert.deepEqual(anchors, [{ scopeKey: scope, threadKey: 'cinema', anchorMessageId: 'bot-response-001', now: 4_000_000 }]);
 });
 
-test('tryRespond: cooldown bloqueia duas chamadas textuais vocativas seguidas', async () => {
+test('tryRespond: sem cooldown por padrão — chamadas vocativas seguidas respondem', async () => {
   const scope = uniqueGroup();
   const { svc, sock, identityMap, cfg } = setup();
   const now = 3_000_000;
@@ -258,6 +258,25 @@ test('tryRespond: cooldown bloqueia duas chamadas textuais vocativas seguidas', 
   const r2 = await svc.tryRespond({
     scopeKey: scope, text: 'bot de novo', mentionedJids: [], authorJid: uniqueJid(),
     sock, identityMap, funConfig: cfg, now: now + 1,
+  });
+
+  assert.equal(r1.responded, true);
+  assert.equal(r2.responded, true, 'cooldown desabilitado por padrão (personaCooldownMs=0)');
+});
+
+test('tryRespond: cooldown configurado (> 0) ainda bloqueia chamadas seguidas', async () => {
+  const scope = uniqueGroup();
+  const { svc, sock, identityMap, cfg } = setup();
+  const now = 3_000_000;
+  sock.sendMessage = async () => {};
+  const withCooldown = { ...cfg, personaCooldownMs: 60_000 };
+  const r1 = await svc.tryRespond({
+    scopeKey: scope, text: 'bot eai', mentionedJids: [], authorJid: uniqueJid(),
+    sock, identityMap, funConfig: withCooldown, now,
+  });
+  const r2 = await svc.tryRespond({
+    scopeKey: scope, text: 'bot de novo', mentionedJids: [], authorJid: uniqueJid(),
+    sock, identityMap, funConfig: withCooldown, now: now + 1,
   });
 
   assert.equal(r1.responded, true);
@@ -463,7 +482,7 @@ test('thread: primeira resposta cria thread', async () => {
   const t = personaRepository.getActiveThread(scope);
   assert.ok(t, 'thread ativa existe');
   assert.equal(t.turnCount, 0);
-  assert.equal(t.maxTurns, 3);
+  assert.equal(t.maxTurns, 0, '0 = sem limite de turnos por padrão');
 });
 
 test('thread: continuar via reply ao bot incrementa turn_count', async () => {
@@ -484,7 +503,7 @@ test('thread: continuar via reply ao bot incrementa turn_count', async () => {
   assert.equal(t.turnCount, 1);
 });
 
-test('thread: limite de turnos encerra (max 3); reply além do limite bloqueia', async () => {
+test('thread: sem limite de turnos por padrão — chat continua além de 3 turnos', async () => {
   const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup();
   const scope = uniqueGroup();
   sock.sendMessage = async () => {};
@@ -495,7 +514,29 @@ test('thread: limite de turnos encerra (max 3); reply além do limite bloqueia',
   now += 70_000;
   await svc.tryRespond({ scopeKey: scope, text: 'kkk', authorJid: uniqueJid(), quotedParticipant: botJ, sock, identityMap, funConfig: cfg, now });
   now += 70_000;
-  await svc.tryRespond({ scopeKey: scope, text: 'heh', authorJid: uniqueJid(), quotedParticipant: botJ, sock, identityMap, funConfig: cfg, now });
+  const r4 = await svc.tryRespond({ scopeKey: scope, text: 'heh', authorJid: uniqueJid(), quotedParticipant: botJ, sock, identityMap, funConfig: cfg, now });
+  now += 70_000;
+  const r5 = await svc.tryRespond({ scopeKey: scope, text: 'mais um', authorJid: uniqueJid(), quotedParticipant: botJ, sock, identityMap, funConfig: cfg, now });
+
+  const t = personaRepository.getActiveThread(scope);
+  assert.ok(t.turnCount >= 4, `turnCount deve crescer sem teto, atual=${t.turnCount}`);
+  assert.equal(r4.responded, true, '4º turno deve responder (sem teto de turnos)');
+  assert.equal(r5.responded, true, '5º turno deve responder (sem teto de turnos)');
+});
+
+test('thread: maxTurns configurado (> 0) ainda encerra a conversa', async () => {
+  const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup();
+  const scope = uniqueGroup();
+  sock.sendMessage = async () => {};
+  const limited = { ...cfg, personaMaxTurns: 3 };
+  let now = Date.now();
+  await svc.tryRespond({ scopeKey: scope, text: 'bot', authorJid: uniqueJid(), sock, identityMap, funConfig: limited, now });
+  now += 70_000;
+  await svc.tryRespond({ scopeKey: scope, text: 'rs', authorJid: uniqueJid(), quotedParticipant: botJ, sock, identityMap, funConfig: limited, now });
+  now += 70_000;
+  await svc.tryRespond({ scopeKey: scope, text: 'kkk', authorJid: uniqueJid(), quotedParticipant: botJ, sock, identityMap, funConfig: limited, now });
+  now += 70_000;
+  await svc.tryRespond({ scopeKey: scope, text: 'heh', authorJid: uniqueJid(), quotedParticipant: botJ, sock, identityMap, funConfig: limited, now });
   now += 70_000;
 
   const t = personaRepository.getActiveThread(scope);
@@ -503,7 +544,7 @@ test('thread: limite de turnos encerra (max 3); reply além do limite bloqueia',
 
   const blocked = await svc.tryRespond({
     scopeKey: scope, text: 'eai', authorJid: uniqueJid(), quotedParticipant: botJ,
-    sock, identityMap, funConfig: cfg, now,
+    sock, identityMap, funConfig: limited, now,
   });
   assert.equal(blocked.responded, false);
   assert.equal(blocked.reason, 'thread-limit');
@@ -749,5 +790,101 @@ test('perfil: style_lines excluem comandos e amostram autores distintos', () => 
   assert.ok(profile.styleLines.length > 0, 'deve ter amostras de tom');
   for (const line of profile.styleLines) {
     assert.ok(!line.startsWith('/'), `style_line não deve ser comando: ${line}`);
+  }
+});
+
+// ============================================================
+// F1 + F3: vocabulário acumulado, dígitos descartados, placeholders filtrados
+// ============================================================
+
+test('F1 extractTokens: descarta tokens puramente numéricos (IDs/timestamps)', () => {
+  const { svc, cfg, personaRepository } = setup();
+  const scope = uniqueGroup();
+  // "174994885714120" era o ruído que aparecia como 1º token do vocabulário no prompt real.
+  const msgs = [
+    '174994885714120 bitcoin preço atual',
+    'pesquisa o preço do bitcoin internet',
+    'bitcoin bitcoin preço preço atual',
+    'internet internet bitcoin preço',
+    'preço do bitcoin na internet atual',
+  ];
+  for (const t of msgs) svc.observeMessage({ scopeKey: scope, userJid: uniqueJid(), text: t, funConfig: cfg });
+  svc.deriveAndPersistProfile(scope, cfg);
+  const profile = personaRepository.getProfile(scope);
+  assert.ok(!profile.topTokens.includes('174994885714120'), 'número cravo não deve virar vocabulário');
+  assert.ok(profile.topTokens.includes('bitcoin'), 'termo real entra');
+  assert.ok(profile.topTokens.includes('preco'), 'preço (sem acento) entra');
+});
+
+test('F1: acumula vocabulário entre derivações com decay temporal', () => {
+  const cfg = { ...baseConfig, personaTokenHalfLifeMs: 7 * 24 * 60 * 60 * 1000 };
+  const { svc, personaRepository } = setup(cfg);
+  const scope = uniqueGroup();
+  const DAY = 24 * 60 * 60 * 1000;
+  // base > 0: o serviço usa o idiom `Number(now) || Date.now()`, então 0 seria
+  // tratado como "sem timestamp" e viraria relógio real, quebrando o determinismo.
+  const BASE = 1_000_000_000;
+
+  // batch A — histórico antigo (5 msgs recorrentes em "salve mano").
+  for (let i = 0; i < 5; i += 1) {
+    svc.observeMessage({ scopeKey: scope, userJid: uniqueJid(), text: 'salve mano mano', funConfig: cfg, now: BASE });
+  }
+  assert.equal(svc.deriveAndPersistProfile(scope, cfg, BASE).ok, true, '1ª deriva do batch A');
+  const afterA = personaRepository.getProfile(scope);
+  assert.ok(afterA.topTokens.includes('salve'), 'batch A entra no perfil');
+  assert.ok(afterA.tokenCounts && typeof afterA.tokenCounts === 'object', 'tokenCounts persistido');
+
+  // batch B — 12 dias depois (acima da meia-vida de 7d): windowMs 24h filtra A da janela,
+  // mas o acúmulo vem do perfil persistido (não da janela). "bitcoin" é o novo recorrente.
+  for (let i = 0; i < 5; i += 1) {
+    svc.observeMessage({ scopeKey: scope, userJid: uniqueJid(), text: 'bitcoin preço preço', funConfig: cfg, now: BASE + 12 * DAY });
+  }
+  assert.equal(svc.deriveAndPersistProfile(scope, cfg, BASE + 12 * DAY).ok, true, '2ª deriva do batch B');
+  const finalProfile = personaRepository.getProfile(scope);
+  assert.ok(finalProfile.topTokens.includes('bitcoin'), 'batch B entra no perfil');
+  // histórico de A decaído mas ainda presente (palavra recorrente do grupo ao longo do tempo)
+  assert.ok(finalProfile.topTokens.includes('salve'), 'vocabulário histórico persiste (acumulado, não sobrescrito)');
+  // contagens de salve decaíram: peso final < peso inicial (5), bitcoin > salve.
+  const salveWeight = Number(finalProfile.tokenCounts?.salve) || 0;
+  const bitcoinWeight = Number(finalProfile.tokenCounts?.bitcoin) || 0;
+  assert.ok(salveWeight > 0 && salveWeight < 5, `salve decaído (0 < w < 5), atual=${salveWeight}`);
+  assert.ok(bitcoinWeight >= 5, `bitcoin batch B conservado (>=5), atual=${bitcoinWeight}`);
+});
+
+test('F3 memorySignalText: descarta placeholders de memória e mantém fatos reais', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      generateZen: async (input) => { request = input; return 'kk nem venho mano'; },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'ph-1' } });
+    const r = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: 'bot, lembra de algo?',
+      authorJid: uniqueJid(),
+      sock, identityMap, funConfig: cfg, now: 9_200_000,
+      responseContextPack: {
+        inferredSignals: [
+          { factText: 'evento recente do grupo' },          // placeholder → descarta
+          { factText: 'Nina coleciona DVDs antigos' },       // real → mantém
+          { factText: 'interação social no grupo' },         // placeholder → descarta
+        ],
+        riskFlags: [],
+      },
+    });
+    assert.equal(r.responded, true);
+    assert.match(request.system, /Nina coleciona DVDs antigos/, 'fato real entra no prompt');
+    assert.doesNotMatch(request.system, /Pistas de memória incertas:[\s\S]*evento recente do grupo/, 'placeholder NÃO entra na seção de pistas');
+    // contagem de bullets de pistas: só deve aparecer o fato real (1 linha), não 3.
+    const pistasBlock = request.system.match(/Pistas de memória incertas[\s\S]*?(?:\n{2}|$)/);
+    if (pistasBlock) {
+      const bullets = pistasBlock[0].match(/^- /gm) || [];
+      assert.equal(bullets.length, 1, `só o fato real deve virar pista, atual=${bullets.length}`);
+    }
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
   }
 });
