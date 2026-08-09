@@ -43,6 +43,7 @@ function setup(cfg = baseConfig, botJid, threadContextService = null, deps = {})
     personaRepository,
     groupRepository,
     threadContextService,
+    personaSocialHintService: deps.personaSocialHintService,
     profileService: deps.profileService,
     generateZen: deps.generateZen,
     getLogger: () => null,
@@ -361,6 +362,126 @@ test('persona: prompt recebe autor, reply, identidade e pistas de contexto', asy
     assert.match(request.system, /Nina prefere terror/);
     assert.match(request.system, /Nina entra na zoeira sobre filme/);
     assert.equal(request.maxTokens, 360);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('REGRESSAO persona: turno do membro na thread guarda o nome e o prompt mostra o interlecutor real', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const authorJid = uniqueJid('5513');
+    const profileService = {
+      displayName: () => 'Nina',
+      buildIdentityBlock: () => '',
+    };
+    const { svc, sock, identityMap, cfg, personaRepository, botJ } = setup(baseConfig, undefined, null, {
+      profileService,
+      generateZen: async (input) => {
+        request = input;
+        return 'Nina, a investigação te pegou kkk';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-name-1' } });
+    const scope = uniqueGroup();
+
+    // 1ª chamada abre thread — turno do membro deve guardar name:'Nina'
+    await svc.tryRespond({
+      scopeKey: scope,
+      text: 'bot, a investigação tá avançando',
+      authorJid,
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_300_000,
+    });
+    const thread1 = personaRepository.getActiveThread(scope, { now: 9_300_000 });
+    const memberRows = thread1?.context.filter((c) => c.role === 'membro');
+    assert.ok(memberRows.length >= 1, 'thread deve ter turno do membro');
+    assert.equal(memberRows[0].name, 'Nina', 'turno deve reter o nome resolvido do autor');
+
+    // 2ª chamada (reply ao bot = continuação) carrega a thread persistida →
+    // a 2ª geração deve mostrar o interlocutor pelo nome, não "membro".
+    request = null;
+    await svc.tryRespond({
+      scopeKey: scope,
+      text: 'kkkk concordo, bot',
+      authorJid,
+      quotedParticipant: botJ,
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_400_000,
+    });
+    assert.ok(request, '2ª geração deve ter sido chamada (continuação)');
+    assert.ok(request.system.includes('- Nina:'), 'system deve mostrar o nome do interlocutor, não "membro"');
+    assert.ok(!request.system.includes('- membro:'), 'sem rótulo genérico "membro" nas trocas');
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona: envia hints positivos, neutros e negativos elegíveis, 10 por tipo e em ordem de confiança', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const scope = uniqueGroup();
+    const hints = [
+      ...Array.from({ length: 12 }, (_, i) => ({
+        hintText: `positive-${i}`,
+        confidence: 100 - i,
+        socialSignal: 'positive',
+        updatedAt: i,
+      })),
+      ...Array.from({ length: 12 }, (_, i) => ({
+        hintText: `neutral-${i}`,
+        confidence: 90 - i,
+        socialSignal: 'neutral',
+        updatedAt: i,
+      })),
+      ...Array.from({ length: 12 }, (_, i) => ({
+        hintText: `negative-${i}`,
+        confidence: 80 - i,
+        socialSignal: 'negative',
+        updatedAt: i,
+      })),
+      { hintText: 'low-confidence', confidence: 44, socialSignal: 'negative', updatedAt: 999 },
+    ];
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      personaSocialHintService: { getHints: () => hints },
+      generateZen: async (input) => {
+        request = input;
+        return 'resposta com contexto social';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-social-hints-1' } });
+
+    const result = await svc.tryRespond({
+      scopeKey: scope,
+      text: 'bot, continua a conversa',
+      authorJid: uniqueJid(),
+      sock,
+      identityMap,
+      funConfig: cfg,
+    });
+
+    assert.equal(result.responded, true);
+    assert.match(request.system, /Pistas sociais inferidas e temporárias/);
+    assert.match(request.system, /positive-0/);
+    assert.match(request.system, /neutral-0/);
+    assert.match(request.system, /negative-0/);
+    assert.doesNotMatch(request.system, /low-confidence/);
+    assert.equal((request.system.match(/\[positive · confiança/g) || []).length, 10);
+    assert.equal((request.system.match(/\[neutral · confiança/g) || []).length, 10);
+    assert.equal((request.system.match(/\[negative · confiança/g) || []).length, 10);
+    assert.ok(request.system.indexOf('positive-0') < request.system.indexOf('positive-1'));
+    assert.ok(request.system.indexOf('neutral-0') < request.system.indexOf('neutral-1'));
+    assert.ok(request.system.indexOf('negative-0') < request.system.indexOf('negative-1'));
   } finally {
     if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
     else process.env.FUN_DISABLE_LIVE_LLM = previous;
