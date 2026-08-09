@@ -207,8 +207,8 @@ export function createPersonaSocialHintService({
     return { ok: true, flushed, results };
   }
 
-  function getHints(scopeKey, participantJids, { limit = 8 } = {}) {
-    return repository.listByScopeAndParticipants(scopeKey, participantJids, { limit });
+  function getHints(scopeKey, { limit = 8 } = {}) {
+    return repository.listByScope(scopeKey, { limit });
   }
 
   return { observeMessage, flushScope, flushDueScopes, getHints, _buffers: buffers };

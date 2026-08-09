@@ -48,20 +48,31 @@ export function createFunPersonaSocialHintRepository({ getDatabase = getDb } = {
     return saved;
   }
 
-  function listByScopeAndParticipants(scopeKey, participantJids = [], { limit = 8 } = {}) {
+  // Pistas são "do grupo", não de um participante: retorna as mais recentes/confiantes
+  // do scope, independente de quem originou a piada.
+  function listByScope(scopeKey, { limit = 8 } = {}) {
     ensureSchema();
-    const ids = [...new Set((participantJids || []).map((jid) => String(jid || '').trim()).filter(Boolean))];
-    if (!scopeKey || !ids.length) return [];
-    const placeholders = ids.map(() => '?').join(', ');
+    if (!scopeKey) return [];
+    const overallLimit = Math.max(1, Math.min(90, Number(limit) || 8));
+    const perSignalLimit = Math.max(1, Math.min(30, overallLimit));
     const rows = getDatabase().prepare(
-      `SELECT scope_key, participant_jid, hint_text, confidence, social_signal, updated_at
-       FROM ${ANALYTICS_SCHEMA}.fun_persona_social_hints
-       WHERE scope_key = ? AND participant_jid IN (${placeholders})
+      `WITH ranked AS (
+         SELECT scope_key, participant_jid, hint_text, confidence, social_signal, updated_at,
+                ROW_NUMBER() OVER (
+                  PARTITION BY social_signal
+                  ORDER BY confidence DESC, updated_at DESC
+                ) AS signal_rank
+         FROM ${ANALYTICS_SCHEMA}.fun_persona_social_hints
+         WHERE scope_key = ?
+       )
+       SELECT scope_key, participant_jid, hint_text, confidence, social_signal, updated_at
+       FROM ranked
+       WHERE signal_rank <= ?
        ORDER BY confidence DESC, updated_at DESC
        LIMIT ?`
-    ).all(String(scopeKey), ...ids, Math.max(1, Math.min(30, Number(limit) || 8)));
+    ).all(String(scopeKey), perSignalLimit, overallLimit);
     return rows.map(mapHint);
   }
 
-  return { upsertHints, listByScopeAndParticipants };
+  return { upsertHints, listByScope };
 }
