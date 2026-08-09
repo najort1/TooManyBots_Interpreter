@@ -479,10 +479,18 @@ export async function handleFunIncomingMessage(deps, ctx) {
 
   /** Sorteio de evento pelo bot — anúncio sempre no grupo.
    *  world events off → só happy hour (trégua e mercado auto ficam off).
+   *  happyHourAutoEnabled=false no grupo → happy hour nunca dispara
+   *  (mesma semântica granular do relógio do mundo, fun/index.js).
    */
   async function maybeAutoEvent(now = Date.now()) {
     if (!isGroup || !eventService?.tryAutoSpawn) return null;
     if (isWorldQuietHours(funConfig, now)) return null;
+    if (
+      typeof groupRepository?.isGranularEventEnabled === 'function' &&
+      groupRepository.isGranularEventEnabled(scope.scopeKey, 'happyHour', funConfig) === false
+    ) {
+      return null; // grupo desativou happy hour — não sorteia
+    }
     try {
       const spawned = eventService.tryAutoSpawn({
         scopeKey: scope.scopeKey,
@@ -511,6 +519,12 @@ export async function handleFunIncomingMessage(deps, ctx) {
     if (!isGroup || !marketService?.tryAutoMarketEvent) return null;
     if (!worldEventsOn) return null;
     if (isWorldQuietHours(funConfig, now)) return null;
+    if (
+      typeof groupRepository?.isGranularEventEnabled === 'function' &&
+      groupRepository.isGranularEventEnabled(scope.scopeKey, 'market', funConfig) === false
+    ) {
+      return null; // grupo desativou mercado auto — não anuncia
+    }
     try {
       const hit = await marketService.tryAutoMarketEvent({
         scopeKey: scope.scopeKey,
