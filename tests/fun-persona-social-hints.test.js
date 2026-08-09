@@ -23,7 +23,7 @@ const cfg = {
   personaSocialHintsMaxChars: 160,
 };
 
-test('pistas sociais: lote LLM mapeia índices para JIDs e recupera seletivamente por scope', async () => {
+test('pistas sociais: lote LLM mapeia índices para JIDs e recupera pistas do scope inteiro', async () => {
   const calls = [];
   const repository = createFunPersonaSocialHintRepository({ getDatabase: getDb });
   const service = createPersonaSocialHintService({
@@ -49,11 +49,12 @@ test('pistas sociais: lote LLM mapeia índices para JIDs e recupera seletivament
   assert.match(calls[0].prompt, /Alice Real/);
   assert.match(calls[0].prompt, /Bob Real/);
   assert.match(calls[0].prompt, /@\d{2}:\d{2}/);
-  const aliceHints = service.getHints(scope, [alice]);
-  assert.deepEqual(aliceHints.map((hint) => hint.participantJid), [alice]);
-  assert.equal(aliceHints[0].confidence, 88);
-  assert.equal(aliceHints[0].socialSignal, 'positive');
-  assert.equal(service.getHints(scope, ['5511999999999@s.whatsapp.net']).length, 0);
+  const scopeHints = service.getHints(scope, { limit: 6 });
+  assert.equal(scopeHints.length, 2);
+  assert.deepEqual(scopeHints.map((hint) => hint.participantJid).sort(), [alice, bob].sort());
+  assert.equal(scopeHints[0].confidence, 88);
+  assert.equal(scopeHints[0].socialSignal, 'positive');
+  assert.equal(service.getHints(scope).length, 2);
 });
 
 test('pistas sociais: prompt aceita humor adulto contextual e preserva sinais de desconforto', async () => {
