@@ -159,6 +159,16 @@ function cleanPromptText(value, maxChars = 500) {
   return String(value || '').replace(/[\r\n]+/g, ' ').trim().slice(0, maxChars);
 }
 
+/**
+ * Turno de thread de um membro. Guarda o nome resolvido do autor (se houver)
+ * para o prompt das "Últimas trocas" mostrar o interlocutor real — nunca só
+ * "membro" genérico. Autor sem nome → omite `name` (render cai em "membro").
+ */
+function memberTurn(authorLabel, text) {
+  const name = String(authorLabel || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
+  return { role: 'membro', ...(name ? { name } : {}), text: String(text || '').slice(0, 200) };
+}
+
 function memorySignalText(signal) {
   if (!signal || typeof signal !== 'object') return '';
   if (Array.isArray(signal.riskFlags) && signal.riskFlags.length) return '';
@@ -447,7 +457,7 @@ export function createPersonaService({
     if (threadContext?.length) {
       parts.push('');
       parts.push('Últimas trocas da conversa atual (para dar continuidade):');
-      for (const turn of threadContext.slice(-4)) parts.push(`- ${turn.role || 'membro'}: "${turn.text || ''}"`);
+      for (const turn of threadContext.slice(-4)) parts.push(`- ${turn.name || turn.role || 'membro'}: "${turn.text || ''}"`);
     }
     parts.push('');
     parts.push(`Limite: até ${maxChars} caracteres. Responda só com a mensagem, sem preâmbulo.`);
@@ -474,10 +484,30 @@ export function createPersonaService({
       ? profileService.buildIdentityBlock(scopeKey, participantJids, funConfig)
       : '';
     const minHintConfidence = Number(o.personaSocialHintsMinConfidence) || 45;
-    const socialHints = (personaSocialHintService?.getHints?.(scopeKey, participantJids, { limit: 6 }) || [])
-      .filter((hint) => hint.socialSignal !== 'negative' && Number(hint.confidence) >= minHintConfidence);
+    const loadedHints = personaSocialHintService?.getHints?.(scopeKey, { limit: 90 }) || [];
+    const hintsBySignal = new Map([
+      ['positive', []],
+      ['neutral', []],
+      ['negative', []],
+    ]);
+    for (const hint of loadedHints) {
+      const confidence = Number(hint?.confidence);
+      const socialSignal = String(hint?.socialSignal || 'neutral');
+      if (!Number.isFinite(confidence) || confidence < minHintConfidence) continue;
+      if (!hintsBySignal.has(socialSignal)) continue;
+      hintsBySignal.get(socialSignal).push(hint);
+    }
+    const socialHints = [...hintsBySignal.entries()].flatMap(([socialSignal, hints]) => hints
+      .sort((a, b) => Number(b?.confidence) - Number(a?.confidence)
+        || Number(b?.updatedAt) - Number(a?.updatedAt))
+      .slice(0, 10)
+      .map((hint) => ({ ...hint, socialSignal })));
     const socialHintBlock = socialHints.length
-      ? `Pistas sociais inferidas e incertas (não são fatos; não as declare como verdade):\n${socialHints.map((hint) => `- ${hint.hintText}`).join('\n')}`
+      ? [
+          'Pistas sociais inferidas e temporárias (não são fatos; não as declare como verdade):',
+          'positive indica adesão à brincadeira, neutral indica sinal ambíguo e negative indica possível desconforto; use negative para evitar insistência, não para acusar ninguém.',
+          ...socialHints.map((hint) => `- [${hint.socialSignal} · confiança ${Math.round(Number(hint.confidence))}] ${hint.hintText}`),
+        ].join('\n')
       : '';
     const contextHasRisk = Array.isArray(responseContextPack?.riskFlags) && responseContextPack.riskFlags.length > 0;
     const inferredSignals = contextHasRisk
@@ -621,7 +651,7 @@ export function createPersonaService({
           threadId: thread.id,
           context: [
             ...threadContext,
-            { role: 'membro', text: String(ctx.text || '').slice(0, 200) },
+            memberTurn(authorLabel, ctx.text),
             { role: 'bot', text: response.slice(0, 200) },
           ],
           now,
@@ -632,7 +662,7 @@ export function createPersonaService({
           scopeKey,
           maxTurns: o.maxTurns,
           context: [
-            { role: 'membro', text: String(ctx.text || '').slice(0, 200) },
+            memberTurn(authorLabel, ctx.text),
             { role: 'bot', text: response.slice(0, 200) },
           ],
           now,
