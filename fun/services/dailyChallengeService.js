@@ -223,7 +223,7 @@ export function createDailyChallengeService(deps = {}) {
     return getConfig() || {};
   }
 
-  function buildGroupLore(scopeKey, { limit = 4, maxChars = 600 } = {}) {
+  function buildGroupLore(scopeKey, { limit = 4 } = {}) {
     if (!scopeKey || !groupMemoryService?.buildLoreContext) return '';
     try {
       return String(
@@ -231,7 +231,7 @@ export function createDailyChallengeService(deps = {}) {
           limit,
           funConfig: cfg(),
         }) || ''
-      ).trim().slice(0, maxChars);
+      ).trim();
     } catch {
       return '';
     }
@@ -564,7 +564,10 @@ export function createDailyChallengeService(deps = {}) {
     const diversityTxt = diversity.length
       ? `\nGêneros/plataformas reconhecidos entre os recentes: ${diversity.join(', ')}. Escolha outro universo quando possível.\n`
       : '';
-    const lore = buildGroupLore(scopeKey, { limit: 4, maxChars: 600 });
+    /* O corte por chars era menor que só o cabeçalho fixo das regras e mutilava
+       o Clima/fatos (ex.: "Clima: • Ga"). Sem slice: o limite de fatos via limit já
+       segura o tamanho; nunca cortar no meio de palavra. */
+    const lore = buildGroupLore(scopeKey, { limit: 4 });
     const system =
       'Voce e um curador de jogos para um desafio diário de WhatsApp em português brasileiro. ' +
       'Gere UM jogo (eletrônico, de tabuleiro, indie, retrô, AAA, cult, brasileiro ou nicho). ' +
@@ -598,7 +601,7 @@ export function createDailyChallengeService(deps = {}) {
       'Evite repetir enigmas muito classicos de forma identica; varie o estilo e o objeto. ' +
       'Responda APENAS no formato JSON: ' +
       '{"riddle":"O que e, o que e?...","answers":["resposta1","resposta2"]}';
-    const lore = buildGroupLore(scopeKey, { limit: 4, maxChars: 450 });
+    const lore = buildGroupLore(scopeKey, { limit: 4 });
     const user = [
       'Gere um enigma popular, claro e respondível agora.',
       lore ? `Clima do grupo para calibrar só o tom (não inclua nomes nem fatos do lore no enigma):\n${lore}` : '',
@@ -1310,7 +1313,7 @@ export function createDailyChallengeService(deps = {}) {
         '- Responda apenas com a dica, sem prefixos como "Dica:" ou "Resposta:".\n' +
         '- Responda em portugues brasileiro.\n' +
         '- ANTES de responder, verifique mentalmente: minha dica contém a palavra resposta ou um sinonimo obvio? Se sim, reescreva.';
-      const lore = buildGroupLore(challenge.scopeKey, { limit: 3, maxChars: 400 });
+      const lore = buildGroupLore(challenge.scopeKey, { limit: 3 });
       const user =
         `Enigma: ${data.riddle || ''}\n` +
         `Resposta correta (para voce saber, NUNCA revele): ${answer}\n` +
