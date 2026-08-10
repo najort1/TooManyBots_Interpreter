@@ -1080,6 +1080,12 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.personaWindowSize,
       { min: 10, max: 500, rounding: 'floor', clamp: true }
     ),
+    // Entradas de "Últimas trocas" no prompt da persona — 2 entries por troca (membro+bot).
+    personaContextTurns: normalizeInt(
+      raw.personaContextTurns,
+      DEFAULT_FUN_CONFIG.personaContextTurns,
+      { min: 4, max: 60, rounding: 'floor', clamp: true }
+    ),
     personaWindowMs: normalizeInt(
       raw.personaWindowMs,
       DEFAULT_FUN_CONFIG.personaWindowMs,

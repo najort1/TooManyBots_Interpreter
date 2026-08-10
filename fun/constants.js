@@ -529,6 +529,11 @@ export const PERSONA_DERIVE_INTERVAL_MS = 5 * 60_000;
 export const PERSONA_TOKEN_HALF_LIFE_MS = 7 * 24 * 60 * 60 * 1000;
 /** Teto de tokens mais frequentes exibidos no prompt do perfil de voz. */
 export const PERSONA_TOP_TOKENS = 50;
+/**
+ * Quantas entradas de contexto a persona injeta no prompt em "Últimas trocas".
+ * Cada troca = 2 entries (membro + bot) → 40 = 20 trocas.
+ */
+export const PERSONA_CONTEXT_TURNS = 40;
 
 /** Defaults do bot Fun standalone (não herda config do TMB). */
 export const DEFAULT_FUN_CONFIG = Object.freeze({
@@ -920,6 +925,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   personaTokenHalfLifeMs: PERSONA_TOKEN_HALF_LIFE_MS,
   /** Quantos tokens mais frequentes persistir (e mostrar) no perfil de voz. */
   personaTopTokens: PERSONA_TOP_TOKENS,
+  /** Entradas de "Últimas trocas" injetadas no prompt da persona (20 trocas = 40 entries). */
+  personaContextTurns: PERSONA_CONTEXT_TURNS,
   // Inferência social assíncrona por lote para a persona.
   personaSocialHintsEnabled: true,
   personaSocialHintsBatchSize: 50,

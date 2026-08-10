@@ -835,6 +835,185 @@ test('perfil: persiste entre "reinícios" (recria service)', () => {
   assert.ok(block.includes('Vocabulário'), 'perfil persistido deve estar disponível após reinício');
 });
 
+// ============================================================
+// Contexto: "Últimas trocas" (20 trocas = 40 entries)
+// ============================================================
+
+test('persona: prompt inclui até personaContextTurns (default 40 = 20 trocas)', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup(baseConfig, undefined, null, {
+      generateZen: async (input) => {
+        request = input;
+        return 'a gente já discutiu isso aqui, tô lembrado kkk';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-ctx-turns-1' } });
+    const scope = uniqueGroup();
+
+    // Thread com 25 trocas (membro+bot) = 50 entries no contexto persistido.
+    const ctx = [];
+    for (let i = 0; i < 25; i++) {
+      ctx.push({ role: 'membro', name: `M${i}`, text: `membro-${i}` });
+      ctx.push({ role: 'bot', text: `bot-${i}` });
+    }
+    personaRepository.openThread({ scopeKey: scope, context: ctx, now: 1_000_000 });
+
+    // Reply ao bot = continuação → carrega a thread persistida no prompt.
+    await svc.tryRespond({
+      scopeKey: scope,
+      text: 'bot, continua aí',
+      authorJid: uniqueJid(),
+      quotedParticipant: botJ,
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 1_000_001,
+    });
+
+    assert.ok(request, 'geração LLM deve ter sido chamada');
+    const last = request.system.indexOf('Últimas trocas da conversa atual');
+    const block = request.system.slice(last);
+    assert.ok(block.includes('membro-5'), 'troca #5 deve estar visível');
+    assert.ok(block.includes('bot-5'), 'turno do bot #5 deve estar visível');
+    assert.ok(!block.includes('membro-0'), 'troca #0 (a mais antiga) deve ter sido cortada');
+    assert.ok(!block.includes('bot-0'), 'turno do bot #0 deve ter sido cortado');
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('BUG REPRO: reply a resposta de comando do bot não invoca a persona', async () => {
+  const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup();
+  const scope = uniqueGroup();
+  sock.sendMessage = async () => ({ key: { id: 'persona-anchored-1' } });
+
+  // Usuário 1 conversou com a persona (thread ativa existe) → resposta âncora gravada.
+  await svc.tryRespond({
+    scopeKey: scope, text: 'bot eai', authorJid: uniqueJid('1'),
+    sock, identityMap, funConfig: cfg, now: 1_000_000,
+  });
+  const thread = personaRepository.getActiveThread(scope, { now: 1_000_000 });
+  assert.equal(thread.anchorMessageId, 'persona-anchored-1', 'resposta da persona deve ser ancorada');
+
+  // Usuário 2 responde à mensagem de COMANDO do bot (id do comando ≠ âncora da persona).
+  const r = await svc.tryRespond({
+    scopeKey: scope,
+    text: 'já vai se despedir?',
+    quotedParticipant: botJ,
+    quotedMessageId: 'command-response-1',
+    messageType: 'extended-text',
+    authorJid: uniqueJid('2'),
+    sock,
+    identityMap,
+    funConfig: cfg,
+    now: 1_000_001,
+  });
+
+  assert.equal(r.responded, false, 'reply a comando do bot não deve invocar a persona');
+  assert.equal(r.reason, 'no-trigger');
+});
+
+test('persona: reply ao bot SEM quotedMessageId continua thread (compat legado/fallback)', async () => {
+  const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup();
+  const scope = uniqueGroup();
+  sock.sendMessage = async () => ({ key: { id: 'persona-legacy-1' } });
+
+  await svc.tryRespond({
+    scopeKey: scope, text: 'bot eai', authorJid: uniqueJid(),
+    sock, identityMap, funConfig: cfg, now: 2_000_000,
+  });
+  const r = await svc.tryRespond({
+    scopeKey: scope, text: 'kkkk concordo', quotedParticipant: botJ,
+    messageType: 'extended-text', authorJid: uniqueJid(), sock, identityMap,
+    funConfig: cfg, now: 2_000_001,
+  });
+  assert.equal(r.responded, true);
+  assert.equal(personaRepository.getActiveThread(scope, { now: 2_000_001 }).turnCount, 1);
+});
+
+test('persona: reply ao bot COM o messageId exato da resposta da persona continua thread', async () => {
+  const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup();
+  const scope = uniqueGroup();
+  sock.sendMessage = async () => ({ key: { id: 'persona-exact-1' } });
+
+  await svc.tryRespond({
+    scopeKey: scope, text: 'bot eai', authorJid: uniqueJid(),
+    sock, identityMap, funConfig: cfg, now: 3_000_000,
+  });
+  const r = await svc.tryRespond({
+    scopeKey: scope, text: 'kkkk concordo', quotedParticipant: botJ,
+    quotedMessageId: 'persona-exact-1', messageType: 'extended-text',
+    authorJid: uniqueJid(), sock, identityMap, funConfig: cfg, now: 3_000_001,
+  });
+  assert.equal(r.responded, true);
+  assert.equal(personaRepository.getActiveThread(scope, { now: 3_000_001 }).turnCount, 1);
+});
+
+test('persona: reply ao bot com messageId que NÃO é da persona não continua thread', async () => {
+  const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup();
+  const scope = uniqueGroup();
+  sock.sendMessage = async () => ({ key: { id: 'persona-mismatch-1' } });
+
+  await svc.tryRespond({
+    scopeKey: scope, text: 'bot eai', authorJid: uniqueJid(),
+    sock, identityMap, funConfig: cfg, now: 4_000_000,
+  });
+  const r = await svc.tryRespond({
+    scopeKey: scope, text: 'oi bot', quotedParticipant: botJ,
+    quotedMessageId: 'some-command-echo-1', messageType: 'extended-text',
+    authorJid: uniqueJid(), sock, identityMap, funConfig: cfg, now: 4_000_001,
+  });
+  assert.equal(r.responded, false, 'messageId de comando não é âncora de persona');
+  assert.equal(r.reason, 'no-trigger');
+});
+
+test('persona: socket sem retorno de key → âncora UUID e continuação por esse UUID', async () => {
+  const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup();
+  const scope = uniqueGroup();
+  // Sem stub de sendMessage → sock.sendMessage é undefined → fallback de ID.
+  await svc.tryRespond({
+    scopeKey: scope, text: 'bot eai', authorJid: uniqueJid(),
+    sock, identityMap, funConfig: cfg, now: 5_000_000,
+  });
+  const thread = personaRepository.getActiveThread(scope, { now: 5_000_000 });
+  assert.ok(thread.anchorMessageId, 'âncora deve existir mesmo sem retorno do socket');
+  assert.match(thread.anchorMessageId, /^[0-9a-f-]{36}$/i, 'fallback deve ser um UUID');
+  assert.ok(thread.anchorText, 'âncora deve guardar o texto da resposta');
+
+  const r = await svc.tryRespond({
+    scopeKey: scope, text: 'kkkk concordo', quotedParticipant: botJ,
+    quotedMessageId: thread.anchorMessageId, messageType: 'extended-text',
+    authorJid: uniqueJid(), sock, identityMap, funConfig: cfg, now: 5_000_001,
+  });
+  assert.equal(r.responded, true, 'reply ao UUID da resposta continua thread');
+  assert.equal(personaRepository.getActiveThread(scope, { now: 5_000_001 }).turnCount, 1);
+});
+
+test('persona: reply com ID real ≠ âncora mas texto idêntico à resposta continua (fallback de conteúdo)', async () => {
+  const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup();
+  const scope = uniqueGroup();
+  sock.sendMessage = async () => ({ key: { id: 'persona-content-1' } });
+
+  await svc.tryRespond({
+    scopeKey: scope, text: 'bot eai', authorJid: uniqueJid(),
+    sock, identityMap, funConfig: cfg, now: 6_000_000,
+  });
+  const thread = personaRepository.getActiveThread(scope, { now: 6_000_000 });
+  assert.ok(thread.anchorMessageId, 'âncora gravada');
+  const r = await svc.tryRespond({
+    scopeKey: scope, text: 'kkkk concordo', quotedParticipant: botJ,
+    quotedMessageId: 'command-echo-999', quotedText: thread.anchorText,
+    messageType: 'extended-text', authorJid: uniqueJid(), sock, identityMap,
+    funConfig: cfg, now: 6_000_001,
+  });
+  assert.equal(r.responded, true, 'texto idêntico à resposta da persona continua');
+  assert.equal(personaRepository.getActiveThread(scope, { now: 6_000_001 }).turnCount, 1);
+});
+
 test('perfil: grupos diferentes não misturam estilos', () => {
   const { svc, cfg, personaRepository } = setup();
   const a = uniqueGroup();

@@ -11,14 +11,28 @@
  * looksLikeScoreboardEcho exportados.
  */
 
+import { randomUUID } from 'crypto';
 import { sanitizeFlavor, looksLikeScoreboardEcho } from '../llm/flavorService.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
-import { PERSONA_DERIVE_INTERVAL_MS, PERSONA_TOKEN_HALF_LIFE_MS, PERSONA_TOP_TOKENS } from '../constants.js';
+import { PERSONA_CONTEXT_TURNS, PERSONA_DERIVE_INTERVAL_MS, PERSONA_TOKEN_HALF_LIFE_MS, PERSONA_TOP_TOKENS } from '../constants.js';
 
 /** Chamadas textuais inequívocas ao bot; menções @ e replies são tratados separadamente. */
 const MENTION_RE = /^\s*(?:bot(?:\s|[?!,.:;]|$)|ei\s+bot(?:\s|[?!,.:;]|$))/iu;
+
+/** IDs de mensagem do WhatsApp/Baileys (base64url) e UUIDs. */
+const GENERIC_ID_RE = /^[A-Za-z0-9_-]{12,64}$/;
+
+/** Normaliza texto para comparação de âncora (fallback de reconciliação). */
+const normalizeAnchorText = (value) =>
+  String(value || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 
 const STOPWORDS = new Set([
   'de', 'a', 'o', 'que', 'e', 'do', 'da', 'em', 'um', 'para', 'com', 'não',
@@ -213,6 +227,7 @@ export function createPersonaService({
       deriveIntervalMs: Number(funConfig.personaDeriveIntervalMs) || PERSONA_DERIVE_INTERVAL_MS,
       tokenHalfLifeMs: Number(funConfig.personaTokenHalfLifeMs) || PERSONA_TOKEN_HALF_LIFE_MS,
       topTokens: Number(funConfig.personaTopTokens) || PERSONA_TOP_TOKENS,
+      contextTurns: Number(funConfig.personaContextTurns) || PERSONA_CONTEXT_TURNS,
       personaSocialHintsMinConfidence: Number(funConfig.personaSocialHintsMinConfidence) || 45,
     };
   }
@@ -437,7 +452,7 @@ export function createPersonaService({
     return parts.join('\n');
   }
 
-  function buildSystemPrompt({ styleBlock, threadContext, maxChars }) {
+  function buildSystemPrompt({ styleBlock, threadContext, maxChars, contextTurns }) {
     const parts = [
       'Você é um membro comum de um grupo de WhatsApp. Está respondendo naturalmente, como um participante qualquer — não como assistente.',
       'Você É o "bot" do grupo: quando alguém chama "bot" ou te marca, é com você. Fale SEMPRE em primeira pessoa (eu, meu, minha) — jamais se refira a si mesmo como "o bot", "esse bot", "a máquina" ou pelo seu nome.',
@@ -457,7 +472,8 @@ export function createPersonaService({
     if (threadContext?.length) {
       parts.push('');
       parts.push('Últimas trocas da conversa atual (para dar continuidade):');
-      for (const turn of threadContext.slice(-4)) parts.push(`- ${turn.name || turn.role || 'membro'}: "${turn.text || ''}"`);
+      const turns = threadContext.slice(-(contextTurns || 4));
+      for (const turn of turns) parts.push(`- ${turn.name || turn.role || 'membro'}: "${turn.text || ''}"`);
     }
     parts.push('');
     parts.push(`Limite: até ${maxChars} caracteres. Responda só com a mensagem, sem preâmbulo.`);
@@ -533,7 +549,7 @@ export function createPersonaService({
       : threadContext;
     const facts = responseContextPack?.confirmedFacts?.map((m) => cleanPromptText(m.factText, 220)).filter(Boolean).slice(0, 4) || [];
     const system = [
-      buildSystemPrompt({ styleBlock, threadContext: contextTurns, maxChars: o.maxChars }),
+      buildSystemPrompt({ styleBlock, threadContext: contextTurns, maxChars: o.maxChars, contextTurns: o.contextTurns }),
       facts.length ? `Fatos confirmados relevantes (não invente além deles):\n${facts.map((fact) => `- ${fact}`).join('\n')}` : '',
       'Sinais inferidos são apenas pistas: jamais os apresente como fato.',
     ].filter(Boolean).join('\n');
@@ -609,7 +625,26 @@ export function createPersonaService({
       const quotedIsBot = botJids.has(quotedRaw) || botJids.has(resolveJid(quotedRaw, ctx.identityMap));
 
       let thread = personaRepository.getActiveThread(scopeKey, { now, ttlMs: o.threadTtlMs });
-      const isContinuation = !mention && !atMention && quotedIsBot && thread;
+      // Só trata reply ao bot como continuação se a mensagem citada for a
+      // própria resposta da persona (âncora). Reply a resposta de comando do
+      // bot (messageId de comando ≠ âncora) não invoca a persona.
+      //
+      // O envio real (engine/sender) não devolve o messageId da resposta; por
+      // isso a âncora também guarda o texto da resposta como fallback. E
+      // mensagens sem quotedMessageId (legado/testes) mantêm o comportamento
+      // antigo por compatibilidade.
+      const quotedId = String(ctx.quotedMessageId || '').trim();
+      const anchorId = String(thread?.anchorMessageId || '').trim();
+      const anchorText = String(thread?.anchorText || '').trim();
+      const quotedTextNorm = normalizeAnchorText(ctx.quotedText);
+      const anchorTextNorm = normalizeAnchorText(anchorText);
+      const quotedIdIsReal = GENERIC_ID_RE.test(quotedId);
+      const idMatches = quotedIdIsReal && quotedId === anchorId;
+      const textMatches =
+        anchorTextNorm && quotedTextNorm && quotedTextNorm === anchorTextNorm;
+      const quotePointsToAnchor =
+        (idMatches || (!quotedId && !quotedTextNorm) || (quotedIdIsReal && textMatches));
+      const isContinuation = !mention && !atMention && quotedIsBot && thread && quotePointsToAnchor;
       if (!mention && !atMention && !isContinuation) return { responded: false, reason: 'no-trigger' };
       if (o.cooldownMs > 0 && !isContinuation && isInCooldown(scopeKey, now, o.cooldownMs)) return { responded: false, reason: 'cooldown' };
       if (o.maxTurns > 0 && isContinuation && thread && thread.turnCount >= thread.maxTurns) return { responded: false, reason: 'thread-limit' };
@@ -667,6 +702,20 @@ export function createPersonaService({
           ],
           now,
         });
+      }
+
+      // Âncora: guarda o messageId da resposta enviada (ou um fallback
+      // determinístico quando o socket não devolve) + o texto da resposta —
+      // só reply a esta mensagem conta como continuação (reply a comando não
+      // invoca a persona).
+      if (thread?.id) {
+        const anchored = personaRepository.setAnchor({
+          threadId: thread.id,
+          anchorMessageId: responseMessageId || randomUUID(),
+          anchorText: response,
+          now,
+        });
+        if (!anchored?.ok) logger?.debug?.('[personaService] setAnchor falhou: %s', anchored?.reason || '?');
       }
 
       const threadKey = String(ctx.responseContextPack?.threadContext?.threadKey || '');

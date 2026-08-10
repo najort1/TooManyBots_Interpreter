@@ -47,6 +47,8 @@ function mapThreadRow(row) {
     maxTurns: Number(row.max_turns) || 0,
     lastActivityAt: Number(row.last_activity_at) || 0,
     context: parseJsonArray(row.context),
+    anchorMessageId: String(row.anchor_message_id || ''),
+    anchorText: String(row.anchor_text || ''),
     createdAt: Number(row.created_at) || 0,
   };
 }
@@ -166,6 +168,27 @@ export function createFunPersonaRepository({ getDatabase = getDb } = {}) {
     return mapThreadRow(row);
   }
 
+  /**
+   * Grava a âncora da última resposta da persona nesta thread: o messageId
+   * (se o socket devolver) ou um fallback determinístico, mais o texto da
+   * resposta (reconciliação quando não há messageId).
+   */
+  function setAnchor({ threadId, anchorMessageId = '', anchorText = '', now = Date.now() } = {}) {
+    ensureSchema();
+    const db = getDatabase();
+    const id = Number(threadId) || 0;
+    if (!id) return { ok: false, reason: 'invalid' };
+    const anchor = String(anchorMessageId || '').trim();
+    const text = String(anchorText || '').trim();
+    if (!anchor && !text) return { ok: false, reason: 'invalid' };
+    db.prepare(
+      `UPDATE ${ANALYTICS_SCHEMA}.fun_persona_thread
+        SET anchor_message_id = ?, anchor_text = ?, last_activity_at = ?
+        WHERE id = ?`
+    ).run(anchor, text.slice(0, 400), Number(now) || Date.now(), id);
+    return { ok: true, thread: getThreadById(id) };
+  }
+
   function closeExpiredThreads({ scopeKey, now = Date.now(), ttlMs = 30 * 60_000 } = {}) {
     ensureSchema();
     const db = getDatabase();
@@ -185,6 +208,7 @@ export function createFunPersonaRepository({ getDatabase = getDb } = {}) {
     openThread,
     continueThread,
     getThreadById,
+    setAnchor,
     closeExpiredThreads,
   };
 }

@@ -886,6 +886,11 @@ export function buildFunSchemaSql() {
     );
 
     -- Thread de conversa contínua da persona com o grupo (FR-006/FR-007/FR-015).
+    -- anchor_message_id: messageId da ÚLTIMA resposta da persona nesta thread —
+    -- usado para só tratar reply a essa mensagem como continuação (reply a
+    -- resposta de comando do bot não deve invocar a persona).
+    -- anchor_text: texto da resposta enviada — fallback de reconciliação quando
+    -- o socket não devolve o messageId (o envio real não expõe o retorno).
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_persona_thread (
       id               INTEGER PRIMARY KEY AUTOINCREMENT,
       scope_key        TEXT    NOT NULL,
@@ -893,6 +898,8 @@ export function buildFunSchemaSql() {
       max_turns       INTEGER NOT NULL DEFAULT 0,
       last_activity_at INTEGER NOT NULL DEFAULT 0,
       context          TEXT    NOT NULL DEFAULT '[]',
+      anchor_message_id TEXT   NOT NULL DEFAULT '',
+      anchor_text      TEXT   NOT NULL DEFAULT '',
       created_at       INTEGER NOT NULL DEFAULT 0
     );
 
@@ -1013,6 +1020,27 @@ export function ensureFunSchema(db) {
     if (personaNames.size && !personaNames.has('token_counts_json')) {
       db.exec(
         `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_persona_profile ADD COLUMN token_counts_json TEXT NOT NULL DEFAULT '{}'`
+      );
+    }
+  } catch {
+    // ignore
+  }
+
+  // Migra âncora de resposta da persona em threads existentes: guarda o
+  // messageId (e o texto) da última resposta da persona — só reply a essa
+  // mensagem é continuação (reply a resposta de comando do bot não invoca a
+  // persona).
+  try {
+    const thCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_persona_thread)`).all();
+    const thNames = new Set(thCols.map((c) => String(c.name || '')));
+    if (thNames.size && !thNames.has('anchor_message_id')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_persona_thread ADD COLUMN anchor_message_id TEXT NOT NULL DEFAULT ''`
+      );
+    }
+    if (thNames.size && !thNames.has('anchor_text')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_persona_thread ADD COLUMN anchor_text TEXT NOT NULL DEFAULT ''`
       );
     }
   } catch {
