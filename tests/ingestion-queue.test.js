@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { createIngestionQueue } from '../runtime/ingestionQueue.js';
 import { createCommandQueueManager } from '../runtime/commandQueue.js';
+import { resolveCommandQueueRouting } from '../fun/commandQueueRouting.js';
 import { createOutputQueue } from '../runtime/outputQueue.js';
 
 function sleep(ms) {
@@ -341,6 +342,44 @@ test('command queue routes tasks to correct class based on command text', async 
   assert.equal(classify('imagine paisagem', ''), 'heavy');
   assert.equal(classify('sticker', ''), 'heavy');
   assert.equal(classify('llm pergunte', ''), 'heavy');
+
+  assert.equal(classify('/tarô o que me espera?', ''), 'heavy');
+  assert.equal(classify('/ship @alice @bob', ''), 'heavy');
+  assert.equal(classify('/quememaisprovavel', ''), 'heavy');
+  assert.equal(classify('/oráculo maldito', ''), 'heavy');
+  assert.equal(classify('/assaltar @alvo', ''), 'heavy');
+  assert.equal(classify('/gerar um dragão', ''), 'heavy');
+});
+
+test('LLM commands use per-actor queue keys within the same chat', () => {
+  const chatJid = '123@g.us';
+  const aliceTarot = resolveCommandQueueRouting({
+    chatJid,
+    actorJid: 'alice@s.whatsapp.net',
+    commandText: '/tarot como vai ser meu dia?',
+  });
+  const bobShip = resolveCommandQueueRouting({
+    chatJid,
+    actorJid: 'bob@s.whatsapp.net',
+    commandText: '/ship @alice @bob',
+  });
+  const chaosCommand = resolveCommandQueueRouting({
+    chatJid,
+    actorJid: 'alice@s.whatsapp.net',
+    commandText: '/oráculo maldito',
+  });
+  const fastCommand = resolveCommandQueueRouting({
+    chatJid,
+    actorJid: 'alice@s.whatsapp.net',
+    commandText: '/saldo',
+  });
+
+  assert.notEqual(aliceTarot.key, bobShip.key);
+  assert.notEqual(aliceTarot.serializationKey, bobShip.serializationKey);
+  assert.equal(chaosCommand.key, chatJid);
+  assert.equal(chaosCommand.serializationKey, '');
+  assert.equal(fastCommand.key, chatJid);
+  assert.equal(fastCommand.serializationKey, '');
 });
 
 test('command queue allows parallel execution across different keys', async () => {
@@ -376,6 +415,97 @@ test('command queue allows parallel execution across different keys', async () =
   assert.ok(events.includes('fast-a-start'));
   assert.ok(events.includes('fast-b-start'));
   assert.ok(events.indexOf('fast-b-end') < events.indexOf('fast-a-end') || events.indexOf('fast-a-end') < events.indexOf('fast-b-end'));
+});
+
+test('LLM commands from different actors in the same chat run concurrently', async () => {
+  const cm = createCommandQueueManager({
+    heavyConcurrency: 4,
+    heavyTaskTimeoutMs: 0,
+    heavyMaxDurationMs: 0,
+  });
+  const chatJid = 'same-group@g.us';
+  const events = [];
+  let active = 0;
+  let maxActive = 0;
+
+  for (const actorJid of ['alice@s.whatsapp.net', 'bob@s.whatsapp.net']) {
+    const routing = resolveCommandQueueRouting({
+      chatJid,
+      actorJid,
+      commandText: '/tarot leitura geral',
+    });
+    cm.enqueue({
+      ...routing,
+      commandText: '/tarot leitura geral',
+      handler: async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        events.push(`${actorJid}:start`);
+        await sleep(30);
+        active -= 1;
+        events.push(`${actorJid}:end`);
+      },
+    });
+  }
+
+  await cm.onIdle();
+
+  assert.equal(maxActive, 2, `Expected LLM handlers to overlap, got ${JSON.stringify(events)}`);
+  assert.equal(cm.getSnapshot().queues.heavy.completed, 2);
+  assert.equal(cm.getSnapshot().queues.heavy.rejected, 0);
+});
+
+test('command queue preserves all queued LLM commands without timeout drops', async () => {
+  const cm = createCommandQueueManager({
+    heavyConcurrency: 4,
+    heavyTaskTimeoutMs: 0,
+    heavyMaxDurationMs: 0,
+  });
+  const completed = [];
+
+  for (let index = 0; index < 4; index += 1) {
+    cm.enqueue({
+      key: 'same-actor@g.us:alice@s.whatsapp.net',
+      serializationKey: 'llm:same-actor@g.us:alice@s.whatsapp.net',
+      commandText: '/tarot leitura geral',
+      handler: async () => {
+        await sleep(25);
+        completed.push(index);
+      },
+    });
+  }
+
+  await cm.onIdle();
+
+  const snapshot = cm.getSnapshot().queues.heavy;
+  assert.deepEqual(completed, [0, 1, 2, 3]);
+  assert.equal(snapshot.completed, 4);
+  assert.equal(snapshot.rejectedTimeout, 0);
+  assert.equal(snapshot.rejectedDuration, 0);
+});
+
+test('command queue queues heavy work instead of rejecting saturation', async () => {
+  const cm = createCommandQueueManager({
+    heavyConcurrency: 1,
+    maxConcurrency: 1,
+    heavyTaskTimeoutMs: 0,
+    heavyMaxDurationMs: 0,
+  });
+  const accepted = [];
+
+  for (const key of ['group-a', 'group-b', 'group-c']) {
+    accepted.push(cm.enqueue({
+      key,
+      commandText: '/tarot leitura geral',
+      handler: async () => { await sleep(20); },
+    }).accepted);
+  }
+
+  await cm.onIdle();
+
+  assert.deepEqual(accepted, [true, true, true]);
+  assert.equal(cm.getSnapshot().queues.heavy.completed, 3);
+  assert.equal(cm.getSnapshot().queues.heavy.rejected, 0);
 });
 
 test('command queue serializes within same key', async () => {

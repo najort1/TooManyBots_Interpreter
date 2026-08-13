@@ -8,11 +8,54 @@ const QUEUE_CLASSES = {
 
 const CLASS_ORDER = [QUEUE_CLASSES.FAST, QUEUE_CLASSES.STATE, QUEUE_CLASSES.HEAVY];
 
+const LLM_BOUND_COMMAND_HEADS = new Set([
+  'tarot', 'taro', 'vidente',
+  'ship',
+  'qmp', 'quememaisprovavel', 'maisprovavel', 'mostlikely',
+  'roletarussa', 'roleta_russa', 'russianroulette', 'rr',
+  'puxar', 'gatilho', 'pull',
+  'cancelar', 'cancelamento', 'cancel',
+  'fofoca', 'rumor', 'gossip',
+  'oraculo', 'oraculomaldito', 'oraculomaluco', 'perguntamaluca',
+  'illuminati', 'iluminati', 'conspiracao', 'teoria',
+  'roast', 'zoar', 'humilhar',
+  'assaltar', 'assalto', 'roubar', 'assault', 'crime',
+  'gerar', 'gerarimagem', 'imagem', 'create', 'imaginar', 'imagine', 'desenhar', 'render',
+]);
+
+const PER_ACTOR_LLM_COMMAND_HEADS = new Set([
+  'tarot', 'taro', 'vidente',
+  'ship',
+]);
+
+function commandHead(commandText = '') {
+  return String(commandText ?? '')
+    .trim()
+    .replace(/^\//, '')
+    .split(/\s+/, 1)[0]
+    ?.toLowerCase()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9_]/g, '') || '';
+}
+
+export function isLlmBoundCommand(commandText = '') {
+  return LLM_BOUND_COMMAND_HEADS.has(commandHead(commandText));
+}
+
+export function isPerActorLlmCommand(commandText = '') {
+  return PER_ACTOR_LLM_COMMAND_HEADS.has(commandHead(commandText));
+}
+
 function computeClass(commandText = '', messageType = '') {
   const text = String(commandText ?? '').trim().toLowerCase();
   if (!text && !messageType) return QUEUE_CLASSES.FAST;
 
   if (messageType === 'image' || messageType === 'video' || messageType === 'document' || messageType === 'audio') {
+    return QUEUE_CLASSES.HEAVY;
+  }
+
+  if (isLlmBoundCommand(text)) {
     return QUEUE_CLASSES.HEAVY;
   }
 
@@ -109,24 +152,9 @@ export function createCommandQueueManager({
     });
   }
 
-  function getRunningTotal() {
-    let total = 0;
-    for (const klass of CLASS_ORDER) {
-      total += queues[klass].getSnapshot().running;
-    }
-    return total;
-  }
-
   function enqueue({ key, payload, handler, priority = 'high', commandText = '', messageType = '', serializationKey = '' }) {
     const klass = computeClass(commandText, messageType);
     const queue = queues[klass];
-
-    if (getRunningTotal() >= totalConcurrencyLimit) {
-      const heavyQueue = queues[QUEUE_CLASSES.HEAVY];
-      if (klass === QUEUE_CLASSES.HEAVY && heavyQueue.getSnapshot().running >= heavyConfig().concurrency) {
-        return { accepted: false, reason: 'heavy-concurrency-saturated', queueClass: klass };
-      }
-    }
 
     const normalizedSerialKey = String(serializationKey ?? '').trim();
     const wrappedHandler = normalizedSerialKey
@@ -186,10 +214,6 @@ export function createCommandQueueManager({
       totalConcurrencyLimit,
       updatedAt: Date.now(),
     };
-  }
-
-  function heavyConfig() {
-    return { ...classConfigs.heavy };
   }
 
   async function onIdle() {

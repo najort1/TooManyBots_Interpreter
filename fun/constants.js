@@ -965,7 +965,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   commandMaxConcurrency: 8,
   commandFastConcurrency: 4,
   commandStateConcurrency: 2,
-  commandHeavyConcurrency: 1,
+  commandHeavyConcurrency: 4,
   commandQueueMax: 5000,
   commandQueueWarnThreshold: 1000,
   outputConcurrency: 4,

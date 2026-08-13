@@ -20,6 +20,7 @@ import { parseMessage } from '../engine/messageParser.js';
 import { sendTextMessage as sendTextMessageOriginal, sendImageMessage as sendImageMessageOriginal, sendStickerMessage as sendStickerMessageOriginal } from '../engine/sender.js';
 import { createCommandQueueManager } from '../runtime/commandQueue.js';
 import { createOutputQueue } from '../runtime/outputQueue.js';
+import { resolveCommandQueueRouting } from './commandQueueRouting.js';
 
 let _outputQueueInstance = null;
 
@@ -324,9 +325,17 @@ export async function startFunBot(options = {}) {
     maxConcurrency: Number(config.commandMaxConcurrency ?? 8),
     fastConcurrency: Number(config.commandFastConcurrency ?? 4),
     stateConcurrency: Number(config.commandStateConcurrency ?? 2),
-    heavyConcurrency: Number(config.commandHeavyConcurrency ?? 1),
+    heavyConcurrency: Number(config.commandHeavyConcurrency ?? 4),
     maxQueueSize: Number(config.commandQueueMax ?? 5000),
     warnThreshold: Number(config.commandQueueWarnThreshold ?? 1000),
+    // Handlers podem aguardar geração de IA e não consomem AbortSignal; a
+    // capacidade máxima da fila é o backpressure, não timeout silencioso.
+    fastTaskTimeoutMs: 0,
+    stateTaskTimeoutMs: 0,
+    heavyTaskTimeoutMs: 0,
+    fastMaxDurationMs: 0,
+    stateMaxDurationMs: 0,
+    heavyMaxDurationMs: 0,
   });
 
   const outputQueue = createOutputQueue({
@@ -647,6 +656,11 @@ export async function startFunBot(options = {}) {
     return String(key.remoteJid ?? key.remote_jid ?? '').trim();
   }
 
+  function extractQueueActorJid(msg, chatJid) {
+    const key = msg?.key && typeof msg.key === 'object' ? msg.key : {};
+    return String(key.participantPn ?? key.participant ?? chatJid ?? '').trim();
+  }
+
   function extractCommandText(msg) {
     const quick = msg?.message && typeof msg.message === 'object' ? msg.message : {};
     const conv = quick.conversationMessage || quick.conversation || '';
@@ -871,9 +885,16 @@ export async function startFunBot(options = {}) {
 
         const cmdText = extractCommandText(msg);
         const msgType = extractMessageType(msg);
+        const actorJid = extractQueueActorJid(msg, qJid);
 
+        const queueRouting = resolveCommandQueueRouting({
+          chatJid: qJid,
+          actorJid,
+          commandText: cmdText,
+        });
         const enqResult = commandQueue.enqueue({
-          key: qJid || 'unknown',
+          key: queueRouting.key,
+          serializationKey: queueRouting.serializationKey,
           commandText: cmdText,
           messageType: msgType,
           priority: msgType === 'image' || msgType === 'video' || msgType === 'document' ? 'low' : 'high',
