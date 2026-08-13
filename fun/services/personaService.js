@@ -494,7 +494,7 @@ export function createPersonaService({
     const groupIdentity = responseContextPack?.groupIdentity || {};
     const identityStyle = (groupIdentity.voiceStyle || []).filter(Boolean).join(', ') || '';
     const toneBlock = buildToneBlock(groupIdentity);
-    const lore = cleanPromptText(groupIdentity.groupLoreSummary, 800);
+    const lore = String(groupIdentity.groupLoreSummary || '').trim();
     const loreBlock = lore ? `Contexto do grupo (lore extraída dos fatos):\n${lore}` : '';
     const identityBlock = profileService?.buildIdentityBlock
       ? profileService.buildIdentityBlock(scopeKey, participantJids, funConfig)
@@ -674,8 +674,11 @@ export function createPersonaService({
         usedFallback = true;
       }
 
+      const quoted = ctx.funConfig?.replyQuoted !== false && ctx.quoteSource?.key
+        ? ctx.quoteSource
+        : undefined;
       const sentMessage = ctx.sock?.sendMessage && typeof ctx.sock.sendMessage === 'function'
-        ? await ctx.sock.sendMessage(scopeKey, { text: response })
+        ? await ctx.sock.sendMessage(scopeKey, { text: response }, quoted ? { quoted } : undefined)
         : null;
       const responseMessageId = String(sentMessage?.key?.id || '');
 

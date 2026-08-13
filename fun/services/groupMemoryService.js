@@ -1166,6 +1166,25 @@ export function createGroupMemoryService({
     return { ok: true, text };
   }
 
+  const LORE_USAGE_RULES = [
+    '- Estes são fatos passados do grupo. Use-os APENAS se a mensagem atual tiver relação direta.',
+    '- É PROIBIDO conectar um fato novo a uma lore antiga se a relação não for óbvia.',
+    '- NUNCA altere o sujeito da lore. Se a lore diz que [Nome] fez X, não atribua a outra pessoa.',
+    '- Se não houver conexão clara, IGNORE a lore por completo.',
+    '- NÃO invente detalhes (números, medidas, causas) que não estejam no fato.',
+  ];
+
+  function renderLoreFacts(facts) {
+    return (facts || []).map((fact) => {
+      const authors = (fact.subjects || [])
+        .map((subject) => firstName(subject))
+        .filter(Boolean)
+        .slice(0, 3);
+      const who = authors.length ? authors.join(', ') : '?';
+      return `- [${fact.kind}] (Autor: ${who}): ${fact.summary}`;
+    });
+  }
+
   /**
    * Bloco estruturado <group_lore> pra injetar em prompts de flavor/caos.
    * Regras anti-alucinação + autor por primeiro nome (não JID cru).
@@ -1201,11 +1220,7 @@ export function createGroupMemoryService({
     const lines = [
       '<group_lore>',
       'Regras de uso da Lore:',
-      '- Estes são fatos passados do grupo. Use-os APENAS se a mensagem atual tiver relação direta.',
-      '- É PROIBIDO conectar um fato novo a uma lore antiga se a relação não for óbvia.',
-      '- NUNCA altere o sujeito da lore. Se a lore diz que [Nome] fez X, não atribua a outra pessoa.',
-      '- Se não houver conexão clara, IGNORE a lore por completo.',
-      '- NÃO invente detalhes (números, medidas, causas) que não estejam no fato.',
+      ...LORE_USAGE_RULES,
     ];
 
     if (persona.personaText) {
@@ -1215,18 +1230,32 @@ export function createGroupMemoryService({
       );
     }
     if (top.length) {
-      lines.push('', 'Fatos:');
-      for (const f of top) {
-        const authors = (f.subjects || [])
-          .map((s) => firstName(s))
-          .filter(Boolean)
-          .slice(0, 3);
-        const who = authors.length ? authors.join(', ') : '?';
-        lines.push(`- [${f.kind}] (Autor: ${who}): ${f.summary}`);
-      }
+      lines.push('', 'Fatos:', ...renderLoreFacts(top));
     }
     lines.push('</group_lore>');
     return lines.join('\n');
+  }
+
+  /**
+   * Lore integral exclusiva da persona: todos os fatos persistidos, sem ranking,
+   * filtro de score ou corte por caracteres. Outros consumidores usam buildLoreContext.
+   */
+  function buildPersonaLoreContext(scopeKey, { funConfig = {} } = {}) {
+    const o = opts(funConfig);
+    if (!o.enabled || !scopeKey) return '';
+
+    const facts = memoryRepository.listFacts(scopeKey, { limit: 200, minScore: 0 });
+    if (!facts.length) return '';
+
+    return [
+      '<group_lore>',
+      'Regras de uso da Lore:',
+      ...LORE_USAGE_RULES,
+      '',
+      'Fatos:',
+      ...renderLoreFacts(facts),
+      '</group_lore>',
+    ].join('\n');
   }
 
   function formatLoreList(scopeKey, { limit = 12, funConfig = {} } = {}) {
@@ -1346,6 +1375,7 @@ export function createGroupMemoryService({
     shouldFlushBuffer,
     getBufferStats,
     buildLoreContext,
+    buildPersonaLoreContext,
     formatLoreList,
     forgetAll,
     forgetSubject,

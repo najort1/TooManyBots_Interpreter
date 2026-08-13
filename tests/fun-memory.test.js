@@ -1013,6 +1013,40 @@ test('buildLoreContext: persona cache hit', () => {
   assert.match(b, /group_lore/);
 });
 
+test('buildPersonaLoreContext: envia todos os fatos sem ranking, score mínimo ou corte', () => {
+  const repo = createFunMemoryRepository({ getDatabase: getDb });
+  const scope = uniqueGroup();
+  const authors = new Map();
+  const summaries = Array.from({ length: 15 }, (_, index) => {
+    const author = uniqueJid(`552${index}`);
+    authors.set(author, `Pessoa${index}`);
+    const summary = `Fato integral ${index}: ${'x'.repeat(90)} fim-${index}`;
+    repo.insertFact({
+      scopeKey: scope,
+      kind: index % 2 ? 'running_gag' : 'event',
+      summary,
+      subjects: [author],
+      score: index === 14 ? 1 : 80 - index,
+    });
+    return summary;
+  });
+  const mem = createGroupMemoryService({
+    memoryRepository: repo,
+    getContactDisplayName: (jid) => authors.get(jid) || '',
+  });
+
+  const lore = mem.buildPersonaLoreContext(scope, { funConfig: {} });
+
+  assert.match(lore, /^<group_lore>\n/);
+  assert.match(lore, /\nFatos:\n/);
+  assert.match(lore, /\[event\] \(Autor: Pessoa0\): Fato integral 0/);
+  for (const summary of summaries) {
+    assert.ok(lore.includes(summary), `fato deve entrar integralmente: ${summary.slice(-8)}`);
+  }
+  assert.match(lore, /fim-14/);
+  assert.match(lore, /<\/group_lore>$/);
+});
+
 /* ——— Anti-alucinação (garantias de pipeline, sem LLM real) ——— */
 
 test('anti-alucinação: defaults de contexto grande (≤40k chars)', () => {

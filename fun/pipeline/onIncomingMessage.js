@@ -668,7 +668,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
       const memoryEvent = {
         scopeKey: scope.scopeKey, authorJid: userJid, text, messageId, quotedMessageId,
         mentionedJids, occurredAt: msgTimeMs, threadTtlMs: funConfig.personaThreadTtlMs,
-        maxContextItems: funConfig.personaMemoryMaxContextItems,
+        maxContextItems: funConfig.personaMemoryMaxContextItems, funConfig,
       };
       const resolvedThread = funConfig.personaMemoryEnabled !== false && threadContextService
         ? threadContextService.resolve(memoryEvent).thread
@@ -716,6 +716,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           quotedParticipant,
           quotedMessageId,
           quotedText,
+          quoteSource,
           responseContextPack,
           authorJid: userJid,
           messageType,

@@ -368,6 +368,45 @@ test('persona: prompt recebe autor, reply, identidade e pistas de contexto', asy
   }
 });
 
+test('persona: lore estruturada acima de 800 chars entra integral no system prompt', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const fullLore = [
+      '<group_lore>',
+      'Fatos:',
+      '- [running_gag] (Autor: Lucas): primeiro fato completo',
+      `- [epic_fail] (Autor: Jonas): ${'x'.repeat(900)} fim-do-ultimo-fato`,
+      '</group_lore>',
+    ].join('\n');
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      generateZen: async (input) => {
+        request = input;
+        return 'isso aí já virou patrimônio do grupo kkk';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-full-lore-1' } });
+
+    const response = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: 'bot, lembra disso?',
+      authorJid: uniqueJid(),
+      sock,
+      identityMap,
+      funConfig: cfg,
+      responseContextPack: { groupIdentity: { groupLoreSummary: fullLore } },
+    });
+
+    assert.equal(response.responded, true);
+    assert.ok(request.system.includes(fullLore), 'lore deve preservar quebras e todo o conteúdo');
+    assert.match(request.system, /fim-do-ultimo-fato/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
 test('REGRESSAO persona: turno do membro na thread guarda o nome e o prompt mostra o interlecutor real', async () => {
   const previous = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
@@ -1187,4 +1226,34 @@ test('F3 memorySignalText: descarta placeholders de memória e mantém fatos rea
     if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
     else process.env.FUN_DISABLE_LIVE_LLM = previous;
   }
+});
+test('persona: resposta cita a mensagem que disparou a persona', async () => {
+  const { svc, sock, identityMap, cfg } = setup();
+  const quoteSource = {
+    key: { id: 'persona-trigger-quoted-1', remoteJid: uniqueGroup(), fromMe: false },
+    message: { conversation: 'bot, responde aqui' },
+  };
+  const calls = [];
+  sock.sendMessage = async (...args) => {
+    calls.push(args);
+    return { key: { id: 'persona-response-quoted-1' } };
+  };
+
+  const response = await svc.tryRespond({
+    scopeKey: quoteSource.key.remoteJid,
+    text: 'bot, responde aqui',
+    authorJid: uniqueJid(),
+    sock,
+    identityMap,
+    funConfig: cfg,
+    quoteSource,
+    now: 1_500_000,
+  });
+
+  assert.equal(response.responded, true);
+  assert.deepEqual(calls[0], [
+    quoteSource.key.remoteJid,
+    { text: response.response },
+    { quoted: quoteSource },
+  ]);
 });

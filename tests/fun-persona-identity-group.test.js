@@ -57,6 +57,31 @@ test('personaContext: lore do groupMemoryService sobrepõe a do identity', async
   assert.match(without.groupIdentity.groupLoreSummary, /trabalhar/, 'sem groupMemoryService mantém identity como fallback');
 });
 
+test('personaContext: prioriza lore estruturada integral do groupMemoryService', async () => {
+  const h = await createPersonaMemoryHarness();
+  const scope = `persona-lore-${Date.now()}@g.us`;
+  const fullLore = [
+    '<group_lore>',
+    'Fatos:',
+    '- [running_gag] (Autor: Lucas): primeiro fato completo',
+    `- [epic_fail] (Autor: Jonas): ${'x'.repeat(900)} fim-do-ultimo-fato`,
+    '</group_lore>',
+  ].join('\n');
+  h.personaIdentityService.refresh({ scopeKey: scope, groupLoreSummary: 'lore antiga' });
+  const withLore = createPersonaContextService({
+    threadContextService: h.threadContextService,
+    memoryRetrievalService: h.memoryRetrievalService,
+    personaIdentityService: h.personaIdentityService,
+    groupMemoryService: { buildPersonaLoreContext: () => fullLore },
+  });
+
+  const pack = withLore.build({ scopeKey: scope, text: 'bot oi', occurredAt: 1_000 });
+
+  assert.equal(pack.groupIdentity.groupLoreSummary, fullLore);
+  assert.match(pack.groupIdentity.groupLoreSummary, /fim-do-ultimo-fato/);
+  assert.ok(!pack.groupIdentity.groupLoreSummary.includes('lore antiga'));
+});
+
 test('style do grupo é maioria da janela, não última mensagem', () => {
   const service = createSocialMemoryService();
   for (let i = 0; i < 4; i++) {
