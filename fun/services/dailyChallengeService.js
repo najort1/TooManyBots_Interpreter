@@ -694,7 +694,7 @@ export function createDailyChallengeService(deps = {}) {
       const pick = pickNonRepeating(
         scopeKey,
         'riddle',
-        RIDDLES.map((r, i) => ({ ...r, key: String(i) + ':' + normalizeAnswer((r.answers || [])[0] || '') })),
+        RIDDLES.map((r) => ({ ...r, key: normalizeAnswer(r.riddle) })),
         memoryLimit
       );
       if (!pick) return null;

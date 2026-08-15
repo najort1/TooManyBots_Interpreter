@@ -631,6 +631,28 @@ test('dailyChallenge service: launch riddle usa fallback quando Zen falha', asyn
   assert.ok(messages.some((m) => /DESAFIO DO DIA — ENIGMA/i.test(m)));
 });
 
+test('dailyChallenge service: fallback de enigma não repete conteúdo já registrado', async () => {
+  const { service, repository } = createServiceHarness({
+    generateZen: async () => 'sem-json-valido',
+    random: () => 0,
+  });
+  const scope = uniqueGroup();
+  const firstRiddle = 'O que e, o que e? Quanto mais se tira, maior fica?';
+  repository.recordContent(scope, 'riddle', firstRiddle);
+
+  const out = await service.launchChallenge({
+    scopeKey: scope,
+    type: 'riddle',
+    now: Date.now(),
+    sendText: async () => {},
+    sendImage: null,
+    sharp: null,
+  });
+
+  assert.equal(out.ok, true);
+  assert.notEqual(repository.getActiveChallenge(scope).challengeData.riddle, firstRiddle);
+});
+
 test('dailyChallenge service: launch pokemon usa fetch + sharp + responde por imagem', async () => {
   const prevFetch = global.fetch;
   try {
