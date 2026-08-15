@@ -16,7 +16,7 @@ function sendJson(res, status, body) {
     'Content-Length': Buffer.byteLength(payload),
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, X-House-Token',
   });
   res.end(payload);
 }
@@ -77,6 +77,13 @@ export function startFunDashboardServer(deps = {}) {
     jobService = null,
     stockService = null,
     marketRepository = null,
+    houseRepository = null,
+    houseService = null,
+    houseLinkService = null,
+    avatarService = null,
+    visitService = null,
+    giftService = null,
+    robberyService = null,
   } = funModule._services;
 
   /** Normaliza scope do path/query: aceita JID completo ou só o número do grupo. */
@@ -101,6 +108,31 @@ export function startFunDashboardServer(deps = {}) {
     if (!jids.length) return true; // dev local sem whitelist
     return jids.includes(scopeKey);
   }
+
+  function houseServicesAvailable() {
+    return Boolean(houseService && houseLinkService && avatarService && visitService && giftService && robberyService);
+  }
+
+  async function resolveHouseToken(token) {
+    return houseLinkService?.resolve?.(String(token || '').trim()) || null;
+  }
+
+  function publicHouseItem(item) {
+    return {
+      id: item.id,
+      itemId: item.itemId,
+      x: item.x,
+      y: item.y,
+      rotated: item.rotated,
+      placed: item.placed,
+      stolen: item.stolen,
+    };
+  }
+
+  function publicAvatar(state) {
+    return { slots: state?.slots || {}, level: Number(state?.level) || 1 };
+  }
+
 
   const config = getConfig();
   const host = String(config.dashboardHost || '127.0.0.1');
@@ -135,7 +167,7 @@ export function startFunDashboardServer(deps = {}) {
         res.writeHead(204, {
           'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
+          'Access-Control-Allow-Headers': 'Content-Type, X-House-Token',
         });
         res.end();
         return;
@@ -173,6 +205,163 @@ export function startFunDashboardServer(deps = {}) {
           ts: Date.now(),
           llm,
         });
+        return;
+      }
+
+      if (path.startsWith('/api/fun/houses/')) {
+        if (!houseServicesAvailable()) {
+          sendJson(res, 503, { error: 'houses-indisponivel' });
+          return;
+        }
+        const match = path.match(/^\/api\/fun\/houses\/([^/]+)(?:\/(.*))?$/);
+        const targetToken = match?.[1] ? decodeURIComponent(match[1]) : '';
+        const action = String(match?.[2] || '');
+        const target = await resolveHouseToken(targetToken);
+        if (!target) {
+          sendJson(res, 404, { error: 'casa-nao-encontrada' });
+          return;
+        }
+        const cfg = getConfig();
+        const owns = true;
+        const neighborMatch = action.match(/^neighbors\/([^/]+)(?:\/(visit|gifts|rob))?$/);
+
+        if (neighborMatch) {
+          const neighbor = houseRepository?.getHouseByPublicId?.(target.scopeKey, decodeURIComponent(neighborMatch[1]));
+          if (!neighbor || neighbor.userJid === target.userJid) {
+            sendJson(res, 404, { error: 'vizinho-nao-encontrado' });
+            return;
+          }
+          if (req.method === 'GET' && !neighborMatch[2]) {
+            const current = houseService.getHouse({ scopeKey: target.scopeKey, userJid: neighbor.userJid });
+            const avatar = avatarService.get({ scopeKey: target.scopeKey, userJid: neighbor.userJid });
+            const mural = visitService.mural({ scopeKey: target.scopeKey, ownerJid: neighbor.userJid }).visits.map((visit) => ({ note: visit.note, createdAt: visit.createdAt }));
+            sendJson(res, 200, { owns: false, house: current.house, items: current.items.filter((item) => item.placed).map(publicHouseItem), avatar: publicAvatar(avatar), host: { nickname: getContactDisplayName(neighbor.userJid) || 'Morador' }, mural });
+            return;
+          }
+          const authToken = String(req.headers['x-house-token'] || '').trim();
+          const actor = authToken ? await resolveHouseToken(authToken) : null;
+          if (!actor) { sendJson(res, 401, { error: 'house-token-required' }); return; }
+          if (actor.scopeKey !== target.scopeKey || actor.userJid !== target.userJid) { sendJson(res, 403, { error: 'fora-do-bairro' }); return; }
+          const body = await readBody(req);
+          if (req.method === 'POST' && neighborMatch[2] === 'visit') {
+            const result = visitService.visit({ scopeKey: target.scopeKey, ownerJid: neighbor.userJid, visitorJid: actor.userJid, note: body.note, funConfig: cfg });
+            sendJson(res, result.ok ? 200 : 409, result.ok ? { ok: true, visit: { note: result.visit.note, createdAt: result.visit.createdAt } } : { error: result.reason });
+            return;
+          }
+          if (req.method === 'POST' && neighborMatch[2] === 'gifts') {
+            const result = giftService.give({ scopeKey: target.scopeKey, giverJid: actor.userJid, recipientJid: neighbor.userJid, itemInstanceId: body.itemId, coins: body.coins, funConfig: cfg });
+            sendJson(res, result.ok ? 200 : 409, result.ok ? { ok: true, gift: { coins: result.gift.coins, itemId: result.gift.itemInstanceId } } : { error: result.reason });
+            return;
+          }
+          if (req.method === 'POST' && neighborMatch[2] === 'rob') {
+            const result = robberyService.rob({ scopeKey: target.scopeKey, robberJid: actor.userJid, ownerJid: neighbor.userJid, funConfig: cfg });
+            sendJson(res, result.ok ? 200 : 409, result.ok ? { ok: true, result: result.result, item: result.item ? publicHouseItem(result.item) : null, fine: result.fine || 0, wantedDelta: result.wantedDelta || 0 } : { error: result.reason, result: result.result });
+            return;
+          }
+          sendJson(res, 404, { error: 'neighbor-route-not-found' });
+          return;
+        }
+
+        if (req.method === 'GET' && !action) {
+          const current = houseService.getHouse({ scopeKey: target.scopeKey, userJid: target.userJid });
+          const avatar = avatarService.get({ scopeKey: target.scopeKey, userJid: target.userJid });
+          const mural = visitService.mural({ scopeKey: target.scopeKey, ownerJid: target.userJid }).visits.map((visit) => ({ note: visit.note, createdAt: visit.createdAt }));
+          if (owns) {
+            const coins = repository.getUserStats(target.userJid, target.scopeKey)?.coins || 0;
+            const gifts = houseRepository?.listGiftsReceived?.(target.scopeKey, target.userJid) || [];
+            sendJson(res, 200, { owns: true, house: current.house, items: current.items.map(publicHouseItem), avatar: publicAvatar(avatar), cleanliness: current.house.cleanliness, security: current.house.securityLevel, coins, mural, gifts });
+          } else {
+            sendJson(res, 200, { owns: false, house: current.house, items: current.items.filter((item) => item.placed).map(publicHouseItem), avatar: publicAvatar(avatar), host: { nickname: getContactDisplayName(target.userJid) || 'Morador' }, mural });
+          }
+          return;
+        }
+
+        if (req.method === 'GET' && action === 'neighborhood') {
+          const houses = (houseRepository?.listHouses?.(target.scopeKey) || []).filter((house) => house.userJid !== target.userJid).map((house) => ({ id: house.publicId, nickname: getContactDisplayName(house.userJid) || 'Morador', cleanliness: house.cleanliness, securityLevel: house.securityLevel }));
+          sendJson(res, 200, { houses });
+          return;
+        }
+
+        if (req.method === 'GET' && action === 'shop') {
+          if (!owns) { sendJson(res, 403, { error: 'house-token-required' }); return; }
+          sendJson(res, 200, { shop: houseService.listCatalog(), coins: repository.getUserStats(target.userJid, target.scopeKey)?.coins || 0 });
+          return;
+        }
+        if (req.method === 'GET' && action === 'avatar') {
+          if (!owns) { sendJson(res, 403, { error: 'house-token-required' }); return; }
+          sendJson(res, 200, avatarService.get({ scopeKey: target.scopeKey, userJid: target.userJid }));
+          return;
+        }
+        if (req.method === 'GET' && action === 'visits') {
+          if (!owns) { sendJson(res, 403, { error: 'house-token-required' }); return; }
+          const visits = visitService.mural({ scopeKey: target.scopeKey, ownerJid: target.userJid }).visits.map((visit) => ({ id: visit.id, note: visit.note, createdAt: visit.createdAt, nickname: getContactDisplayName(visit.visitorJid) || 'Visitante' }));
+          sendJson(res, 200, { visits });
+          return;
+        }
+
+        const authToken = String(req.headers['x-house-token'] || '').trim();
+        const actor = authToken ? await resolveHouseToken(authToken) : null;
+        if (!actor) { sendJson(res, 401, { error: 'house-token-required' }); return; }
+        if (actor.scopeKey !== target.scopeKey) { sendJson(res, 403, { error: 'fora-do-bairro' }); return; }
+        const body = await readBody(req);
+        if (req.method === 'POST' && action === 'collect') {
+          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
+          const result = houseService.collect({ scopeKey: target.scopeKey, userJid: target.userJid, funConfig: cfg });
+          sendJson(res, result.ok ? 200 : 409, result.ok ? { ok: true, coins: result.coins, reason: result.reason } : { error: result.reason, nextAt: result.nextAt });
+          return;
+        }
+        if (req.method === 'PUT' && action === 'items/move') {
+          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
+          const result = houseService.move({ scopeKey: target.scopeKey, userJid: target.userJid, itemInstanceId: body.itemId, x: body.x, y: body.y, rotated: body.rotated });
+          sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, item: publicHouseItem(result.item) } : { error: result.reason });
+          return;
+        }
+        if (req.method === 'POST' && action === 'items/place') {
+          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
+          const result = houseService.place({ scopeKey: target.scopeKey, userJid: target.userJid, itemId: body.itemId, x: body.x, y: body.y, funConfig: cfg });
+          sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, item: publicHouseItem(result.item), coins: result.coins } : { error: result.reason, need: result.need, coins: result.coins });
+          return;
+        }
+        if (req.method === 'POST' && action === 'items/sell') {
+          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
+          const result = houseService.sell({ scopeKey: target.scopeKey, userJid: target.userJid, itemInstanceId: body.itemId });
+          sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, coins: result.coins } : { error: result.reason });
+          return;
+        }
+        if (req.method === 'POST' && action === 'security') {
+          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
+          const result = houseService.upgradeSecurity({ scopeKey: target.scopeKey, userJid: target.userJid, funConfig: cfg });
+          sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, house: result.house, coins: result.coins } : { error: result.reason, need: result.need, coins: result.coins });
+          return;
+        }
+        if (req.method === 'PUT' && action === 'avatar') {
+          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
+          const result = avatarService.equip({ scopeKey: target.scopeKey, userJid: target.userJid, itemId: body.itemId, funConfig: cfg });
+          sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, avatar: publicAvatar(result.state) } : { error: result.reason });
+          return;
+        }
+        if (req.method === 'POST' && action === 'avatar/shop') {
+          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
+          const result = avatarService.buy({ scopeKey: target.scopeKey, userJid: target.userJid, itemId: body.itemId, funConfig: cfg });
+          sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, avatar: publicAvatar(result.state), coins: result.coins } : { error: result.reason, need: result.need, coins: result.coins });
+          return;
+        }
+        if (req.method === 'POST' && action === 'visit') {
+          const result = visitService.visit({ scopeKey: target.scopeKey, ownerJid: target.userJid, visitorJid: actor.userJid, note: body.note, funConfig: cfg });
+          sendJson(res, result.ok ? 200 : 409, result.ok ? { ok: true, visit: { note: result.visit.note, createdAt: result.visit.createdAt } } : { error: result.reason });
+          return;
+        }
+        if (req.method === 'POST' && action === 'gifts') {
+          const result = giftService.give({ scopeKey: target.scopeKey, giverJid: actor.userJid, recipientJid: target.userJid, itemInstanceId: body.itemId, coins: body.coins, funConfig: cfg });
+          sendJson(res, result.ok ? 200 : 409, result.ok ? { ok: true, gift: { coins: result.gift.coins, itemId: result.gift.itemInstanceId } } : { error: result.reason });
+          return;
+        }
+        if (req.method === 'POST' && action === 'rob') {
+          const result = robberyService.rob({ scopeKey: target.scopeKey, robberJid: actor.userJid, ownerJid: target.userJid, funConfig: cfg });
+          sendJson(res, result.ok ? 200 : 409, result.ok ? { ok: true, result: result.result, item: result.item ? publicHouseItem(result.item) : null, fine: result.fine || 0, wantedDelta: result.wantedDelta || 0 } : { error: result.reason, result: result.result });
+          return;
+        }
+        sendJson(res, 404, { error: 'house-route-not-found' });
         return;
       }
 
