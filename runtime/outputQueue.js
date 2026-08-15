@@ -52,6 +52,7 @@ export function createOutputQueue({
       globalConcurrency: normGlobal,
       jidGapMs: normGap,
       maxCoalesceDelayMs: normCoalesce,
+      maxQueueSize: normMaxQ,
       queued: queuedCount,
       running: runningCount,
       activeKeys: buckets.size,
@@ -111,24 +112,27 @@ export function createOutputQueue({
           counters.failed += 1;
         } finally {
           runningCount -= 1;
+          bucket.active = false;
 
           if (bucket.items.length > 0) {
-            if (!readyKeySet.has(key)) {
-              readyKeySet.add(key);
-              readyKeys.push(key);
+            const queueNextForJid = () => {
+              if (!bucket.active && bucket.items.length > 0 && !readyKeySet.has(key)) {
+                readyKeySet.add(key);
+                readyKeys.push(key);
+                scheduleDrain();
+              }
+            };
+            const gap = gapForPriority(item.priority);
+            if (gap > 0) {
+              setTimeout(queueNextForJid, gap);
+            } else {
+              queueNextForJid();
             }
-            bucket.active = false;
           } else {
-            bucket.active = false;
             buckets.delete(key);
           }
 
-          const gap = gapForPriority(item.priority);
-          if (gap > 0 && runningCount < normGlobal) {
-            setTimeout(() => scheduleDrain(), gap);
-          } else {
-            scheduleDrain();
-          }
+          scheduleDrain();
           notifyIdle();
         }
       })();
@@ -144,7 +148,7 @@ export function createOutputQueue({
     }
   }
 
-  function enqueue({ jid, send, priority = 'reply', coalesceKey = '' }) {
+  function enqueue({ jid, send, priority = 'reply', coalesceKey = '', onCoalesced = null }) {
     const normalizedJid = String(jid ?? '').trim();
     if (!normalizedJid) return { accepted: false, reason: 'no-jid' };
     if (typeof send !== 'function') return { accepted: false, reason: 'no-send' };
@@ -155,7 +159,13 @@ export function createOutputQueue({
     }
 
     const prio = mapPriority(priority);
-    const item = { queuedAt: Date.now(), send, priority: prio, coalesceKey: String(coalesceKey || '') };
+    const item = {
+      queuedAt: Date.now(),
+      send,
+      priority: prio,
+      coalesceKey: String(coalesceKey || ''),
+      onCoalesced: typeof onCoalesced === 'function' ? onCoalesced : null,
+    };
 
     let bucket = buckets.get(normalizedJid);
     if (!bucket) {
@@ -167,8 +177,10 @@ export function createOutputQueue({
       const last = bucket.items[bucket.items.length - 1];
       if (last.coalesceKey === item.coalesceKey && last.priority === prio) {
         counters.coalesced += 1;
+        try { last.onCoalesced?.(); } catch { }
         last.send = send;
         last.queuedAt = Date.now();
+        last.onCoalesced = item.onCoalesced;
         return { accepted: true, coalesced: true };
       }
     }

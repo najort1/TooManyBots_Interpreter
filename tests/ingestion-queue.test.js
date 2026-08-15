@@ -829,3 +829,64 @@ test('serializationKey lock held even when task ignores abort signal', async () 
   assert.ok(timeline.indexOf('t1-end') < timeline.indexOf('t2-run'),
     `Esperado t1-end antes de t2-run, timeline=${JSON.stringify(timeline)}`);
 });
+
+test('output queue applies the gap only to the same jid', async () => {
+  const queue = createOutputQueue({
+    globalConcurrency: 2,
+    jidGapMs: 100,
+    maxCoalesceDelayMs: 0,
+  });
+  const sentAt = new Map();
+
+  queue.enqueue({
+    jid: 'group-a@g.us',
+    priority: 'reply',
+    send: async () => { sentAt.set('a1', Date.now()); },
+  });
+  queue.enqueue({
+    jid: 'group-a@g.us',
+    priority: 'reply',
+    send: async () => { sentAt.set('a2', Date.now()); },
+  });
+  queue.enqueue({
+    jid: 'group-b@g.us',
+    priority: 'reply',
+    send: async () => { sentAt.set('b1', Date.now()); },
+  });
+
+  await queue.onIdle();
+
+  assert.ok(sentAt.get('a2') - sentAt.get('a1') >= 95);
+  assert.ok(sentAt.get('b1') - sentAt.get('a1') < 80);
+  assert.equal(queue.getSnapshot().sent, 3);
+});
+
+test('output queue resolves the replaced coalesced item', async () => {
+  const queue = createOutputQueue({
+    globalConcurrency: 1,
+    jidGapMs: 0,
+    maxCoalesceDelayMs: 40,
+  });
+  let replaced = 0;
+  const sent = [];
+
+  queue.enqueue({
+    jid: 'group@g.us',
+    priority: 'flavor',
+    coalesceKey: 'world',
+    onCoalesced: () => { replaced += 1; },
+    send: async () => { sent.push('first'); },
+  });
+  queue.enqueue({
+    jid: 'group@g.us',
+    priority: 'flavor',
+    coalesceKey: 'world',
+    send: async () => { sent.push('latest'); },
+  });
+
+  await queue.onIdle();
+
+  assert.equal(replaced, 1);
+  assert.deepEqual(sent, ['latest']);
+  assert.equal(queue.getSnapshot().coalesced, 1);
+});

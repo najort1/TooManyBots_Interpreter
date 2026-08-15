@@ -22,6 +22,9 @@ import { createFactionService } from '../fun/services/factionService.js';
 import { createCasinoService } from '../fun/services/casinoService.js';
 import { createXpService } from '../fun/services/xpService.js';
 import { ACTION_TYPE } from '../fun/constants.js';
+import { createCommandQueueManager } from '../runtime/commandQueue.js';
+import { createOutputQueue } from '../runtime/outputQueue.js';
+import { resolveCommandQueueRouting } from '../fun/commandQueueRouting.js';
 
 await initDb();
 _resetDefaultFunStatsRepository();
@@ -37,6 +40,10 @@ function uniqueGroup() {
 function makeUsers(n, prefix = '5511') {
   const base = Date.now();
   return Array.from({ length: n }, (_, i) => `${prefix}${String(base).slice(-5)}${String(i).padStart(3, '0')}@s.whatsapp.net`);
+}
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 function sumCoins(repo, users, scope) {
@@ -788,4 +795,73 @@ test('invariante: escrow bet nunca deixa pot no limbo em accept com saldo ok', (
   assert.equal(after, before);
   // one has +25 net relative to peer: pot 50 distributed to winner
   assert.ok(r.winnerCoins >= 80);
+});
+
+test('stress queue: 120 users receive every routed LLM reply without drops', async () => {
+  const chatJid = uniqueGroup();
+  const users = makeUsers(120, '5588');
+  const commandQueue = createCommandQueueManager({
+    maxConcurrency: 20,
+    fastConcurrency: 8,
+    stateConcurrency: 4,
+    heavyConcurrency: 8,
+    maxQueueSize: 1000,
+    warnThreshold: 500,
+    fastTaskTimeoutMs: 0,
+    stateTaskTimeoutMs: 0,
+    heavyTaskTimeoutMs: 0,
+    fastMaxDurationMs: 0,
+    stateMaxDurationMs: 0,
+    heavyMaxDurationMs: 0,
+  });
+  const outputQueue = createOutputQueue({
+    globalConcurrency: 8,
+    jidGapMs: 25,
+    maxCoalesceDelayMs: 0,
+    maxQueueSize: 1000,
+  });
+  const acceptedAt = new Map();
+  const latencies = [];
+  const delivered = new Set();
+  const accepted = [];
+
+  for (const userJid of users) {
+    const routing = resolveCommandQueueRouting({ chatJid, actorJid: userJid, commandText: '/tarot carga' });
+    acceptedAt.set(userJid, Date.now());
+    accepted.push(commandQueue.enqueue({
+      ...routing,
+      commandText: '/tarot carga',
+      handler: async () => {
+        await sleep(4);
+        const output = outputQueue.enqueue({
+          jid: userJid,
+          priority: 'reply',
+          send: async () => {
+            await sleep(2);
+            delivered.add(userJid);
+            latencies.push(Date.now() - acceptedAt.get(userJid));
+          },
+        });
+        assert.equal(output.accepted, true, 'output queue rejected a reply');
+      },
+    }).accepted);
+  }
+
+  await commandQueue.onIdle();
+  await outputQueue.onIdle();
+
+  const commandSnapshot = commandQueue.getSnapshot();
+  const outputSnapshot = outputQueue.getSnapshot();
+  latencies.sort((a, b) => a - b);
+  const p95LatencyMs = latencies[Math.floor((latencies.length - 1) * 0.95)];
+
+  assert.ok(accepted.every(Boolean), 'all incoming commands must be accepted');
+  assert.equal(commandSnapshot.totalRejected, 0);
+  assert.equal(commandSnapshot.totalFailed, 0);
+  assert.equal(commandSnapshot.totalCompleted, users.length);
+  assert.equal(outputSnapshot.rejected, 0);
+  assert.equal(outputSnapshot.failed, 0);
+  assert.equal(outputSnapshot.sent, users.length);
+  assert.equal(delivered.size, users.length, 'every simulated user must receive a reply');
+  assert.ok(p95LatencyMs < 1_500, 'p95 response latency should stay below 1.5s');
 });

@@ -26,70 +26,47 @@ let _outputQueueInstance = null;
 
 export function setOutputQueue(q) { _outputQueueInstance = q; }
 
+function enqueueFunOutput(jid, options, send) {
+  const opts = options && typeof options === 'object' ? { ...options } : {};
+  if (!_outputQueueInstance) return send();
+
+  return new Promise((resolve) => {
+    const result = _outputQueueInstance.enqueue({
+      jid,
+      priority: opts.priority || 'reply',
+      coalesceKey: opts.coalesceKey || '',
+      onCoalesced: () => resolve({ skipped: true, reason: 'output-coalesced' }),
+      send: async () => {
+        try {
+          const sent = await send();
+          resolve(sent);
+        } catch (error) {
+          const failure = { skipped: true, reason: String(error?.message || error) };
+          resolve(failure);
+          throw error;
+        }
+      },
+    });
+
+    if (!result.accepted) {
+      resolve({ skipped: true, reason: result.reason || 'output-queue-rejected' });
+    }
+  });
+}
+
 async function sendTextMessage(sock, jid, text, options = {}) {
   const opts = options && typeof options === 'object' ? { ...options } : {};
-  if (_outputQueueInstance) {
-    return new Promise((resolve) => {
-      _outputQueueInstance.enqueue({
-        jid,
-        priority: opts.priority || 'reply',
-        coalesceKey: opts.coalesceKey || '',
-        send: async () => {
-          try {
-            const result = await sendTextMessageOriginal(sock, jid, text, { ...opts, skipGuard: true });
-            resolve(result);
-          } catch (err) {
-            resolve({ skipped: true, reason: String(err?.message || err) });
-          }
-        },
-      });
-    });
-  }
-  return sendTextMessageOriginal(sock, jid, text, { ...opts, skipGuard: true });
+  return enqueueFunOutput(jid, opts, () => sendTextMessageOriginal(sock, jid, text, { ...opts, skipGuard: true }));
 }
 
 async function sendImageMessage(sock, jid, payload, options = {}) {
   const opts = options && typeof options === 'object' ? { ...options } : {};
-  if (_outputQueueInstance) {
-    return new Promise((resolve) => {
-      _outputQueueInstance.enqueue({
-        jid,
-        priority: opts.priority || 'reply',
-        coalesceKey: opts.coalesceKey || '',
-        send: async () => {
-          try {
-            const result = await sendImageMessageOriginal(sock, jid, payload, { ...opts, skipGuard: true });
-            resolve(result);
-          } catch (err) {
-            resolve({ skipped: true, reason: String(err?.message || err) });
-          }
-        },
-      });
-    });
-  }
-  return sendImageMessageOriginal(sock, jid, payload, { ...opts, skipGuard: true });
+  return enqueueFunOutput(jid, opts, () => sendImageMessageOriginal(sock, jid, payload, { ...opts, skipGuard: true }));
 }
 
 async function sendStickerMessage(sock, jid, buffer, options = {}) {
   const opts = options && typeof options === 'object' ? { ...options } : {};
-  if (_outputQueueInstance) {
-    return new Promise((resolve) => {
-      _outputQueueInstance.enqueue({
-        jid,
-        priority: opts.priority || 'reply',
-        coalesceKey: opts.coalesceKey || '',
-        send: async () => {
-          try {
-            const result = await sendStickerMessageOriginal(sock, jid, buffer, { ...opts, skipGuard: true });
-            resolve(result);
-          } catch (err) {
-            resolve({ skipped: true, reason: String(err?.message || err) });
-          }
-        },
-      });
-    });
-  }
-  return sendStickerMessageOriginal(sock, jid, buffer, { ...opts, skipGuard: true });
+  return enqueueFunOutput(jid, opts, () => sendStickerMessageOriginal(sock, jid, buffer, { ...opts, skipGuard: true }));
 }
 import { resolveIncomingActorJid } from '../runtime/contactUtils.js';
 import { createInstanceLock } from '../runtime/instanceLock.js';
@@ -322,12 +299,12 @@ export async function startFunBot(options = {}) {
   let currentSocket = null;
 
   const commandQueue = createCommandQueueManager({
-    maxConcurrency: Number(config.commandMaxConcurrency ?? 8),
-    fastConcurrency: Number(config.commandFastConcurrency ?? 4),
-    stateConcurrency: Number(config.commandStateConcurrency ?? 2),
-    heavyConcurrency: Number(config.commandHeavyConcurrency ?? 4),
-    maxQueueSize: Number(config.commandQueueMax ?? 5000),
-    warnThreshold: Number(config.commandQueueWarnThreshold ?? 1000),
+    maxConcurrency: Number(config.commandMaxConcurrency ?? 20),
+    fastConcurrency: Number(config.commandFastConcurrency ?? 8),
+    stateConcurrency: Number(config.commandStateConcurrency ?? 4),
+    heavyConcurrency: Number(config.commandHeavyConcurrency ?? 8),
+    maxQueueSize: Number(config.commandQueueMax ?? 20000),
+    warnThreshold: Number(config.commandQueueWarnThreshold ?? 2000),
     // Handlers podem aguardar geração de IA e não consomem AbortSignal; a
     // capacidade máxima da fila é o backpressure, não timeout silencioso.
     fastTaskTimeoutMs: 0,
@@ -339,10 +316,10 @@ export async function startFunBot(options = {}) {
   });
 
   const outputQueue = createOutputQueue({
-    globalConcurrency: Number(config.outputConcurrency ?? 4),
-    jidGapMs: Number(config.outputJidGapMs ?? 600),
-    maxCoalesceDelayMs: Number(config.outputCoalesceDelayMs ?? 2000),
-    maxQueueSize: Number(config.outputQueueMax ?? 2000),
+    globalConcurrency: Number(config.outputConcurrency ?? 8),
+    jidGapMs: Number(config.outputJidGapMs ?? 250),
+    maxCoalesceDelayMs: Number(config.outputCoalesceDelayMs ?? 1000),
+    maxQueueSize: Number(config.outputQueueMax ?? 10000),
   });
   setOutputQueue(outputQueue);
 
@@ -908,8 +885,21 @@ export async function startFunBot(options = {}) {
           },
         });
 
-        if (!enqResult.accepted && config.debugMode) {
-          console.warn('[fun] Mensagem rejeitada pela fila:', enqResult.reason, enqResult.queueClass);
+        if (!enqResult.accepted) {
+          auditBus.emit({
+            category: 'queue',
+            level: 'error',
+            kind: 'command-rejected',
+            scope: qJid || null,
+            ok: false,
+            detail: {
+              reason: enqResult.reason || 'unknown',
+              queueClass: enqResult.queueClass || 'unknown',
+            },
+          });
+          if (config.debugMode) {
+            console.warn('[fun] Mensagem rejeitada pela fila:', enqResult.reason, enqResult.queueClass);
+          }
         }
       }
     });
