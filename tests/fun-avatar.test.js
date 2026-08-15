@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { initDb } from '../db/index.js';
+import { getDb } from '../db/context.js';
+import { createFunStatsRepository } from '../fun/db/funStatsRepository.js';
+import { createFunAvatarRepository } from '../fun/db/funAvatarRepository.js';
+import { createAvatarService } from '../fun/services/avatarService.js';
+await initDb();
+const unique = (prefix) => prefix + Date.now() + Math.floor(Math.random() * 1e6);
+test('avatar: equipar por nível e comprar premium com ledger', () => { const repository = createFunStatsRepository({ getDatabase: getDb }); const avatarRepository = createFunAvatarRepository({ getDatabase: getDb }); const service = createAvatarService({ repository, avatarRepository }); const scope = unique('120363') + '@g.us'; const user = unique('5513') + '@s.whatsapp.net'; repository.addCoins({ userJid: user, scopeKey: scope, amount: 1000, reason: 'seed' }); const bought = service.buy({ scopeKey: scope, userJid: user, itemId: 'oculos_pixel', funConfig: { avatarEnabled: true } }); assert.equal(bought.ok, true); assert.equal(service.equip({ scopeKey: scope, userJid: user, itemId: 'oculos_pixel', funConfig: { avatarEnabled: true } }).ok, true); assert.equal(service.get({ scopeKey: scope, userJid: user }).slots.hair_face, 'oculos_pixel'); });
