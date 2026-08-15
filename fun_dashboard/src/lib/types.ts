@@ -306,3 +306,40 @@ export type BolsaEvent = {
 };
 
 export type BolsaRange = "1d" | "7d" | "30d" | "90d" | "all";
+
+
+export type HouseItem = {
+  id: string;
+  itemId: string;
+  x: number;
+  y: number;
+  rotated: boolean;
+  placed: boolean;
+  stolen: boolean;
+};
+
+export type NeighborhoodHouse = {
+  id: string;
+  nickname: string;
+  cleanliness: number;
+  securityLevel: number;
+};
+
+export type HouseView = {
+  owns: boolean;
+  house: { cleanliness: number; securityLevel: number; houseType: string };
+  items: HouseItem[];
+  avatar: { slots: Record<string, string>; level: number };
+  cleanliness?: number;
+  security?: number;
+  coins?: number;
+  host?: { nickname: string };
+  mural: Array<{ id?: string; note: string; createdAt: number; nickname?: string }>;
+};
+
+export type AvatarState = {
+  slots: Record<string, string>;
+  unlocked: string[];
+  level: number;
+  catalog: Array<{ id: string; name: string; emoji: string; slot: string; unlockLevel: number; cost: number; category: string; owned: boolean }>;
+};

@@ -1,0 +1,3 @@
+"use client";
+import { useState } from "react";
+export function GiftPanel({ onGift }: { onGift: (coins: number) => Promise<void> }) { const [coins, setCoins] = useState(50); return <section className="rounded-2xl border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900"><h2 className="font-semibold">🎁 Presentear</h2><div className="mt-3 flex gap-2"><input type="number" min="1" value={coins} onChange={(event) => setCoins(Number(event.target.value))} className="w-24 rounded-lg border border-zinc-300 bg-transparent px-2 py-1"/><button type="button" onClick={() => void onGift(coins)} className="rounded-lg bg-violet-600 px-3 py-1 text-sm font-medium text-white">Enviar coins</button></div></section>; }

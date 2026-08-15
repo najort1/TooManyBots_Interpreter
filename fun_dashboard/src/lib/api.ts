@@ -14,6 +14,9 @@ import type {
   GroupSettings,
   Overview,
   RankEntry,
+  HouseView,
+  AvatarState,
+  NeighborhoodHouse,
 } from "./types";
 
 /**
@@ -174,4 +177,25 @@ export const funApi = {
       readOnly?: boolean;
     }>(`/api/fun/bolsa/events?${q.toString()}`);
   },
+
+  houses: {
+    get: (token: string) => request<HouseView>(`/api/fun/houses/${encodeURIComponent(token)}`),
+    collect: (token: string) => request<{ ok: boolean; coins: number }>(`/api/fun/houses/${encodeURIComponent(token)}/collect`, { method: "POST", headers: { "x-house-token": token } }),
+    place: (token: string, body: { itemId: string; x: number; y: number }) => request<{ ok: boolean; coins: number }>(`/api/fun/houses/${encodeURIComponent(token)}/items/place`, { method: "POST", headers: { "x-house-token": token }, body: JSON.stringify(body) }),
+    move: (token: string, body: { itemId: string; x: number; y: number; rotated?: boolean }) => request<{ ok: boolean }>(`/api/fun/houses/${encodeURIComponent(token)}/items/move`, { method: "PUT", headers: { "x-house-token": token }, body: JSON.stringify(body) }),
+    sell: (token: string, itemId: string) => request<{ ok: boolean; coins: number }>(`/api/fun/houses/${encodeURIComponent(token)}/items/sell`, { method: "POST", headers: { "x-house-token": token }, body: JSON.stringify({ itemId }) }),
+    neighborhood: (token: string) => request<{ houses: NeighborhoodHouse[] }>('/api/fun/houses/' + encodeURIComponent(token) + '/neighborhood'),
+    neighbor: (token: string, houseId: string) => request<HouseView>(`/api/fun/houses/${encodeURIComponent(token)}/neighbors/${encodeURIComponent(houseId)}`),
+    shop: (token: string) => request<{ shop: Array<{ id: string; name: string; emoji: string; cost: number }>; coins: number }>(`/api/fun/houses/${encodeURIComponent(token)}/shop`),
+    avatar: (token: string) => request<AvatarState>(`/api/fun/houses/${encodeURIComponent(token)}/avatar`),
+    equipAvatar: (token: string, itemId: string) => request<{ ok: boolean }>(`/api/fun/houses/${encodeURIComponent(token)}/avatar`, { method: "PUT", headers: { "x-house-token": token }, body: JSON.stringify({ itemId }) }),
+    buyAvatar: (token: string, itemId: string) => request<{ ok: boolean; coins: number }>(`/api/fun/houses/${encodeURIComponent(token)}/avatar/shop`, { method: "POST", headers: { "x-house-token": token }, body: JSON.stringify({ itemId }) }),
+    visit: (token: string, note: string) => request<{ ok: boolean }>(`/api/fun/houses/${encodeURIComponent(token)}/visit`, { method: "POST", headers: { "x-house-token": token }, body: JSON.stringify({ note }) }),
+    giftCoins: (token: string, coins: number) => request<{ ok: boolean }>(`/api/fun/houses/${encodeURIComponent(token)}/gifts`, { method: "POST", headers: { "x-house-token": token }, body: JSON.stringify({ coins }) }),
+    rob: (token: string) => request<{ ok: boolean; result: string; fine?: number }>(`/api/fun/houses/${encodeURIComponent(token)}/rob`, { method: "POST", headers: { "x-house-token": token } }),
+    visitNeighbor: (token: string, houseId: string, note: string) => request<{ ok: boolean }>(`/api/fun/houses/${encodeURIComponent(token)}/neighbors/${encodeURIComponent(houseId)}/visit`, { method: "POST", headers: { "x-house-token": token }, body: JSON.stringify({ note }) }),
+    giftNeighbor: (token: string, houseId: string, coins: number) => request<{ ok: boolean }>(`/api/fun/houses/${encodeURIComponent(token)}/neighbors/${encodeURIComponent(houseId)}/gifts`, { method: "POST", headers: { "x-house-token": token }, body: JSON.stringify({ coins }) }),
+    robNeighbor: (token: string, houseId: string) => request<{ ok: boolean; result: string; fine?: number }>(`/api/fun/houses/${encodeURIComponent(token)}/neighbors/${encodeURIComponent(houseId)}/rob`, { method: "POST", headers: { "x-house-token": token } }),
+    upgradeSecurity: (token: string) => request<{ ok: boolean; coins: number }>(`/api/fun/houses/${encodeURIComponent(token)}/security`, { method: "POST", headers: { "x-house-token": token } }),
+  }
 };

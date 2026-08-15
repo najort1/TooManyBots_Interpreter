@@ -70,7 +70,8 @@ function unauthorized(isApi: boolean, reason: string) {
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
-  if (!isProtectedPath(pathname)) {
+  const publicHouseRoute = pathname === "/casas" || pathname.startsWith("/casas/") || pathname === "/api/fun/houses" || pathname.startsWith("/api/fun/houses/");
+  if (!isProtectedPath(pathname) && !publicHouseRoute) {
     return NextResponse.next();
   }
 
@@ -97,6 +98,13 @@ export function middleware(req: NextRequest) {
       status: 429,
       headers: { ...headers, "Content-Type": "text/plain; charset=utf-8" },
     });
+  }
+
+  if (publicHouseRoute) {
+    const res = NextResponse.next();
+    res.headers.set("X-RateLimit-Limit", String(rl.limit));
+    res.headers.set("X-RateLimit-Remaining", String(rl.remaining));
+    return res;
   }
 
   const key = extractApiKey(req);
@@ -148,6 +156,7 @@ export const config = {
     "/casino/:path*",
     "/bolsa",
     "/bolsa/:path*",
+    "/casas/:path*",
     "/groups/:path*",
     "/settings/:path*",
     "/selfheal/:path*",

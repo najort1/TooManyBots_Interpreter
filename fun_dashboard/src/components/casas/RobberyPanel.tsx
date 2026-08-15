@@ -1,0 +1,2 @@
+"use client";
+export function RobberyPanel({ onRob }: { onRob: () => Promise<void> }) { return <section className="rounded-2xl border border-rose-200 bg-rose-50 p-4 dark:border-rose-900 dark:bg-rose-950/30"><h2 className="font-semibold">🕵️ Roubo</h2><p className="mt-1 text-sm text-rose-800 dark:text-rose-200">Pode falhar e gerar multa.</p><button type="button" onClick={() => void onRob()} className="mt-3 rounded-lg bg-rose-700 px-3 py-1.5 text-sm font-medium text-white">Tentar roubo</button></section>; }

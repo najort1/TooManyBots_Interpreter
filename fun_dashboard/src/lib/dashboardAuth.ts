@@ -22,10 +22,16 @@ export function isProtectedPath(pathname: string): boolean {
   if (pathname === "/bolsa" || pathname.startsWith("/bolsa/")) {
     return false;
   }
+  if (pathname === "/casas" || pathname.startsWith("/casas/")) {
+    return false;
+  }
   if (
     pathname === "/api/fun/bolsa" ||
     pathname.startsWith("/api/fun/bolsa/")
   ) {
+    return false;
+  }
+  if (pathname === "/api/fun/houses" || pathname.startsWith("/api/fun/houses/")) {
     return false;
   }
   // job mini-games

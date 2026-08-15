@@ -1,5 +1,1036 @@
 @import "tailwindcss";
 
+.casas-world-page,
+.avatar-page {
+  --casas-ink: #171020;
+  --casas-panel: rgba(42, 27, 61, 0.82);
+  --casas-line: rgba(227, 202, 255, 0.16);
+  --casas-lilac: #ba8dff;
+  --casas-gold: #ffe18b;
+  --casas-positive: #66e7ac;
+  min-height: 100svh;
+  color: #fff9ff;
+}
+
+.casas-world-page {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: clamp(0.75rem, 2vw, 1.5rem);
+  padding-bottom: 2rem;
+  background:
+    radial-gradient(circle at 15% 8%, rgba(176, 114, 255, 0.2), transparent 23rem),
+    radial-gradient(circle at 88% 5%, rgba(255, 205, 112, 0.11), transparent 18rem),
+    var(--casas-ink);
+}
+
+.casas-topbar,
+.avatar-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  max-width: 1180px;
+  margin: 0 auto 0.85rem;
+}
+
+.casas-kicker {
+  margin: 0;
+  color: var(--casas-gold);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.63rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+}
+
+.casas-topbar h1 {
+  margin: 0.15rem 0 0;
+  font-size: clamp(1.25rem, 2.8vw, 1.7rem);
+  letter-spacing: -0.035em;
+}
+
+.casas-topbar-actions,
+.casas-desktop-nav,
+.casas-mobile-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.casas-coin-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid rgba(255, 225, 139, 0.32);
+  border-radius: 999px;
+  background: rgba(96, 66, 35, 0.34);
+  color: #fff0b6;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.82rem;
+  font-weight: 700;
+  padding: 0.55rem 0.8rem;
+}
+
+.casas-nav-button {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-width: 3.6rem;
+  gap: 0.08rem;
+  border: 1px solid transparent;
+  border-radius: 0.85rem;
+  color: #d8c9ed;
+  font-size: 0.63rem;
+  line-height: 1.1;
+  padding: 0.42rem 0.55rem;
+  text-decoration: none;
+  transition: 160ms ease;
+}
+
+.casas-nav-button > span:first-child {
+  font-size: 1.1rem;
+}
+
+.casas-nav-button:hover,
+.casas-nav-button-active {
+  border-color: var(--casas-line);
+  background: rgba(188, 141, 255, 0.14);
+  color: #fff7ff;
+}
+
+.casas-toast {
+  width: min(1180px, 100%);
+  margin: 0 auto 0.65rem;
+  border: 1px solid rgba(114, 235, 172, 0.28);
+  border-radius: 0.85rem;
+  background: rgba(20, 86, 60, 0.52);
+  color: #d9ffeb;
+  font-size: 0.82rem;
+  padding: 0.7rem 0.9rem;
+  animation: casas-toast-in 0.32s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+}
+
+@keyframes casas-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.casas-toast-error {
+  border-color: rgba(255, 140, 155, 0.32);
+  background: rgba(112, 33, 55, 0.62);
+  color: #ffe2e7;
+}
+
+.casas-game-shell {
+  position: relative;
+  width: min(100%, 1080px);
+  margin: 0 auto;
+  overflow: hidden;
+  border: 1px solid var(--casas-line);
+  border-radius: clamp(1rem, 2vw, 1.5rem);
+  background: #20142f;
+  box-shadow: 0 30px 70px rgba(6, 3, 13, 0.52), inset 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.house-game-canvas {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.house-game-canvas canvas {
+  image-rendering: pixelated;
+}
+
+.casas-stage-status,
+.casas-stage-hint {
+  position: absolute;
+  z-index: 2;
+  border: 1px solid rgba(255, 247, 214, 0.16);
+  background: rgba(31, 17, 49, 0.78);
+  box-shadow: 0 10px 20px rgba(10, 5, 19, 0.3);
+  backdrop-filter: blur(10px);
+}
+
+.casas-stage-status {
+  display: flex;
+  gap: 0.9rem;
+  left: 1rem;
+  bottom: 1rem;
+  border-radius: 0.9rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.casas-hud-stat {
+  min-width: 7.2rem;
+}
+
+.casas-hud-bar {
+  display: block;
+  overflow: hidden;
+  margin-top: 0.28rem;
+  border: 1px solid rgba(255, 247, 214, 0.22);
+  border-radius: 999px;
+  background: rgba(12, 6, 22, 0.65);
+  height: 0.42rem;
+}
+
+.casas-hud-bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #66e7ac, #9df0c3);
+  box-shadow: 0 0 10px rgba(102, 231, 172, 0.55);
+  transition: width 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.casas-hud-pips {
+  display: flex;
+  gap: 0.22rem;
+  margin-top: 0.3rem;
+}
+
+.casas-hud-pips i {
+  width: 0.85rem;
+  height: 0.42rem;
+  border-radius: 999px;
+  background: rgba(12, 6, 22, 0.65);
+  border: 1px solid rgba(255, 247, 214, 0.22);
+  transition: 0.25s ease;
+}
+
+.casas-hud-pips i.on {
+  background: linear-gradient(90deg, #7cc8ff, #b3e1ff);
+  border-color: rgba(124, 200, 255, 0.7);
+  box-shadow: 0 0 8px rgba(124, 200, 255, 0.5);
+}
+
+.casas-stage-status span {
+  display: grid;
+  gap: 0.06rem;
+}
+
+.casas-stage-status b {
+  font-size: 0.77rem;
+}
+
+.casas-stage-status small {
+  color: #c8b7dc;
+  font-size: 0.59rem;
+}
+
+.casas-stage-hint {
+  right: 1rem;
+  bottom: 1rem;
+  border-radius: 999px;
+  color: #f7e7bb;
+  font-size: 0.7rem;
+  padding: 0.5rem 0.75rem;
+}
+
+.casas-game-dock {
+  display: grid;
+  grid-template-columns: minmax(11rem, 1.8fr) repeat(3, minmax(5.5rem, 1fr));
+  gap: 0.5rem;
+  width: min(100%, 1080px);
+  margin: 0.75rem auto 0;
+}
+
+.casas-primary-action,
+.casas-dock-action,
+.casas-small-button,
+.casas-close-button {
+  border: 1px solid var(--casas-line);
+  color: #fff8ff;
+  cursor: pointer;
+  transition: 160ms ease;
+}
+
+.casas-primary-action,
+.casas-dock-action {
+  min-height: 4.25rem;
+  border-radius: 1rem;
+}
+
+.casas-primary-action {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  border-color: rgba(105, 238, 177, 0.35);
+  background: linear-gradient(135deg, #4fd391, #66e7ac);
+  color: #113626;
+  padding: 0.65rem 0.9rem;
+  text-align: left;
+}
+
+.casas-primary-action::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 34%;
+  background: linear-gradient(105deg, transparent, rgba(255, 255, 255, 0.5), transparent);
+  transform: skewX(-18deg);
+  animation: casas-shine 3.4s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes casas-shine {
+  0%, 55% { left: -45%; }
+  85%, 100% { left: 125%; }
+}
+
+.casas-primary-action:not(:disabled):hover {
+  filter: brightness(1.06);
+}
+
+.casas-primary-action:not(:disabled):active,
+.casas-dock-action:not(:disabled):active,
+.casas-small-button:not(:disabled):active,
+.casas-close-button:not(:disabled):active,
+.casas-nav-button:not(:disabled):active,
+.casas-shop-item:not(:disabled):active {
+  transform: scale(0.955);
+}
+
+.casas-primary-action > span:first-child {
+  font-size: 1.5rem;
+}
+
+.casas-primary-action span:last-child {
+  display: grid;
+  gap: 0.1rem;
+}
+
+.casas-primary-action small {
+  color: #245b41;
+  font-size: 0.65rem;
+}
+
+.casas-dock-action {
+  display: grid;
+  place-items: center;
+  gap: 0.15rem;
+  background: var(--casas-panel);
+  font-size: 0.72rem;
+}
+
+.casas-dock-action > span:first-child {
+  font-size: 1.08rem;
+}
+
+.casas-dock-action:hover,
+.casas-small-button:hover,
+.casas-close-button:hover {
+  border-color: rgba(219, 184, 255, 0.5);
+  background: rgba(186, 141, 255, 0.18);
+}
+
+.casas-dock-danger {
+  color: #ffc9d3;
+}
+
+.casas-context-panel {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  width: min(100%, 820px);
+  margin: 0.85rem auto 0;
+  border: 1px solid var(--casas-line);
+  border-radius: 1.15rem;
+  background: var(--casas-panel);
+  padding: 1rem 1.1rem;
+}
+
+.casas-context-panel h2,
+.casas-sheet h2 {
+  margin: 0.2rem 0;
+  font-size: 1.05rem;
+}
+
+.casas-context-panel p {
+  margin: 0.3rem 0 0;
+  color: #cdbddd;
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.casas-context-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 2.7rem;
+  height: 2.7rem;
+  border-radius: 0.9rem;
+  background: rgba(186, 141, 255, 0.16);
+  font-size: 1.35rem;
+}
+
+.casas-field,
+.casas-coin-input {
+  border: 1px solid rgba(223, 198, 250, 0.2);
+  border-radius: 0.75rem;
+  outline: none;
+  background: #1d132c;
+  color: #fff7ff;
+  font-size: 0.82rem;
+  padding: 0.66rem 0.75rem;
+}
+
+.casas-field:focus,
+.casas-coin-input:focus {
+  border-color: rgba(201, 161, 255, 0.72);
+}
+
+.casas-coin-input {
+  width: 6.8rem;
+}
+
+.casas-small-button,
+.casas-close-button {
+  border-radius: 0.75rem;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.65rem 0.8rem;
+}
+
+.casas-gift-button {
+  color: #fff0b5;
+}
+
+.casas-rob-button {
+  color: #ffc9d2;
+}
+
+.casas-sheet-backdrop {
+  position: fixed;
+  z-index: 50;
+  inset: 0;
+  display: grid;
+  place-items: end center;
+  padding: 1rem;
+  background: rgba(8, 4, 15, 0.7);
+  backdrop-filter: blur(8px);
+  animation: casas-backdrop-in 0.22s ease;
+}
+
+@keyframes casas-backdrop-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.casas-sheet {
+  width: min(100%, 690px);
+  max-height: min(78svh, 720px);
+  overflow: auto;
+  border: 1px solid rgba(232, 210, 255, 0.2);
+  border-radius: 1.5rem 1.5rem 1rem 1rem;
+  background: linear-gradient(145deg, #33214d, #1d142d);
+  box-shadow: 0 -25px 70px rgba(0, 0, 0, 0.32);
+  padding: 1rem;
+  animation: casas-sheet-up 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.12);
+}
+
+@keyframes casas-sheet-up {
+  from {
+    opacity: 0;
+    transform: translateY(48px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.casas-sheet-handle {
+  width: 3rem;
+  height: 0.28rem;
+  margin: 0 auto 0.85rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.casas-visit-entry {
+  display: flex;
+  gap: 0.75rem;
+  border: 1px solid rgba(229, 207, 249, 0.12);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 0.75rem;
+  animation: casas-entry-in 0.3s ease backwards;
+}
+
+.casas-visit-entry:nth-child(1) { animation-delay: 0.03s; }
+.casas-visit-entry:nth-child(2) { animation-delay: 0.08s; }
+.casas-visit-entry:nth-child(3) { animation-delay: 0.13s; }
+.casas-visit-entry:nth-child(4) { animation-delay: 0.18s; }
+.casas-visit-entry:nth-child(n + 5) { animation-delay: 0.23s; }
+
+@keyframes casas-entry-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.casas-visit-entry > span {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.75rem;
+  background: rgba(186, 141, 255, 0.13);
+}
+
+.casas-visit-entry b,
+.casas-visit-entry p {
+  margin: 0;
+  font-size: 0.8rem;
+}
+
+.casas-visit-entry small {
+  display: block;
+  margin-top: 0.14rem;
+  color: #9d8bb4;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.6rem;
+  letter-spacing: 0.06em;
+}
+
+.casas-visit-entry p,
+.casas-empty-state {
+  color: #cdbddd;
+  font-size: 0.78rem;
+}
+
+.casas-shop-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.6rem;
+  margin-top: 1rem;
+}
+
+.casas-shop-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  border: 1px solid rgba(229, 207, 249, 0.12);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff8ff;
+  padding: 0.7rem;
+  text-align: left;
+  transition: 160ms ease;
+}
+
+.casas-shop-item:hover {
+  transform: translateY(-2px);
+  border-color: rgba(255, 226, 136, 0.45);
+  background: rgba(255, 225, 139, 0.1);
+}
+
+.casas-shop-item span:nth-child(2) {
+  display: grid;
+  gap: 0.12rem;
+  min-width: 0;
+}
+
+.casas-shop-item b,
+.casas-shop-item strong {
+  font-size: 0.76rem;
+}
+
+.casas-shop-item small {
+  color: #cdbddd;
+  font-size: 0.64rem;
+}
+
+.casas-shop-item strong {
+  margin-left: auto;
+  color: #fff0b4;
+}
+
+.casas-shop-emoji {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.8rem;
+  background: rgba(186, 141, 255, 0.15);
+  font-size: 1.25rem;
+  transition: transform 0.18s ease;
+}
+
+.casas-shop-item:not(:disabled):hover .casas-shop-emoji {
+  transform: scale(1.12) rotate(-4deg);
+}
+
+.casas-shop-locked {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.casas-shop-locked:hover {
+  transform: none;
+  border-color: rgba(229, 207, 249, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.casas-loading {
+  position: relative;
+  animation: casas-loading-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes casas-loading-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.25); }
+}
+
+.casas-loading-card {
+  display: grid;
+  justify-items: center;
+  gap: 0.7rem;
+  color: #dec9f5;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.82rem;
+}
+
+.casas-loading-house {
+  font-size: 2.6rem;
+  animation: casas-loading-bob 1.2s ease-in-out infinite;
+}
+
+@keyframes casas-loading-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.casas-loading-bar {
+  overflow: hidden;
+  width: 11rem;
+  height: 0.4rem;
+  border-radius: 999px;
+  background: rgba(186, 141, 255, 0.18);
+}
+
+.casas-loading-bar > span {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #ba8dff, #ffe18b);
+  animation: casas-loading-slide 1.1s ease-in-out infinite;
+}
+
+@keyframes casas-loading-slide {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(280%); }
+}
+
+.casas-error-card {
+  display: grid;
+  justify-items: center;
+  gap: 0.3rem;
+  max-width: 22rem;
+}
+
+.casas-error-icon {
+  font-size: 2.6rem;
+  animation: casas-loading-bob 2.4s ease-in-out infinite;
+}
+
+.casas-error-card h1 {
+  margin: 0.2rem 0 0;
+  font-size: 1.25rem;
+}
+
+.casas-mobile-nav {
+  display: none;
+}
+
+.avatar-page {
+  padding: clamp(0.85rem, 2.5vw, 2rem);
+  background:
+    radial-gradient(circle at 20% 10%, rgba(194, 139, 255, 0.22), transparent 24rem),
+    radial-gradient(circle at 87% 15%, rgba(255, 214, 117, 0.12), transparent 20rem),
+    #171020;
+}
+
+.avatar-back {
+  color: #dec4ff;
+  font-size: 0.82rem;
+  text-decoration: none;
+}
+
+.avatar-back:hover {
+  color: #fff3c8;
+}
+
+.avatar-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(20rem, 1.1fr);
+  gap: 1rem;
+  width: min(100%, 1100px);
+  margin: 0 auto;
+}
+
+.avatar-stage,
+.avatar-wardrobe {
+  border: 1px solid var(--casas-line);
+  border-radius: 1.5rem;
+  background: var(--casas-panel);
+  box-shadow: 0 22px 55px rgba(6, 3, 13, 0.35);
+}
+
+.avatar-stage {
+  position: relative;
+  display: grid;
+  min-height: 620px;
+  overflow: hidden;
+  grid-template-rows: auto 1fr;
+  padding: 1.25rem;
+}
+
+.avatar-stage::after {
+  position: absolute;
+  right: -7rem;
+  bottom: -7rem;
+  width: 16rem;
+  height: 16rem;
+  border: 2px solid rgba(255, 231, 150, 0.16);
+  border-radius: 50%;
+  content: "";
+}
+
+.avatar-stage-copy {
+  position: relative;
+  z-index: 1;
+  max-width: 23rem;
+}
+
+.avatar-stage h1 {
+  margin: 0.25rem 0 0;
+  font-size: clamp(1.8rem, 4vw, 3rem);
+  letter-spacing: -0.055em;
+  line-height: 0.96;
+}
+
+.avatar-stage-copy p:last-child {
+  color: #cdbddd;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+
+.avatar-mirror {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 330px;
+}
+
+.avatar-mirror-glow {
+  position: absolute;
+  width: min(84%, 330px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(252, 213, 131, 0.32), rgba(177, 111, 255, 0.19) 45%, transparent 70%);
+  filter: blur(4px);
+}
+
+.avatar-mirror-frame {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  width: min(77%, 300px);
+  aspect-ratio: 0.78;
+  border: 5px solid #f4ddab;
+  border-radius: 48% 48% 15% 15%;
+  background: linear-gradient(145deg, #615185, #2a1c43 68%);
+  box-shadow: inset 0 0 0 6px #34244f, 0 18px 40px rgba(10, 5, 20, 0.32);
+}
+
+.avatar-mirror-frame::after {
+  content: "";
+  position: absolute;
+  top: -20%;
+  bottom: -20%;
+  left: -35%;
+  width: 26%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.14), transparent);
+  transform: skewX(-16deg);
+  animation: casas-mirror-shine 4.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes casas-mirror-shine {
+  0%, 60% { left: -40%; }
+  90%, 100% { left: 130%; }
+}
+
+.avatar-figure {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 75%;
+  height: 77%;
+}
+
+.avatar-figure-art {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+  animation: casas-float 3.4s ease-in-out infinite;
+}
+
+@keyframes casas-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-7px); }
+}
+
+.avatar-figure svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+  filter: drop-shadow(0 10px 18px rgba(10, 5, 20, 0.4));
+}
+
+.avatar-figure > span {
+  position: absolute;
+  bottom: 0.5rem;
+  border-radius: 999px;
+  background: #241634;
+  color: #fff6d8;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.63rem;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  padding: 0.35rem 0.55rem;
+}
+
+.avatar-stage-spark {
+  position: absolute;
+  color: #ffe58d;
+  font-size: 1.6rem;
+  animation: casas-twinkle 2.6s ease-in-out infinite;
+}
+
+@keyframes casas-twinkle {
+  0%, 100% { opacity: 0.25; transform: scale(0.7) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1.15) rotate(18deg); }
+}
+
+.avatar-stage-spark-one { right: 14%; top: 43%; animation-delay: 0s; }
+.avatar-stage-spark-two { left: 12%; bottom: 12%; color: #c79dff; animation-delay: 1.3s; }
+
+.avatar-wardrobe {
+  padding: 1.25rem;
+}
+
+.avatar-wardrobe-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.avatar-wardrobe-heading h2 {
+  margin: 0.2rem 0;
+  font-size: 1.35rem;
+}
+
+.avatar-wardrobe-heading p {
+  margin: 0;
+  color: #cdbddd;
+  font-size: 0.8rem;
+}
+
+.avatar-count {
+  display: grid;
+  place-items: center;
+  align-self: start;
+  min-width: 2.8rem;
+  height: 2.2rem;
+  border-radius: 0.7rem;
+  background: rgba(255, 225, 139, 0.13);
+  color: #ffe7a2;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 0.75rem;
+}
+
+.avatar-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.35rem;
+  margin-top: 1.2rem;
+  padding: 0.32rem;
+  border-radius: 0.9rem;
+  background: #1d132b;
+}
+
+.avatar-tab {
+  display: grid;
+  place-items: center;
+  gap: 0.1rem;
+  border: 0;
+  border-radius: 0.65rem;
+  background: transparent;
+  color: #c9b6df;
+  font-size: 0.68rem;
+  padding: 0.55rem 0.3rem;
+}
+
+.avatar-tab > span:first-child { font-size: 1.05rem; }
+
+.avatar-tab-active {
+  background: rgba(186, 141, 255, 0.2);
+  color: #fff7ff;
+}
+
+.avatar-items {
+  display: grid;
+  gap: 0.55rem;
+  margin-top: 1rem;
+}
+
+.avatar-items > * {
+  animation: casas-item-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.15) backwards;
+}
+
+.avatar-items > *:nth-child(1) { animation-delay: 0.02s; }
+.avatar-items > *:nth-child(2) { animation-delay: 0.06s; }
+.avatar-items > *:nth-child(3) { animation-delay: 0.1s; }
+.avatar-items > *:nth-child(4) { animation-delay: 0.14s; }
+.avatar-items > *:nth-child(n + 5) { animation-delay: 0.18s; }
+
+@keyframes casas-item-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.avatar-item {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  border: 1px solid rgba(229, 207, 249, 0.12);
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.045);
+  color: #fff8ff;
+  padding: 0.62rem;
+  text-align: left;
+  transition: 160ms ease;
+}
+
+.avatar-item:not(:disabled):hover {
+  transform: translateX(3px);
+  border-color: rgba(213, 177, 255, 0.46);
+  background: rgba(186, 141, 255, 0.12);
+}
+
+.avatar-item-equipped {
+  border-color: rgba(113, 234, 175, 0.4);
+  background: rgba(96, 222, 157, 0.1);
+  animation: casas-equipped-pulse 2.4s ease-in-out infinite;
+}
+
+@keyframes casas-equipped-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(113, 234, 175, 0); }
+  50% { box-shadow: 0 0 0 4px rgba(113, 234, 175, 0.14); }
+}
+
+.avatar-item-locked { opacity: 0.55; }
+
+.avatar-item-emoji {
+  display: grid;
+  flex: 0 0 auto;
+  place-items: center;
+  width: 2.6rem;
+  height: 2.6rem;
+  border-radius: 0.8rem;
+  background: rgba(255, 225, 139, 0.11);
+  font-size: 1.25rem;
+}
+
+.avatar-item b,
+.avatar-item small {
+  display: block;
+}
+
+.avatar-item b { font-size: 0.8rem; }
+.avatar-item small { margin-top: 0.12rem; color: #cdbddd; font-size: 0.66rem; }
+
+.avatar-item-state {
+  margin-left: auto;
+  color: #fbe9a5;
+  font-size: 0.69rem;
+  font-weight: 800;
+}
+
+@media (max-width: 760px) {
+  .casas-world-page { padding: 0.85rem 0.65rem 5.6rem; }
+  .casas-topbar { padding: 0 0.25rem; }
+  .casas-desktop-nav { display: none; }
+  .casas-game-shell { border-radius: 1.05rem; }
+  .casas-stage-status { left: 0.6rem; bottom: 0.6rem; gap: 0.5rem; padding: 0.4rem 0.55rem; }
+  .casas-stage-hint { display: none; }
+  .casas-game-dock { grid-template-columns: 1fr repeat(3, minmax(3.5rem, 0.58fr)); gap: 0.4rem; }
+  .casas-primary-action { min-height: 3.75rem; padding: 0.45rem 0.55rem; }
+  .casas-primary-action small { display: none; }
+  .casas-dock-action { min-height: 3.75rem; font-size: 0.62rem; }
+  .casas-mobile-nav { position: fixed; z-index: 30; right: 0.8rem; bottom: 0.75rem; left: 0.8rem; display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid rgba(231, 211, 255, 0.18); border-radius: 1rem; background: rgba(34, 20, 51, 0.92); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.38); backdrop-filter: blur(16px); padding: 0.3rem; }
+  .casas-mobile-nav .casas-nav-button { min-width: 0; }
+  .casas-context-panel { margin-top: 0.65rem; }
+  .casas-shop-grid { grid-template-columns: 1fr; }
+  .avatar-page { padding: 0.85rem 0.65rem; }
+  .avatar-layout { grid-template-columns: 1fr; }
+  .avatar-stage { min-height: 440px; padding: 1rem; }
+  .avatar-mirror { min-height: 250px; }
+  .avatar-mirror-frame { width: min(64%, 260px); }
+}
+
+@media (orientation: landscape) and (max-height: 720px) {
+  .casas-world-page { max-width: none; min-height: 100svh; padding: 0; }
+  .casas-topbar { position: fixed; z-index: 31; top: 0.4rem; right: 0.7rem; left: 0.7rem; margin: 0; pointer-events: none; }
+  .casas-topbar h1 { display: none; }
+  .casas-topbar-actions { margin-left: auto; pointer-events: auto; }
+  .casas-topbar > div:first-child { pointer-events: none; }
+  .casas-game-shell { width: min(100%, calc(100svh * 1.333)); margin: 0 auto; border-radius: 0; }
+  .house-game-canvas { height: 100svh; width: 100%; }
+  .casas-game-dock { position: fixed; z-index: 32; bottom: 0.45rem; left: 50%; grid-template-columns: minmax(9rem, 1.55fr) repeat(3, minmax(4rem, 0.6fr)); width: min(30rem, calc(100vw - 1rem)); margin: 0; transform: translateX(-50%); }
+  .casas-primary-action,
+  .casas-dock-action { min-height: 3rem; }
+  .casas-primary-action small { display: none; }
+  .casas-stage-status { bottom: 4.2rem; left: 0.65rem; }
+  .casas-stage-hint { display: none; }
+  .casas-context-panel { position: fixed; z-index: 32; right: 0.6rem; bottom: 0.45rem; left: 0.6rem; width: auto; margin: 0; padding: 0.7rem; }
+  .casas-context-panel h2,
+  .casas-context-panel p { display: none; }
+  .casas-visit-panel { display: none; }
+  .casas-mobile-nav { display: none; }
+}
+
 /* dark: via classe .dark no <html> (toggle) */
 @custom-variant dark (&:where(.dark, .dark *));
 
