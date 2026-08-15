@@ -328,3 +328,17 @@ Roadmap P1/P2 (alianças, guerra, tribunal…): [`docs/FUN-P1-P2-ROADMAP.md`](./
 ## Licença / monorepo
 
 Parte do repositório **TooManyBots_Interpreter**. Ver `CONTRIBUTING.md` e `Agents.md` na raiz para mapa geral e convenções de PR.
+
+
+## Casas e avatares
+
+`/casa` cria a casa padrão no escopo do grupo e, no DM, entrega um link pessoal para `/casas/{token}`. `/avatar` abre o editor do avatar no mesmo link. Em grupos, ambos os comandos apenas instruem a chamar o bot no privado.
+
+- A casa começa com sofá e planta, permite comprar, mover e vender decoração, limpar e coletar a recompensa diária.
+- Itens de avatar são liberados por nível ou comprados com coins; as compras e vendas sempre passam pelo ledger existente.
+- Visitas, presentes e roubos são isolados por `scope_key`. Item roubado recebe posse plena e pode ser vendido ou presenteado pelo novo dono.
+- Os links usam token aleatório de 24 bytes com hash `scrypt` e salt no banco. O token é enviado somente em DM; nunca entra em respostas da API.
+
+Configurações novas em `fun/config.user.json`: `housesEnabled`, `avatarEnabled`, `visitsEnabled`, `giftsEnabled`, `robberyEnabled`, `houseDailyCollectMax`, `houseMaxItems`, `houseSecurityMaxLevel`, `houseRobberyCooldownMs` e `houseRobberyDailyMax`.
+
+Tabelas: `fun_houses`, `fun_house_items`, `fun_house_visits`, `fun_house_gifts`, `fun_house_tokens`, `fun_avatar_state` e `fun_house_robberies`.
