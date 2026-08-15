@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '30';
+export const FUN_SCHEMA_VERSION = '31';
 
 export const PERSONA_MEMORY_TYPES = Object.freeze(['thread', 'episodic', 'semantic', 'social']);
 export const PERSONA_MEMORY_EVIDENCE = Object.freeze(['explicit', 'corroborated', 'inferred']);
@@ -85,6 +85,8 @@ export const FUN_COMMANDS = Object.freeze({
   // Negócios / propriedades
   PROPERTY: 'property',
   COLLECT: 'collect',
+  HOUSE: 'house',
+  AVATAR: 'avatar',
   // Conquistas
   ACHIEVEMENTS: 'achievements',
   // Bolsa de valores (ações das empresas)
@@ -411,6 +413,11 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   coletar: FUN_COMMANDS.COLLECT,
   collect: FUN_COMMANDS.COLLECT,
   sacar: FUN_COMMANDS.COLLECT,
+  casa: FUN_COMMANDS.HOUSE,
+  casas: FUN_COMMANDS.HOUSE,
+  house: FUN_COMMANDS.HOUSE,
+  avatar: FUN_COMMANDS.AVATAR,
+  boneco: FUN_COMMANDS.AVATAR,
   conquistas: FUN_COMMANDS.ACHIEVEMENTS,
   conquista: FUN_COMMANDS.ACHIEVEMENTS,
   achievements: FUN_COMMANDS.ACHIEVEMENTS,
@@ -866,6 +873,21 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   propertyMaxOwned: 2,
   propertyTickMs: 15 * 60_000,
   propertyMinHealthToEarn: 15,
+  // Casas e avatares — economia social por grupo.
+  housesEnabled: true,
+  avatarEnabled: true,
+  visitsEnabled: true,
+  giftsEnabled: true,
+  robberyEnabled: true,
+  houseDailyCollectMax: 1,
+  houseMaxItems: 24,
+  houseCellGrid: '6x8',
+  houseSecurityMaxLevel: 3,
+  houseRobberyCooldownMs: 6 * 60 * 60_000,
+  houseRobberyDailyMax: 2,
+  avatarShopRotationMs: 24 * 60 * 60_000,
+  houseVisitDailyMax: 5,
+  houseGiftDailyMax: 3,
   // Roast
   roastEnabled: true,
   roastCooldownMs: 60 * 60_000,
@@ -962,16 +984,16 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   /** Limite do histórico em anel (mín. 20, máx. 2000). */
   tuiMaxHistory: 200,
   // Filas de processamento (command queue + output queue)
-  commandMaxConcurrency: 8,
-  commandFastConcurrency: 4,
-  commandStateConcurrency: 2,
-  commandHeavyConcurrency: 4,
-  commandQueueMax: 5000,
-  commandQueueWarnThreshold: 1000,
-  outputConcurrency: 4,
-  outputJidGapMs: 600,
-  outputCoalesceDelayMs: 2000,
-  outputQueueMax: 2000,
+  commandMaxConcurrency: 20,
+  commandFastConcurrency: 8,
+  commandStateConcurrency: 4,
+  commandHeavyConcurrency: 8,
+  commandQueueMax: 20000,
+  commandQueueWarnThreshold: 2000,
+  outputConcurrency: 8,
+  outputJidGapMs: 250,
+  outputCoalesceDelayMs: 1000,
+  outputQueueMax: 10000,
   // Desafio Diário
   dailyChallengeEnabled: true,
   dailyChallengeStartHour: 8,

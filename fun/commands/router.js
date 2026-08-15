@@ -83,6 +83,8 @@ import {
   handlePropertyCommand,
   handleCollectCommand,
 } from './handlers/property.js';
+import { handleHouseCommand } from './handlers/house.js';
+import { handleAvatarCommand } from './handlers/avatar.js';
 import { handleAchievementsCommand } from './handlers/achievements.js';
 import { handleCartasCommand } from './handlers/cartas.js';
 import { handleQmpCommand } from './handlers/qmp.js';
@@ -176,6 +178,12 @@ export async function routeFunCommand(ctx) {
     chaosService,
     chaosEventService,
     propertyService,
+    houseService,
+    houseLinkService,
+    avatarService,
+    visitService,
+    giftService,
+    robberyService,
     roastService,
     newsService,
     achievementService,
@@ -256,6 +264,12 @@ export async function routeFunCommand(ctx) {
     chaosService,
     chaosEventService,
     propertyService,
+    houseService,
+    houseLinkService,
+    avatarService,
+    visitService,
+    giftService,
+    robberyService,
     roastService,
     newsService,
     achievementService,
@@ -434,6 +448,10 @@ export async function routeFunCommand(ctx) {
       return handlePropertyCommand(base);
     case FUN_COMMANDS.COLLECT:
       return handleCollectCommand(base);
+    case FUN_COMMANDS.HOUSE:
+      return handleHouseCommand(base);
+    case FUN_COMMANDS.AVATAR:
+      return handleAvatarCommand(base);
     case FUN_COMMANDS.ACHIEVEMENTS:
       return handleAchievementsCommand(base);
     case FUN_COMMANDS.CARTAS:

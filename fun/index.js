@@ -31,6 +31,8 @@ import { createStockService } from './services/stockService.js';
 import { createFunJobRepository } from './db/funJobRepository.js';
 import { createFunUserPrefsRepository } from './db/funUserPrefsRepository.js';
 import { createFunPropertyRepository } from './db/funPropertyRepository.js';
+import { createFunHouseRepository } from './db/funHouseRepository.js';
+import { createFunAvatarRepository } from './db/funAvatarRepository.js';
 import { createFunNewsRepository } from './db/funNewsRepository.js';
 import { createFunAchievementRepository } from './db/funAchievementRepository.js';
 import { createFunSnapshotRepository } from './db/funSnapshotRepository.js';
@@ -42,6 +44,13 @@ import { createReactionMediaService } from './services/reactionMediaService.js';
 import { createChaosService } from './services/chaosService.js';
 import { createChaosEventService } from './services/chaosEventService.js';
 import { createPropertyService } from './services/propertyService.js';
+import { createHouseService } from './services/houseService.js';
+import { createHouseLinkService } from './services/houseLinkService.js';
+import { createAvatarService } from './services/avatarService.js';
+import { createVisitService } from './services/visitService.js';
+import { createGiftService } from './services/giftService.js';
+import { createRobberyService } from './services/robberyService.js';
+import { createPoliceService } from './services/policeService.js';
 import { createRoastService } from './services/roastService.js';
 import { createNewsService } from './services/newsService.js';
 import { createChangelogService } from './services/changelogService.js';
@@ -155,6 +164,8 @@ export function createFunModule(deps = {}) {
     });
   const propertyRepository =
     deps.propertyRepository || createFunPropertyRepository({ getDatabase });
+  const houseRepository = deps.houseRepository || createFunHouseRepository({ getDatabase });
+  const avatarRepository = deps.avatarRepository || createFunAvatarRepository({ getDatabase });
   const newsRepository =
     deps.newsRepository || createFunNewsRepository({ getDatabase });
   const achievementRepository =
@@ -243,6 +254,13 @@ export function createFunModule(deps = {}) {
       repository,
       propertyRepository,
     });
+  const policeService = deps.policeService || createPoliceService({ getDatabase, repository, effectsRepository });
+  const houseService = deps.houseService || createHouseService({ repository, houseRepository });
+  const houseLinkService = deps.houseLinkService || createHouseLinkService({ houseRepository });
+  const avatarService = deps.avatarService || createAvatarService({ repository, avatarRepository });
+  const visitService = deps.visitService || createVisitService({ houseRepository });
+  const giftService = deps.giftService || createGiftService({ repository, houseRepository });
+  const robberyService = deps.robberyService || createRobberyService({ repository, houseRepository, policeService });
   const marketService =
     deps.marketService ||
     createMarketService({
@@ -528,6 +546,12 @@ export function createFunModule(deps = {}) {
       chaosService,
       chaosEventService,
         propertyService,
+        houseService,
+        houseLinkService,
+        avatarService,
+        visitService,
+        giftService,
+        robberyService,
         roastService,
         newsService,
         achievementService,
@@ -1247,6 +1271,15 @@ export function createFunModule(deps = {}) {
       marketRepository,
       stockService,
       propertyService,
+      houseRepository,
+      avatarRepository,
+      policeService,
+      houseService,
+      houseLinkService,
+      avatarService,
+      visitService,
+      giftService,
+      robberyService,
       roastService,
       newsService,
       snapshotRepository,

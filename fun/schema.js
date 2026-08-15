@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { FUN_SCHEMA_VERSION } from './constants.js';
 
 const ANALYTICS_SCHEMA = 'analytics';
@@ -947,6 +948,95 @@ export function buildFunSchemaSql() {
 
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_persona_social_hints_scope_participant
       ON fun_persona_social_hints(scope_key, participant_jid, updated_at DESC);
+
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_houses (
+      scope_key TEXT NOT NULL,
+      user_jid TEXT NOT NULL,
+      public_id TEXT NOT NULL DEFAULT '',
+      house_type TEXT NOT NULL DEFAULT 'casa_padrao',
+      cleanliness INTEGER NOT NULL DEFAULT 100,
+      security_level INTEGER NOT NULL DEFAULT 0,
+      last_collect_day TEXT NOT NULL DEFAULT '',
+      last_clean_day TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, user_jid)
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_house_items (
+      id TEXT PRIMARY KEY,
+      scope_key TEXT NOT NULL,
+      owner_jid TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      x INTEGER NOT NULL DEFAULT 0,
+      y INTEGER NOT NULL DEFAULT 0,
+      rotated INTEGER NOT NULL DEFAULT 0,
+      placed INTEGER NOT NULL DEFAULT 1,
+      stolen_flag INTEGER NOT NULL DEFAULT 0,
+      acquired_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_house_items_owner
+      ON fun_house_items(scope_key, owner_jid, placed, updated_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_house_visits (
+      id TEXT PRIMARY KEY,
+      scope_key TEXT NOT NULL,
+      owner_jid TEXT NOT NULL,
+      visitor_jid TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_house_visits_owner
+      ON fun_house_visits(scope_key, owner_jid, created_at DESC);
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_house_visits_visitor
+      ON fun_house_visits(scope_key, visitor_jid, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_house_gifts (
+      id TEXT PRIMARY KEY,
+      scope_key TEXT NOT NULL,
+      giver_jid TEXT NOT NULL,
+      recipient_jid TEXT NOT NULL,
+      item_instance_id TEXT NOT NULL DEFAULT '',
+      coins INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_house_gifts_giver
+      ON fun_house_gifts(scope_key, giver_jid, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_house_tokens (
+      id TEXT PRIMARY KEY,
+      scope_key TEXT NOT NULL,
+      user_jid TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      revoked_at INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_house_tokens_active
+      ON fun_house_tokens(revoked_at, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_avatar_state (
+      scope_key TEXT NOT NULL,
+      user_jid TEXT NOT NULL,
+      slots_json TEXT NOT NULL DEFAULT '{}',
+      unlocked_json TEXT NOT NULL DEFAULT '[]',
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, user_jid)
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_house_robberies (
+      id TEXT PRIMARY KEY,
+      scope_key TEXT NOT NULL,
+      robber_jid TEXT NOT NULL,
+      owner_jid TEXT NOT NULL,
+      item_instance_id TEXT NOT NULL DEFAULT '',
+      result TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_house_robberies_robber
+      ON fun_house_robberies(scope_key, robber_jid, created_at DESC);
   `;
 }
 
@@ -957,6 +1047,22 @@ export function ensureFunSchema(db) {
   if (!db) throw new Error('[fun/schema] Database handle required');
 
   db.exec(buildFunSchemaSql());
+
+  try {
+    const houseCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_houses)`).all();
+    const houseNames = new Set(houseCols.map((column) => String(column.name || '')));
+    if (houseNames.size && !houseNames.has('public_id')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_houses ADD COLUMN public_id TEXT NOT NULL DEFAULT ''`);
+    }
+    const housesWithoutPublicId = db.prepare(`SELECT scope_key, user_jid FROM ${ANALYTICS_SCHEMA}.fun_houses WHERE public_id = ''`).all();
+    const setPublicId = db.prepare(`UPDATE ${ANALYTICS_SCHEMA}.fun_houses SET public_id = ? WHERE scope_key = ? AND user_jid = ?`);
+    for (const house of housesWithoutPublicId) {
+      setPublicId.run(randomUUID(), String(house.scope_key), String(house.user_jid));
+    }
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_houses_public_id ON fun_houses(scope_key, public_id)`);
+  } catch {
+    // ignore
+  }
 
   // Migra colunas opcionais (instalacoes antigas)
   try {
