@@ -107,7 +107,7 @@
   color: #d9ffeb;
   font-size: 0.82rem;
   padding: 0.7rem 0.9rem;
-  animation: casas-toast-in 0.32s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+  animation: casas-toast-in 0.24s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes casas-toast-in {
@@ -146,7 +146,9 @@
 }
 
 .house-game-canvas canvas {
-  image-rendering: pixelated;
+  display: block;
+  image-rendering: auto;
+  touch-action: none;
 }
 
 .casas-stage-status,
@@ -439,7 +441,7 @@
   background: linear-gradient(145deg, #33214d, #1d142d);
   box-shadow: 0 -25px 70px rgba(0, 0, 0, 0.32);
   padding: 1rem;
-  animation: casas-sheet-up 0.34s cubic-bezier(0.2, 0.9, 0.3, 1.12);
+  animation: casas-sheet-up 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes casas-sheet-up {
@@ -525,6 +527,38 @@
   margin-top: 1rem;
 }
 
+.casas-shop-sheet {
+  width: min(100%, 790px);
+}
+
+.casas-shop-filters {
+  display: flex;
+  gap: 0.4rem;
+  overflow-x: auto;
+  margin-top: 1rem;
+  padding-bottom: 0.2rem;
+  scrollbar-width: thin;
+}
+
+.casas-shop-filters button {
+  flex: 0 0 auto;
+  border: 1px solid rgba(229, 207, 249, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.045);
+  color: #cdbddd;
+  padding: 0.46rem 0.75rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  transition: 160ms ease;
+}
+
+.casas-shop-filters button.active {
+  border-color: rgba(255, 224, 125, 0.55);
+  background: rgba(255, 216, 100, 0.14);
+  color: #fff0b4;
+  box-shadow: 0 0 18px rgba(255, 214, 91, 0.08);
+}
+
 .casas-shop-item {
   display: flex;
   align-items: center;
@@ -560,6 +594,16 @@
   font-size: 0.64rem;
 }
 
+.casas-shop-item em {
+  overflow: hidden;
+  color: #9e8caf;
+  font-size: 0.58rem;
+  font-style: normal;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .casas-shop-item strong {
   margin-left: auto;
   color: #fff0b4;
@@ -590,6 +634,19 @@
   transform: none;
   border-color: rgba(229, 207, 249, 0.12);
   background: rgba(255, 255, 255, 0.05);
+}
+
+.casas-shop-applied,
+.casas-shop-applied:hover {
+  border-color: rgba(114, 232, 165, 0.42);
+  background: rgba(88, 204, 140, 0.1);
+  cursor: default;
+  opacity: 1;
+  transform: none;
+}
+
+.casas-shop-applied .casas-shop-emoji {
+  box-shadow: inset 0 0 0 1px rgba(132, 240, 180, 0.38), 0 0 18px rgba(80, 219, 145, 0.12);
 }
 
 .casas-loading {
@@ -797,12 +854,12 @@
   place-items: center;
   width: 100%;
   height: 100%;
-  animation: casas-float 3.4s ease-in-out infinite;
+  animation: casas-float 4.6s ease-in-out infinite;
 }
 
 @keyframes casas-float {
   0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-7px); }
+  50% { transform: translateY(-4px); }
 }
 
 .avatar-figure svg {
@@ -829,12 +886,12 @@
   position: absolute;
   color: #ffe58d;
   font-size: 1.6rem;
-  animation: casas-twinkle 2.6s ease-in-out infinite;
+  animation: casas-twinkle 3.4s ease-in-out infinite;
 }
 
 @keyframes casas-twinkle {
-  0%, 100% { opacity: 0.25; transform: scale(0.7) rotate(0deg); }
-  50% { opacity: 1; transform: scale(1.15) rotate(18deg); }
+  0%, 100% { opacity: 0.35; transform: scale(0.82) rotate(0deg); }
+  50% { opacity: 0.9; transform: scale(1.06) rotate(10deg); }
 }
 
 .avatar-stage-spark-one { right: 14%; top: 43%; animation-delay: 0s; }
@@ -910,7 +967,7 @@
 }
 
 .avatar-items > * {
-  animation: casas-item-in 0.3s cubic-bezier(0.2, 0.9, 0.3, 1.15) backwards;
+  animation: casas-item-in 0.24s cubic-bezier(0.16, 1, 0.3, 1) backwards;
 }
 
 .avatar-items > *:nth-child(1) { animation-delay: 0.02s; }
@@ -957,7 +1014,7 @@
 
 @keyframes casas-equipped-pulse {
   0%, 100% { box-shadow: 0 0 0 0 rgba(113, 234, 175, 0); }
-  50% { box-shadow: 0 0 0 4px rgba(113, 234, 175, 0.14); }
+  50% { box-shadow: 0 0 0 2px rgba(113, 234, 175, 0.12); }
 }
 
 .avatar-item-locked { opacity: 0.55; }
