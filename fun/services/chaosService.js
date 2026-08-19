@@ -205,7 +205,7 @@ export function createChaosService({
     };
   }
 
-  function pullTrigger({ userJid, scopeKey, funConfig = {}, now = Date.now() }) {
+  function pullTrigger({ userJid, scopeKey, funConfig = {}, now = Date.now(), virtual = false }) {
     const o = opts(funConfig);
     const game = getRussian(scopeKey, funConfig, now);
     if (!game) {
@@ -223,7 +223,9 @@ export function createChaosService({
 
     if (dies) {
       russianGames.delete(String(scopeKey || ''));
-      if (effectsRepository?.setTimedEffect) {
+      // Ator virtual da persona participa da narrativa, mas nunca cria perfil,
+      // XP bloqueado ou qualquer dado persistente no grupo.
+      if (!virtual && effectsRepository?.setTimedEffect) {
         effectsRepository.setTimedEffect({
           userJid,
           scopeKey,
@@ -241,6 +243,7 @@ export function createChaosService({
         deathMs: o.deathMs,
         deathLabel: formatRetry(o.deathMs),
         pulls: game.pulls.length,
+        virtual: Boolean(virtual),
       };
     }
 
@@ -255,6 +258,7 @@ export function createChaosService({
       remaining: game.remaining,
       chambers: game.chambers,
       pulls: game.pulls.length,
+      virtual: Boolean(virtual),
     };
   }
 
