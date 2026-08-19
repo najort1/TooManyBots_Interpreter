@@ -955,6 +955,9 @@ export function buildFunSchemaSql() {
       user_jid TEXT NOT NULL,
       public_id TEXT NOT NULL DEFAULT '',
       house_type TEXT NOT NULL DEFAULT 'casa_padrao',
+      wall_style TEXT NOT NULL DEFAULT 'parede_beco',
+      floor_style TEXT NOT NULL DEFAULT 'piso_lilas',
+      window_style TEXT NOT NULL DEFAULT 'janela_classica',
       cleanliness INTEGER NOT NULL DEFAULT 100,
       security_level INTEGER NOT NULL DEFAULT 0,
       last_collect_day TEXT NOT NULL DEFAULT '',
@@ -972,6 +975,7 @@ export function buildFunSchemaSql() {
       x INTEGER NOT NULL DEFAULT 0,
       y INTEGER NOT NULL DEFAULT 0,
       rotated INTEGER NOT NULL DEFAULT 0,
+      rotation INTEGER NOT NULL DEFAULT 0,
       placed INTEGER NOT NULL DEFAULT 1,
       stolen_flag INTEGER NOT NULL DEFAULT 0,
       acquired_at INTEGER NOT NULL,
@@ -1054,12 +1058,28 @@ export function ensureFunSchema(db) {
     if (houseNames.size && !houseNames.has('public_id')) {
       db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_houses ADD COLUMN public_id TEXT NOT NULL DEFAULT ''`);
     }
+    if (houseNames.size && !houseNames.has('wall_style')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_houses ADD COLUMN wall_style TEXT NOT NULL DEFAULT 'parede_beco'`);
+    }
+    if (houseNames.size && !houseNames.has('floor_style')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_houses ADD COLUMN floor_style TEXT NOT NULL DEFAULT 'piso_lilas'`);
+    }
+    if (houseNames.size && !houseNames.has('window_style')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_houses ADD COLUMN window_style TEXT NOT NULL DEFAULT 'janela_classica'`);
+    }
     const housesWithoutPublicId = db.prepare(`SELECT scope_key, user_jid FROM ${ANALYTICS_SCHEMA}.fun_houses WHERE public_id = ''`).all();
     const setPublicId = db.prepare(`UPDATE ${ANALYTICS_SCHEMA}.fun_houses SET public_id = ? WHERE scope_key = ? AND user_jid = ?`);
     for (const house of housesWithoutPublicId) {
       setPublicId.run(randomUUID(), String(house.scope_key), String(house.user_jid));
     }
     db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_houses_public_id ON fun_houses(scope_key, public_id)`);
+
+    const itemCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_house_items)`).all();
+    const itemNames = new Set(itemCols.map((column) => String(column.name || '')));
+    if (itemNames.size && !itemNames.has('rotation')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_house_items ADD COLUMN rotation INTEGER NOT NULL DEFAULT 0`);
+    }
+    db.exec(`UPDATE ${ANALYTICS_SCHEMA}.fun_house_items SET rotation = 1 WHERE rotated = 1 AND rotation = 0`);
   } catch {
     // ignore
   }
