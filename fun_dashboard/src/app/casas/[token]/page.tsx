@@ -4,7 +4,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { funApi } from "@/lib/api";
-import type { HouseItem, HouseView, NeighborhoodHouse } from "@/lib/types";
+import type { HouseItem, HouseShopItem, HouseView, NeighborhoodHouse } from "@/lib/types";
 
 const HouseGame = dynamic(() => import("@/components/casas/HouseGame"), {
   ssr: false,
@@ -13,16 +13,22 @@ const HouseGame = dynamic(() => import("@/components/casas/HouseGame"), {
 
 type Props = { params: Promise<{ token: string }> };
 type Screen = "home" | "neighborhood" | "neighbor";
-type ShopItem = { id: string; name: string; emoji: string; cost: number };
+type ShopFilter = "all" | HouseShopItem["kind"];
 type NeighborView = { id: string; house: HouseView };
 
 const itemNames: Record<string, string> = {
   sofa_inicial: "Sofá de entrada",
   planta_inicial: "Planta sobrevivente",
   tapete_rua: "Tapete da rua",
+  mesa_cafe: "Mesa de café",
+  vaso_flores: "Vaso florido",
   luminaria_neon: "Luminária neon",
+  puff_estrela: "Puff estrela",
+  poltrona_vintage: "Poltrona vintage",
   estante_caotica: "Estante caótica",
   tv_tubo: "TV de tubo",
+  cama_nuvem: "Cama nuvem",
+  jukebox_neon: "Jukebox neon",
   geladeira_premium: "Geladeira premium",
   gato_sindico: "Gato síndico",
   camera_porta: "Câmera de porta",
@@ -36,6 +42,16 @@ function findFreeCell(items: HouseItem[]) {
     }
   }
   return null;
+}
+
+function normalizeShopItems(items: HouseShopItem[]) {
+  return items.map((item) => ({
+    ...item,
+    kind: item.kind || "furniture",
+    description: item.description || "Item de decoração do beco.",
+    owned: Boolean(item.owned),
+    applied: Boolean(item.applied),
+  }));
 }
 
 function timeAgo(timestamp: number) {
@@ -61,7 +77,8 @@ export default function CasaPage({ params }: Props) {
   const [screen, setScreen] = useState<Screen>("home");
   const [neighborView, setNeighborView] = useState<NeighborView | null>(null);
   const [selectedItemId, setSelectedItemId] = useState<string>();
-  const [shop, setShop] = useState<ShopItem[]>([]);
+  const [shop, setShop] = useState<HouseShopItem[]>([]);
+  const [shopFilter, setShopFilter] = useState<ShopFilter>("all");
   const [shopOpen, setShopOpen] = useState(false);
   const [muralOpen, setMuralOpen] = useState(false);
   const [giftCoins, setGiftCoins] = useState("25");
@@ -98,8 +115,10 @@ export default function CasaPage({ params }: Props) {
         setNeighborView({ id: neighborView.id, house });
       }
       setNotice(success);
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Ação indisponível.");
+      return false;
     } finally {
       setBusy(false);
     }
@@ -108,12 +127,13 @@ export default function CasaPage({ params }: Props) {
   const openShop = useCallback(async () => {
     try {
       setError("");
-      if (!shop.length) setShop((await funApi.houses.shop(token)).shop);
+      setShop(normalizeShopItems((await funApi.houses.shop(token)).shop));
+      setShopFilter("all");
       setShopOpen(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "A loja está indisponível.");
     }
-  }, [shop.length, token]);
+  }, [token]);
 
   const openNeighbor = useCallback(async (neighbor: NeighborhoodHouse) => {
     try {
@@ -137,8 +157,54 @@ export default function CasaPage({ params }: Props) {
   }, [screen]);
 
   const selectedItem = useMemo(() => ownHouse?.items.find((item) => item.id === selectedItemId) || null, [ownHouse, selectedItemId]);
+  const rotateSelectedItem = useCallback(async () => {
+    if (!selectedItem || busy) return;
+    const previousRotation = Number.isFinite(selectedItem.rotation) ? selectedItem.rotation : selectedItem.rotated ? 1 : 0;
+    const nextRotation = (previousRotation + 1) % 4;
+    setOwnHouse((current) => current ? {
+      ...current,
+      items: current.items.map((item) => item.id === selectedItem.id ? { ...item, rotation: nextRotation, rotated: nextRotation % 2 === 1 } : item),
+    } : current);
+    try {
+      setBusy(true);
+      setError("");
+      await funApi.houses.move(token, {
+        itemId: selectedItem.id,
+        x: selectedItem.x,
+        y: selectedItem.y,
+        rotation: nextRotation,
+        rotated: nextRotation % 2 === 1,
+      });
+      await refresh();
+      setNotice("Móvel girado.");
+    } catch (err) {
+      setOwnHouse((current) => current ? {
+        ...current,
+        items: current.items.map((item) => item.id === selectedItem.id ? { ...item, rotation: previousRotation, rotated: previousRotation % 2 === 1 } : item),
+      } : current);
+      setError(err instanceof Error ? err.message : "Não foi possível girar o móvel.");
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, refresh, selectedItem, token]);
   const displayedHouse = screen === "neighbor" ? neighborView?.house || ownHouse : ownHouse;
   const coins = ownHouse?.coins ?? 0;
+  const filteredShop = useMemo(() => shopFilter === "all" ? shop : shop.filter((item) => item.kind === shopFilter), [shop, shopFilter]);
+  const chooseShopItem = useCallback(async (item: HouseShopItem) => {
+    if (!ownHouse) return;
+    if (item.kind === "furniture") {
+      const cell = findFreeCell(ownHouse.items);
+      if (!cell) {
+        setError("Sua casa está cheia.");
+        return;
+      }
+      const saved = await runAction(() => funApi.houses.place(token, { itemId: item.id, ...cell }), `${item.name} colocado na casa.`);
+      if (saved) setShopOpen(false);
+      return;
+    }
+    const saved = await runAction(() => funApi.houses.applyStyle(token, item.id), `${item.name} aplicado na casa.`);
+    if (saved) setShop(normalizeShopItems((await funApi.houses.shop(token)).shop));
+  }, [ownHouse, runAction, token]);
 
   if (error && !ownHouse) return <main className="grid min-h-screen place-items-center bg-[#171020] p-6 text-center text-zinc-50"><div className="casas-error-card"><p className="casas-kicker">CASAS DO BECO</p><span className="casas-error-icon" aria-hidden="true">🏚️</span><h1>Casa indisponível</h1><p className="mt-2 text-violet-200">{error}</p></div></main>;
   if (!displayedHouse || !ownHouse) return <main className="grid min-h-screen place-items-center bg-[#171020]"><div className="casas-loading-card"><span className="casas-loading-house" aria-hidden="true">🏠</span><p>Carregando o bairro…</p><span className="casas-loading-bar"><span /></span></div></main>;
@@ -156,7 +222,7 @@ export default function CasaPage({ params }: Props) {
     {notice && <p className="casas-toast">✦ {notice}</p>}
 
     <section className="casas-game-shell">
-      <HouseGame mode={screen === "neighborhood" ? "neighborhood" : "house"} house={displayedHouse} neighborhood={neighborhood} owns={isHome} selectedItemId={isHome ? selectedItemId : undefined} onExit={leaveScene} onOpenNeighbor={(neighbor) => void openNeighbor(neighbor)} onSelectItem={(item) => setSelectedItemId(item.id)} onMoveItem={(item, x, y) => void runAction(() => funApi.houses.move(token, { itemId: item.id, x, y, rotated: item.rotated }), "Móvel reposicionado.")} />
+      <HouseGame mode={screen === "neighborhood" ? "neighborhood" : "house"} house={displayedHouse} neighborhood={neighborhood} owns={isHome} selectedItemId={isHome ? selectedItemId : undefined} interactionLocked={busy} onExit={leaveScene} onOpenNeighbor={(neighbor) => void openNeighbor(neighbor)} onSelectItem={(item) => setSelectedItemId(item.id)} onClearSelection={() => setSelectedItemId(undefined)} onMoveItem={(item, x, y) => runAction(() => funApi.houses.move(token, { itemId: item.id, x, y, rotation: item.rotation, rotated: item.rotated }), "Móvel reposicionado.")} />
 
       {isHome && <div className="casas-stage-status">
         <span className="casas-hud-stat">
@@ -173,7 +239,7 @@ export default function CasaPage({ params }: Props) {
       {isHome && <div className="casas-stage-hint">{selectedItem ? `Selecionado: ${itemNames[selectedItem.itemId] || "Móvel"}` : "Clique em um móvel para decorar"}</div>}
     </section>
 
-    {isHome && <section className="casas-game-dock"><button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.collect(token), "Recompensa diária coletada.")} className="casas-primary-action"><span aria-hidden="true">🎁</span><span><b>Coletar diária</b><small>recompensa da casa</small></span></button><button type="button" disabled={busy} onClick={() => void openShop()} className="casas-dock-action"><span aria-hidden="true">🛋️</span><span>Loja</span></button><button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.upgradeSecurity(token), "Segurança melhorada.")} className="casas-dock-action"><span aria-hidden="true">🛡️</span><span>Segurança</span></button><button type="button" onClick={() => setMuralOpen(true)} className="casas-dock-action"><span aria-hidden="true">📌</span><span>Mural</span></button>{selectedItem && <><button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.move(token, { itemId: selectedItem.id, x: selectedItem.x, y: selectedItem.y, rotated: !selectedItem.rotated }), "Móvel girado.")} className="casas-dock-action"><span aria-hidden="true">↻</span><span>Girar</span></button><button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.sell(token, selectedItem.id), "Móvel vendido.")} className="casas-dock-action casas-dock-danger"><span aria-hidden="true">◫</span><span>Vender</span></button></>}</section>}
+    {isHome && <section className="casas-game-dock"><button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.collect(token), "Recompensa diária coletada.")} className="casas-primary-action"><span aria-hidden="true">🎁</span><span><b>Coletar diária</b><small>recompensa da casa</small></span></button><button type="button" disabled={busy} onClick={() => void openShop()} className="casas-dock-action"><span aria-hidden="true">🛋️</span><span>Loja</span></button><button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.upgradeSecurity(token), "Segurança melhorada.")} className="casas-dock-action"><span aria-hidden="true">🛡️</span><span>Segurança</span></button><button type="button" onClick={() => setMuralOpen(true)} className="casas-dock-action"><span aria-hidden="true">📌</span><span>Mural</span></button>{selectedItem && <><button type="button" disabled={busy} onClick={() => void rotateSelectedItem()} className="casas-dock-action"><span aria-hidden="true">↻</span><span>Girar</span></button><button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.sell(token, selectedItem.id), "Móvel vendido.")} className="casas-dock-action casas-dock-danger"><span aria-hidden="true">◫</span><span>Vender</span></button></>}</section>}
 
     {screen === "neighborhood" && <section className="casas-context-panel"><span className="casas-context-icon">🌆</span><div><p className="casas-kicker">MAPA SOCIAL</p><h2>Escolha uma porta e visite o bairro.</h2><p>Os moradores aparecem com a aparência que salvaram no avatar. A presença em tempo real ficará para uma futura etapa.</p></div></section>}
 
@@ -183,6 +249,6 @@ export default function CasaPage({ params }: Props) {
 
     {muralOpen && <div className="casas-sheet-backdrop" role="presentation" onMouseDown={() => setMuralOpen(false)}><section className="casas-sheet" role="dialog" aria-modal="true" aria-label="Mural de visitas" onMouseDown={(event) => event.stopPropagation()}><div className="casas-sheet-handle" /><div className="flex items-start justify-between gap-3"><div><p className="casas-kicker">MURAL DO BECO</p><h2>Quem passou por aqui</h2></div><button type="button" onClick={() => setMuralOpen(false)} className="casas-close-button">Fechar</button></div><div className="mt-4 space-y-2">{displayedHouse.mural.length ? displayedHouse.mural.map((visit, index) => <article key={visit.id || index} className="casas-visit-entry"><span>🙂</span><div><b>{visit.nickname || "Visitante"}</b><p>{visit.note || "Passou para conhecer a casa."}</p>{visit.createdAt ? <small>{timeAgo(visit.createdAt)}</small> : null}</div></article>) : <p className="casas-empty-state">Ainda não houve visitas. Saia para conhecer o bairro e comece a conversa.</p>}</div></section></div>}
 
-    {shopOpen && <div className="casas-sheet-backdrop" role="presentation" onMouseDown={() => setShopOpen(false)}><section className="casas-sheet casas-shop-sheet" role="dialog" aria-modal="true" aria-label="Loja do Beco" onMouseDown={(event) => event.stopPropagation()}><div className="casas-sheet-handle" /><div className="flex items-start justify-between gap-3"><div><p className="casas-kicker">LOJA DO BECO</p><h2>O que combina com sua casa?</h2></div><span className="casas-coin-pill">🪙 {coins}</span><button type="button" onClick={() => setShopOpen(false)} className="casas-close-button">Fechar</button></div><div className="casas-shop-grid">{shop.map((item) => { const affordable = item.cost <= coins; return <button key={item.id} type="button" disabled={busy || !affordable} onClick={() => { const cell = findFreeCell(ownHouse.items); if (!cell) { setError("Sua casa está cheia."); return; } void runAction(() => funApi.houses.place(token, { itemId: item.id, ...cell }), `${item.name} colocado na casa.`).then(() => setShopOpen(false)); }} className={`casas-shop-item ${affordable ? "" : "casas-shop-locked"}`}><span className="casas-shop-emoji">{item.emoji}</span><span><b>{item.name}</b><small>{affordable ? "Colocar na casa" : "Sem coins suficientes"}</small></span><strong>{item.cost}c</strong></button>; })}</div></section></div>}
+    {shopOpen && <div className="casas-sheet-backdrop" role="presentation" onMouseDown={() => setShopOpen(false)}><section className="casas-sheet casas-shop-sheet" role="dialog" aria-modal="true" aria-label="Loja do Beco" onMouseDown={(event) => event.stopPropagation()}><div className="casas-sheet-handle" /><div className="flex items-start justify-between gap-3"><div><p className="casas-kicker">LOJA DO BECO</p><h2>Decore cada detalhe da sua casa</h2></div><span className="casas-coin-pill">🪙 {coins}</span><button type="button" onClick={() => setShopOpen(false)} className="casas-close-button">Fechar</button></div><div className="casas-shop-filters" role="tablist" aria-label="Categorias da loja">{([['all', 'Tudo'], ['furniture', 'Móveis'], ['wallpaper', 'Paredes'], ['floor', 'Pisos'], ['window', 'Janelas']] as Array<[ShopFilter, string]>).map(([kind, label]) => <button key={kind} type="button" role="tab" aria-selected={shopFilter === kind} onClick={() => setShopFilter(kind)} className={shopFilter === kind ? "active" : ""}>{label}</button>)}</div><div className="casas-shop-grid">{filteredShop.map((item) => { const affordable = item.owned || item.cost <= coins; const isApplied = item.applied; const action = item.kind === "furniture" ? "Colocar na casa" : isApplied ? "Em uso agora" : item.owned ? "Aplicar acabamento" : "Comprar e aplicar"; return <button key={item.id} type="button" disabled={busy || !affordable || isApplied} onClick={() => void chooseShopItem(item)} className={`casas-shop-item ${affordable ? "" : "casas-shop-locked"} ${isApplied ? "casas-shop-applied" : ""}`}><span className="casas-shop-emoji">{item.emoji}</span><span><b>{item.name}</b><small>{affordable ? action : "Sem coins suficientes"}</small><em>{item.description}</em></span><strong>{item.cost === 0 ? "GRÁTIS" : `${item.cost}c`}</strong></button>; })}</div></section></div>}
   </main>;
 }

@@ -3,6 +3,24 @@
 import * as Phaser from "phaser";
 import { useEffect, useId, useRef, useState } from "react";
 import type { HouseItem, HouseView, NeighborhoodHouse } from "@/lib/types";
+import {
+  AVATAR_FLOOR_OFFSET_Y,
+  GRID_COLUMNS,
+  GRID_ORIGIN_X,
+  GRID_ROWS,
+  TILE_HEIGHT,
+  TILE_WIDTH,
+  cellFromFurniturePosition,
+  furnitureFloorPosition,
+  furnitureRectanglePoints,
+  getGridOutline,
+  isGridCellAvailable,
+  normalizeFurnitureRotation,
+  normalizePolygonPoints,
+  projectFurniturePoint,
+  resolveDropCell,
+  toIso,
+} from "./houseGeometry.js";
 
 type WorldMode = "house" | "neighborhood";
 type ViewportMode = "desktop" | "portrait" | "landscape";
@@ -16,17 +34,13 @@ type HouseGameProps = {
   onExit: () => void;
   onOpenNeighbor: (neighbor: NeighborhoodHouse) => void;
   onSelectItem: (item: HouseItem) => void;
-  onMoveItem: (item: HouseItem, x: number, y: number) => void;
+  onClearSelection: () => void;
+  interactionLocked?: boolean;
+  onMoveItem: (item: HouseItem, x: number, y: number) => boolean | Promise<boolean>;
 };
 
 const GAME_WIDTH = 960;
 const GAME_HEIGHT = 720;
-const GRID_COLUMNS = 6;
-const GRID_ROWS = 8;
-const TILE_WIDTH = 126;
-const TILE_HEIGHT = 63;
-const GRID_ORIGIN_X = 543;
-const GRID_ORIGIN_Y = 232;
 const WALL_HEIGHT = 126;
 
 const PAL = {
@@ -42,30 +56,37 @@ const PAL = {
   outline: 0x241735,
 };
 
+const FLOOR_THEMES: Record<string, { a: number; b: number; grid: number }> = {
+  piso_lilas: { a: 0x8d6bb0, b: 0x7c5ca1, grid: 0xc9aee3 },
+  piso_madeira: { a: 0xc39168, b: 0xb27c58, grid: 0xe4bb91 },
+  piso_xadrez: { a: 0xe2c9aa, b: 0x765044, grid: 0xf2dec4 },
+  piso_galaxia: { a: 0x40518e, b: 0x29386f, grid: 0x91a9ee },
+};
+
+const WALL_THEMES: Record<string, { left: number; right: number; edge: number; trim: number; pattern: "stripe" | "leaf" | "brick" | "neon" }> = {
+  parede_beco: { left: 0x3b2757, right: 0x30204b, edge: 0x241735, trim: 0x6b4d92, pattern: "stripe" },
+  parede_menta: { left: 0x4c796c, right: 0x3c665c, edge: 0x27473f, trim: 0x91c5a9, pattern: "leaf" },
+  parede_tijolo: { left: 0x824e48, right: 0x6f413f, edge: 0x422a2b, trim: 0xc98772, pattern: "brick" },
+  parede_noite_neon: { left: 0x202858, right: 0x171d48, edge: 0x0f1434, trim: 0x52e0e7, pattern: "neon" },
+};
+
 const itemLabels: Record<string, string> = {
   sofa_inicial: "Sofá de entrada",
   planta_inicial: "Planta sobrevivente",
   tapete_rua: "Tapete da rua",
+  mesa_cafe: "Mesa de café",
+  vaso_flores: "Vaso florido",
   luminaria_neon: "Luminária neon",
+  puff_estrela: "Puff estrela",
+  poltrona_vintage: "Poltrona vintage",
   estante_caotica: "Estante caótica",
   tv_tubo: "TV de tubo",
+  cama_nuvem: "Cama nuvem",
+  jukebox_neon: "Jukebox neon",
   geladeira_premium: "Geladeira premium",
   gato_sindico: "Gato síndico",
   camera_porta: "Câmera de porta",
 };
-
-function toIso(x: number, y: number) {
-  return { x: GRID_ORIGIN_X + (x - y) * (TILE_WIDTH / 2), y: GRID_ORIGIN_Y + (x + y) * (TILE_HEIGHT / 2) };
-}
-
-function fromIso(screenX: number, screenY: number) {
-  const horizontal = (screenX - GRID_ORIGIN_X) / (TILE_WIDTH / 2);
-  const vertical = (screenY - GRID_ORIGIN_Y) / (TILE_HEIGHT / 2);
-  const x = Math.round((vertical + horizontal) / 2);
-  const y = Math.round((vertical - horizontal) / 2);
-  if (x < 0 || x >= GRID_COLUMNS || y < 0 || y >= GRID_ROWS) return null;
-  return { x, y };
-}
 
 function diamondPoints(cx: number, cy: number, w = TILE_WIDTH, h = TILE_HEIGHT) {
   return [
@@ -74,6 +95,70 @@ function diamondPoints(cx: number, cy: number, w = TILE_WIDTH, h = TILE_HEIGHT) 
     { x: cx, y: cy + h / 2 },
     { x: cx - w / 2, y: cy },
   ];
+}
+
+function centeredPolygon(scene: Phaser.Scene, x: number, y: number, points: number[], fillColor?: number, fillAlpha?: number) {
+  return scene.add.polygon(x, y, normalizePolygonPoints(points), fillColor, fillAlpha);
+}
+
+type FurniturePoint = { x: number; y: number };
+
+function localPolygon(scene: Phaser.Scene, points: FurniturePoint[], fillColor: number, fillAlpha = 1) {
+  const minX = Math.min(...points.map((point) => point.x));
+  const maxX = Math.max(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y));
+  const maxY = Math.max(...points.map((point) => point.y));
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  const relativePoints = points.flatMap((point) => [point.x - centerX, point.y - centerY]);
+  return centeredPolygon(scene, centerX, centerY, relativePoints, fillColor, fillAlpha);
+}
+
+function projectedFurniturePoint(u: number, v: number, z: number, rotation: number | boolean) {
+  const point = projectFurniturePoint(u, v, z, normalizeFurnitureRotation(rotation));
+  return { x: point.x, y: point.y + 8 };
+}
+
+function projectedFurnitureRectangle(width: number, depth: number, z: number, rotation: number | boolean, centerU = 0, centerV = 0) {
+  return furnitureRectanglePoints({ width, depth, z, rotation: normalizeFurnitureRotation(rotation), centerU, centerV })
+    .map((point) => ({ x: point.x, y: point.y + 8 }));
+}
+
+function isoCuboid(
+  scene: Phaser.Scene,
+  options: { centerU?: number; centerV?: number; width: number; depth: number; base: number; height: number; top: number; left: number; right: number; rotation: number },
+) {
+  const { centerU = 0, centerV = 0, width, depth, base, height, top, left, right, rotation } = options;
+  const bottom = projectedFurnitureRectangle(width, depth, base, rotation, centerU, centerV);
+  const upper = projectedFurnitureRectangle(width, depth, base + height, rotation, centerU, centerV);
+  const faces = [0, 1, 2, 3].map((index) => {
+    const next = (index + 1) % 4;
+    const points = [upper[index], upper[next], bottom[next], bottom[index]];
+    return {
+      points,
+      averageX: points.reduce((sum, point) => sum + point.x, 0) / points.length,
+      averageY: (bottom[index].y + bottom[next].y) / 2,
+    };
+  });
+  const visibleSides = faces.sort((a, b) => b.averageY - a.averageY).slice(0, 2).sort((a, b) => a.averageY - b.averageY);
+  return [
+    ...visibleSides.map((face) => localPolygon(scene, face.points, face.averageX < 0 ? left : right).setStrokeStyle(3, PAL.outline)),
+    localPolygon(scene, upper, top).setStrokeStyle(3, PAL.outline),
+  ];
+}
+
+function itemRotation(item: HouseItem) {
+  return normalizeFurnitureRotation(item.rotation ?? item.rotated);
+}
+
+const REDUCED_MOTION_KEY = "casas-reduced-motion";
+
+function motionAllowed(scene: Phaser.Scene) {
+  return scene.registry.get(REDUCED_MOTION_KEY) !== true;
+}
+
+function motionDuration(scene: Phaser.Scene, duration: number) {
+  return motionAllowed(scene) ? duration : Math.min(60, duration);
 }
 
 function alive(target: Phaser.GameObjects.GameObject) {
@@ -109,7 +194,7 @@ type AvatarRig = {
   root: Phaser.GameObjects.Container;
   bobber: Phaser.GameObjects.Container;
   face: Phaser.GameObjects.Text;
-  breathing: Phaser.Tweens.Tween;
+  breathing: Phaser.Tweens.Tween | null;
   walkTweens: Phaser.Tweens.Tween[];
   leanTween: Phaser.Tweens.Tween | null;
   walking: boolean;
@@ -142,6 +227,21 @@ function createAvatarRig(scene: Phaser.Scene, avatar: HouseView["avatar"], name:
   head.add(face);
   bobber.add([legL, legR, armL, armR, body, bodyShade, shirtHighlight, head]);
 
+  if (outfit === "jaqueta_neon") {
+    bobber.add([
+      scene.add.rectangle(0, -8, 4, 48, 0xffe082, 0.92),
+      scene.add.triangle(-13, -27, -13, -8, 0, 10, 0, -12, 0xff82ba, 0.9).setStrokeStyle(2, 0xc22d70),
+      scene.add.triangle(13, -27, 13, -8, 0, 10, 0, -12, 0xff82ba, 0.9).setStrokeStyle(2, 0xc22d70),
+    ]);
+  } else if (outfit === "terno_suspeito") {
+    bobber.add([
+      scene.add.triangle(0, -31, -15, -31, 0, -6, 15, -31, 0xf4f1e9).setStrokeStyle(2, 0x24324b),
+      centeredPolygon(scene, 0, -11, [0, -10, 7, 0, 3, 19, -3, 19, -7, 0], 0xa33b4d).setStrokeStyle(2, 0x562331),
+      scene.add.line(0, -7, -25, -28, -4, -3, 0x1e2a45).setLineWidth(3),
+      scene.add.line(0, -7, 25, -28, 4, -3, 0x1e2a45).setLineWidth(3),
+    ]);
+  }
+
   if (hair === "cabelo_caos") {
     bobber.add([
       scene.add.rectangle(0, -84, 58, 17, 0x633b2b).setStrokeStyle(3, PAL.outline),
@@ -157,48 +257,60 @@ function createAvatarRig(scene: Phaser.Scene, avatar: HouseView["avatar"], name:
     ]);
   }
   if (accessory === "coroa_papel") {
-    bobber.add(scene.add.text(0, -96, "♛", { fontFamily: "monospace", fontSize: "40px", color: "#ffe082", stroke: "#754e24", strokeThickness: 3 }).setOrigin(0.5));
+    bobber.add(centeredPolygon(scene, 0, -103, [-31, 12, -24, -15, -8, 4, 0, -18, 10, 4, 25, -15, 31, 12, 31, 23, -31, 23], 0xffe082).setStrokeStyle(4, 0x754e24));
   }
   if (accessory === "corrente_brilho") {
-    bobber.add(scene.add.ellipse(0, 8, 36, 12, 0xffd34f).setStrokeStyle(3, 0x7b4d1b));
+    const chain = scene.add.graphics();
+    chain.lineStyle(4, 0xffd34f, 1);
+    chain.beginPath();
+    chain.moveTo(-19, -29);
+    chain.lineTo(0, -16);
+    chain.lineTo(19, -29);
+    chain.strokePath();
+    bobber.add([chain, scene.add.circle(0, -13, 6, 0xffd34f).setStrokeStyle(3, 0x7b4d1b)]);
   }
 
   const nameplate = scene.add.text(0, -122, name.toUpperCase(), { fontFamily: "monospace", fontSize: "12px", color: "#fff5d2", backgroundColor: "#2a1b43", padding: { x: 7, y: 4 } }).setOrigin(0.5);
   root.add([scene.add.ellipse(0, 30, 74, 20, 0x120d20, 0.32), bobber, nameplate]);
 
+  const ambientMotion = motionAllowed(scene);
+  const walkTweens = ambientMotion ? [
+    scene.tweens.add({ targets: legL, rotation: { from: -0.5, to: 0.5 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
+    scene.tweens.add({ targets: legR, rotation: { from: 0.5, to: -0.5 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
+    scene.tweens.add({ targets: armL, rotation: { from: 0.34, to: -0.06 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
+    scene.tweens.add({ targets: armR, rotation: { from: -0.06, to: 0.34 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
+    scene.tweens.add({ targets: bobber, y: -7, duration: 95, yoyo: true, repeat: -1, ease: "Quad.easeOut" }),
+  ] : [];
   const rig: AvatarRig = {
     root,
     bobber,
     face,
-    breathing: scene.tweens.add({ targets: bobber, y: -3, duration: 1500, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
-    walkTweens: [
-      scene.tweens.add({ targets: legL, rotation: { from: -0.5, to: 0.5 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
-      scene.tweens.add({ targets: legR, rotation: { from: 0.5, to: -0.5 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
-      scene.tweens.add({ targets: armL, rotation: { from: 0.34, to: -0.06 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
-      scene.tweens.add({ targets: armR, rotation: { from: -0.06, to: 0.34 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
-      scene.tweens.add({ targets: bobber, y: -7, duration: 95, yoyo: true, repeat: -1, ease: "Quad.easeOut" }),
-    ],
+    breathing: ambientMotion ? scene.tweens.add({ targets: bobber, y: -3, duration: 1800, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }) : null,
+    walkTweens,
     leanTween: null,
     walking: false,
   };
   rig.walkTweens.forEach((tween) => tween.pause());
 
-  scene.time.addEvent({
-    delay: 2600,
-    loop: true,
-    callback: () => {
-      if (!alive(face)) return;
-      face.setText("–ᴗ–");
-      scene.time.delayedCall(130, () => {
-        if (alive(face)) face.setText("•ᴗ•");
-      });
-    },
-  });
+  if (ambientMotion) {
+    scene.time.addEvent({
+      delay: 2600,
+      loop: true,
+      callback: () => {
+        if (!alive(face)) return;
+        face.setText("–ᴗ–");
+        scene.time.delayedCall(130, () => {
+          if (alive(face)) face.setText("•ᴗ•");
+        });
+      },
+    });
+  }
 
   return rig;
 }
 
 function dustPuff(scene: Phaser.Scene, x: number, y: number) {
+  if (!motionAllowed(scene)) return;
   for (let i = 0; i < 5; i += 1) {
     const angle = Math.PI + (i - 2) * 0.38;
     const puff = scene.add.circle(x, y, 4 + Math.random() * 3, 0xd9c8ef, 0.5).setDepth(1150);
@@ -215,8 +327,8 @@ function dustPuff(scene: Phaser.Scene, x: number, y: number) {
   }
 }
 
-function selectionAura(scene: Phaser.Scene, parent: Phaser.GameObjects.Container) {
-  const aura = scene.add.ellipse(0, 8, 104, 34).setStrokeStyle(3, PAL.gold, 0.95);
+function selectionAura(scene: Phaser.Scene, parent: Phaser.GameObjects.Container, itemName: string) {
+  const aura = centeredPolygon(scene, 0, 8, [0, -18, 52, 0, 0, 18, -52, 0]).setStrokeStyle(3, PAL.gold, 0.95);
   const corners = [
     [-46, -6],
     [46, -6],
@@ -225,60 +337,149 @@ function selectionAura(scene: Phaser.Scene, parent: Phaser.GameObjects.Container
   ].map(([cx, cy]) => scene.add.triangle(cx, cy, -5, 8, 5, 8, 0, -6, PAL.gold).setStrokeStyle(1, 0x8a6a1f));
   const label = labelChip(scene, "SELECIONADO", 0x3d2a12, PAL.gold, "#ffe9a8");
   label.setPosition(0, -110);
-  parent.add(scene.add.container(0, 0, [aura, ...corners, label]));
-  scene.tweens.add({ targets: aura, scaleX: { from: 0.94, to: 1.06 }, alpha: { from: 0.95, to: 0.55 }, duration: 640, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
-  corners.forEach((corner, index) => scene.tweens.add({ targets: corner, y: corner.y - 5, duration: 520, yoyo: true, repeat: -1, delay: index * 90, ease: "Sine.easeInOut" }));
-  scene.tweens.add({ targets: label, y: label.y - 5, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+  const nameChip = labelChip(scene, itemName, 0x2f2148, 0xd9b8ff, "#fff6d5");
+  nameChip.setPosition(0, -136);
+  const overlay = scene.add.container(0, 0, [aura, ...corners, label, nameChip]).setVisible(false);
+  parent.add(overlay);
+  return overlay;
 }
 
 function createFurniture(scene: Phaser.Scene, item: HouseItem) {
   const container = scene.add.container(0, 0);
-  container.add(scene.add.ellipse(0, 6, 78, 22, 0x160d24, 0.3));
+  const art = scene.add.container(0, 0);
+  const rotation = itemRotation(item);
+  const wideItem = ["sofa_inicial", "cama_nuvem"].includes(item.itemId);
+  const footprint = item.itemId === "tapete_rua"
+    ? projectedFurnitureRectangle(1.68, 0.92, -1, rotation)
+    : projectedFurnitureRectangle(wideItem ? 1.55 : 0.82, wideItem ? 0.82 : 0.72, -1, rotation);
+  const shadow = localPolygon(scene, footprint, 0x160d24, item.itemId === "tapete_rua" ? 0.18 : 0.3);
+  container.add([shadow, art]);
   const outline = PAL.outline;
 
   if (item.itemId === "sofa_inicial") {
-    container.add([
-      scene.add.rectangle(-30, -22, 16, 44, 0x35548f).setStrokeStyle(4, outline),
-      scene.add.rectangle(30, -22, 16, 44, 0x35548f).setStrokeStyle(4, outline),
-      scene.add.rectangle(0, -46, 78, 26, 0x4e83df).setStrokeStyle(4, outline),
-      scene.add.rectangle(0, -18, 80, 24, 0x6fa8f5).setStrokeStyle(4, outline),
-      scene.add.rectangle(-18, -30, 30, 12, 0x8fc1ff, 0.85),
-      scene.add.rectangle(18, -30, 30, 12, 0x8fc1ff, 0.85),
-      scene.add.rectangle(-27, 6, 10, 12, 0x1d2a52),
-      scene.add.rectangle(27, 6, 10, 12, 0x1d2a52),
+    const seam = scene.add.graphics().lineStyle(2, 0xb8d8ff, 0.52);
+    const seamStart = projectedFurniturePoint(0, -0.16, 34, rotation);
+    const seamEnd = projectedFurniturePoint(0, 0.27, 34, rotation);
+    seam.lineBetween(seamStart.x, seamStart.y, seamEnd.x, seamEnd.y);
+    art.add([
+      ...isoCuboid(scene, { centerV: -0.31, width: 1.52, depth: 0.2, base: 11, height: 48, top: 0x5d91eb, left: 0x34578f, right: 0x416cb5, rotation }),
+      ...isoCuboid(scene, { centerV: 0.05, width: 1.42, depth: 0.68, base: 9, height: 22, top: 0x79b3f6, left: 0x3d68aa, right: 0x4e83d4, rotation }),
+      ...isoCuboid(scene, { centerU: -0.69, centerV: 0.03, width: 0.18, depth: 0.76, base: 8, height: 30, top: 0x6ca3ee, left: 0x304f84, right: 0x416db4, rotation }),
+      ...isoCuboid(scene, { centerU: 0.69, centerV: 0.03, width: 0.18, depth: 0.76, base: 8, height: 30, top: 0x6ca3ee, left: 0x304f84, right: 0x416db4, rotation }),
+      ...isoCuboid(scene, { centerU: -0.35, centerV: 0.08, width: 0.64, depth: 0.5, base: 31, height: 4, top: 0x91c5ff, left: 0x507fc4, right: 0x669be2, rotation }),
+      ...isoCuboid(scene, { centerU: 0.35, centerV: 0.08, width: 0.64, depth: 0.5, base: 31, height: 4, top: 0x91c5ff, left: 0x507fc4, right: 0x669be2, rotation }),
+      seam,
     ]);
   } else if (item.itemId === "planta_inicial") {
-    const foliage = scene.add.container(0, -34);
+    const foliage = scene.add.container(0, -30).setScale(rotation === 1 || rotation === 2 ? -1 : 1, 1);
+    const stems = scene.add.graphics().lineStyle(4, 0x356b43, 1);
+    stems.lineBetween(0, 17, -15, -17);
+    stems.lineBetween(0, 17, 16, -23);
+    stems.lineBetween(0, 17, 25, -6);
+    stems.lineBetween(0, 17, -25, -3);
     foliage.add([
-      scene.add.rectangle(0, 18, 7, 26, 0x3f7a4c).setStrokeStyle(2, 0x275232),
-      scene.add.circle(-16, -8, 17, 0x59a66a).setStrokeStyle(3, outline),
-      scene.add.circle(12, -14, 20, 0x77ca7b).setStrokeStyle(3, outline),
-      scene.add.circle(19, 6, 14, 0x4a925d).setStrokeStyle(3, outline),
-      scene.add.circle(-4, 4, 12, 0x6dbd72).setStrokeStyle(3, outline),
+      stems,
+      scene.add.ellipse(-23, -7, 27, 43, 0x4d9f62).setRotation(-0.72).setStrokeStyle(3, outline),
+      scene.add.ellipse(18, -20, 29, 48, 0x70c779).setRotation(0.58).setStrokeStyle(3, outline),
+      scene.add.ellipse(28, 0, 24, 38, 0x438c58).setRotation(0.98).setStrokeStyle(3, outline),
+      scene.add.ellipse(-7, -27, 25, 44, 0x64b96f).setRotation(-0.2).setStrokeStyle(3, outline),
+      scene.add.ellipse(-3, 2, 23, 34, 0x78cb7e).setRotation(0.2).setStrokeStyle(3, outline),
+      scene.add.ellipse(-15, -16, 7, 17, 0xa4e0a8, 0.62).setRotation(-0.72),
+      scene.add.ellipse(12, -30, 7, 18, 0xb3e7b5, 0.58).setRotation(0.58),
     ]);
-    container.add([
-      scene.add.polygon(0, 6, [-17, 0, 17, 0, 13, 26, -13, 26], 0xc8784e).setStrokeStyle(4, outline),
-      scene.add.rectangle(0, 0, 40, 8, 0xe09468).setStrokeStyle(3, outline),
+    art.add([
+      scene.add.ellipse(0, 7, 31, 10, 0x8f442f).setStrokeStyle(3, outline),
+      centeredPolygon(scene, 0, -1, [-20, -8, 20, -8, 14, 9, -14, 9], 0xbd6645).setStrokeStyle(3, outline),
+      scene.add.ellipse(0, -9, 43, 15, 0xe28b5e).setStrokeStyle(3, outline),
+      scene.add.ellipse(0, -9, 32, 10, 0x56392b).setStrokeStyle(2, 0x7d4732),
+      scene.add.ellipse(-7, -11, 10, 4, 0xffffff, 0.16),
       foliage,
     ]);
-    scene.tweens.add({ targets: foliage, rotation: { from: -0.05, to: 0.05 }, duration: 2100, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    if (motionAllowed(scene)) scene.tweens.add({ targets: foliage, y: { from: -30, to: -32 }, scaleY: { from: 1, to: 1.018 }, duration: 2600, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
   } else if (item.itemId === "tapete_rua") {
-    const stitches: Phaser.GameObjects.Rectangle[] = [];
-    for (let i = 0; i < 10; i += 1) {
-      const angle = (i / 10) * Math.PI * 2;
-      stitches.push(scene.add.rectangle(Math.cos(angle) * 42, 11 + Math.sin(angle) * 15, 5, 5, 0xf5e2c0));
+    const textile = scene.add.graphics();
+    textile.lineStyle(3, 0xf3c98b, 0.9);
+    [-0.22, 0, 0.22].forEach((v) => {
+      const start = projectedFurniturePoint(-0.62, v, 2, rotation);
+      const end = projectedFurniturePoint(0.62, v, 2, rotation);
+      textile.lineBetween(start.x, start.y, end.x, end.y);
+    });
+    textile.lineStyle(2, 0x6f2746, 0.85);
+    [-0.45, 0.45].forEach((u) => {
+      const start = projectedFurniturePoint(u, -0.32, 3, rotation);
+      const end = projectedFurniturePoint(u, 0.32, 3, rotation);
+      textile.lineBetween(start.x, start.y, end.x, end.y);
+    });
+    const fringes = scene.add.graphics().lineStyle(2, 0xf4dfbd, 0.95);
+    for (const endU of [-0.84, 0.84]) {
+      for (const v of [-0.34, -0.17, 0, 0.17, 0.34]) {
+        const start = projectedFurniturePoint(endU, v, 1, rotation);
+        const finish = projectedFurniturePoint(endU + Math.sign(endU) * 0.12, v, 0, rotation);
+        fringes.lineBetween(start.x, start.y, finish.x, finish.y);
+      }
     }
-    container.add([
-      scene.add.ellipse(0, 11, 98, 40, 0xcf7151).setStrokeStyle(4, outline),
-      scene.add.ellipse(0, 11, 72, 27, 0xf5bc76).setStrokeStyle(2, 0xa85837),
-      scene.add.ellipse(0, 11, 40, 14, 0xcf7151),
-      scene.add.ellipse(0, 11, 16, 6, 0xf5bc76),
-      ...stitches,
+    art.add([
+      localPolygon(scene, projectedFurnitureRectangle(1.68, 0.92, 0, rotation), 0x9e3e4b).setStrokeStyle(3, outline),
+      localPolygon(scene, projectedFurnitureRectangle(1.5, 0.74, 1, rotation), 0xe7ad66).setStrokeStyle(2, 0x743044),
+      localPolygon(scene, projectedFurnitureRectangle(1.22, 0.48, 2, rotation), 0x7e3150).setStrokeStyle(2, 0xf0c27d),
+      textile,
+      fringes,
     ]);
+  } else if (item.itemId === "mesa_cafe") {
+    const cup = projectedFurniturePoint(0.25, -0.08, 28, rotation);
+    art.add([
+      ...isoCuboid(scene, { width: 1.08, depth: 0.68, base: 20, height: 10, top: 0xb98256, left: 0x754a36, right: 0x936044, rotation }),
+      ...[-0.42, 0.42].flatMap((u) => [-0.22, 0.22].flatMap((v) => isoCuboid(scene, { centerU: u, centerV: v, width: 0.1, depth: 0.1, base: 0, height: 22, top: 0x8b5b3f, left: 0x593827, right: 0x71472f, rotation }))),
+      scene.add.ellipse(cup.x, cup.y - 8, 16, 8, 0xf2e7d4).setStrokeStyle(2, outline),
+      scene.add.circle(cup.x + 8, cup.y - 8, 5, 0x000000, 0).setStrokeStyle(2, 0xf2e7d4),
+    ]);
+  } else if (item.itemId === "vaso_flores") {
+    const bouquet = scene.add.container(0, -37);
+    const stems = scene.add.graphics().lineStyle(3, 0x4e8e55, 1);
+    [-18, -8, 5, 17].forEach((x, index) => stems.lineBetween(0, 25, x, -7 - (index % 2) * 8));
+    bouquet.add([stems, ...[-18, -8, 5, 17].map((x, index) => scene.add.circle(x, -7 - (index % 2) * 8, 8, [0xf58ba8, 0xffd76a, 0xb69cf2, 0xf28f62][index]).setStrokeStyle(2, outline))]);
+    art.add([
+      scene.add.ellipse(0, 8, 26, 9, 0x5c335f).setStrokeStyle(3, outline),
+      centeredPolygon(scene, 0, -3, [-17, -12, 17, -12, 12, 12, -12, 12], 0xa85e99).setStrokeStyle(3, outline),
+      scene.add.ellipse(0, -14, 35, 11, 0xd183bd).setStrokeStyle(3, outline),
+      bouquet,
+    ]);
+  } else if (item.itemId === "puff_estrela") {
+    art.add([
+      centeredPolygon(scene, 0, 5, [0, -32, 12, -12, 36, -10, 19, 7, 23, 31, 0, 20, -23, 31, -19, 7, -36, -10, -12, -12], 0x9e477f).setStrokeStyle(4, outline),
+      centeredPolygon(scene, 0, -4, [0, -28, 10, -11, 31, -9, 16, 6, 20, 26, 0, 17, -20, 26, -16, 6, -31, -9, -10, -11], 0xdb78b5).setStrokeStyle(2, 0xf2a7d3),
+      scene.add.circle(-7, -12, 7, 0xffffff, 0.18),
+    ]);
+  } else if (item.itemId === "poltrona_vintage") {
+    art.add([
+      ...isoCuboid(scene, { centerV: -0.26, width: 0.92, depth: 0.2, base: 9, height: 50, top: 0x873d58, left: 0x55263b, right: 0x6d3047, rotation }),
+      ...isoCuboid(scene, { centerV: 0.04, width: 0.8, depth: 0.62, base: 10, height: 24, top: 0xb85b76, left: 0x6c3148, right: 0x8c405b, rotation }),
+      ...[-0.43, 0.43].flatMap((u) => isoCuboid(scene, { centerU: u, centerV: 0.02, width: 0.16, depth: 0.68, base: 8, height: 31, top: 0xa44c68, left: 0x602c43, right: 0x7d3853, rotation })),
+    ]);
+  } else if (item.itemId === "cama_nuvem") {
+    art.add([
+      ...isoCuboid(scene, { width: 1.58, depth: 0.94, base: 4, height: 17, top: 0xe8e4f2, left: 0x9b91b4, right: 0xb7aecb, rotation }),
+      ...isoCuboid(scene, { centerV: -0.39, width: 1.58, depth: 0.16, base: 5, height: 54, top: 0xb7a9d3, left: 0x74688e, right: 0x9184ac, rotation }),
+      ...isoCuboid(scene, { centerU: -0.4, centerV: -0.22, width: 0.58, depth: 0.32, base: 22, height: 7, top: 0xffffff, left: 0xc9c6d7, right: 0xdedbe8, rotation }),
+      ...isoCuboid(scene, { centerU: 0.3, centerV: -0.22, width: 0.58, depth: 0.32, base: 22, height: 7, top: 0xf7f2ff, left: 0xc1b9d0, right: 0xd7cfdf, rotation }),
+      localPolygon(scene, projectedFurnitureRectangle(1.42, 0.45, 23, rotation, 0, 0.18), 0x8ec9d5).setStrokeStyle(2, 0x4f8091),
+    ]);
+  } else if (item.itemId === "jukebox_neon") {
+    const glow = scene.add.ellipse(0, -31, 44, 67, 0x6ff6e9, 0.14);
+    art.add([
+      scene.add.rectangle(0, -18, 52, 72, 0x5a294f).setStrokeStyle(4, outline),
+      scene.add.circle(0, -48, 26, 0x783867).setStrokeStyle(4, outline),
+      scene.add.circle(0, -48, 18, 0xf0bf61).setStrokeStyle(3, 0x6f3c43),
+      scene.add.rectangle(0, -10, 34, 30, 0x2b3150).setStrokeStyle(3, 0x6ff6e9),
+      scene.add.rectangle(-10, 14, 8, 13, 0xe85696),
+      scene.add.rectangle(10, 14, 8, 13, 0x6ff6e9),
+      glow,
+    ]);
+    if (motionAllowed(scene)) scene.tweens.add({ targets: glow, alpha: { from: 0.2, to: 0.07 }, duration: 1300, yoyo: true, repeat: -1 });
   } else if (item.itemId === "luminaria_neon") {
     const glow = scene.add.circle(0, -34, 30, 0x70eefa, 0.16);
     const glow2 = scene.add.circle(0, -34, 44, 0x70eefa, 0.08);
-    container.add([
+    art.add([
       scene.add.ellipse(0, 10, 40, 12, 0x2c3550).setStrokeStyle(3, outline),
       scene.add.rectangle(0, -10, 8, 44, 0x3f4b6e).setStrokeStyle(2, outline),
       scene.add.circle(0, -34, 20, 0x70eefa).setStrokeStyle(4, outline),
@@ -286,16 +487,18 @@ function createFurniture(scene: Phaser.Scene, item: HouseItem) {
       glow2,
       glow,
     ]);
-    scene.tweens.add({ targets: [glow, glow2], alpha: { from: 0.28, to: 0.06 }, duration: 1200, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    if (motionAllowed(scene)) scene.tweens.add({ targets: [glow, glow2], alpha: { from: 0.22, to: 0.08 }, duration: 1800, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
   } else if (item.itemId === "estante_caotica") {
     const books: Phaser.GameObjects.Rectangle[] = [];
     const bookColors = [0xe85e5d, 0x6ebce7, 0xf0ca67, 0x9be08a, 0xd98cf0];
     for (let shelf = 0; shelf < 3; shelf += 1) {
+      const widths = [9, 11, 8, 10, 9];
+      const heights = [17, 14, 19, 16, 18];
       let bx = -20;
       let count = 0;
-      while (bx < 18 && count < 5) {
-        const w = 8 + Math.floor(Math.random() * 4);
-        const h = 14 + Math.floor(Math.random() * 6);
+      while (bx < 18 && count < widths.length) {
+        const w = widths[(shelf + count) % widths.length];
+        const h = heights[(shelf * 2 + count) % heights.length];
         const book = scene.add.rectangle(bx + w / 2, -32 + shelf * 22 - h / 2, w, h, bookColors[(shelf * 2 + count) % bookColors.length]).setStrokeStyle(2, 0x33213d);
         if (shelf === 1 && count === 3) book.setRotation(-0.24);
         books.push(book);
@@ -303,7 +506,7 @@ function createFurniture(scene: Phaser.Scene, item: HouseItem) {
         count += 1;
       }
     }
-    container.add([
+    art.add([
       scene.add.rectangle(0, -22, 60, 66, 0x845f49).setStrokeStyle(4, outline),
       scene.add.rectangle(-30, -22, 6, 66, 0x6a4a37),
       scene.add.rectangle(0, -43, 50, 5, 0x30213d),
@@ -314,7 +517,7 @@ function createFurniture(scene: Phaser.Scene, item: HouseItem) {
   } else if (item.itemId === "tv_tubo") {
     const scanline = scene.add.rectangle(-16, -14, 8, 2, 0xffffff, 0.65);
     const snow = scene.add.circle(10, -20, 2.5, 0xffffff, 0.8);
-    container.add([
+    art.add([
       scene.add.rectangle(-22, 8, 9, 14, 0x2d2938).setStrokeStyle(2, outline),
       scene.add.rectangle(22, 8, 9, 14, 0x2d2938).setStrokeStyle(2, outline),
       scene.add.rectangle(0, -10, 64, 50, 0x595366).setStrokeStyle(4, outline),
@@ -327,18 +530,20 @@ function createFurniture(scene: Phaser.Scene, item: HouseItem) {
       scanline,
       snow,
     ]);
-    scene.tweens.add({ targets: scanline, y: { from: -26, to: -2 }, duration: 700, repeat: -1, onRepeat: () => scanline.setX(-20 + Math.random() * 8) });
-    scene.time.addEvent({
-      delay: 1800,
-      loop: true,
-      callback: () => {
-        if (!alive(snow)) return;
-        snow.setPosition(-20 + Math.random() * 34, -25 + Math.random() * 22);
-        scene.tweens.add({ targets: snow, alpha: { from: 0.9, to: 0 }, duration: 320, onComplete: () => snow.setAlpha(0.8) });
-      },
-    });
+    if (motionAllowed(scene)) {
+      scene.tweens.add({ targets: scanline, y: { from: -26, to: -2 }, duration: 900, repeat: -1, onRepeat: () => scanline.setX(-18) });
+      scene.time.addEvent({
+        delay: 1800,
+        loop: true,
+        callback: () => {
+          if (!alive(snow)) return;
+          snow.setPosition(9, -18);
+          scene.tweens.add({ targets: snow, alpha: { from: 0.9, to: 0 }, duration: 320, onComplete: () => snow.setAlpha(0.8) });
+        },
+      });
+    }
   } else if (item.itemId === "geladeira_premium") {
-    container.add([
+    art.add([
       scene.add.rectangle(0, -18, 52, 82, 0xb7e7f3).setStrokeStyle(4, outline),
       scene.add.rectangle(0, -38, 52, 4, 0x4d88a4),
       scene.add.rectangle(17, -24, 5, 24, 0x4d88a4).setStrokeStyle(2, 0x2f5d75),
@@ -360,7 +565,7 @@ function createFurniture(scene: Phaser.Scene, item: HouseItem) {
       scene.add.circle(5, -2, 2.5, 0x4b2d2a),
       scene.add.triangle(-2.5, 4, -6, 0, -2, 0, -4, 5, 0xe8848f),
     ]);
-    container.add([
+    art.add([
       scene.add.ellipse(0, -8, 52, 34, 0xf3aa5f).setStrokeStyle(4, outline),
       scene.add.ellipse(-8, -16, 26, 10, 0xd98f45, 0.7),
       scene.add.ellipse(8, -14, 22, 9, 0xd98f45, 0.7),
@@ -369,12 +574,14 @@ function createFurniture(scene: Phaser.Scene, item: HouseItem) {
       head,
       tail,
     ]);
-    scene.tweens.add({ targets: tail, rotation: { from: -0.34, to: 0.3 }, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
-    scene.tweens.add({ targets: head, y: { from: -30, to: -34 }, duration: 1300, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    if (motionAllowed(scene)) {
+      scene.tweens.add({ targets: tail, rotation: { from: -0.28, to: 0.24 }, duration: 1200, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+      scene.tweens.add({ targets: head, y: { from: -30, to: -33 }, duration: 1600, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    }
   } else if (item.itemId === "camera_porta") {
     const led = scene.add.circle(-16, -14, 3.5, 0x7dffa0);
-    const cone = scene.add.polygon(-20, 6, [0, -8, -52, 26, -34, 34], 0x9fe4ff, 0.12);
-    container.add([
+    const cone = centeredPolygon(scene, -20, 6, [0, -8, -52, 26, -34, 34], 0x9fe4ff, 0.12);
+    art.add([
       scene.add.rectangle(-6, 14, 10, 26, 0x354158).setStrokeStyle(2, outline),
       scene.add.ellipse(-6, 26, 22, 8, 0x2c3850).setStrokeStyle(2, outline),
       scene.add.rectangle(2, -10, 12, 26, 0x5b6a87).setStrokeStyle(3, outline),
@@ -384,13 +591,17 @@ function createFurniture(scene: Phaser.Scene, item: HouseItem) {
       cone,
       led,
     ]);
-    scene.tweens.add({ targets: led, alpha: { from: 1, to: 0.15 }, duration: 460, yoyo: true, repeat: -1, ease: "Quad.easeInOut" });
-    scene.tweens.add({ targets: cone, alpha: { from: 0.14, to: 0.03 }, duration: 2000, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    if (motionAllowed(scene)) {
+      scene.tweens.add({ targets: led, alpha: { from: 1, to: 0.35 }, duration: 760, yoyo: true, repeat: -1, ease: "Quad.easeInOut" });
+      scene.tweens.add({ targets: cone, alpha: { from: 0.12, to: 0.045 }, duration: 2400, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    }
   } else {
-    container.add(scene.add.rectangle(0, -20, 52, 44, 0x948aa8).setStrokeStyle(4, outline));
+    art.add(scene.add.rectangle(0, -20, 52, 44, 0x948aa8).setStrokeStyle(4, outline));
   }
 
-  if (item.rotated) container.setRotation(-0.09).setScale(0.97);
+  if ((rotation === 1 || rotation === 2) && !["sofa_inicial", "planta_inicial", "tapete_rua", "mesa_cafe", "poltrona_vintage", "cama_nuvem", "luminaria_neon"].includes(item.itemId)) {
+    art.setScale(-1, 1);
+  }
   return container;
 }
 
@@ -408,7 +619,7 @@ function createTree(scene: Phaser.Scene, x: number, y: number, scale: number) {
     scene.add.rectangle(-3, -34, 4, 30, 0x8f6242, 0.6),
     foliage,
   ]).setScale(scale);
-  scene.tweens.add({ targets: foliage, rotation: { from: -0.03, to: 0.03 }, duration: 2300, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+  if (motionAllowed(scene)) scene.tweens.add({ targets: foliage, rotation: { from: -0.03, to: 0.03 }, duration: 2300, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
   return tree;
 }
 
@@ -421,7 +632,7 @@ function createLampPost(scene: Phaser.Scene, x: number, y: number) {
     scene.add.rectangle(0, -63, 16, 10, 0xfff3c4),
     glow,
   ]);
-  scene.tweens.add({ targets: glow, alpha: { from: 0.28, to: 0.1 }, duration: 1600, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+  if (motionAllowed(scene)) scene.tweens.add({ targets: glow, alpha: { from: 0.24, to: 0.12 }, duration: 2100, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
   return lamp;
 }
 
@@ -438,11 +649,11 @@ function createStreetHouse(
   const art = scene.add.container(0, 0);
   art.add([
     scene.add.ellipse(0, 2, 190, 34, 0x2d2340, 0.3),
-    scene.add.polygon(62, -96, [0, 0, 34, -17, 34, 72, 0, 88], bodyColor, 0.75).setStrokeStyle(4, 0x332342),
+    centeredPolygon(scene, 62, -96, [0, 0, 34, -17, 34, 72, 0, 88], bodyColor, 0.75).setStrokeStyle(4, 0x332342),
     scene.add.rectangle(0, -50, 124, 100, bodyColor).setStrokeStyle(5, 0x332342),
     scene.add.rectangle(30, -50, 12, 100, 0x000000, 0.1),
-    scene.add.polygon(0, -114, [0, -40, 78, 4, 0, 40, -78, 4], roofColor).setStrokeStyle(5, 0x332342),
-    scene.add.polygon(44, -114, [0, -40, 78, 4, 0, 40], roofColor, 0.55),
+    centeredPolygon(scene, 0, -114, [0, -40, 78, 4, 0, 40, -78, 4], roofColor).setStrokeStyle(5, 0x332342),
+    centeredPolygon(scene, 44, -114, [0, -40, 78, 4, 0, 40], roofColor, 0.55),
     scene.add.rectangle(-40, -148, 14, 34, 0x8a5a5a).setStrokeStyle(3, 0x5c3a3a),
     scene.add.rectangle(0, -26, 38, 56, 0x704351).setStrokeStyle(4, 0x332342),
     scene.add.circle(26, -22, 3.5, 0xffdf72),
@@ -452,17 +663,19 @@ function createStreetHouse(
   const windowGlowA = scene.add.rectangle(-42, -66, 24, 26, 0xffe99d, 0.9).setStrokeStyle(4, 0xf2e6c8);
   const windowGlowB = scene.add.rectangle(42, -66, 24, 26, 0xffe99d, 0.9).setStrokeStyle(4, 0xf2e6c8);
   art.add([windowGlowA, windowGlowB]);
-  scene.tweens.add({ targets: [windowGlowA, windowGlowB], fillAlpha: { from: 0.95, to: 0.55 }, duration: 2400, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+  if (motionAllowed(scene)) scene.tweens.add({ targets: [windowGlowA, windowGlowB], fillAlpha: { from: 0.9, to: 0.64 }, duration: 2800, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
 
-  scene.time.addEvent({
-    delay: 1150,
-    loop: true,
-    callback: () => {
-      if (!alive(art)) return;
-      const puff = scene.add.circle(x - 40 * scale, y - 152 * scale, 6, 0xe8ecf4, 0.5).setDepth(-60);
-      scene.tweens.add({ targets: puff, y: puff.y - 42, x: puff.x + 10, scale: 1.8, alpha: 0, duration: 1900, ease: "Sine.easeOut", onComplete: () => puff.destroy() });
-    },
-  });
+  if (motionAllowed(scene)) {
+    scene.time.addEvent({
+      delay: 1450,
+      loop: true,
+      callback: () => {
+        if (!alive(art)) return;
+        const puff = scene.add.circle(x - 40 * scale, y - 152 * scale, 6, 0xe8ecf4, 0.5).setDepth(-60);
+        scene.tweens.add({ targets: puff, y: puff.y - 42, x: puff.x + 10, scale: 1.8, alpha: 0, duration: 1900, ease: "Sine.easeOut", onComplete: () => puff.destroy() });
+      },
+    });
+  }
 
   const trimmedLabel = label.length > 14 ? `${label.slice(0, 13)}…` : label;
   const plate = labelChip(scene, trimmedLabel.toUpperCase(), 0x6e4a30, 0x46301f, "#ffeccc");
@@ -473,11 +686,11 @@ function createStreetHouse(
     const badgeColors = [0x77d48f, 0xe8c45e, 0xe0705f];
     const level = Phaser.Math.Clamp(options.securityLevel, 1, 3);
     const badge = scene.add.container(74, 34, [
-      scene.add.polygon(0, 0, [0, -10, 9, -6, 9, 4, 0, 11, -9, 4, -9, -6], badgeColors[level - 1]).setStrokeStyle(2, 0x2c2c34),
+      centeredPolygon(scene, 0, 0, [0, -10, 9, -6, 9, 4, 0, 11, -9, 4, -9, -6], badgeColors[level - 1]).setStrokeStyle(2, 0x2c2c34),
       uiText(scene, 0, -1, String(level), 11, "#2c2c34", "#2c2c34", 0),
     ]);
     art.add(badge);
-    scene.tweens.add({ targets: badge, y: { from: 34, to: 30 }, duration: 1300, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    if (motionAllowed(scene)) scene.tweens.add({ targets: badge, y: { from: 34, to: 31 }, duration: 1700, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
   }
 
   if (options.own) {
@@ -487,13 +700,13 @@ function createStreetHouse(
       pennant,
     ]);
     art.add(flag);
-    scene.tweens.add({ targets: pennant, scaleX: { from: 1, to: 0.7 }, duration: 700, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+    if (motionAllowed(scene)) scene.tweens.add({ targets: pennant, scaleX: { from: 1, to: 0.78 }, duration: 1100, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
     const ownChip = labelChip(scene, "SUA CASA", 0x3d2a12, PAL.gold, "#ffe9a8");
     ownChip.setPosition(0, -188);
     art.add(ownChip);
     const arrow = scene.add.triangle(0, -166, -8, 0, 8, 0, 0, 12, PAL.gold).setStrokeStyle(2, 0x8a6a1f);
     art.add(arrow);
-    scene.tweens.add({ targets: arrow, y: { from: -172, to: -158 }, duration: 620, yoyo: true, repeat: -1, ease: "Quad.easeInOut" });
+    if (motionAllowed(scene)) scene.tweens.add({ targets: arrow, y: { from: -168, to: -160 }, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
   }
 
   const house = scene.add.container(x, y, [art]).setScale(scale);
@@ -518,7 +731,7 @@ function createStreetHouse(
 
   if (options.entranceDelay != null) {
     house.setAlpha(0).setY(y + 18);
-    scene.tweens.add({ targets: house, alpha: 1, y, duration: 420, delay: options.entranceDelay, ease: "Back.easeOut" });
+    scene.tweens.add({ targets: house, alpha: 1, y, duration: motionDuration(scene, 320), delay: motionAllowed(scene) ? options.entranceDelay : 0, ease: "Cubic.easeOut" });
   }
   return house;
 }
@@ -528,20 +741,28 @@ type BecoSceneAPI = {
   switchMode: (mode: WorldMode) => void;
   syncDynamic: () => void;
   applyViewport: (viewport: ViewportMode) => void;
+  applyMotionPreference: (reduced: boolean) => void;
 };
 
 type Drifter = { obj: Phaser.GameObjects.Container; speed: number };
+type FurnitureRig = {
+  root: Phaser.GameObjects.Container;
+  itemId: string;
+  rotation: number;
+  selection: Phaser.GameObjects.Container;
+};
 
-export default function HouseGame({ mode, house, neighborhood, owns, selectedItemId, onExit, onOpenNeighbor, onSelectItem, onMoveItem }: HouseGameProps) {
+export default function HouseGame({ mode, house, neighborhood, owns, selectedItemId, interactionLocked = false, onExit, onOpenNeighbor, onSelectItem, onClearSelection, onMoveItem }: HouseGameProps) {
   const rawId = useId();
   const containerId = `house-game-${rawId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
-  const callbacksRef = useRef({ onExit, onOpenNeighbor, onSelectItem, onMoveItem });
-  const propsRef = useRef({ mode, house, neighborhood, owns, selectedItemId, viewportMode: "desktop" as ViewportMode });
+  const callbacksRef = useRef({ onExit, onOpenNeighbor, onSelectItem, onClearSelection, onMoveItem });
+  const propsRef = useRef({ mode, house, neighborhood, owns, selectedItemId, interactionLocked, viewportMode: "desktop" as ViewportMode, reducedMotion: false });
   const sceneRef = useRef<(Phaser.Scene & BecoSceneAPI) | null>(null);
   const [viewportMode, setViewportMode] = useState<ViewportMode>("desktop");
+  const [reducedMotion, setReducedMotion] = useState(false);
 
-  callbacksRef.current = { onExit, onOpenNeighbor, onSelectItem, onMoveItem };
-  propsRef.current = { mode, house, neighborhood, owns, selectedItemId, viewportMode };
+  callbacksRef.current = { onExit, onOpenNeighbor, onSelectItem, onClearSelection, onMoveItem };
+  propsRef.current = { mode, house, neighborhood, owns, selectedItemId, interactionLocked, viewportMode, reducedMotion };
 
   useEffect(() => {
     const updateViewportMode = () => {
@@ -554,18 +775,28 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
   }, []);
 
   useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReducedMotion(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
     class BecoScene extends Phaser.Scene implements BecoSceneAPI {
       private activeMode: WorldMode = "house";
       private tiles: Array<Array<Phaser.GameObjects.Polygon | null>> = [];
-      private furnitureRigs: Phaser.GameObjects.Container[] = [];
+      private furnitureRigs: FurnitureRig[] = [];
       private neighborHouses: Phaser.GameObjects.Container[] = [];
       private drifters: Drifter[] = [];
       private avatarRig: AvatarRig | null = null;
       private headerTitle: Phaser.GameObjects.Text | null = null;
       private headerHint: Phaser.GameObjects.Text | null = null;
       private lastHouseKey: string | null = null;
+      private lastStructureKey: string | null = null;
       private lastNeighborhoodKey: string | null = null;
       private dragCell: { x: number; y: number } | null = null;
+      private dragCellValid = false;
 
       constructor() {
         super("beco-scene");
@@ -593,8 +824,20 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         }
       }
 
+      applyMotionPreference(reduced: boolean) {
+        if (this.registry.get(REDUCED_MOTION_KEY) === reduced) return;
+        this.registry.set(REDUCED_MOTION_KEY, reduced);
+        this.scene.restart();
+      }
+
       syncDynamic() {
-        if (this.activeMode === "house") this.syncHouse();
+        if (this.activeMode === "house") {
+          if (this.lastStructureKey != null && this.lastStructureKey !== this.buildStructureKey()) {
+            this.scene.restart();
+            return;
+          }
+          this.syncHouse();
+        }
         else this.syncNeighborhood();
       }
 
@@ -609,6 +852,7 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
 
       create() {
         this.activeMode = propsRef.current.mode;
+        this.registry.set(REDUCED_MOTION_KEY, propsRef.current.reducedMotion);
         this.tiles = [];
         this.furnitureRigs = [];
         this.neighborHouses = [];
@@ -617,9 +861,11 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         this.headerTitle = null;
         this.headerHint = null;
         this.lastHouseKey = null;
+        this.lastStructureKey = null;
         this.lastNeighborhoodKey = null;
         this.dragCell = null;
-        this.cameras.main.fadeIn(340, 12, 7, 22);
+        this.dragCellValid = false;
+        this.cameras.main.fadeIn(motionAllowed(this) ? 300 : 0, 12, 7, 22);
         this.applyViewport(propsRef.current.viewportMode);
         if (this.activeMode === "house") this.createHouse();
         else this.createNeighborhood();
@@ -627,16 +873,19 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
       }
 
       private floorPoints() {
-        return {
-          north: { x: GRID_ORIGIN_X, y: GRID_ORIGIN_Y - TILE_HEIGHT / 2 },
-          east: { x: GRID_ORIGIN_X + GRID_COLUMNS * (TILE_WIDTH / 2), y: GRID_ORIGIN_Y },
-          bottom: { x: GRID_ORIGIN_X + (GRID_COLUMNS - GRID_ROWS) * (TILE_WIDTH / 2), y: GRID_ORIGIN_Y + (GRID_COLUMNS + GRID_ROWS) * (TILE_HEIGHT / 2) + TILE_HEIGHT / 2 },
-          west: { x: GRID_ORIGIN_X - GRID_ROWS * (TILE_WIDTH / 2), y: GRID_ORIGIN_Y + (GRID_ROWS - 1) * (TILE_HEIGHT / 2) },
-        };
+        return getGridOutline();
       }
 
       private tileBaseColor(x: number, y: number) {
-        return (x + y) % 2 === 0 ? PAL.floorA : PAL.floorB;
+        const theme = FLOOR_THEMES[propsRef.current.house.house.floorStyle] || FLOOR_THEMES.piso_lilas;
+        if (propsRef.current.house.house.floorStyle === "piso_madeira") return y % 2 === 0 ? theme.a : theme.b;
+        if (propsRef.current.house.house.floorStyle === "piso_galaxia" && (x * 3 + y * 5) % 7 === 0) return 0x5669aa;
+        return (x + y) % 2 === 0 ? theme.a : theme.b;
+      }
+
+      private buildStructureKey() {
+        const current = propsRef.current.house.house;
+        return `${current.wallStyle || "parede_beco"}|${current.floorStyle || "piso_lilas"}|${current.windowStyle || "janela_classica"}`;
       }
 
       private setDropHint(cell: { x: number; y: number } | null, valid: boolean) {
@@ -645,20 +894,26 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
           if (previous) previous.setFillStyle(this.tileBaseColor(this.dragCell.x, this.dragCell.y), 1);
         }
         this.dragCell = cell;
+        this.dragCellValid = Boolean(cell && valid);
         if (!cell) return;
         const tile = this.tiles[cell.y]?.[cell.x];
         if (tile) tile.setFillStyle(valid ? PAL.floorValid : PAL.floorInvalid, 1);
       }
 
       private moveAvatar(rig: AvatarRig, targetX: number, targetY: number) {
+        const destinationY = targetY + AVATAR_FLOOR_OFFSET_Y;
         const dx = targetX - rig.root.x;
-        const dy = targetY - rig.root.y;
+        const dy = destinationY - rig.root.y;
         const distance = Math.hypot(dx, dy);
         if (distance < 6) return;
+        if (!motionAllowed(this)) {
+          rig.root.setPosition(targetX, destinationY).setDepth(targetY + 80);
+          return;
+        }
         this.tweens.killTweensOf(rig.root);
         if (!rig.walking) {
           rig.walking = true;
-          rig.breathing.pause();
+          rig.breathing?.pause();
           rig.bobber.setY(0);
           rig.walkTweens.forEach((tween) => tween.resume());
         }
@@ -667,24 +922,27 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         this.tweens.add({
           targets: rig.root,
           x: targetX,
-          y: targetY - 24,
+          y: destinationY,
           duration: Math.max(260, distance * 3),
           ease: "Sine.easeInOut",
+          onUpdate: () => rig.root.setDepth(rig.root.y - AVATAR_FLOOR_OFFSET_Y + 80),
           onComplete: () => {
             rig.walkTweens.forEach((tween) => tween.pause());
             rig.walking = false;
             rig.leanTween?.remove();
             rig.leanTween = null;
             rig.bobber.setRotation(0).setY(0);
-            rig.breathing.resume();
+            rig.breathing?.resume();
             dustPuff(this, rig.root.x, rig.root.y + 26);
-            this.tweens.add({ targets: rig.bobber, scaleX: { from: 1.14, to: 1 }, scaleY: { from: 0.84, to: 1 }, duration: 260, ease: "Back.easeOut" });
+            this.tweens.add({ targets: rig.bobber, scaleX: { from: 1.08, to: 1 }, scaleY: { from: 0.92, to: 1 }, duration: 190, ease: "Cubic.easeOut" });
           },
         });
       }
 
       private buildStaticHouse() {
         const { north, east, bottom, west } = this.floorPoints();
+        const room = propsRef.current.house.house;
+        const wallTheme = WALL_THEMES[room.wallStyle] || WALL_THEMES.parede_beco;
         const g = this.add.graphics().setDepth(-60);
 
         // laje com espessura sob o piso
@@ -697,29 +955,47 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         g.fillPoints([north, east, bottom, west], true);
 
         // paredes
-        g.fillStyle(PAL.wallLeft, 1);
+        g.fillStyle(wallTheme.left, 1);
         g.fillPoints([north, west, { x: west.x, y: west.y - WALL_HEIGHT }, { x: north.x, y: north.y - WALL_HEIGHT }], true);
-        g.fillStyle(PAL.wallRight, 1);
+        g.fillStyle(wallTheme.right, 1);
         g.fillPoints([north, east, { x: east.x, y: east.y - WALL_HEIGHT }, { x: north.x, y: north.y - WALL_HEIGHT }], true);
 
         // rodapés
-        g.fillStyle(0x584079, 1);
+        g.fillStyle(wallTheme.trim, 1);
         g.fillPoints([north, west, { x: west.x, y: west.y - 12 }, { x: north.x, y: north.y - 12 }], true);
-        g.fillStyle(0x463260, 1);
+        g.fillStyle(wallTheme.edge, 1);
         g.fillPoints([north, east, { x: east.x, y: east.y - 12 }, { x: north.x, y: north.y - 12 }], true);
 
-        // listras de papel de parede
         const wallVec = { x: west.x - north.x, y: west.y - north.y };
-        g.fillStyle(0xffffff, 0.05);
-        for (let t = 0.1; t < 0.95; t += 0.08) {
-          const ax = north.x + wallVec.x * t;
-          const ay = north.y + wallVec.y * t;
-          const bx = north.x + wallVec.x * (t + 0.014);
-          const by = north.y + wallVec.y * (t + 0.014);
-          g.fillPoints([{ x: ax, y: ay }, { x: bx, y: by }, { x: bx, y: by - WALL_HEIGHT + 14 }, { x: ax, y: ay - WALL_HEIGHT + 14 }], true);
+        if (wallTheme.pattern === "stripe" || wallTheme.pattern === "neon") {
+          g.fillStyle(wallTheme.pattern === "neon" ? 0x56eff2 : 0xffffff, wallTheme.pattern === "neon" ? 0.16 : 0.05);
+          for (let t = 0.1; t < 0.95; t += wallTheme.pattern === "neon" ? 0.18 : 0.08) {
+            const ax = north.x + wallVec.x * t;
+            const ay = north.y + wallVec.y * t;
+            const bx = north.x + wallVec.x * (t + (wallTheme.pattern === "neon" ? 0.008 : 0.014));
+            const by = north.y + wallVec.y * (t + (wallTheme.pattern === "neon" ? 0.008 : 0.014));
+            g.fillPoints([{ x: ax, y: ay }, { x: bx, y: by }, { x: bx, y: by - WALL_HEIGHT + 14 }, { x: ax, y: ay - WALL_HEIGHT + 14 }], true);
+          }
+        } else if (wallTheme.pattern === "brick") {
+          g.lineStyle(2, 0x4c2e31, 0.38);
+          for (let level = 24; level < WALL_HEIGHT; level += 24) {
+            g.lineBetween(west.x, west.y - level, north.x, north.y - level);
+            g.lineBetween(north.x, north.y - level, east.x, east.y - level);
+          }
+          for (let t = 0.08; t < 0.96; t += 0.16) {
+            const point = { x: north.x + wallVec.x * t, y: north.y + wallVec.y * t };
+            g.lineBetween(point.x, point.y - WALL_HEIGHT + 8, point.x, point.y - 12);
+          }
+        } else {
+          g.fillStyle(0xb6dfc3, 0.18);
+          for (let t = 0.12; t < 0.94; t += 0.16) {
+            const point = { x: north.x + wallVec.x * t, y: north.y + wallVec.y * t - 56 };
+            g.fillEllipse(point.x, point.y, 13, 25);
+            g.fillEllipse(point.x + 12, point.y + 13, 11, 21);
+          }
         }
 
-        g.lineStyle(3, 0x6b4d92, 0.8);
+        g.lineStyle(3, wallTheme.trim, 0.8);
         g.strokePoints([{ x: west.x, y: west.y - WALL_HEIGHT }, { x: north.x, y: north.y - WALL_HEIGHT }, { x: east.x, y: east.y - WALL_HEIGHT }], false);
 
         g.fillStyle(PAL.gold, 0.14);
@@ -730,31 +1006,36 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
           { x: north.x + wallVec.x * 0.06, y: north.y + wallVec.y * 0.06 - WALL_HEIGHT + 26 },
         ], true);
 
-        this.add.rectangle(GRID_ORIGIN_X - 3, north.y - WALL_HEIGHT / 2, 8, WALL_HEIGHT, PAL.wallEdge).setDepth(-55);
+        this.add.rectangle(GRID_ORIGIN_X - 3, north.y - WALL_HEIGHT / 2, 8, WALL_HEIGHT, wallTheme.edge).setDepth(-55);
 
         // janela na parede esquerda
-        const winA = { x: north.x + wallVec.x * 0.36, y: north.y + wallVec.y * 0.36 };
-        const winB = { x: north.x + wallVec.x * 0.52, y: north.y + wallVec.y * 0.52 };
-        const winH = 74;
+        const windowStyle = room.windowStyle || "janela_classica";
+        const windowStart = windowStyle === "janela_panoramica" ? 0.27 : 0.36;
+        const windowEnd = windowStyle === "janela_panoramica" ? 0.62 : windowStyle === "janela_arco" ? 0.55 : 0.52;
+        const winA = { x: north.x + wallVec.x * windowStart, y: north.y + wallVec.y * windowStart };
+        const winB = { x: north.x + wallVec.x * windowEnd, y: north.y + wallVec.y * windowEnd };
+        const winH = windowStyle === "janela_arco" ? 88 : windowStyle === "janela_panoramica" ? 78 : 74;
+        const windowFrame = windowStyle === "janela_neon" ? 0x5ff5ef : windowStyle === "janela_arco" ? 0xf2c979 : 0xe8d9ff;
+        const windowGlass = windowStyle === "janela_neon" ? 0x7359ad : windowStyle === "janela_arco" ? 0xffdb8b : 0x9fd8ef;
         const windowG = this.add.graphics().setDepth(-50);
-        windowG.fillStyle(0x9fd8ef, 1);
+        windowG.fillStyle(windowGlass, 1);
         windowG.fillPoints([winA, winB, { x: winB.x, y: winB.y - winH }, { x: winA.x, y: winA.y - winH }], true);
-        windowG.fillStyle(0xc9ecfb, 1);
+        windowG.fillStyle(windowStyle === "janela_neon" ? 0xe765b5 : 0xc9ecfb, 0.78);
         const winMid = { x: (winA.x + winB.x) / 2, y: (winA.y + winB.y) / 2 };
         windowG.fillPoints([winA, winMid, { x: winMid.x, y: winMid.y - winH }, { x: winA.x, y: winA.y - winH }], true);
-        windowG.lineStyle(4, 0xe8d9ff, 1);
+        windowG.lineStyle(windowStyle === "janela_neon" ? 6 : 4, windowFrame, 1);
         windowG.strokePoints([winA, winB, { x: winB.x, y: winB.y - winH }, { x: winA.x, y: winA.y - winH }], true);
-        windowG.lineStyle(3, 0xe8d9ff, 0.9);
+        windowG.lineStyle(3, windowFrame, 0.9);
         windowG.lineBetween(winMid.x, winMid.y, winMid.x, winMid.y - winH);
-        windowG.lineBetween(winA.x, winA.y - winH / 2, winB.x, winB.y - winH / 2);
+        if (windowStyle !== "janela_panoramica") windowG.lineBetween(winA.x, winA.y - winH / 2, winB.x, winB.y - winH / 2);
 
         const shine = this.add.graphics().setDepth(-49);
         shine.fillStyle(0xffffff, 0.26);
         shine.fillPoints([{ x: winA.x, y: winA.y - 10 }, { x: winA.x + 13, y: winA.y - 16 }, { x: winA.x + 13, y: winA.y - winH + 8 }, { x: winA.x, y: winA.y - winH + 15 }], true);
-        this.tweens.add({ targets: shine, x: { from: 0, to: 96 }, duration: 2400, repeat: -1, hold: 2600, ease: "Sine.easeInOut" });
+        if (motionAllowed(this)) this.tweens.add({ targets: shine, alpha: { from: 0.18, to: 0.38 }, duration: 2200, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
 
-        const rays = this.add.polygon(winMid.x + 66, winMid.y + 120, [0, -80, 130, 24, 30, 150, -60, 40], 0xfff3c9, 0.07).setDepth(-40);
-        this.tweens.add({ targets: rays, alpha: { from: 0.09, to: 0.035 }, duration: 2800, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+        const rays = centeredPolygon(this, winMid.x + 66, winMid.y + 120, [0, -80, 130, 24, 30, 150, -60, 40], 0xfff3c9, 0.07).setDepth(-40);
+        if (motionAllowed(this)) this.tweens.add({ targets: rays, alpha: { from: 0.08, to: 0.045 }, duration: 3200, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
 
         // quadro na parede direita
         const frameG = this.add.graphics().setDepth(-50);
@@ -775,10 +1056,10 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         lampG.fillStyle(PAL.gold, 1);
         lampG.fillTriangle(GRID_ORIGIN_X - 16, lampTop + 74, GRID_ORIGIN_X + 28, lampTop + 74, GRID_ORIGIN_X + 6, lampTop + 52);
         const bulbGlow = this.add.circle(GRID_ORIGIN_X + 6, lampTop + 84, 30, 0xffe9a5, 0.22).setDepth(-46);
-        this.tweens.add({ targets: bulbGlow, alpha: { from: 0.26, to: 0.12 }, duration: 1700, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+        if (motionAllowed(this)) this.tweens.add({ targets: bulbGlow, alpha: { from: 0.24, to: 0.15 }, duration: 2200, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
 
         // poeira flutuando na luz
-        for (let i = 0; i < 10; i += 1) {
+        for (let i = 0; motionAllowed(this) && i < 8; i += 1) {
           const mote = this.add.circle(winMid.x - 60 + Math.random() * 160, 180 + Math.random() * 140, 1.4 + Math.random() * 1.8, 0xfff3d9, 0.16).setDepth(-30);
           this.tweens.add({
             targets: mote,
@@ -809,13 +1090,24 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
           for (let x = 0; x < GRID_COLUMNS; x += 1) {
             const position = toIso(x, y);
             const tileColor = this.tileBaseColor(x, y);
-            const tile = this.add.polygon(position.x, position.y, [0, -TILE_HEIGHT / 2, TILE_WIDTH / 2, 0, 0, TILE_HEIGHT / 2, -TILE_WIDTH / 2, 0], tileColor)
-              .setStrokeStyle(1.5, 0xc9aee3, 0.35)
+            const floorTheme = FLOOR_THEMES[house.house.floorStyle] || FLOOR_THEMES.piso_lilas;
+            const tile = centeredPolygon(this, position.x, position.y, [0, -TILE_HEIGHT / 2, TILE_WIDTH / 2, 0, 0, TILE_HEIGHT / 2, -TILE_WIDTH / 2, 0], tileColor)
+              .setStrokeStyle(1.5, floorTheme.grid, 0.38)
               .setDepth(position.y)
-              .setInteractive({ useHandCursor: true });
+              .setInteractive({
+                hitArea: new Phaser.Geom.Polygon([
+                  TILE_WIDTH / 2, 0,
+                  TILE_WIDTH, TILE_HEIGHT / 2,
+                  TILE_WIDTH / 2, TILE_HEIGHT,
+                  0, TILE_HEIGHT / 2,
+                ]),
+                hitAreaCallback: Phaser.Geom.Polygon.Contains,
+                useHandCursor: true,
+              });
             tile.on("pointerover", () => tile.setFillStyle(PAL.floorHover, 1));
             tile.on("pointerout", () => tile.setFillStyle(tileColor, 1));
             tile.on("pointerdown", () => {
+              if (!propsRef.current.interactionLocked) callbacksRef.current.onClearSelection();
               if (this.avatarRig) this.moveAvatar(this.avatarRig, position.x, position.y);
               const ripple = this.add.graphics().setDepth(1090);
               ripple.lineStyle(3, 0xfff0b8, 0.9);
@@ -828,8 +1120,8 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
 
         const avatarPosition = toIso(3, 5);
         this.avatarRig = createAvatarRig(this, house.avatar, owns ? "VOCÊ" : house.host?.nickname || "MORADOR");
-        this.avatarRig.root.setPosition(avatarPosition.x, avatarPosition.y - 24).setDepth(1100).setScale(0);
-        this.tweens.add({ targets: this.avatarRig.root, scale: 1, duration: 420, delay: 140, ease: "Back.easeOut" });
+        this.avatarRig.root.setPosition(avatarPosition.x, avatarPosition.y + AVATAR_FLOOR_OFFSET_Y).setDepth(avatarPosition.y + 80).setScale(motionAllowed(this) ? 0.96 : 1);
+        if (motionAllowed(this)) this.tweens.add({ targets: this.avatarRig.root, scale: 1, alpha: { from: 0, to: 1 }, duration: 260, delay: 80, ease: "Cubic.easeOut" });
       }
 
       private buildDoor() {
@@ -857,104 +1149,148 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         const signY = (p0.y + p1.y) / 2 - doorH - 28;
         const sign = labelChip(this, "SAIR PARA O BAIRRO ▸", 0x4a2c58, 0xd9a8e0, "#ffe9f4");
         sign.setPosition(signX, signY).setDepth(1300);
-        this.tweens.add({ targets: sign, y: signY - 5, duration: 900, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+        if (motionAllowed(this)) this.tweens.add({ targets: sign, y: signY - 3, duration: 1300, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
 
         const zone = this.add.zone(signX, (p0.y + p1.y) / 2 - doorH / 2, 96, doorH + 48).setDepth(1301);
         zone.setInteractive({ hitArea: new Phaser.Geom.Rectangle(-48, -(doorH + 48) / 2, 96, doorH + 48), hitAreaCallback: Phaser.Geom.Rectangle.Contains, useHandCursor: true });
         zone.on("pointerover", () => this.tweens.add({ targets: glow, alpha: { from: 0, to: 1 }, duration: 160 }));
         zone.on("pointerout", () => this.tweens.add({ targets: glow, alpha: 0, duration: 220 }));
         zone.on("pointerdown", () => {
-          this.cameras.main.fadeOut(220, 12, 7, 22);
+          this.cameras.main.fadeOut(motionAllowed(this) ? 180 : 0, 12, 7, 22);
           this.cameras.main.once("camerafadeoutcomplete", () => callbacksRef.current.onExit());
         });
       }
 
-      private buildHouseKey(items: HouseItem[], selected: string | undefined) {
+      private buildHouseKey(items: HouseItem[]) {
         const { house, owns } = propsRef.current;
         return [
           owns ? "own" : `host:${house.host?.nickname || ""}`,
-          items.filter((i) => i.placed).map((i) => `${i.id}:${i.x},${i.y}${i.rotated ? "r" : ""}`).join("|"),
-          selected || "",
+          items.filter((i) => i.placed).map((i) => `${i.id}:${i.x},${i.y}:r${itemRotation(i)}`).join("|"),
         ].join("#");
       }
 
-      private syncHouse() {
-        const { house, owns, selectedItemId } = propsRef.current;
-        const key = this.buildHouseKey(house.items, selectedItemId);
-        if (key === this.lastHouseKey) return;
-        this.lastHouseKey = key;
+      private syncSelection() {
+        const selected = propsRef.current.selectedItemId;
+        this.furnitureRigs.forEach((rig) => rig.selection.setVisible(rig.itemId === selected));
+      }
 
+      private syncHouse() {
+        const { house, owns } = propsRef.current;
         this.headerTitle?.setText(owns ? "SUA CASA NO BECO" : `CASA DE ${(house.host?.nickname || "UM VIZINHO").toUpperCase()}`);
         this.headerHint?.setText(owns ? "toque no piso para andar · segure e arraste para decorar" : "toque no piso para explorar");
 
-        this.furnitureRigs.forEach((rig) => destroyTree(this, rig));
+        const key = this.buildHouseKey(house.items);
+        if (key === this.lastHouseKey) {
+          this.syncSelection();
+          return;
+        }
+        this.lastHouseKey = key;
+
+        const previousRotations = new Map(this.furnitureRigs.map((rig) => [rig.itemId, rig.rotation]));
+        this.furnitureRigs.forEach((rig) => destroyTree(this, rig.root));
         this.furnitureRigs = [];
 
         for (const item of house.items.filter((entry) => entry.placed)) {
-          const position = toIso(item.x, item.y);
+          const gridPosition = toIso(item.x, item.y);
+          const position = furnitureFloorPosition(item);
           const furniture = createFurniture(this, item);
-          const selected = item.id === selectedItemId;
-          const baseScale = item.rotated ? 0.97 : 1;
-          furniture.setPosition(position.x, position.y + 10).setDepth(position.y + 40);
-          if (selected) {
-            selectionAura(this, furniture);
-            const nameChip = labelChip(this, itemLabels[item.itemId] || "Móvel", 0x2f2148, 0xd9b8ff, "#fff6d5");
-            nameChip.setPosition(0, -134);
-            furniture.add(nameChip);
-            this.tweens.add({ targets: furniture, scale: { from: baseScale, to: baseScale * 1.05 }, duration: 700, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+          const baseScale = 1;
+          furniture.setPosition(position.x, position.y).setDepth(gridPosition.y + 40);
+          const selection = selectionAura(this, furniture, itemLabels[item.itemId] || "Móvel");
+          const rotation = itemRotation(item);
+          const rig: FurnitureRig = { root: furniture, itemId: item.id, rotation, selection };
+          this.furnitureRigs.push(rig);
+          const previousRotation = previousRotations.get(item.id);
+          if (previousRotation != null && previousRotation !== rotation && motionAllowed(this)) {
+            furniture.setPosition(position.x, position.y - 5).setScale(0.84).setAlpha(0.25);
+            this.tweens.add({
+              targets: furniture,
+              x: { from: position.x + (rotation === 1 || rotation === 2 ? 7 : -7), to: position.x },
+              y: position.y,
+              scale: baseScale,
+              alpha: 1,
+              duration: 210,
+              ease: "Back.easeOut",
+            });
           }
           if (!owns) {
-            this.furnitureRigs.push(furniture);
             continue;
           }
 
           furniture.setData("dragging", false);
           furniture.setInteractive({ hitArea: new Phaser.Geom.Rectangle(-52, -112, 104, 124), hitAreaCallback: Phaser.Geom.Rectangle.Contains, useHandCursor: true });
           this.input.setDraggable(furniture);
-          const idleScale = selected ? baseScale * 1.05 : baseScale;
-          furniture.on("pointerover", () => this.tweens.add({ targets: furniture, scale: idleScale * 1.05, duration: 130, ease: "Quad.easeOut" }));
+          furniture.on("pointerover", () => {
+            if (propsRef.current.interactionLocked) return;
+            this.tweens.killTweensOf(furniture);
+            this.tweens.add({ targets: furniture, scale: baseScale * 1.035, duration: motionDuration(this, 140), ease: "Cubic.easeOut" });
+          });
           furniture.on("pointerout", () => {
             if (furniture.getData("dragging")) return;
-            this.tweens.add({ targets: furniture, scale: idleScale, duration: 130, ease: "Quad.easeOut" });
+            this.tweens.killTweensOf(furniture);
+            this.tweens.add({ targets: furniture, scale: baseScale, duration: motionDuration(this, 140), ease: "Cubic.easeOut" });
           });
-          furniture.on("pointerdown", () => callbacksRef.current.onSelectItem(item));
+          furniture.on("pointerdown", () => {
+            if (!propsRef.current.interactionLocked) callbacksRef.current.onSelectItem(item);
+          });
           furniture.on("dragstart", () => {
+            if (propsRef.current.interactionLocked) return;
             this.tweens.killTweensOf(furniture);
             furniture.setData("dragging", true);
-            furniture.setScale(1.1).setDepth(5000).setAlpha(0.94);
+            this.dragCell = { x: item.x, y: item.y };
+            this.dragCellValid = true;
+            furniture.setScale(baseScale * 1.06).setDepth(5000).setAlpha(0.94);
           });
           furniture.on("drag", (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
-            furniture.setPosition(dragX, dragY + 10);
-            const cell = fromIso(dragX, dragY + 10);
-            this.setDropHint(cell, cell != null);
+            if (!furniture.getData("dragging")) return;
+            furniture.setPosition(dragX, dragY);
+            const cell = cellFromFurniturePosition(dragX, dragY);
+            this.setDropHint(cell, isGridCellAvailable(propsRef.current.house.items, item.id, cell));
           });
-          furniture.on("dragend", (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
+          furniture.on("dragend", () => {
+            if (!furniture.getData("dragging")) return;
             furniture.setData("dragging", false);
-            const next = fromIso(dragX, dragY + 10);
+            const next = resolveDropCell(this.dragCell, this.dragCellValid);
             this.setDropHint(null, false);
             if (next) {
-              const snapped = toIso(next.x, next.y);
-              this.tweens.add({ targets: furniture, x: snapped.x, y: snapped.y + 10, scale: 1, alpha: 1, duration: 240, ease: "Back.easeOut" });
+              const snappedGrid = toIso(next.x, next.y);
+              const snapped = furnitureFloorPosition(next);
+              this.tweens.killTweensOf(furniture);
+              this.tweens.add({ targets: furniture, x: snapped.x, y: snapped.y, scale: baseScale, alpha: 1, duration: motionDuration(this, 220), ease: "Cubic.easeOut" });
+              furniture.setDepth(snappedGrid.y + 40);
               const echoedItems = propsRef.current.house.items.map((entry) => (entry.id === item.id ? { ...entry, x: next.x, y: next.y } : entry));
-              this.lastHouseKey = this.buildHouseKey(echoedItems, propsRef.current.selectedItemId);
-              callbacksRef.current.onMoveItem(item, next.x, next.y);
-            } else {
-              this.tweens.add({
-                targets: furniture,
-                x: { from: furniture.x - 7, to: furniture.x + 7 },
-                duration: 55,
-                yoyo: true,
-                repeat: 3,
-                onComplete: () => this.tweens.add({ targets: furniture, x: position.x, y: position.y + 10, scale: idleScale, alpha: 1, duration: 260, ease: "Back.easeOut" }),
+              this.lastHouseKey = this.buildHouseKey(echoedItems);
+              void Promise.resolve(callbacksRef.current.onMoveItem(item, next.x, next.y)).then((saved) => {
+                if (saved || !alive(furniture)) return;
+                this.lastHouseKey = this.buildHouseKey(propsRef.current.house.items);
+                this.tweens.killTweensOf(furniture);
+                this.tweens.add({ targets: furniture, x: position.x, y: position.y, scale: baseScale, alpha: 1, duration: motionDuration(this, 220), ease: "Cubic.easeOut" });
+                furniture.setDepth(gridPosition.y + 40);
               });
+            } else {
+              this.tweens.killTweensOf(furniture);
+              if (motionAllowed(this)) {
+                this.tweens.add({
+                  targets: furniture,
+                  x: { from: furniture.x - 4, to: furniture.x + 4 },
+                  duration: 45,
+                  yoyo: true,
+                  repeat: 2,
+                  onComplete: () => this.tweens.add({ targets: furniture, x: position.x, y: position.y, scale: baseScale, alpha: 1, duration: 180, ease: "Cubic.easeOut" }),
+                });
+              } else {
+                furniture.setPosition(position.x, position.y).setScale(baseScale).setAlpha(1);
+              }
+              furniture.setDepth(gridPosition.y + 40);
             }
           });
-          this.furnitureRigs.push(furniture);
         }
+        this.syncSelection();
       }
 
       private createHouse() {
         this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x20142f).setDepth(-100);
+        this.lastStructureKey = this.buildStructureKey();
         this.buildStaticHouse();
         this.buildHeader();
         this.buildFloorAndAvatar();
@@ -986,8 +1322,10 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         }
         const sunGlow = this.add.circle(0, 0, 44, 0xffed9a, 0.35);
         const sun = this.add.container(828, 96, [sunRays, sunGlow, this.add.circle(0, 0, 30, 0xffed9a).setStrokeStyle(4, 0xffd26d)]).setDepth(-95);
-        this.tweens.add({ targets: sun, rotation: Math.PI * 2, duration: 46000, repeat: -1 });
-        this.tweens.add({ targets: sunGlow, scale: { from: 1, to: 1.14 }, duration: 2200, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+        if (motionAllowed(this)) {
+          this.tweens.add({ targets: sun, rotation: Math.PI * 2, duration: 56000, repeat: -1 });
+          this.tweens.add({ targets: sunGlow, scale: { from: 1, to: 1.08 }, duration: 2800, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+        }
 
         const cloudSpecs: Array<[number, number, number, number]> = [
           [180, 58, 1, 22],
@@ -1002,8 +1340,10 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
             this.add.ellipse(30, 2, 46, 22, 0xffffff, 0.9),
             this.add.ellipse(8, 8, 70, 16, 0xffffff, 0.85),
           ]).setScale(scale).setAlpha(0.85).setDepth(-90);
-          this.drifters.push({ obj: cloud, speed });
-          this.tweens.add({ targets: cloud, y: y + 6, duration: 2600, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+          if (motionAllowed(this)) {
+            this.drifters.push({ obj: cloud, speed });
+            this.tweens.add({ targets: cloud, y: y + 4, duration: 3200, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+          }
         });
 
         const birdSpecs: Array<[number, number, number]> = [
@@ -1014,10 +1354,12 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
           const wingL = this.add.rectangle(-5, 0, 12, 3, 0x2f3542).setOrigin(1, 0.5);
           const wingR = this.add.rectangle(5, 0, 12, 3, 0x2f3542).setOrigin(0, 0.5);
           const bird = this.add.container(GAME_WIDTH + 60, y, [wingL, wingR]).setDepth(-80).setAlpha(0.8);
-          this.drifters.push({ obj: bird, speed });
-          this.tweens.add({ targets: wingL, rotation: { from: -0.6, to: 0.5 }, duration: 240, yoyo: true, repeat: -1, delay, ease: "Sine.easeInOut" });
-          this.tweens.add({ targets: wingR, rotation: { from: 0.6, to: -0.5 }, duration: 240, yoyo: true, repeat: -1, delay, ease: "Sine.easeInOut" });
-          this.tweens.add({ targets: bird, y: y - 14, duration: 1500, yoyo: true, repeat: -1, delay, ease: "Sine.easeInOut" });
+          if (motionAllowed(this)) {
+            this.drifters.push({ obj: bird, speed });
+            this.tweens.add({ targets: wingL, rotation: { from: -0.6, to: 0.5 }, duration: 240, yoyo: true, repeat: -1, delay, ease: "Sine.easeInOut" });
+            this.tweens.add({ targets: wingR, rotation: { from: 0.6, to: -0.5 }, duration: 240, yoyo: true, repeat: -1, delay, ease: "Sine.easeInOut" });
+            this.tweens.add({ targets: bird, y: y - 10, duration: 1800, yoyo: true, repeat: -1, delay, ease: "Sine.easeInOut" });
+          }
         });
 
         const hills = this.add.graphics().setDepth(-92);
@@ -1055,7 +1397,7 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
           this.add.rectangle(-9, -14, 5, 8, 0x8a342f),
           this.add.rectangle(9, -14, 5, 8, 0x8a342f),
         ]);
-        this.tweens.add({ targets: hydrant, y: { from: 596, to: 592 }, duration: 1400, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+        if (motionAllowed(this)) this.tweens.add({ targets: hydrant, y: { from: 596, to: 594 }, duration: 1800, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
 
         const signG = this.add.graphics().setDepth(-60);
         signG.fillStyle(0x8a5a3c, 1);
@@ -1067,7 +1409,7 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         signG.fillRect(266, 96, 10, 34);
         const signTitle = uiText(this, 158, 56, "BAIRRO DO GRUPO", 19, "#fff4cf", "#3a2418", 5).setDepth(-59);
         const signHint = uiText(this, 158, 78, "toque em uma casa para visitar", 11, "#ffe6bd", "#3a2418", 3).setDepth(-59);
-        this.tweens.add({ targets: [signTitle, signHint], y: "-=2", duration: 1200, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
+        if (motionAllowed(this)) this.tweens.add({ targets: [signTitle, signHint], y: "-=2", duration: 1600, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
       }
 
       private syncNeighborhood() {
@@ -1082,7 +1424,7 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         this.neighborHouses.push(
           createStreetHouse(this, 168, 512, 1, "Sua casa", 0x9466cf, 0xe8b64f, {
             onClick: () => {
-              this.cameras.main.fadeOut(200, 12, 7, 22);
+              this.cameras.main.fadeOut(motionAllowed(this) ? 180 : 0, 12, 7, 22);
               this.cameras.main.once("camerafadeoutcomplete", () => callbacksRef.current.onExit());
             },
             own: true,
@@ -1136,8 +1478,10 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
       parent: containerId,
       width: GAME_WIDTH,
       height: GAME_HEIGHT,
-      pixelArt: true,
-      roundPixels: true,
+      antialias: true,
+      antialiasGL: true,
+      pixelArt: false,
+      roundPixels: false,
       backgroundColor: "#20142f",
       scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH, width: GAME_WIDTH, height: GAME_HEIGHT },
       scene: BecoScene,
@@ -1152,6 +1496,10 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
   useEffect(() => {
     sceneRef.current?.applyViewport(viewportMode);
   }, [viewportMode]);
+
+  useEffect(() => {
+    sceneRef.current?.applyMotionPreference(reducedMotion);
+  }, [reducedMotion]);
 
   useEffect(() => {
     const scene = sceneRef.current;

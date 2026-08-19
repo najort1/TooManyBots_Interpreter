@@ -123,6 +123,7 @@ export function startFunDashboardServer(deps = {}) {
       itemId: item.itemId,
       x: item.x,
       y: item.y,
+      rotation: item.rotation,
       rotated: item.rotated,
       placed: item.placed,
       stolen: item.stolen,
@@ -284,7 +285,7 @@ export function startFunDashboardServer(deps = {}) {
 
         if (req.method === 'GET' && action === 'shop') {
           if (!owns) { sendJson(res, 403, { error: 'house-token-required' }); return; }
-          sendJson(res, 200, { shop: houseService.listCatalog(), coins: repository.getUserStats(target.userJid, target.scopeKey)?.coins || 0 });
+          sendJson(res, 200, { shop: houseService.listShop({ scopeKey: target.scopeKey, userJid: target.userJid }), coins: repository.getUserStats(target.userJid, target.scopeKey)?.coins || 0 });
           return;
         }
         if (req.method === 'GET' && action === 'avatar') {
@@ -312,8 +313,14 @@ export function startFunDashboardServer(deps = {}) {
         }
         if (req.method === 'PUT' && action === 'items/move') {
           if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
-          const result = houseService.move({ scopeKey: target.scopeKey, userJid: target.userJid, itemInstanceId: body.itemId, x: body.x, y: body.y, rotated: body.rotated });
+          const result = houseService.move({ scopeKey: target.scopeKey, userJid: target.userJid, itemInstanceId: body.itemId, x: body.x, y: body.y, rotation: body.rotation, rotated: body.rotated });
           sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, item: publicHouseItem(result.item) } : { error: result.reason });
+          return;
+        }
+        if (req.method === 'PUT' && action === 'styles/apply') {
+          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
+          const result = houseService.applyStyle({ scopeKey: target.scopeKey, userJid: target.userJid, itemId: body.itemId, funConfig: cfg });
+          sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, house: result.house, coins: result.coins, purchased: result.purchased } : { error: result.reason, need: result.need, coins: result.coins });
           return;
         }
         if (req.method === 'POST' && action === 'items/place') {

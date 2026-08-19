@@ -313,9 +313,22 @@ export type HouseItem = {
   itemId: string;
   x: number;
   y: number;
+  rotation: number;
   rotated: boolean;
   placed: boolean;
   stolen: boolean;
+};
+
+export type HouseShopItem = {
+  id: string;
+  name: string;
+  emoji: string;
+  cost: number;
+  kind: "furniture" | "wallpaper" | "floor" | "window";
+  category: string;
+  description: string;
+  owned: boolean;
+  applied: boolean;
 };
 
 export type NeighborhoodHouse = {
@@ -327,7 +340,7 @@ export type NeighborhoodHouse = {
 
 export type HouseView = {
   owns: boolean;
-  house: { cleanliness: number; securityLevel: number; houseType: string };
+  house: { cleanliness: number; securityLevel: number; houseType: string; wallStyle: string; floorStyle: string; windowStyle: string };
   items: HouseItem[];
   avatar: { slots: Record<string, string>; level: number };
   cleanliness?: number;
