@@ -1,3 +1,5 @@
+import { FUN_COMMAND_ALIASES } from '../constants.js';
+
 /**
  * Ajuda modular do Fun — índice curto + `/ajuda <tema>`.
  * Evita parede de texto no WhatsApp.
@@ -398,6 +400,41 @@ export function formatHelp(prefix = '/', topicToken = '', nsfwPermitted = false)
     ].join('\n');
   }
   return renderTopic(id, p, nsfwPermitted);
+}
+
+let commandTopicIndex = null;
+
+/**
+ * Resolve um comando exibido na ajuda para o seu tema, sem manter uma segunda
+ * lista de comandos para a persona. O índice é derivado dos próprios textos
+ * que o usuário vê em /ajuda.
+ */
+export function resolveHelpTarget(token) {
+  const direct = resolveHelpTopic(token);
+  if (direct) return direct;
+  const key = norm(String(token || '').replace(/^[/!]+/, ''));
+  if (!key) return null;
+  if (!commandTopicIndex) {
+    commandTopicIndex = new Map();
+    const canonicalTopics = new Map();
+    for (const topic of HELP_TOPICS) {
+      const page = renderTopic(topic.id, '/', false) || '';
+      for (const match of page.matchAll(/`\/([a-z0-9_]+)/gi)) {
+        const command = norm(match[1]);
+        if (!command) continue;
+        if (!commandTopicIndex.has(command)) commandTopicIndex.set(command, topic.id);
+        const canonical = FUN_COMMAND_ALIASES[command];
+        if (canonical && !canonicalTopics.has(canonical)) canonicalTopics.set(canonical, topic.id);
+      }
+    }
+    for (const [alias, canonical] of Object.entries(FUN_COMMAND_ALIASES)) {
+      const topic = canonicalTopics.get(canonical);
+      if (topic && !commandTopicIndex.has(alias)) {
+        commandTopicIndex.set(alias, topic);
+      }
+    }
+  }
+  return commandTopicIndex.get(key) || null;
 }
 
 /** Índice + lista de ids (testes / debug) */

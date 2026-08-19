@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {
   formatHelp,
   resolveHelpTopic,
+  resolveHelpTarget,
   listHelpTopicIds,
   HELP_TOPICS,
 } from '../fun/formatters/helpGuide.js';
@@ -53,6 +54,14 @@ test('help tema desconhecido volta pro índice', () => {
   const text = formatHelp('/', 'xyzinexistente');
   assert.ok(text.includes('Não achei'));
   assert.ok(text.includes('Fun — ajuda'));
+});
+
+test('help resolve comandos a partir dos próprios textos renderizados', () => {
+  assert.equal(resolveHelpTarget('/daily'), 'basico');
+  assert.equal(resolveHelpTarget('roletarussa'), 'jogos');
+  assert.equal(resolveHelpTarget('rr'), 'jogos');
+  assert.equal(resolveHelpTarget('bolsa'), 'economia');
+  assert.equal(resolveHelpTarget('comando_inexistente'), null);
 });
 
 test('todos os topics do catálogo têm id único', () => {
