@@ -64,6 +64,13 @@ export const ZEN_TASK_DEFAULTS = Object.freeze({
     jsonMode: false,
     jsonOnly: false,
   }),
+  lore_reconcile: Object.freeze({
+    temperature: 0,
+    maxTokens: 500,
+    timeoutMs: 35_000,
+    jsonMode: true,
+    jsonOnly: true,
+  }),
   dailyguess: Object.freeze({
     temperature: 0.9,
     maxTokens: 400,
@@ -154,6 +161,9 @@ export function resolveZenTaskParams(task, funConfig = {}) {
       temperature: funConfig.zenPersonaTemperature,
       maxTokens: funConfig.zenPersonaMaxTokens,
       timeoutMs: funConfig.zenPersonaTimeoutMs,
+    },
+    lore_reconcile: {
+      timeoutMs: funConfig.loreReconciliationTimeoutMs,
     },
     dailyguess: {
       temperature: funConfig.zenDailyGuessTemperature,

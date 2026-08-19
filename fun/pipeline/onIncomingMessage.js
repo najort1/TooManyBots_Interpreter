@@ -149,6 +149,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     personaSocialHintService,
     personaService,
     personaContextService,
+    loreReconciliationService,
     threadContextService,
     memoryIngestionService,
     memoryDecayService,
@@ -659,6 +660,16 @@ export async function handleFunIncomingMessage(deps, ctx) {
   // após o roteamento de comandos. Nunca quebra o pipeline.
   if (isGroup && personaService && scope.scopeKey) {
     try {
+      // Pedido explícito para esquecer/corrigir lore é reconciliado fora do
+      // caminho crítico da mensagem. A LLM só escolhe IDs da lore deste grupo.
+      if (!isCommand && loreReconciliationService?.observe) {
+        void loreReconciliationService.observe({
+          scopeKey: scope.scopeKey,
+          text,
+          funConfig,
+          now: msgTimeMs,
+        }).catch(() => {});
+      }
       if (personaService.observeMessage) {
         personaService.observeMessage({
           scopeKey: scope.scopeKey,

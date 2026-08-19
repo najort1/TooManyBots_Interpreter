@@ -1040,6 +1040,31 @@ export function normalizeFunConfig(input) {
       { min: 5_000, max: 90_000, rounding: 'floor', clamp: true }
     ),
     personaEnabled: normalizeBoolean(raw.personaEnabled, DEFAULT_FUN_CONFIG.personaEnabled),
+    personaToolsEnabled: normalizeBoolean(raw.personaToolsEnabled, DEFAULT_FUN_CONFIG.personaToolsEnabled),
+    personaToolCooldownMs: normalizeInt(
+      raw.personaToolCooldownMs,
+      DEFAULT_FUN_CONFIG.personaToolCooldownMs,
+      { min: 5_000, max: 30 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    loreReconciliationEnabled: normalizeBoolean(
+      raw.loreReconciliationEnabled,
+      DEFAULT_FUN_CONFIG.loreReconciliationEnabled
+    ),
+    loreReconciliationCooldownMs: normalizeInt(
+      raw.loreReconciliationCooldownMs,
+      DEFAULT_FUN_CONFIG.loreReconciliationCooldownMs,
+      { min: 5_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    loreReconciliationMaxCandidates: normalizeInt(
+      raw.loreReconciliationMaxCandidates,
+      DEFAULT_FUN_CONFIG.loreReconciliationMaxCandidates,
+      { min: 1, max: 100, rounding: 'floor', clamp: true }
+    ),
+    loreReconciliationTimeoutMs: normalizeInt(
+      raw.loreReconciliationTimeoutMs,
+      DEFAULT_FUN_CONFIG.loreReconciliationTimeoutMs,
+      { min: 5_000, max: 90_000, rounding: 'floor', clamp: true }
+    ),
     personaMemoryEnabled: normalizeBoolean(raw.personaMemoryEnabled, DEFAULT_FUN_CONFIG.personaMemoryEnabled),
     personaSocialHintsEnabled: normalizeBoolean(raw.personaSocialHintsEnabled, DEFAULT_FUN_CONFIG.personaSocialHintsEnabled),
     personaSocialHintsBatchSize: normalizeInt(raw.personaSocialHintsBatchSize, DEFAULT_FUN_CONFIG.personaSocialHintsBatchSize, {

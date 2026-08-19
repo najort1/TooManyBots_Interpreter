@@ -29,6 +29,12 @@
   "zenTemperature": 0.85,
   "zenSendSamplingParams": false,
   "zenApiKey": "",
+  "personaToolsEnabled": true,
+  "personaToolCooldownMs": 45000,
+  "loreReconciliationEnabled": true,
+  "loreReconciliationCooldownMs": 60000,
+  "loreReconciliationMaxCandidates": 50,
+  "loreReconciliationTimeoutMs": 35000,
   "flavorTimeoutMs": 55000,
   "ollamaEnabled": true,
   "ollamaBaseUrl": "http://127.0.0.1:11434",
@@ -44,4 +50,3 @@
   "replyCommandsInPrivate": true,
   "adminJids": []
 }
-

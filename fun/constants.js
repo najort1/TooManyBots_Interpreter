@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '31';
+export const FUN_SCHEMA_VERSION = '32';
 
 export const PERSONA_MEMORY_TYPES = Object.freeze(['thread', 'episodic', 'semantic', 'social']);
 export const PERSONA_MEMORY_EVIDENCE = Object.freeze(['explicit', 'corroborated', 'inferred']);
@@ -669,7 +669,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   zenMaxRetries: 3,
   /**
    * Knobs por tarefa (override de zenTemperature/zenMaxTokens globais).
-   * Ver fun/llm/zenTaskParams.js — invent/extract/flavor/chaos/tarot/assault/persona/dailyGuess/dailyHint/journalist
+   * Ver fun/llm/zenTaskParams.js — invent/extract/flavor/chaos/tarot/assault/persona/lore_reconcile/dailyGuess/dailyHint/journalist
    */
   zenInventTemperature: 0.75,
   zenInventMaxTokens: 1600,
@@ -949,6 +949,14 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   personaTopTokens: PERSONA_TOP_TOKENS,
   /** Entradas de "Últimas trocas" injetadas no prompt da persona (20 trocas = 40 entries). */
   personaContextTurns: PERSONA_CONTEXT_TURNS,
+  // Persona agentiva: protocolo JSON e allowlist de consultas/zoeira segura.
+  personaToolsEnabled: true,
+  personaToolCooldownMs: 45_000,
+  // Reconciliação inversa: pedido explícito pode remover lore antiga ou errada.
+  loreReconciliationEnabled: true,
+  loreReconciliationCooldownMs: 60_000,
+  loreReconciliationMaxCandidates: 50,
+  loreReconciliationTimeoutMs: 35_000,
   // Inferência social assíncrona por lote para a persona.
   personaSocialHintsEnabled: true,
   personaSocialHintsBatchSize: 50,
@@ -1112,5 +1120,3 @@ export const ACHIEVEMENTS = Object.freeze({
     icon: '💵',
   },
 });
-
-

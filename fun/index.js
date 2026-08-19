@@ -70,6 +70,8 @@ import { createFunDailyChallengeRepository } from './db/funDailyChallengeReposit
 import { createDailyChallengeService } from './services/dailyChallengeService.js';
 import { createGroupMemoryService } from './services/groupMemoryService.js';
 import { createPersonaService } from './services/personaService.js';
+import { createPersonaToolExecutor } from './services/personaToolExecutor.js';
+import { createLoreReconciliationService } from './services/loreReconciliationService.js';
 import { createPersonaSocialHintService } from './services/personaSocialHintService.js';
 import { createFunConversationMemoryRepository } from './db/funConversationMemoryRepository.js';
 import { createFunThreadContextRepository } from './db/funThreadContextRepository.js';
@@ -371,17 +373,7 @@ export function createFunModule(deps = {}) {
   const personaIdentityService = deps.personaIdentityService || createPersonaIdentityService({ personaIdentityRepository });
   const socialMemoryService = deps.socialMemoryService || createSocialMemoryService();
   const personaContextService = deps.personaContextService || createPersonaContextService({ threadContextService, memoryRetrievalService, personaIdentityService, groupMemoryService, getLogger });
-  const personaService =
-    deps.personaService ||
-    createPersonaService({
-      personaRepository,
-      groupRepository,
-      threadContextService,
-      personaSocialHintService,
-      profileService,
-      getLogger,
-      generateZen: deps.openaiChatComplete || deps.zenGenerate,
-    });
+  let personaService = deps.personaService || null;
   const flavorService =
     deps.flavorService ||
     createFlavorService({
@@ -468,6 +460,39 @@ export function createFunModule(deps = {}) {
       dailyChallengeService,
       groupMemoryService,
       getContactDisplayName: resolveContactName,
+    });
+
+  const personaToolExecutor =
+    deps.personaToolExecutor ||
+    createPersonaToolExecutor({
+      chaosService,
+      newsService,
+      groupMemoryService,
+      memoryRepository,
+      tarotService,
+      relationshipService,
+      reactionMediaService,
+      getContactDisplayName: resolveContactName,
+    });
+  if (!personaService) {
+    personaService = createPersonaService({
+      personaRepository,
+      groupRepository,
+      threadContextService,
+      personaSocialHintService,
+      profileService,
+      personaToolExecutor,
+      getLogger,
+      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+    });
+  }
+  const loreReconciliationService =
+    deps.loreReconciliationService ||
+    createLoreReconciliationService({
+      memoryRepository,
+      groupMemoryService,
+      getLogger,
+      generateZen: deps.openaiChatComplete || deps.zenGenerate,
     });
 
   const farewellRepository =
@@ -562,6 +587,7 @@ export function createFunModule(deps = {}) {
         personaSocialHintService,
         personaService,
         personaContextService,
+        loreReconciliationService,
         threadContextService,
         memoryIngestionService,
         memoryDecayService,
