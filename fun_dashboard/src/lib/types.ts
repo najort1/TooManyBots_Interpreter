@@ -329,6 +329,9 @@ export type HouseShopItem = {
   description: string;
   owned: boolean;
   applied: boolean;
+  width?: number;
+  depth?: number;
+  isSurface?: boolean;
 };
 
 export type NeighborhoodHouse = {
