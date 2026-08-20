@@ -101,6 +101,21 @@ export function startFunDashboardServer(deps = {}) {
     return s;
   }
 
+  // Hub de conexões SSE em tempo real por casa (scopeKey:houseToken)
+  const roomStreams = new Map();
+
+  function broadcastRoomEvent(token, eventType, data) {
+    const clients = roomStreams.get(token);
+    if (!clients || !clients.size) return;
+    const payload = `event: ${eventType}\ndata: ${JSON.stringify(data)}\n\n`;
+    for (const clientRes of clients) {
+      try {
+        clientRes.write(payload);
+      } catch {
+        clients.delete(clientRes);
+      }
+    }
+  }
   function isScopeAllowed(scopeKey) {
     const cfg = getConfig();
     const jids = Array.isArray(cfg.groupWhitelistJids) ? cfg.groupWhitelistJids : [];
@@ -273,6 +288,101 @@ export function startFunDashboardServer(deps = {}) {
             sendJson(res, 200, { owns: true, house: current.house, items: current.items.map(publicHouseItem), avatar: publicAvatar(avatar), cleanliness: current.house.cleanliness, security: current.house.securityLevel, coins, mural, gifts });
           } else {
             sendJson(res, 200, { owns: false, house: current.house, items: current.items.filter((item) => item.placed).map(publicHouseItem), avatar: publicAvatar(avatar), host: { nickname: getContactDisplayName(target.userJid) || 'Morador' }, mural });
+          }
+          return;
+        }
+
+        if (req.method === 'GET' && action === 'stream') {
+          res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+            'Access-Control-Allow-Origin': '*',
+          });
+          res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, ts: Date.now() })}\n\n`);
+
+          if (!roomStreams.has(targetToken)) {
+            roomStreams.set(targetToken, new Set());
+          }
+          const clients = roomStreams.get(targetToken);
+          clients.add(res);
+
+          // Keep-alive ping a cada 15s para evitar timeout do proxy Next.js
+          const keepAliveInterval = setInterval(() => {
+            try {
+              res.write(': keepalive\n\n');
+            } catch {
+              clearInterval(keepAliveInterval);
+            }
+          }, 15000);
+
+          // Anuncia entrada de novo visitante
+          broadcastRoomEvent(targetToken, 'presence', {
+            type: 'join',
+            userJid: target.userJid,
+            nickname: getContactDisplayName(target.userJid) || 'Visitante',
+            count: clients.size,
+          });
+
+          req.on('close', () => {
+            clearInterval(keepAliveInterval);
+            clients.delete(res);
+            if (clients.size === 0) {
+              roomStreams.delete(targetToken);
+            } else {
+              broadcastRoomEvent(targetToken, 'presence', {
+                type: 'leave',
+                userJid: target.userJid,
+                count: clients.size,
+              });
+            }
+          });
+          return;
+        }
+
+        if (req.method === 'POST' && action === 'chat') {
+          const body = await readBody(req);
+          const text = String(body.text || '').trim();
+          if (!text) {
+            sendJson(res, 400, { error: 'texto-obrigatorio' });
+            return;
+          }
+          const senderNickname = getContactDisplayName(target.userJid) || 'Morador';
+          const msgPayload = {
+            id: 'chat_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+            senderJid: target.userJid,
+            nickname: senderNickname,
+            text,
+            isNpc: false,
+            createdAt: Date.now(),
+          };
+
+          // Transmite para todos no SSE da casa
+          broadcastRoomEvent(targetToken, 'chat', msgPayload);
+
+          sendJson(res, 200, { ok: true, message: msgPayload });
+
+          // Se a mensagem mencionar "mordomo", "bot", "sindico" ou perguntar algo, o NPC da Persona AI responde automaticamente!
+          const lowerText = text.toLowerCase();
+          if (lowerText.includes('mordomo') || lowerText.includes('sindico') || lowerText.includes('bot') || lowerText.includes('ajuda') || lowerText.includes('ola') || lowerText.includes('olá')) {
+            setTimeout(() => {
+              const npcResponses = [
+                `Olá, ${senderNickname}! Sou o Mordomo do Beco. Como posso servir sua casa hoje?`,
+                `Fiscalizando o cômodo! Lembre-se de manter a casa limpa (🧹) e a segurança em dia (🛡️).`,
+                `Que bom ver você por aqui, ${senderNickname}! Aceita um suco de caju gelado? 🍹`,
+                `Tudo em ordem no beco! Se precisar arrumar a casa, use a Mala de Mobis. 🛋️`,
+              ];
+              const npcMsg = {
+                id: 'npc_' + Date.now(),
+                senderJid: 'npc_mordomo@bot',
+                nickname: 'Mordomo do Beco',
+                text: npcResponses[Math.floor(Math.random() * npcResponses.length)],
+                isNpc: true,
+                createdAt: Date.now(),
+              };
+              broadcastRoomEvent(targetToken, 'chat', npcMsg);
+            }, 1200);
           }
           return;
         }
