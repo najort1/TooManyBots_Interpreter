@@ -1,8 +1,38 @@
-import { getHouseDefinition, getHouseItem, getHouseStyleSlot, isHousePositionValid, isHouseStyle, listHouseItems } from '../shop/houses.js';
+import { getFootprintCells, getHouseDefinition, getHouseItem, getHouseStyleSlot, isHousePositionValid, isHouseStyle, listHouseItems } from '../shop/houses.js';
 
 function dayKey(now) { return new Date(Number(now) || Date.now()).toISOString().slice(0, 10); }
 function dayStart(now) { const date = new Date(Number(now) || Date.now()); return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()); }
 function normalizeRotation(value) { return ((Math.floor(Number(value) || 0) % 4) + 4) % 4; }
+
+function checkFootprintOverlap(placedItems, targetItemDef, targetX, targetY, targetRotation, excludeInstanceId = null) {
+  const targetCells = getFootprintCells(targetX, targetY, targetItemDef, targetRotation);
+  for (const cell of targetCells) {
+    if (!isHousePositionValid(cell.x, cell.y)) {
+      return { valid: false, reason: 'invalid-position' };
+    }
+  }
+
+  // Mapear ocupação dos itens existentes colocados na casa
+  for (const existingItem of placedItems) {
+    if (excludeInstanceId && existingItem.id === excludeInstanceId) continue;
+    const existingDef = getHouseItem(existingItem.itemId);
+    if (!existingDef || isHouseStyle(existingDef)) continue;
+    const existingCells = getFootprintCells(existingItem.x, existingItem.y, existingDef, existingItem.rotation);
+
+    for (const targetCell of targetCells) {
+      for (const existingCell of existingCells) {
+        if (targetCell.x === existingCell.x && targetCell.y === existingCell.y) {
+          // Se o item existente é uma superfície (ex: mesa) e o novo objeto é pequeno (1x1), permitimos empilhamento no zIndex superior
+          const canStack = Boolean(existingDef.isSurface) && (targetItemDef.width || 1) === 1 && (targetItemDef.depth || 1) === 1;
+          if (!canStack) {
+            return { valid: false, reason: 'occupied-position' };
+          }
+        }
+      }
+    }
+  }
+  return { valid: true };
+}
 
 export function createHouseService({ repository, houseRepository } = {}) {
   if (!repository || !houseRepository) throw new Error('[fun/houses] repository obrigatório');
@@ -35,33 +65,37 @@ export function createHouseService({ repository, houseRepository } = {}) {
       };
     });
   }
-  function place({ scopeKey, userJid, itemId, x, y, funConfig = {}, now = Date.now() }) {
+  function place({ scopeKey, userJid, itemId, x, y, rotation = 0, funConfig = {}, now = Date.now() }) {
     if (!enabled(funConfig)) return { ok: false, reason: 'disabled' };
-    if (!isHousePositionValid(x, y)) return { ok: false, reason: 'invalid-position' };
     const item = getHouseItem(itemId);
     if (!item) return { ok: false, reason: 'unknown-item' };
     if (isHouseStyle(item)) return { ok: false, reason: 'style-use-apply' };
+    const normRot = normalizeRotation(rotation);
     const current = provision({ scopeKey, userJid, now });
-    const furnitureCount = current.items.filter((entry) => !isHouseStyle(getHouseItem(entry.itemId))).length;
+    const placedItems = current.items.filter((entry) => entry.placed);
+    const furnitureCount = placedItems.filter((entry) => !isHouseStyle(getHouseItem(entry.itemId))).length;
     if (furnitureCount >= maxItems(funConfig)) return { ok: false, reason: 'item-cap', max: maxItems(funConfig) };
-    if (current.items.some((entry) => entry.placed && entry.x === Math.floor(Number(x)) && entry.y === Math.floor(Number(y)))) {
-      return { ok: false, reason: 'occupied-position' };
-    }
+
+    const overlapCheck = checkFootprintOverlap(placedItems, item, x, y, normRot);
+    if (!overlapCheck.valid) return { ok: false, reason: overlapCheck.reason };
+
     const stats = repository.getUserStats(userJid, scopeKey) || repository.ensureUserRow(userJid, scopeKey, now);
     if ((Number(stats.coins) || 0) < item.cost) return { ok: false, reason: 'no-coins', need: item.cost, coins: Number(stats.coins) || 0 };
     if (item.cost > 0) repository.addCoins({ userJid, scopeKey, amount: -item.cost, now, reason: 'house-buy:' + item.id });
-    const placed = houseRepository.insertItem({ scopeKey, ownerJid: userJid, itemId: item.id, x, y, now });
+    const placed = houseRepository.insertItem({ scopeKey, ownerJid: userJid, itemId: item.id, x, y, rotation: normRot, now });
     return { ok: true, item: placed, definition: item, coins: repository.getUserStats(userJid, scopeKey)?.coins || 0 };
   }
   function move({ scopeKey, userJid, itemInstanceId, x, y, rotation, rotated, now = Date.now() }) {
-    if (!isHousePositionValid(x, y)) return { ok: false, reason: 'invalid-position' };
     const item = houseRepository.getItem(itemInstanceId);
     if (!item || item.scopeKey !== String(scopeKey) || item.ownerJid !== String(userJid)) return { ok: false, reason: 'not-owned' };
-    if (isHouseStyle(getHouseItem(item.itemId))) return { ok: false, reason: 'style-use-apply' };
-    const occupied = houseRepository.listItems(scopeKey, userJid, { placed: true })
-      .some((entry) => entry.id !== item.id && entry.x === Math.floor(Number(x)) && entry.y === Math.floor(Number(y)));
-    if (occupied) return { ok: false, reason: 'occupied-position' };
+    const itemDef = getHouseItem(item.itemId);
+    if (isHouseStyle(itemDef)) return { ok: false, reason: 'style-use-apply' };
     const nextRotation = rotation == null ? (rotated == null ? item.rotation : (rotated ? 1 : 0)) : normalizeRotation(rotation);
+
+    const placedItems = houseRepository.listItems(scopeKey, userJid, { placed: true });
+    const overlapCheck = checkFootprintOverlap(placedItems, itemDef, x, y, nextRotation, item.id);
+    if (!overlapCheck.valid) return { ok: false, reason: overlapCheck.reason };
+
     return { ok: true, item: houseRepository.updateItem(item.id, { x, y, rotation: nextRotation, placed: true }, now) };
   }
   function applyStyle({ scopeKey, userJid, itemId, funConfig = {}, now = Date.now() }) {
@@ -130,5 +164,15 @@ export function createHouseService({ repository, houseRepository } = {}) {
     repository.addCoins({ userJid, scopeKey, amount: -cost, now, reason: 'house-security-upgrade' });
     return { ok: true, cost, house: houseRepository.updateHouse(scopeKey, userJid, { securityLevel: house.securityLevel + 1 }, now), coins: repository.getUserStats(userJid, scopeKey)?.coins || 0 };
   }
-  return { provision, getHouse, listCatalog: listHouseItems, listShop, place, move, applyStyle, remove, sell, clean, collect, upgradeSecurity };
+  function toggleState({ scopeKey, userJid, itemInstanceId, now = Date.now() }) {
+    const item = houseRepository.getItem(itemInstanceId);
+    if (!item || item.scopeKey !== String(scopeKey) || item.ownerJid !== String(userJid)) return { ok: false, reason: 'not-owned' };
+    const itemDef = getHouseItem(item.itemId);
+    if (!itemDef || !itemDef.hasStates) return { ok: false, reason: 'no-states' };
+    const nextState = item.state === 1 ? 0 : 1;
+    const updated = houseRepository.updateItem(item.id, { state: nextState }, now);
+    return { ok: true, item: updated };
+  }
+
+  return { provision, getHouse, listCatalog: listHouseItems, listShop, place, move, toggleState, applyStyle, remove, sell, clean, collect, upgradeSecurity };
 }
