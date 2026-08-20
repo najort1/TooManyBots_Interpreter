@@ -61,7 +61,20 @@ export default function AvatarPage({ params }: Props) {
     {error && <p className="casas-toast casas-toast-error">{error}</p>}
     <div className="avatar-layout">
       <section className="avatar-stage"><div className="avatar-stage-copy"><p className="casas-kicker">ESTÚDIO DO BECO</p><h1>Seu avatar, sua presença.</h1><p>Monte o visual que todo mundo vai ver quando entrar na sua casa.</p></div><div className="avatar-mirror"><div className="avatar-mirror-glow" /><div className="avatar-mirror-frame"><AvatarFigure avatar={avatar} label="VOCÊ" /></div><span className="avatar-stage-spark avatar-stage-spark-one">✦</span><span className="avatar-stage-spark avatar-stage-spark-two">✧</span></div></section>
-      <section className="avatar-wardrobe"><div className="avatar-wardrobe-heading"><div><p className="casas-kicker">GUARDA-ROUPA</p><h2>{currentSlot.label}</h2><p>{currentSlot.description}</p></div><span className="avatar-count">{visibleItems.filter((item) => item.owned).length}/{visibleItems.length}</span></div><div className="avatar-tabs">{slotConfig.map((slot) => <button key={slot.id} type="button" onClick={() => setActiveSlot(slot.id)} className={`avatar-tab ${slot.id === activeSlot ? "avatar-tab-active" : ""}`}><span>{slot.icon}</span><span>{slot.label}</span></button>)}</div><div className="avatar-items" key={activeSlot}>{visibleItems.map((item) => { const equipped = avatar.slots[item.slot] === item.id; const lockedByLevel = !item.owned && item.cost === 0; return <button key={item.id} type="button" disabled={busyId === item.id || lockedByLevel} onClick={() => void select(item.id)} className={`avatar-item ${equipped ? "avatar-item-equipped" : ""} ${!item.owned ? "avatar-item-locked" : ""}`}><span className="avatar-item-emoji">{item.emoji}</span><span className="min-w-0 flex-1 text-left"><b>{item.name}</b><small>{equipped ? "Equipado agora" : item.owned ? "Disponível para equipar" : item.cost ? `${item.cost} coins para liberar` : `Libera no nível ${item.unlockLevel}`}</small></span><span className="avatar-item-state">{equipped ? "✓" : item.owned ? "Usar" : item.cost ? "Comprar" : "🔒"}</span></button>; })}</div></section>
+      <section className="avatar-wardrobe">
+        <div className="avatar-wardrobe-heading"><div><p className="casas-kicker">GUARDA-ROUPA</p><h2>{currentSlot.label}</h2><p>{currentSlot.description}</p></div><span className="avatar-count">{visibleItems.filter((item) => item.owned).length}/{visibleItems.length}</span></div>
+        <div className="avatar-tabs">{slotConfig.map((slot) => <button key={slot.id} type="button" onClick={() => setActiveSlot(slot.id)} className={`avatar-tab ${slot.id === activeSlot ? "avatar-tab-active" : ""}`}><span>{slot.icon}</span><span>{slot.label}</span></button>)}</div>
+        <div className="avatar-items" key={activeSlot}>{visibleItems.map((item) => {
+          const equipped = avatar.slots[item.slot] === item.id;
+          const lockedByLevel = !item.owned && item.cost === 0;
+          const previewAvatar = { slots: { ...avatar.slots, [item.slot]: item.id } };
+          return <button key={item.id} type="button" disabled={busyId === item.id || lockedByLevel} onClick={() => void select(item.id)} className={`avatar-item ${equipped ? "avatar-item-equipped" : ""} ${!item.owned ? "avatar-item-locked" : ""}`}>
+            <span className="avatar-item-preview" aria-hidden="true"><AvatarFigure avatar={previewAvatar} compact /></span>
+            <span className="min-w-0 flex-1 text-left"><b>{item.name}</b><small>{equipped ? "Equipado agora" : item.owned ? "Disponível para equipar" : item.cost ? `${item.cost} coins para liberar` : `Libera no nível ${item.unlockLevel}`}</small></span>
+            <span className="avatar-item-state">{equipped ? "✓" : item.owned ? "Usar" : item.cost ? "Comprar" : "🔒"}</span>
+          </button>;
+        })}</div>
+      </section>
     </div>
   </main>;
 }

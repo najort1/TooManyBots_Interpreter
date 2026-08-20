@@ -10,6 +10,7 @@ import {
   TILE_HEIGHT,
   TILE_WIDTH,
   cellFromFurniturePosition,
+  furnitureDepth,
   furnitureFloorPosition,
   furnitureRectanglePoints,
   fromIso,
@@ -118,6 +119,33 @@ test('house geometry: âncoras de móveis preservam a célula visual', () => {
   assert.deepEqual(anchored, { x: center.x, y: center.y + FURNITURE_FLOOR_OFFSET_Y });
   assert.deepEqual(cellFromFurniturePosition(anchored.x, anchored.y), cell);
   assert.equal(AVATAR_FLOOR_OFFSET_Y, -30);
+});
+
+test('house geometry: móveis com footprint usam o centro visual e preservam a célula âncora', () => {
+  const cell = { x: 2, y: 4 };
+  const rug = { width: 2, depth: 2 };
+  const centered = furnitureFloorPosition(cell, rug, 0);
+  const expectedCenter = toIso(2.5, 4.5);
+  assert.deepEqual(centered, { x: expectedCenter.x, y: expectedCenter.y + FURNITURE_FLOOR_OFFSET_Y });
+  assert.deepEqual(cellFromFurniturePosition(centered.x, centered.y, rug, 0), cell);
+
+  const table = { width: 2, depth: 1 };
+  const rotated = furnitureFloorPosition(cell, table, 1);
+  assert.deepEqual(cellFromFurniturePosition(rotated.x, rotated.y, table, 1), cell);
+});
+
+test('house geometry: profundidade do móvel fica à frente de todo o footprint', () => {
+  const cell = { x: 0, y: 6 };
+  const rug = { width: 2, depth: 2 };
+  const deepestFloor = toIso(1, 7).y;
+  assert.ok(furnitureDepth(cell, rug, 0) > deepestFloor);
+});
+
+test('house geometry: validação completa rejeita footprint rotacionado fora do grid', () => {
+  const table = { id: 'mesa_cafe', kind: 'furniture', width: 2, depth: 1 };
+  const catalog = new Map([[table.id, table]]);
+  assert.equal(isGridCellAvailable([], catalog, 'table', { x: 0, y: 7 }, table, 1), false);
+  assert.equal(isGridCellAvailable([], catalog, 'table', { x: 0, y: 6 }, table, 1), true);
 });
 
 test('house geometry: drop usa a última célula do drag e respeita ocupação', () => {
