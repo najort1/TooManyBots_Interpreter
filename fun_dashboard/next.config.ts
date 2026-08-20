@@ -8,6 +8,7 @@ const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const nextConfig: NextConfig = {
   // monorepo: evita Next achar o lockfile da raiz do repo
   outputFileTracingRoot: rootDir,
+  allowedDevOrigins: ["*.trycloudflare.com", "localhost:3001", "127.0.0.1:3001"],
   async rewrites() {
     return [
       {
