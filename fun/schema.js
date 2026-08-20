@@ -974,6 +974,8 @@ export function buildFunSchemaSql() {
       item_id TEXT NOT NULL,
       x INTEGER NOT NULL DEFAULT 0,
       y INTEGER NOT NULL DEFAULT 0,
+      z_index INTEGER NOT NULL DEFAULT 0,
+      state INTEGER NOT NULL DEFAULT 0,
       rotated INTEGER NOT NULL DEFAULT 0,
       rotation INTEGER NOT NULL DEFAULT 0,
       placed INTEGER NOT NULL DEFAULT 1,
@@ -1078,6 +1080,12 @@ export function ensureFunSchema(db) {
     const itemNames = new Set(itemCols.map((column) => String(column.name || '')));
     if (itemNames.size && !itemNames.has('rotation')) {
       db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_house_items ADD COLUMN rotation INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (itemNames.size && !itemNames.has('z_index')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_house_items ADD COLUMN z_index INTEGER NOT NULL DEFAULT 0`);
+    }
+    if (itemNames.size && !itemNames.has('state')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_house_items ADD COLUMN state INTEGER NOT NULL DEFAULT 0`);
     }
     db.exec(`UPDATE ${ANALYTICS_SCHEMA}.fun_house_items SET rotation = 1 WHERE rotated = 1 AND rotation = 0`);
   } catch {
