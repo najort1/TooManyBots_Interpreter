@@ -1,9 +1,6 @@
 import { HOUSE_MESSAGES } from '../../messages/house.js';
 import { formatHouseLink } from '../../formatters/house.js';
-
-function publicBaseUrl(funConfig = {}) {
-  return String(funConfig.publicBaseUrl || '').replace(/\/$/, '') || 'http://localhost:' + (Number(funConfig.dashboardUiPort) || 3001);
-}
+import { getPublicBaseUrl } from '../../utils/publicUrl.js';
 
 export async function handleHouseCommand({ isGroup, scopeKey, userJid, houseService, houseLinkService, repository, funConfig, reply, args = [] }) {
   if (funConfig.housesEnabled === false) { await reply(HOUSE_MESSAGES.disabled); return { handled: true }; }
@@ -18,6 +15,6 @@ export async function handleHouseCommand({ isGroup, scopeKey, userJid, houseServ
   const provisioned = houseService.provision({ scopeKey, userJid });
   const link = await houseLinkService.generate({ scopeKey, userJid });
   const coins = repository?.getUserStats(userJid, scopeKey)?.coins || 0;
-  await reply(formatHouseLink({ url: publicBaseUrl(funConfig) + '/casas/' + link.token, coins, groupName: scopeKey }));
+  await reply(formatHouseLink({ url: getPublicBaseUrl(funConfig) + '/casas/' + link.token, coins, groupName: scopeKey }));
   return { handled: true, house: provisioned.house };
 }
