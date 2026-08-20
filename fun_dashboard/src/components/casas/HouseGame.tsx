@@ -2,7 +2,8 @@
 
 import * as Phaser from "phaser";
 import { useEffect, useId, useRef, useState } from "react";
-import type { HouseItem, HouseView, NeighborhoodHouse } from "@/lib/types";
+import type { HouseItem, HouseShopItem, HouseView, NeighborhoodHouse } from "@/lib/types";
+import { getAvatarOutfitColor, getAvatarVisualKey } from "./avatarAppearance.js";
 import {
   AVATAR_FLOOR_OFFSET_Y,
   GRID_COLUMNS,
@@ -11,8 +12,11 @@ import {
   TILE_HEIGHT,
   TILE_WIDTH,
   cellFromFurniturePosition,
+  findPathAStar,
+  furnitureDepth,
   furnitureFloorPosition,
   furnitureRectanglePoints,
+  getFootprintCells,
   getGridOutline,
   isGridCellAvailable,
   normalizeFurnitureRotation,
@@ -28,6 +32,7 @@ type ViewportMode = "desktop" | "portrait" | "landscape";
 type HouseGameProps = {
   mode: WorldMode;
   house: HouseView;
+  catalog: HouseShopItem[];
   neighborhood: NeighborhoodHouse[];
   owns: boolean;
   selectedItemId?: string;
@@ -200,14 +205,186 @@ type AvatarRig = {
   walking: boolean;
 };
 
+function avatarLines(scene: Phaser.Scene, color: number, width: number, segments: number[][]) {
+  const graphics = scene.add.graphics().lineStyle(width, color, 1);
+  segments.forEach(([x1, y1, x2, y2]) => graphics.lineBetween(x1, y1, x2, y2));
+  return graphics;
+}
+
+function addAvatarBackAccessory(scene: Phaser.Scene, bobber: Phaser.GameObjects.Container, accessory: string) {
+  if (accessory === "asas_pixel") {
+    bobber.add([
+      centeredPolygon(scene, -45, -34, [0, 12, -18, 12, -18, -2, -31, -2, -31, -24, -16, -24, -16, -12, 0, -12], 0xc8f1ff).setStrokeStyle(3, PAL.outline),
+      centeredPolygon(scene, 45, -34, [0, 12, 18, 12, 18, -2, 31, -2, 31, -24, 16, -24, 16, -12, 0, -12], 0xd9c8ff).setStrokeStyle(3, PAL.outline),
+    ]);
+  } else if (accessory === "aura_vinil") {
+    bobber.add([
+      scene.add.ellipse(0, -35, 112, 158, 0x000000, 0).setStrokeStyle(4, 0x8cf4ff, 0.9),
+      scene.add.ellipse(0, -35, 98, 142, 0x000000, 0).setStrokeStyle(2, 0xf79cff, 0.85),
+    ]);
+  }
+}
+
+function addAvatarOutfitDetails(scene: Phaser.Scene, bobber: Phaser.GameObjects.Container, outfit: string) {
+  if (outfit === "jaqueta_neon") {
+    bobber.add([
+      scene.add.rectangle(0, -8, 4, 48, 0xffe082, 0.92),
+      scene.add.triangle(-13, -27, -13, -8, 0, 10, 0, -12, 0xff82ba, 0.9).setStrokeStyle(2, 0xc22d70),
+      scene.add.triangle(13, -27, 13, -8, 0, 10, 0, -12, 0xff82ba, 0.9).setStrokeStyle(2, 0xc22d70),
+    ]);
+  } else if (outfit === "terno_suspeito") {
+    bobber.add([
+      scene.add.triangle(0, -31, -15, -31, 0, -6, 15, -31, 0xf4f1e9).setStrokeStyle(2, 0x24324b),
+      centeredPolygon(scene, 0, -11, [0, -10, 7, 0, 3, 19, -3, 19, -7, 0], 0xa33b4d).setStrokeStyle(2, 0x562331),
+      avatarLines(scene, 0x1e2a45, 3, [[-25, -28, -4, -3], [25, -28, 4, -3]]),
+    ]);
+  } else if (outfit === "moletom_nuvem") {
+    bobber.add([
+      centeredPolygon(scene, 0, -27, [-20, -9, 0, 4, 20, -9, 20, 5, 0, 15, -20, 5], 0xd8efff).setStrokeStyle(3, 0x38658b),
+      avatarLines(scene, 0xffffff, 2, [[-7, -21, -7, -7], [7, -21, 7, -7]]),
+      scene.add.ellipse(0, 5, 30, 10, 0xd8efff).setStrokeStyle(2, 0x38658b),
+    ]);
+  } else if (outfit === "camisa_xadrez") {
+    bobber.add(avatarLines(scene, 0xf5c7a9, 3, [
+      [-18, -35, -18, 20], [0, -35, 0, 20], [18, -35, 18, 20],
+      [-27, -20, 27, -20], [-27, 0, 27, 0],
+    ]));
+  } else if (outfit === "uniforme_arcade") {
+    bobber.add([
+      scene.add.rectangle(0, -26, 52, 14, 0x25254b),
+      scene.add.rectangle(0, 2, 30, 21, 0x182238).setStrokeStyle(3, 0x7dfff2),
+      avatarLines(scene, 0xffe15c, 3, [[-9, 2, -1, 2], [-5, -2, -5, 6], [7, 0, 10, 0]]),
+    ]);
+  } else if (outfit === "vestido_aurora") {
+    bobber.add([
+      avatarLines(scene, 0xffd6c4, 4, [[-22, -33, 0, -9], [0, -9, 22, -33]]),
+      centeredPolygon(scene, 0, 18, [-25, -8, 25, -8, 35, 28, -35, 28], 0xd96ea8).setStrokeStyle(3, PAL.outline),
+      avatarLines(scene, 0xffb38c, 3, [[-28, 18, 28, 18], [-31, 29, 31, 29]]),
+    ]);
+  } else if (outfit === "macacao_oficina") {
+    bobber.add([
+      avatarLines(scene, 0x5b4937, 5, [[-18, -35, -18, 5], [18, -35, 18, 5], [-18, -2, 18, -2]]),
+      scene.add.rectangle(0, -8, 20, 13, 0xf0be62).setStrokeStyle(2, 0x5b4937),
+      avatarLines(scene, 0xfff1b8, 2, [[-6, -8, 6, -8]]),
+    ]);
+  } else if (outfit === "jaqueta_colegial") {
+    bobber.add([
+      avatarLines(scene, 0xf7e5c1, 6, [[-20, -36, -20, 20], [20, -36, 20, 20]]),
+      avatarLines(scene, 0x173d36, 3, [[0, -36, 0, 21]]),
+      scene.add.rectangle(-8, -5, 12, 14, 0xf4c857).setStrokeStyle(2, 0x173d36),
+    ]);
+  } else if (outfit === "traje_astral") {
+    bobber.add([
+      avatarLines(scene, 0x9bc8ff, 4, [[-27, -28, 27, -28], [-24, 17, 24, 17]]),
+      scene.add.rectangle(0, -4, 28, 22, 0x111b39).setStrokeStyle(3, 0x6be3ff),
+      scene.add.circle(-5, -4, 4, 0xffdc75),
+      avatarLines(scene, 0xf58cff, 2, [[5, -8, 10, -8], [5, 0, 10, 0]]),
+    ]);
+  }
+}
+
+function addAvatarHairFace(scene: Phaser.Scene, bobber: Phaser.GameObjects.Container, hair: string) {
+  if (hair === "cabelo_caos") {
+    bobber.add([
+      scene.add.rectangle(0, -84, 58, 17, 0x633b2b).setStrokeStyle(3, PAL.outline),
+      scene.add.rectangle(-22, -73, 13, 22, 0x633b2b).setStrokeStyle(3, PAL.outline),
+      scene.add.rectangle(23, -73, 13, 22, 0x633b2b).setStrokeStyle(3, PAL.outline),
+    ]);
+  } else if (hair === "oculos_pixel") {
+    bobber.add([
+      scene.add.rectangle(-14, -54, 22, 15, 0x1b1430, 0.85).setStrokeStyle(3, 0x5fe8ff),
+      scene.add.rectangle(14, -54, 22, 15, 0x1b1430, 0.85).setStrokeStyle(3, 0x5fe8ff),
+      scene.add.rectangle(0, -54, 6, 4, 0x5fe8ff),
+    ]);
+  } else if (hair === "cabelo_cacheado") {
+    bobber.add([
+      scene.add.circle(-25, -82, 12, 0x412b43).setStrokeStyle(3, PAL.outline),
+      scene.add.circle(-10, -91, 13, 0x412b43).setStrokeStyle(3, PAL.outline),
+      scene.add.circle(7, -92, 14, 0x412b43).setStrokeStyle(3, PAL.outline),
+      scene.add.circle(23, -84, 13, 0x412b43).setStrokeStyle(3, PAL.outline),
+      scene.add.circle(-29, -68, 11, 0x412b43).setStrokeStyle(3, PAL.outline),
+      scene.add.circle(29, -69, 11, 0x412b43).setStrokeStyle(3, PAL.outline),
+    ]);
+  } else if (hair === "franja_azul") {
+    bobber.add(centeredPolygon(scene, 0, -79, [-31, 11, -31, -8, 0, -23, 31, -8, 31, 12, 19, -1, 10, 15, 0, -2, -11, 14, -20, -1], 0x398bc6).setStrokeStyle(4, PAL.outline));
+  } else if (hair === "bone_beco") {
+    bobber.add([
+      scene.add.rectangle(0, -86, 56, 18, 0x7257d9).setStrokeStyle(4, PAL.outline),
+      centeredPolygon(scene, 18, -76, [-18, -7, 29, -7, 36, 3, -18, 3], 0x513aa7).setStrokeStyle(3, PAL.outline),
+      scene.add.rectangle(-12, -87, 11, 6, 0xffd35c),
+    ]);
+  } else if (hair === "bandana_pixel") {
+    bobber.add([
+      scene.add.rectangle(0, -75, 60, 12, 0xef5d6f).setStrokeStyle(3, PAL.outline),
+      centeredPolygon(scene, 34, -68, [-7, -9, 15, -5, 4, 2, 15, 10, -9, 5], 0xef5d6f).setStrokeStyle(3, PAL.outline),
+      avatarLines(scene, 0xffd6a6, 3, [[-20, -75, -12, -75], [-3, -77, 5, -77], [14, -75, 22, -75]]),
+    ]);
+  } else if (hair === "mascara_misterio") {
+    bobber.add([
+      centeredPolygon(scene, 0, -53, [-29, -11, 0, -19, 29, -11, 23, 11, 0, 18, -23, 11], 0x5e3d8f).setStrokeStyle(3, PAL.outline),
+      scene.add.triangle(-13, -55, -19, -4, 0, -4, 6, 4, 0xffe6b0),
+      scene.add.triangle(13, -55, -6, -4, 19, -4, 0, 4, 0xffe6b0),
+    ]);
+  } else if (hair === "cabelo_rosa") {
+    bobber.add([
+      scene.add.rectangle(-27, -55, 14, 62, 0xe667a3).setStrokeStyle(4, PAL.outline),
+      scene.add.rectangle(27, -55, 14, 62, 0xe667a3).setStrokeStyle(4, PAL.outline),
+      centeredPolygon(scene, 0, -82, [-30, 11, -29, -9, 0, -24, 29, -9, 30, 12, 12, -4, 3, 12, -7, -4, -17, 12], 0xe667a3).setStrokeStyle(4, PAL.outline),
+    ]);
+  } else if (hair === "chapeu_pescador") {
+    bobber.add([
+      centeredPolygon(scene, 0, -88, [-21, 8, -15, -17, 15, -17, 22, 8], 0xd5ad62).setStrokeStyle(4, PAL.outline),
+      centeredPolygon(scene, 0, -76, [-39, -7, 39, -7, 49, 5, -49, 5], 0xe7c878).setStrokeStyle(4, PAL.outline),
+    ]);
+  }
+}
+
+function addAvatarFrontAccessory(scene: Phaser.Scene, bobber: Phaser.GameObjects.Container, accessory: string) {
+  if (accessory === "coroa_papel") {
+    bobber.add(centeredPolygon(scene, 0, -103, [-31, 12, -24, -15, -8, 4, 0, -18, 10, 4, 25, -15, 31, 12, 31, 23, -31, 23], 0xffe082).setStrokeStyle(4, 0x754e24));
+  } else if (accessory === "corrente_brilho") {
+    bobber.add([
+      avatarLines(scene, 0xffd34f, 4, [[-19, -29, 0, -16], [0, -16, 19, -29]]),
+      scene.add.circle(0, -13, 6, 0xffd34f).setStrokeStyle(3, 0x7b4d1b),
+    ]);
+  } else if (accessory === "fones_neon") {
+    bobber.add([
+      scene.add.ellipse(0, -66, 70, 62, 0x000000, 0).setStrokeStyle(5, 0x6cf5ff),
+      scene.add.rectangle(-34, -53, 13, 28, 0x7638a8).setStrokeStyle(3, PAL.outline),
+      scene.add.rectangle(34, -53, 13, 28, 0x7638a8).setStrokeStyle(3, PAL.outline),
+    ]);
+  } else if (accessory === "mochila_lateral") {
+    bobber.add([
+      avatarLines(scene, 0x45324f, 5, [[-16, -34, 34, 18]]),
+      scene.add.rectangle(35, 10, 23, 31, 0xdb8c53).setStrokeStyle(3, PAL.outline),
+      avatarLines(scene, 0xffe0a8, 3, [[26, 2, 44, 2]]),
+    ]);
+  } else if (accessory === "cachecol_estrelas") {
+    bobber.add([
+      centeredPolygon(scene, 0, -34, [-25, -8, 0, 2, 25, -8, 25, 5, 0, 15, -25, 5], 0x7056c8).setStrokeStyle(3, PAL.outline),
+      centeredPolygon(scene, 16, -2, [-7, -25, 8, -25, 18, 28, 2, 31], 0x7056c8).setStrokeStyle(3, PAL.outline),
+      scene.add.star(-10, -34, 5, 3, 7, 0xffe28b),
+    ]);
+  } else if (accessory === "bolsa_cogumelo") {
+    bobber.add([
+      avatarLines(scene, 0x6a3f47, 4, [[-20, -34, 33, 25]]),
+      scene.add.rectangle(34, 19, 20, 21, 0xf5d8a8).setStrokeStyle(3, PAL.outline),
+      scene.add.ellipse(34, 7, 30, 17, 0xee675f).setStrokeStyle(3, PAL.outline),
+      scene.add.circle(29, 5, 2.5, 0xfff0d2),
+      scene.add.circle(39, 7, 2.5, 0xfff0d2),
+    ]);
+  }
+}
+
 function createAvatarRig(scene: Phaser.Scene, avatar: HouseView["avatar"], name: string): AvatarRig {
   const outfit = avatar.slots.outfit;
   const hair = avatar.slots.hair_face;
   const accessory = avatar.slots.optional_accessory;
-  const bodyColor = outfit === "terno_suspeito" ? 0x344563 : outfit === "jaqueta_neon" ? 0xed4a91 : 0x7b5ce5;
+  const bodyColor = getAvatarOutfitColor(outfit);
 
   const root = scene.add.container(0, 0);
   const bobber = scene.add.container(0, 0);
+  addAvatarBackAccessory(scene, bobber, accessory);
 
   const legL = scene.add.rectangle(-12, 2, 14, 30, 0x332f54).setStrokeStyle(3, PAL.outline).setOrigin(0.5, 0);
   const legR = scene.add.rectangle(12, 2, 14, 30, 0x332f54).setStrokeStyle(3, PAL.outline).setOrigin(0.5, 0);
@@ -225,50 +402,15 @@ function createAvatarRig(scene: Phaser.Scene, avatar: HouseView["avatar"], name:
   ]);
   const face = scene.add.text(0, -2, "•ᴗ•", { fontFamily: "monospace", fontSize: "19px", color: "#3a2740" }).setOrigin(0.5);
   head.add(face);
-  bobber.add([legL, legR, armL, armR, body, bodyShade, shirtHighlight, head]);
+  bobber.add([legL, legR, armL, armR, body, bodyShade, shirtHighlight]);
 
-  if (outfit === "jaqueta_neon") {
-    bobber.add([
-      scene.add.rectangle(0, -8, 4, 48, 0xffe082, 0.92),
-      scene.add.triangle(-13, -27, -13, -8, 0, 10, 0, -12, 0xff82ba, 0.9).setStrokeStyle(2, 0xc22d70),
-      scene.add.triangle(13, -27, 13, -8, 0, 10, 0, -12, 0xff82ba, 0.9).setStrokeStyle(2, 0xc22d70),
-    ]);
-  } else if (outfit === "terno_suspeito") {
-    bobber.add([
-      scene.add.triangle(0, -31, -15, -31, 0, -6, 15, -31, 0xf4f1e9).setStrokeStyle(2, 0x24324b),
-      centeredPolygon(scene, 0, -11, [0, -10, 7, 0, 3, 19, -3, 19, -7, 0], 0xa33b4d).setStrokeStyle(2, 0x562331),
-      scene.add.line(0, -7, -25, -28, -4, -3, 0x1e2a45).setLineWidth(3),
-      scene.add.line(0, -7, 25, -28, 4, -3, 0x1e2a45).setLineWidth(3),
-    ]);
-  }
+  addAvatarOutfitDetails(scene, bobber, outfit);
 
-  if (hair === "cabelo_caos") {
-    bobber.add([
-      scene.add.rectangle(0, -84, 58, 17, 0x633b2b).setStrokeStyle(3, PAL.outline),
-      scene.add.rectangle(-22, -73, 13, 22, 0x633b2b).setStrokeStyle(3, PAL.outline),
-      scene.add.rectangle(23, -73, 13, 22, 0x633b2b).setStrokeStyle(3, PAL.outline),
-    ]);
-  }
-  if (hair === "oculos_pixel") {
-    bobber.add([
-      scene.add.rectangle(-14, -54, 22, 15, 0x1b1430, 0.85).setStrokeStyle(3, 0x5fe8ff),
-      scene.add.rectangle(14, -54, 22, 15, 0x1b1430, 0.85).setStrokeStyle(3, 0x5fe8ff),
-      scene.add.rectangle(0, -54, 6, 4, 0x5fe8ff),
-    ]);
-  }
-  if (accessory === "coroa_papel") {
-    bobber.add(centeredPolygon(scene, 0, -103, [-31, 12, -24, -15, -8, 4, 0, -18, 10, 4, 25, -15, 31, 12, 31, 23, -31, 23], 0xffe082).setStrokeStyle(4, 0x754e24));
-  }
-  if (accessory === "corrente_brilho") {
-    const chain = scene.add.graphics();
-    chain.lineStyle(4, 0xffd34f, 1);
-    chain.beginPath();
-    chain.moveTo(-19, -29);
-    chain.lineTo(0, -16);
-    chain.lineTo(19, -29);
-    chain.strokePath();
-    bobber.add([chain, scene.add.circle(0, -13, 6, 0xffd34f).setStrokeStyle(3, 0x7b4d1b)]);
-  }
+  // O rosto precisa ficar acima das lapelas e detalhes da roupa.
+  bobber.add(head);
+
+  addAvatarHairFace(scene, bobber, hair);
+  addAvatarFrontAccessory(scene, bobber, accessory);
 
   const nameplate = scene.add.text(0, -122, name.toUpperCase(), { fontFamily: "monospace", fontSize: "12px", color: "#fff5d2", backgroundColor: "#2a1b43", padding: { x: 7, y: 4 } }).setOrigin(0.5);
   root.add([scene.add.ellipse(0, 30, 74, 20, 0x120d20, 0.32), bobber, nameplate]);
@@ -370,6 +512,25 @@ function createFurniture(scene: Phaser.Scene, item: HouseItem) {
       ...isoCuboid(scene, { centerU: 0.35, centerV: 0.08, width: 0.64, depth: 0.5, base: 31, height: 4, top: 0x91c5ff, left: 0x507fc4, right: 0x669be2, rotation }),
       seam,
     ]);
+    if (rotation === 2 || rotation === 3) {
+      const rearFace = localPolygon(scene, [
+        projectedFurniturePoint(-0.78, -0.42, 12, rotation),
+        projectedFurniturePoint(0.78, -0.42, 12, rotation),
+        projectedFurniturePoint(0.78, -0.42, 65, rotation),
+        projectedFurniturePoint(-0.78, -0.42, 65, rotation),
+      ], 0x416cb5).setStrokeStyle(4, outline);
+      const rearDetails = scene.add.graphics().lineStyle(3, 0x82b6f4, 0.72);
+      [-0.36, 0.36].forEach((u) => {
+        const lower = projectedFurniturePoint(u, -0.425, 20, rotation);
+        const upper = projectedFurniturePoint(u, -0.425, 57, rotation);
+        rearDetails.lineBetween(lower.x, lower.y, upper.x, upper.y);
+      });
+      art.add([
+        rearFace,
+        ...isoCuboid(scene, { centerV: -0.42, width: 1.64, depth: 0.14, base: 62, height: 7, top: 0x83b9f5, left: 0x41699f, right: 0x5684c1, rotation }),
+        rearDetails,
+      ]);
+    }
   } else if (item.itemId === "planta_inicial") {
     const foliage = scene.add.container(0, -30).setScale(rotation === 1 || rotation === 2 ? -1 : 1, 1);
     const stems = scene.add.graphics().lineStyle(4, 0x356b43, 1);
@@ -752,17 +913,17 @@ type FurnitureRig = {
   selection: Phaser.GameObjects.Container;
 };
 
-export default function HouseGame({ mode, house, neighborhood, owns, selectedItemId, interactionLocked = false, onExit, onOpenNeighbor, onSelectItem, onClearSelection, onMoveItem }: HouseGameProps) {
+export default function HouseGame({ mode, house, catalog, neighborhood, owns, selectedItemId, interactionLocked = false, onExit, onOpenNeighbor, onSelectItem, onClearSelection, onMoveItem }: HouseGameProps) {
   const rawId = useId();
   const containerId = `house-game-${rawId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const callbacksRef = useRef({ onExit, onOpenNeighbor, onSelectItem, onClearSelection, onMoveItem });
-  const propsRef = useRef({ mode, house, neighborhood, owns, selectedItemId, interactionLocked, viewportMode: "desktop" as ViewportMode, reducedMotion: false });
+  const propsRef = useRef({ mode, house, catalog, neighborhood, owns, selectedItemId, interactionLocked, viewportMode: "desktop" as ViewportMode, reducedMotion: false });
   const sceneRef = useRef<(Phaser.Scene & BecoSceneAPI) | null>(null);
   const [viewportMode, setViewportMode] = useState<ViewportMode>("desktop");
   const [reducedMotion, setReducedMotion] = useState(false);
 
   callbacksRef.current = { onExit, onOpenNeighbor, onSelectItem, onClearSelection, onMoveItem };
-  propsRef.current = { mode, house, neighborhood, owns, selectedItemId, interactionLocked, viewportMode, reducedMotion };
+  propsRef.current = { mode, house, catalog, neighborhood, owns, selectedItemId, interactionLocked, viewportMode, reducedMotion };
 
   useEffect(() => {
     const updateViewportMode = () => {
@@ -790,13 +951,13 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
       private neighborHouses: Phaser.GameObjects.Container[] = [];
       private drifters: Drifter[] = [];
       private avatarRig: AvatarRig | null = null;
-      private headerTitle: Phaser.GameObjects.Text | null = null;
-      private headerHint: Phaser.GameObjects.Text | null = null;
+      private lastAvatarKey: string | null = null;
       private lastHouseKey: string | null = null;
       private lastStructureKey: string | null = null;
       private lastNeighborhoodKey: string | null = null;
       private dragCell: { x: number; y: number } | null = null;
       private dragCellValid = false;
+      private dragHintCells: Array<{ x: number; y: number }> = [];
 
       constructor() {
         super("beco-scene");
@@ -819,8 +980,8 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
           this.cameras.main.setZoom(1.08);
           this.cameras.main.centerOn(GAME_WIDTH / 2, 350);
         } else {
-          this.cameras.main.setZoom(1);
-          this.cameras.main.centerOn(GAME_WIDTH / 2, GAME_HEIGHT / 2);
+          this.cameras.main.setZoom(1.06);
+          this.cameras.main.centerOn(GAME_WIDTH / 2, 380);
         }
       }
 
@@ -832,6 +993,10 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
 
       syncDynamic() {
         if (this.activeMode === "house") {
+          if (this.lastAvatarKey != null && this.lastAvatarKey !== this.buildAvatarKey()) {
+            this.scene.restart();
+            return;
+          }
           if (this.lastStructureKey != null && this.lastStructureKey !== this.buildStructureKey()) {
             this.scene.restart();
             return;
@@ -858,13 +1023,13 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         this.neighborHouses = [];
         this.drifters = [];
         this.avatarRig = null;
-        this.headerTitle = null;
-        this.headerHint = null;
+        this.lastAvatarKey = null;
         this.lastHouseKey = null;
         this.lastStructureKey = null;
         this.lastNeighborhoodKey = null;
         this.dragCell = null;
         this.dragCellValid = false;
+        this.dragHintCells = [];
         this.cameras.main.fadeIn(motionAllowed(this) ? 300 : 0, 12, 7, 22);
         this.applyViewport(propsRef.current.viewportMode);
         if (this.activeMode === "house") this.createHouse();
@@ -888,16 +1053,24 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         return `${current.wallStyle || "parede_beco"}|${current.floorStyle || "piso_lilas"}|${current.windowStyle || "janela_classica"}`;
       }
 
-      private setDropHint(cell: { x: number; y: number } | null, valid: boolean) {
-        if (this.dragCell) {
-          const previous = this.tiles[this.dragCell.y]?.[this.dragCell.x];
-          if (previous) previous.setFillStyle(this.tileBaseColor(this.dragCell.x, this.dragCell.y), 1);
+      private buildAvatarKey() {
+        return getAvatarVisualKey(propsRef.current.house.avatar);
+      }
+
+      private setDropHint(cell: { x: number; y: number } | null, valid: boolean, itemDef: HouseShopItem | undefined, rotation: number) {
+        for (const previousCell of this.dragHintCells) {
+          const previous = this.tiles[previousCell.y]?.[previousCell.x];
+          if (previous) previous.setFillStyle(this.tileBaseColor(previousCell.x, previousCell.y), 1);
         }
+        this.dragHintCells = [];
         this.dragCell = cell;
         this.dragCellValid = Boolean(cell && valid);
         if (!cell) return;
-        const tile = this.tiles[cell.y]?.[cell.x];
-        if (tile) tile.setFillStyle(valid ? PAL.floorValid : PAL.floorInvalid, 1);
+        this.dragHintCells = getFootprintCells(cell.x, cell.y, itemDef, rotation)
+          .filter((footprintCell) => this.tiles[footprintCell.y]?.[footprintCell.x]);
+        for (const footprintCell of this.dragHintCells) {
+          this.tiles[footprintCell.y][footprintCell.x]?.setFillStyle(valid ? PAL.floorValid : PAL.floorInvalid, 1);
+        }
       }
 
       private moveAvatar(rig: AvatarRig, targetX: number, targetY: number) {
@@ -1037,16 +1210,23 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         const rays = centeredPolygon(this, winMid.x + 66, winMid.y + 120, [0, -80, 130, 24, 30, 150, -60, 40], 0xfff3c9, 0.07).setDepth(-40);
         if (motionAllowed(this)) this.tweens.add({ targets: rays, alpha: { from: 0.08, to: 0.045 }, duration: 3200, yoyo: true, repeat: -1, ease: "Sine.easeInOut" });
 
-        // quadro na parede direita
+        // quadro preso à parede direita, acompanhando a perspectiva do cômodo
+        const rightWallVec = { x: east.x - north.x, y: east.y - north.y };
+        const wallPoint = (progress: number, lift: number) => ({
+          x: north.x + rightWallVec.x * progress,
+          y: north.y + rightWallVec.y * progress - lift,
+        });
+        const frameOuter = [wallPoint(0.58, 34), wallPoint(0.72, 34), wallPoint(0.72, 94), wallPoint(0.58, 94)];
+        const frameInner = [wallPoint(0.595, 43), wallPoint(0.705, 43), wallPoint(0.705, 85), wallPoint(0.595, 85)];
         const frameG = this.add.graphics().setDepth(-50);
         frameG.fillStyle(0x8a5a3c, 1);
-        frameG.fillPoints([{ x: 690, y: 150 }, { x: 726, y: 132 }, { x: 726, y: 92 }, { x: 690, y: 110 }], true);
+        frameG.fillPoints(frameOuter, true);
         frameG.lineStyle(3, 0xd9b46a, 1);
-        frameG.strokePoints([{ x: 690, y: 150 }, { x: 726, y: 132 }, { x: 726, y: 92 }, { x: 690, y: 110 }], true);
+        frameG.strokePoints(frameOuter, true);
         frameG.fillStyle(0x9fd8ef, 1);
-        frameG.fillPoints([{ x: 697, y: 139 }, { x: 719, y: 128 }, { x: 719, y: 102 }, { x: 697, y: 113 }], true);
+        frameG.fillPoints(frameInner, true);
         frameG.fillStyle(0x5ba661, 1);
-        frameG.fillPoints([{ x: 697, y: 136 }, { x: 719, y: 125 }, { x: 719, y: 118 }, { x: 697, y: 129 }], true);
+        frameG.fillPoints([wallPoint(0.595, 47), wallPoint(0.705, 47), wallPoint(0.705, 60), wallPoint(0.595, 60)], true);
 
         // luminária de teto
         const lampTop = north.y - WALL_HEIGHT;
@@ -1070,16 +1250,6 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
             onRepeat: () => mote.setPosition(winMid.x - 60 + Math.random() * 160, 300 + Math.random() * 40),
           });
         }
-      }
-
-      private buildHeader() {
-        const panel = this.add.graphics().setDepth(1200);
-        panel.fillStyle(0x2f2148, 0.88);
-        panel.fillRoundedRect(GAME_WIDTH / 2 - 176, 16, 352, 56, 12);
-        panel.lineStyle(2, 0xe6c7ff, 0.25);
-        panel.strokeRoundedRect(GAME_WIDTH / 2 - 176, 16, 352, 56, 12);
-        this.headerTitle = uiText(this, GAME_WIDTH / 2, 37, "", 15, "#fff4cf").setDepth(1201);
-        this.headerHint = uiText(this, GAME_WIDTH / 2, 60, "", 10, "#e5d9f5").setDepth(1201);
       }
 
       private buildFloorAndAvatar() {
@@ -1119,6 +1289,7 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         }
 
         const avatarPosition = toIso(3, 5);
+        this.lastAvatarKey = this.buildAvatarKey();
         this.avatarRig = createAvatarRig(this, house.avatar, owns ? "VOCÊ" : house.host?.nickname || "MORADOR");
         this.avatarRig.root.setPosition(avatarPosition.x, avatarPosition.y + AVATAR_FLOOR_OFFSET_Y).setDepth(avatarPosition.y + 80).setScale(motionAllowed(this) ? 0.96 : 1);
         if (motionAllowed(this)) this.tweens.add({ targets: this.avatarRig.root, scale: 1, alpha: { from: 0, to: 1 }, duration: 260, delay: 80, ease: "Cubic.easeOut" });
@@ -1162,10 +1333,11 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
       }
 
       private buildHouseKey(items: HouseItem[]) {
-        const { house, owns } = propsRef.current;
+        const { house, owns, catalog } = propsRef.current;
         return [
           owns ? "own" : `host:${house.host?.nickname || ""}`,
           items.filter((i) => i.placed).map((i) => `${i.id}:${i.x},${i.y}:r${itemRotation(i)}`).join("|"),
+          catalog.map((item) => `${item.id}:${item.width || 1}x${item.depth || 1}`).join("|"),
         ].join("#");
       }
 
@@ -1176,9 +1348,6 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
 
       private syncHouse() {
         const { house, owns } = propsRef.current;
-        this.headerTitle?.setText(owns ? "SUA CASA NO BECO" : `CASA DE ${(house.host?.nickname || "UM VIZINHO").toUpperCase()}`);
-        this.headerHint?.setText(owns ? "toque no piso para andar · segure e arraste para decorar" : "toque no piso para explorar");
-
         const key = this.buildHouseKey(house.items);
         if (key === this.lastHouseKey) {
           this.syncSelection();
@@ -1190,14 +1359,15 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         this.furnitureRigs.forEach((rig) => destroyTree(this, rig.root));
         this.furnitureRigs = [];
 
+        const catalogMap = new Map(propsRef.current.catalog.map((entry) => [entry.id, entry]));
         for (const item of house.items.filter((entry) => entry.placed)) {
-          const gridPosition = toIso(item.x, item.y);
-          const position = furnitureFloorPosition(item);
+          const itemDef = catalogMap.get(item.itemId);
+          const rotation = itemRotation(item);
+          const position = furnitureFloorPosition(item, itemDef, rotation);
           const furniture = createFurniture(this, item);
           const baseScale = 1;
-          furniture.setPosition(position.x, position.y).setDepth(gridPosition.y + 40);
+          furniture.setPosition(position.x, position.y).setDepth(furnitureDepth(item, itemDef, rotation));
           const selection = selectionAura(this, furniture, itemLabels[item.itemId] || "Móvel");
-          const rotation = itemRotation(item);
           const rig: FurnitureRig = { root: furniture, itemId: item.id, rotation, selection };
           this.furnitureRigs.push(rig);
           const previousRotation = previousRotations.get(item.id);
@@ -1244,20 +1414,21 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
           furniture.on("drag", (_pointer: Phaser.Input.Pointer, dragX: number, dragY: number) => {
             if (!furniture.getData("dragging")) return;
             furniture.setPosition(dragX, dragY);
-            const cell = cellFromFurniturePosition(dragX, dragY);
-            this.setDropHint(cell, isGridCellAvailable(propsRef.current.house.items, item.id, cell));
+            const cell = cellFromFurniturePosition(dragX, dragY, itemDef, rotation);
+            const currentCatalogMap = new Map(propsRef.current.catalog.map((entry) => [entry.id, entry]));
+            const valid = isGridCellAvailable(propsRef.current.house.items, currentCatalogMap, item.id, cell, itemDef, rotation);
+            this.setDropHint(cell, valid, itemDef, rotation);
           });
           furniture.on("dragend", () => {
             if (!furniture.getData("dragging")) return;
             furniture.setData("dragging", false);
             const next = resolveDropCell(this.dragCell, this.dragCellValid);
-            this.setDropHint(null, false);
+            this.setDropHint(null, false, itemDef, rotation);
             if (next) {
-              const snappedGrid = toIso(next.x, next.y);
-              const snapped = furnitureFloorPosition(next);
+              const snapped = furnitureFloorPosition(next, itemDef, rotation);
               this.tweens.killTweensOf(furniture);
               this.tweens.add({ targets: furniture, x: snapped.x, y: snapped.y, scale: baseScale, alpha: 1, duration: motionDuration(this, 220), ease: "Cubic.easeOut" });
-              furniture.setDepth(snappedGrid.y + 40);
+              furniture.setDepth(furnitureDepth(next, itemDef, rotation));
               const echoedItems = propsRef.current.house.items.map((entry) => (entry.id === item.id ? { ...entry, x: next.x, y: next.y } : entry));
               this.lastHouseKey = this.buildHouseKey(echoedItems);
               void Promise.resolve(callbacksRef.current.onMoveItem(item, next.x, next.y)).then((saved) => {
@@ -1265,7 +1436,7 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
                 this.lastHouseKey = this.buildHouseKey(propsRef.current.house.items);
                 this.tweens.killTweensOf(furniture);
                 this.tweens.add({ targets: furniture, x: position.x, y: position.y, scale: baseScale, alpha: 1, duration: motionDuration(this, 220), ease: "Cubic.easeOut" });
-                furniture.setDepth(gridPosition.y + 40);
+                furniture.setDepth(furnitureDepth(item, itemDef, rotation));
               });
             } else {
               this.tweens.killTweensOf(furniture);
@@ -1281,7 +1452,7 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
               } else {
                 furniture.setPosition(position.x, position.y).setScale(baseScale).setAlpha(1);
               }
-              furniture.setDepth(gridPosition.y + 40);
+              furniture.setDepth(furnitureDepth(item, itemDef, rotation));
             }
           });
         }
@@ -1292,7 +1463,6 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
         this.add.rectangle(GAME_WIDTH / 2, GAME_HEIGHT / 2, GAME_WIDTH, GAME_HEIGHT, 0x20142f).setDepth(-100);
         this.lastStructureKey = this.buildStructureKey();
         this.buildStaticHouse();
-        this.buildHeader();
         this.buildFloorAndAvatar();
         this.buildDoor();
         this.syncHouse();
@@ -1509,7 +1679,7 @@ export default function HouseGame({ mode, house, neighborhood, owns, selectedIte
       return;
     }
     scene.syncDynamic();
-  }, [mode, house, neighborhood, owns, selectedItemId, containerId]);
+  }, [mode, house, catalog, neighborhood, owns, selectedItemId, containerId]);
 
   return <div id={containerId} className="house-game-canvas" aria-label={mode === "house" ? "Casa isométrica interativa" : "Mapa interativo do bairro"} />;
 }
