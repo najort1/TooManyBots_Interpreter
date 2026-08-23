@@ -1,0 +1,13 @@
+"use client";
+/** Asset-free emergency sound synthesizer. Call methods from user gestures. */
+class FirefighterAudio {
+ private ctx: AudioContext|null=null; private active=new Map<string,{stop:()=>void}>();
+ private init(){if(typeof window==='undefined')return null; if(!this.ctx){const C=window.AudioContext||(window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext; if(C)this.ctx=new C()} if(this.ctx?.state==='suspended')void this.ctx.resume(); return this.ctx}
+ private tone(freq:number,dur=.15,type:OscillatorType='sine',gain=.12){const c=this.init();if(!c)return;const o=c.createOscillator(),g=c.createGain();o.type=type;o.frequency.value=freq;g.gain.setValueAtTime(gain,c.currentTime);g.gain.exponentialRampToValueAtTime(.001,c.currentTime+dur);o.connect(g).connect(c.destination);o.start();o.stop(c.currentTime+dur)}
+ private noise(key:string,filter:number,gain=.12){const c=this.init();if(!c)return;this.stop(key);const n=c.createBufferSource(),b=c.createBuffer(1,c.sampleRate*2,c.sampleRate),d=b.getChannelData(0);for(let i=0;i<d.length;i++)d[i]=Math.random()*2-1;n.buffer=b;n.loop=true;const f=c.createBiquadFilter(),g=c.createGain();f.type='lowpass';f.frequency.value=filter;g.gain.value=gain;n.connect(f).connect(g).connect(c.destination);n.start();this.active.set(key,{stop:()=>{try{n.stop()}catch{};n.disconnect()}})}
+ stop(key:string){this.active.get(key)?.stop();this.active.delete(key)} stopAll(){this.active.forEach(x=>x.stop());this.active.clear()}
+ siren(){const c=this.init();if(!c)return;this.stop('siren');const o=c.createOscillator(),g=c.createGain();o.type='sawtooth';g.gain.value=.1;o.connect(g).connect(c.destination);const t=c.currentTime;o.frequency.setValueAtTime(500,t);o.frequency.linearRampToValueAtTime(900,t+1.1);o.frequency.linearRampToValueAtTime(500,t+2.2);o.start();o.stop(t+2.3);this.active.set('siren',{stop:()=>o.disconnect()})}
+ water(on=true){on?this.noise('water',1800,.16):this.stop('water')} foam(on=true){on?this.noise('foam',700,.12):this.stop('foam')} fire(on=true){on?this.noise('fire',900,.1):this.stop('fire')} steam(){this.noise('steam',3200,.1);setTimeout(()=>this.stop('steam'),700)}
+ radio(){this.tone(1100,.08,'square',.08);setTimeout(()=>this.tone(1500,.1,'square',.08),100)} collapse(){this.tone(90,.8,'sawtooth',.25)} lowWater(){this.tone(240,.12,'square');setTimeout(()=>this.tone(240,.12,'square'),220)} rescue(){[660,880,1320].forEach((f,i)=>setTimeout(()=>this.tone(f,.18,'sine',.16),i*150))} emergency(){this.siren();this.radio()}
+}
+export const firefighterAudio=new FirefighterAudio(); export default firefighterAudio;
