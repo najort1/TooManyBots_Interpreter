@@ -592,7 +592,11 @@ export function createDailyChallengeService(deps = {}) {
     return tryLlmJson('dailyguess', system, user);
   }
 
-  async function tryLlmRiddle(scopeKey) {
+  async function tryLlmRiddle(scopeKey, recentRiddles = []) {
+    const recentList = Array.isArray(recentRiddles) ? recentRiddles.slice(0, 50) : [];
+    const recentTxt = recentList.length
+      ? `\n\nNUNCA repita um enigma desta lista de recentes (normalize sem acentos/pontuação/maiúsculas):\n${recentList.map((r) => `  - ${r}`).join('\n')}\n`
+      : '';
     const system =
       'Voce e um criador de enigmas para WhatsApp. Gere UM enigma curto e inteligente em portugues brasileiro. ' +
       'REGRAS: o campo "riddle" deve conter o enigma completo, pronto para ser enviado ao grupo. ' +
@@ -600,7 +604,7 @@ export function createDailyChallengeService(deps = {}) {
       'O enigma NAO pode conter a resposta literal, partes obvias da resposta, nem entregar a resposta de forma direta. ' +
       'Evite repetir enigmas muito classicos de forma identica; varie o estilo e o objeto. ' +
       'Responda APENAS no formato JSON: ' +
-      '{"riddle":"O que e, o que e?...","answers":["resposta1","resposta2"]}';
+      '{"riddle":"O que e, o que e?...","answers":["resposta1","resposta2"]}' + recentTxt;
     const lore = buildGroupLore(scopeKey, { limit: 4 });
     const user = [
       'Gere um enigma popular, claro e respondível agora.',
@@ -677,20 +681,40 @@ export function createDailyChallengeService(deps = {}) {
 
   async function launchRiddle(scopeKey, now) {
     const memoryLimit = cfg().dailyChallengeContentMemory?.riddle || 50;
-    const llmRiddle = await tryLlmRiddle(scopeKey);
+    const recent = repository.getRecentContent(scopeKey, 'riddle', memoryLimit);
+    const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
+
+    const llmRiddle = await tryLlmRiddle(scopeKey, recent);
     let riddle = null;
     if (llmRiddle?.riddle) {
       const answers = Array.isArray(llmRiddle.answers)
         ? llmRiddle.answers.map(normalizeAnswer).filter(Boolean)
         : [];
+      const riddleNorm = normalizeAnswer(llmRiddle.riddle);
       if (answers.length > 0) {
-        riddle = {
+        let candidate = {
           riddle: String(llmRiddle.riddle || '').trim(),
           answers,
         };
+        if (recentSet.has(riddleNorm)) {
+          const retry = await tryLlmRiddle(scopeKey, recent);
+          if (retry?.riddle) {
+            const retryNorm = normalizeAnswer(retry.riddle);
+            const retryAnswers = Array.isArray(retry.answers)
+              ? retry.answers.map(normalizeAnswer).filter(Boolean)
+              : [];
+            if (!recentSet.has(retryNorm) && retryAnswers.length > 0) {
+              candidate = {
+                riddle: String(retry.riddle || '').trim(),
+                answers: retryAnswers,
+              };
+            }
+          }
+        }
+        riddle = candidate;
       }
     }
-    if (!riddle || !riddle.riddle) {
+    if (!riddle || !riddle.riddle || recentSet.has(normalizeAnswer(riddle.riddle))) {
       const pick = pickNonRepeating(
         scopeKey,
         'riddle',

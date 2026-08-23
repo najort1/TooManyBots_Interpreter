@@ -653,6 +653,69 @@ test('dailyChallenge service: fallback de enigma não repete conteúdo já regis
   assert.notEqual(repository.getActiveChallenge(scope).challengeData.riddle, firstRiddle);
 });
 
+test('dailyChallenge service: launch riddle via LLM não repete enigma recente e faz retry se colidir', async () => {
+  let callCount = 0;
+  const duplicateRiddle = 'O que e, o que e? Quanto mais se tira, maior fica?';
+  const newRiddle = 'O que e, o que e? Tem dentes mas nao morde?';
+
+  const { service, repository } = createServiceHarness({
+    generateZen: async () => {
+      callCount++;
+      if (callCount === 1) {
+        return JSON.stringify({ riddle: duplicateRiddle, answers: ['buraco'] });
+      }
+      return JSON.stringify({ riddle: newRiddle, answers: ['pente'] });
+    },
+  });
+  const scope = uniqueGroup();
+  repository.recordContent(scope, 'riddle', duplicateRiddle);
+
+  const out = await service.launchChallenge({
+    scopeKey: scope,
+    type: 'riddle',
+    now: Date.now(),
+    sendText: async () => {},
+    sendImage: null,
+    sharp: null,
+  });
+
+  assert.equal(out.ok, true);
+  assert.equal(callCount, 2, 'deveria ter feito uma segunda chamada de retry ao LLM');
+  assert.equal(repository.getActiveChallenge(scope).challengeData.riddle, newRiddle);
+});
+
+test('dailyChallenge service: enigmas em dias/períodos consecutivos para o mesmo escopo não se repetem', async () => {
+  const { service, repository } = createServiceHarness({
+    generateZen: async () => 'sem-json-valido',
+    random: () => 0,
+  });
+  const scope = uniqueGroup();
+  const selectedRiddles = new Set();
+
+  for (let day = 1; day <= 3; day++) {
+    const now = new Date(`2099-03-0${day}T12:00:00.000Z`).getTime();
+    const out = await service.launchChallenge({
+      scopeKey: scope,
+      type: 'riddle',
+      now,
+      sendText: async () => {},
+      sendImage: null,
+      sharp: null,
+    });
+    assert.equal(out.ok, true);
+    const active = repository.getActiveChallenge(scope);
+    const riddleText = active.challengeData.riddle;
+
+    assert.ok(!selectedRiddles.has(riddleText), `Dia ${day} repetiu o enigma: "${riddleText}"`);
+    selectedRiddles.add(riddleText);
+
+    // expira o desafio para permitir lançar no dia seguinte
+    repository.expireChallenge(active.id, now + 5 * 3600_000);
+  }
+
+  assert.equal(selectedRiddles.size, 3, 'três dias consecutivos devem gerar 3 enigmas diferentes');
+});
+
 test('dailyChallenge service: launch pokemon usa fetch + sharp + responde por imagem', async () => {
   const prevFetch = global.fetch;
   try {
