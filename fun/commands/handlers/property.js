@@ -90,6 +90,52 @@ export async function handlePropertyCommand({
     return { handled: true, result };
   }
 
+  if (sub === 'vender' || sub === 'sell') {
+    const id = args[1] || args.slice(1).join('_');
+    const result = propertyService.sell({
+      userJid,
+      scopeKey,
+      propertyId: id,
+      funConfig,
+    });
+    if (!result.ok) {
+      if (result.reason === 'unknown') {
+        await reply('Negócio inválido. `/negocio` pra ver o catálogo.');
+        return { handled: true };
+      }
+      if (result.reason === 'not-owned') {
+        await reply('Você não tem esse negócio para vender.');
+        return { handled: true };
+      }
+      await reply(fmt.genericError({ command: 'negocio vender' }));
+      return { handled: true };
+    }
+
+    newsService?.log?.(scopeKey, 'property_sell', {
+      userJid,
+      payload: { name: result.def.name, refund: result.refund },
+    });
+    achievementService?.check?.(
+      userJid,
+      scopeKey,
+      'coins',
+      { coins: result.coins },
+      funConfig
+    );
+
+    const detailBox =
+      result.bufferCoins > 0
+        ? ` (base *${result.baseRefund}*c + caixa *${result.bufferCoins}*c)`
+        : '';
+    const lines = [
+      `🏷️ *${result.def.emoji} Negócio vendido:* ${result.def.name}`,
+      `Recebeu *${result.refund}*c${detailBox} · saldo *${result.coins}*c`,
+      '_Slot liberado pra novos investimentos._',
+    ];
+    await reply(lines.join('\n'));
+    return { handled: true, result };
+  }
+
   if (sub === 'consertar' || sub === 'reparar' || sub === 'repair') {
     const id = args[1] || args.slice(1).join('_');
     const result = propertyService.repair({

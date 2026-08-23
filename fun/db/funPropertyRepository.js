@@ -189,6 +189,14 @@ export function createFunPropertyRepository({ getDatabase = getDb } = {}) {
     })();
   }
 
+  function deleteProperty(id) {
+    ensureSchema();
+    const res = getDatabase()
+      .prepare(`DELETE FROM ${ANALYTICS_SCHEMA}.fun_properties WHERE id = ?`)
+      .run(String(id || ''));
+    return res.changes > 0;
+  }
+
   return {
     listByUser,
     listByScope,
@@ -201,5 +209,6 @@ export function createFunPropertyRepository({ getDatabase = getDb } = {}) {
     applyDamage,
     takeFromBuffer,
     collectAllBuffers,
+    deleteProperty,
   };
 }

@@ -103,6 +103,53 @@ export function createPropertyService({
   }
 
   /**
+   * Vende um negócio: remove a propriedade da contagem ativa (libera 1 slot) e
+   * credita no saldo do usuário o reembolso base (50% do custo original) somado
+   * a 100% do caixa acumulado (`bufferCoins`) ainda não sacado.
+   *
+   * Lógica de reembolso (documentada):
+   *   refund = floor(def.cost * 0.5) + bufferCoins
+   *
+   * A venda não impacta o sistema de ticks/renda das demais propriedades ativas,
+   * o mercado ou outros módulos. Apenas `analytics.fun_properties` e o saldo
+   * `fun_user_stats.coins` são afetados.
+   *
+   * @returns {{ ok: boolean, reason?: string, def?: object, property?: object,
+   *            refund?: number, baseRefund?: number, bufferCoins?: number, coins?: number }}
+   */
+  function sell({ userJid, scopeKey, propertyId, funConfig = {}, now = Date.now() }) {
+    if (!enabled(funConfig)) return { ok: false, reason: 'disabled' };
+    const def = getProperty(propertyId);
+    if (!def) return { ok: false, reason: 'unknown' };
+    const row = propertyRepository.getByUserType(scopeKey, userJid, def.id);
+    if (!row) return { ok: false, reason: 'not-owned', def };
+
+    const baseRefund = Math.floor(def.cost * 0.5);
+    const bufferCoins = Math.max(0, Math.floor(Number(row.bufferCoins) || 0));
+    const refund = baseRefund + bufferCoins;
+
+    repository.addCoins({
+      userJid,
+      scopeKey,
+      amount: refund,
+      now,
+      reason: `property-sell:${def.id}`,
+    });
+
+    propertyRepository.deleteProperty(row.id);
+
+    return {
+      ok: true,
+      property: row,
+      def,
+      refund,
+      baseRefund,
+      bufferCoins,
+      coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+    };
+  }
+
+  /**
    * Acumula buffer para todas as props do scope (chamado no economy tick).
    * @returns {{ ticked: number, totalAdded: number }}
    */
@@ -272,7 +319,7 @@ export function createPropertyService({
     }
     lines.push(
       '',
-      `_Máx ${maxOwned(funConfig)} negócios · \`/coletar\` saca o caixa · \`/negocio consertar <id>\`_`
+      `_Máx ${maxOwned(funConfig)} negócios · \`/coletar\` saca o caixa · \`/negocio vender <id>\` · \`/negocio consertar <id>\`_`
     );
     return lines.join('\n');
   }
@@ -282,6 +329,7 @@ export function createPropertyService({
     listCatalog,
     listOwned,
     buy,
+    sell,
     tickScope,
     collect,
     repair,

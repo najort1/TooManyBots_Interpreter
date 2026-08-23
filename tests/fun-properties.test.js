@@ -10,6 +10,7 @@ import {
 import { createFunPropertyRepository } from '../fun/db/funPropertyRepository.js';
 import { createPropertyService } from '../fun/services/propertyService.js';
 import { getProperty } from '../fun/shop/properties.js';
+import { handlePropertyCommand } from '../fun/commands/handlers/property.js';
 
 await initDb();
 _resetDefaultFunStatsRepository();
@@ -146,4 +147,157 @@ test('properties: max owned e saldo insuficiente', () => {
   });
   assert.equal(fail.ok, false);
   assert.equal(fail.reason, 'no-coins');
+});
+
+test('properties: venda de propriedade, atualização de saldo, liberação de slot e erros', () => {
+  const { repository, propertyService } = setup();
+  const scope = uniqueGroup();
+  const u = uniqueJid();
+  const cfg = { propertiesEnabled: true, propertyMaxOwned: 2 };
+
+  // Saldo inicial suficiente para compras
+  repository.addCoins({ userJid: u, scopeKey: scope, amount: 30000, reason: 'seed' });
+
+  // Comprar 2 propriedades (atingir o limite de 2)
+  const buy1 = propertyService.buy({ userJid: u, scopeKey: scope, propertyId: 'barraca', funConfig: cfg });
+  assert.equal(buy1.ok, true);
+
+  const buy2 = propertyService.buy({ userJid: u, scopeKey: scope, propertyId: 'cassino', funConfig: cfg });
+  assert.equal(buy2.ok, true);
+
+  assert.equal(propertyService.listOwned(scope, u).length, 2);
+
+  // Tentar comprar a 3ª propriedade deve falhar por limite de slots
+  const buy3Fail = propertyService.buy({ userJid: u, scopeKey: scope, propertyId: 'firma', funConfig: cfg });
+  assert.equal(buy3Fail.ok, false);
+  assert.equal(buy3Fail.reason, 'max-owned');
+
+  const coinsBeforeSell = repository.getUserStats(u, scope).coins;
+
+  // Vender a 1ª propriedade (barraca: custo 900 -> 50% = 450 coins de reembolso base)
+  const sellResult = propertyService.sell({ userJid: u, scopeKey: scope, propertyId: 'barraca', funConfig: cfg });
+  assert.equal(sellResult.ok, true);
+  assert.equal(sellResult.def.id, 'barraca');
+  assert.equal(sellResult.baseRefund, 450);
+  assert.equal(sellResult.refund, 450);
+
+  // Verificar atualização correta do saldo
+  const coinsAfterSell = repository.getUserStats(u, scope).coins;
+  assert.equal(coinsAfterSell, coinsBeforeSell + 450);
+
+  // Slot foi liberado: agora possui apenas 1 propriedade ativa
+  assert.equal(propertyService.listOwned(scope, u).length, 1);
+
+  // Com a liberação do slot, agora é possível comprar a 3ª propriedade (firma)
+  const buy3Success = propertyService.buy({ userJid: u, scopeKey: scope, propertyId: 'firma', funConfig: cfg });
+  assert.equal(buy3Success.ok, true);
+  assert.equal(propertyService.listOwned(scope, u).length, 2);
+
+  // Vender a 2ª propriedade (cassino) e a 3ª propriedade (firma) para liberar todos os slots
+  const sell2 = propertyService.sell({ userJid: u, scopeKey: scope, propertyId: 'cassino', funConfig: cfg });
+  assert.equal(sell2.ok, true);
+
+  const sell3 = propertyService.sell({ userJid: u, scopeKey: scope, propertyId: 'firma', funConfig: cfg });
+  assert.equal(sell3.ok, true);
+
+  // Usuário agora não tem nenhuma propriedade e pode possuir todas as 3 sequencialmente se 2 forem vendidas
+  assert.equal(propertyService.listOwned(scope, u).length, 0);
+
+  // Tratamento de erro: tentar vender propriedade já vendida / não possuída
+  const sellNotOwned = propertyService.sell({ userJid: u, scopeKey: scope, propertyId: 'barraca', funConfig: cfg });
+  assert.equal(sellNotOwned.ok, false);
+  assert.equal(sellNotOwned.reason, 'not-owned');
+
+  // Tratamento de erro: tentar vender propriedade inexistente no catálogo
+  const sellUnknown = propertyService.sell({ userJid: u, scopeKey: scope, propertyId: 'inexistente', funConfig: cfg });
+  assert.equal(sellUnknown.ok, false);
+  assert.equal(sellUnknown.reason, 'unknown');
+});
+
+test('properties: venda com buffer acumulado transfere reembolso base e caixa', () => {
+  const { repository, propertyRepository, propertyService } = setup();
+  const scope = uniqueGroup();
+  const u = uniqueJid();
+  const cfg = { propertiesEnabled: true };
+
+  repository.addCoins({ userJid: u, scopeKey: scope, amount: 5000, reason: 'seed' });
+  const buy = propertyService.buy({ userJid: u, scopeKey: scope, propertyId: 'barraca', funConfig: cfg });
+  assert.equal(buy.ok, true);
+
+  // Injetar bufferCoins no negócio
+  const owned = propertyService.listOwned(scope, u)[0];
+  propertyRepository.setBuffer(owned.id, 75);
+
+  const coinsBefore = repository.getUserStats(u, scope).coins;
+  const sell = propertyService.sell({ userJid: u, scopeKey: scope, propertyId: 'barraca', funConfig: cfg });
+
+  assert.equal(sell.ok, true);
+  assert.equal(sell.baseRefund, 450);
+  assert.equal(sell.bufferCoins, 75);
+  assert.equal(sell.refund, 525);
+  assert.equal(repository.getUserStats(u, scope).coins, coinsBefore + 525);
+  assert.equal(propertyService.listOwned(scope, u).length, 0);
+});
+
+test('properties: handler de comando /negocio vender responde corretamente', async () => {
+  const { repository, propertyService } = setup();
+  const scope = uniqueGroup();
+  const u = uniqueJid();
+  const cfg = { propertiesEnabled: true, propertyMaxOwned: 2 };
+
+  repository.addCoins({ userJid: u, scopeKey: scope, amount: 5000, reason: 'seed' });
+  propertyService.buy({ userJid: u, scopeKey: scope, propertyId: 'barraca', funConfig: cfg });
+
+  let replyText = '';
+  const reply = async (msg) => {
+    replyText = msg;
+  };
+
+  // Vender barraca
+  const res = await handlePropertyCommand({
+    userJid: u,
+    scopeKey: scope,
+    propertyService,
+    funConfig: cfg,
+    reply,
+    args: ['vender', 'barraca'],
+  });
+
+  assert.equal(res.handled, true);
+  assert.equal(res.result.ok, true);
+  assert.ok(replyText.includes('Barraca de Pastel'));
+  assert.ok(replyText.includes('450'));
+  assert.ok(replyText.includes('450'));
+
+  // Tentativa de vender novamente
+  await handlePropertyCommand({
+    userJid: u,
+    scopeKey: scope,
+    propertyService,
+    funConfig: cfg,
+    reply,
+    args: ['vender', 'barraca'],
+  });
+
+  assert.ok(replyText.includes('Você não tem esse negócio para vender.'));
+
+  // Tentativa de vender negócio inexistente
+  await handlePropertyCommand({
+    userJid: u,
+    scopeKey: scope,
+    propertyService,
+    funConfig: cfg,
+    reply,
+    args: ['vender', 'invalido'],
+  });
+
+  assert.ok(replyText.includes('Negócio inválido'));
+});
+
+test('properties: formatList inclui instrução de venda', () => {
+  const { propertyService } = setup();
+  const scope = uniqueGroup();
+  const u = uniqueJid();
+  const text = propertyService.formatList(scope, u);
+  assert.ok(text.includes('/negocio vender <id>'));
 });
