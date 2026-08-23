@@ -2,8 +2,9 @@
 
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { FireGame } from "./FireGame";
+import { FirefighterGameOpenGL } from "@/components/firefighter/FirefighterGameOpenGL";
 import { FirewallGame } from "./FirewallGame";
+import { InternGameOpenGL } from "@/components/intern/InternGameOpenGL";
 
 type OpenResp = {
   ok: boolean;
@@ -401,7 +402,7 @@ function PlayInner() {
 
   const howTo = howToFor(meta.game, meta.gameConfig);
   const dark =
-    meta.game === "fire" || meta.game === "firewall" || meta.game === "sequence";
+    meta.game === "fire" || meta.game === "firewall" || meta.game === "sequence" || meta.game === "printer";
 
   if (phase === "briefing" || phase === "practice-done") {
     return (
@@ -430,29 +431,29 @@ function PlayInner() {
 
   // phase === "play"
   return (
-    <Shell dark={dark}>
+    <Shell dark={dark} wide={meta.game === "printer"}>
       {playMode === "practice" ? (
         <div
-          className={`mb-3 rounded-lg border px-3 py-2 text-center text-xs font-medium ${
+          className={`mb-2 rounded-xl border px-3 py-1.5 text-center text-xs font-bold ${
             dark
-              ? "border-amber-500/40 bg-amber-500/10 text-amber-200"
+              ? "border-amber-500/40 bg-amber-500/15 text-amber-200"
               : "border-amber-300 bg-amber-50 text-amber-800"
           }`}
         >
-          TREINO GRÁTIS — não conta como tentativa real (sem CD, sem taxa)
+          TREINO GRÁTIS — sem CD, sem taxa
         </div>
       ) : (
         <div
-          className={`mb-3 rounded-lg border px-3 py-2 text-center text-xs font-medium ${
+          className={`mb-2 rounded-xl border px-3 py-1.5 text-center text-xs font-bold ${
             dark
-              ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-200"
+              ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-200"
               : "border-emerald-300 bg-emerald-50 text-emerald-800"
           }`}
         >
-          TESTE REAL — resultado vale pra contratação
+          TESTE REAL — vale para contratação
         </div>
       )}
-      {meta.game !== "fire" && meta.game !== "firewall" && meta.game !== "sequence" && (
+      {meta.game !== "fire" && meta.game !== "firewall" && meta.game !== "sequence" && meta.game !== "printer" && (
         <header className="mb-4">
           <p className="text-2xl">{meta.emoji}</p>
           <h1 className="text-lg font-semibold text-zinc-900">{meta.jobName}</h1>
@@ -460,14 +461,14 @@ function PlayInner() {
         </header>
       )}
       {meta.game === "printer" && (
-        <PrinterGame
+        <InternGameOpenGL
           key={`${playMode}-${practiceUsed}`}
           config={meta.gameConfig}
           onDone={submit}
         />
       )}
       {meta.game === "fire" && (
-        <FireGame
+        <FirefighterGameOpenGL
           key={`${playMode}-${practiceUsed}`}
           config={meta.gameConfig}
           onDone={submit}
@@ -639,17 +640,19 @@ function Briefing({
 function Shell({
   children,
   dark = false,
+  wide = false,
 }: {
   children: React.ReactNode;
   dark?: boolean;
+  wide?: boolean;
 }) {
   return (
     <div
-      className={`flex min-h-dvh flex-col items-center px-4 py-6 ${
+      className={`flex min-h-dvh flex-col items-center px-2 sm:px-4 py-2 sm:py-6 ${
         dark ? "bg-zinc-950 text-zinc-50" : "bg-zinc-50 text-zinc-900"
       }`}
     >
-      <div className="w-full max-w-md">{children}</div>
+      <div className={`w-full ${wide ? "max-w-4xl" : "max-w-md"}`}>{children}</div>
     </div>
   );
 }
