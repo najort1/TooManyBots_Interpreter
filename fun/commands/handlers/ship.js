@@ -130,7 +130,7 @@ export async function handleShipCommand({
       scopeKey,
       userJids: [a, b],
       funConfig,
-      limit: 8,
+      limit: Infinity,
     }
   );
 

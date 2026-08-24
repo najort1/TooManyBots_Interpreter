@@ -2,7 +2,7 @@ import { getDb } from '../../db/context.js';
 import { ensureFunSchema as applyFunSchema } from '../schema.js';
 
 const ANALYTICS_SCHEMA = 'analytics';
-const defaults = () => ({ hair_face: 'base_face', outfit: 'camiseta_beco', optional_accessory: 'sem_acessorio' });
+const defaults = () => ({ body: 'corpo_beco', hair_face: 'base_face', outfit: 'camiseta_beco', optional_accessory: 'sem_acessorio' });
 function parseObject(value, fallback) { try { const parsed = JSON.parse(String(value || '')); return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : fallback; } catch { return fallback; } }
 function parseArray(value) { try { const parsed = JSON.parse(String(value || '[]')); return Array.isArray(parsed) ? parsed.map(String) : []; } catch { return []; } }
 function mapState(row) { if (!row) return null; return { scopeKey: String(row.scope_key), userJid: String(row.user_jid), slots: { ...defaults(), ...parseObject(row.slots_json, {}) }, unlocked: parseArray(row.unlocked_json), updatedAt: Number(row.updated_at) || 0 }; }

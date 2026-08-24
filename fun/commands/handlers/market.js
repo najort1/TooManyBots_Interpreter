@@ -780,7 +780,7 @@ export async function handleAssaultCommand({
   try {
     groupLore = groupMemoryService?.buildLoreContext?.(scopeKey, {
       userJids: [userJid, result.targetJid].filter(Boolean),
-      limit: 4,
+      limit: Infinity,
       funConfig,
     }) || '';
     const identityBlock = profileService?.buildIdentityBlock?.(

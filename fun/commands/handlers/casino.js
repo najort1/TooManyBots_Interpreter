@@ -38,7 +38,7 @@ export async function handleRouletteCommand({
     scopeKey,
     userJids: [userJid],
     funConfig,
-    limit: 8,
+    limit: Infinity,
   };
 
   const parsed = casinoService.parseRouletteBet(args);
@@ -130,7 +130,7 @@ export async function handleSlotCommand({
     scopeKey,
     userJids: [userJid],
     funConfig,
-    limit: 8,
+    limit: Infinity,
   };
   const amount = parseAmountFromArgs(args);
   if (!amount) {
@@ -374,7 +374,7 @@ export async function handleCashoutCommand({
       scopeKey,
       userJids: [userJid],
       funConfig,
-      limit: 8,
+      limit: Infinity,
     }
   );
   if (result.crashed) {
@@ -583,7 +583,7 @@ export async function handleStandCommand({
       scopeKey,
       userJids: [userJid],
       funConfig,
-      limit: 8,
+      limit: Infinity,
     }
   );
   const msg =

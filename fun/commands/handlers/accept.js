@@ -67,7 +67,7 @@ export async function handleAcceptCommand({
         scopeKey,
         userJids: [result.fromJid, result.toJid],
         funConfig,
-        limit: 8,
+        limit: Infinity,
       }
     );
     await reply(

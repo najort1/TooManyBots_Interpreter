@@ -72,7 +72,7 @@ export async function handleMarryCommand({
     scopeKey,
     userJids: [userJid, target],
     funConfig,
-    limit: 8,
+    limit: Infinity,
   };
 
   if (result.married && result.reason === 'mutual') {

@@ -509,7 +509,7 @@ export function createMarketService({
     try {
       loreContext = memories?.buildLoreContext?.(scopeKey, {
         userJids: targetJid ? [targetJid] : [],
-        limit: 4,
+        limit: Infinity,
         funConfig,
       }) || '';
       identityBlock = targetJid

@@ -21,7 +21,7 @@ async function chaosText(flavorService, scenario, vars, templateFn, loreOpts = {
     try {
       merged.groupLore = loreOpts.groupMemoryService.buildLoreContext(loreOpts.scopeKey, {
         userJids: loreOpts.userJids || [],
-        limit: 8,
+        limit: Infinity,
         funConfig: loreOpts.funConfig || {},
       });
     } catch {

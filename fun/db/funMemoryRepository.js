@@ -65,7 +65,8 @@ export function createFunMemoryRepository({ getDatabase = getDb } = {}) {
     const factId = id || randomUUID();
     const ts = Number(now) || Date.now();
     const k = KINDS.has(String(kind)) ? String(kind) : 'event';
-    const sum = String(summary || '').trim().slice(0, 200);
+    // sem limite: summary vai completo pro banco (e do banco pro prompt).
+    const sum = String(summary || '').trim();
     if (!sum || !scopeKey) return null;
 
     getDatabase()
@@ -129,7 +130,7 @@ export function createFunMemoryRepository({ getDatabase = getDb } = {}) {
     const current = getFact(id);
     if (!current) return null;
     const ts = Number(now) || Date.now();
-    const incoming = summary ? String(summary).trim().slice(0, 200) : '';
+    const incoming = summary ? String(summary).trim() : '';
     const nextSummary =
       incoming && overwriteSummary !== false ? incoming : current.summary;
     const nextScore = Math.max(
@@ -163,7 +164,8 @@ export function createFunMemoryRepository({ getDatabase = getDb } = {}) {
 
   function updateFactSummary(id, scopeKey, summary) {
     ensureSchema();
-    const text = String(summary || '').trim().slice(0, 200);
+    // sem limite: summary vai completo pro banco (e do banco pro prompt).
+    const text = String(summary || '').trim();
     if (!text) return null;
     const result = getDatabase().prepare(`UPDATE ${ANALYTICS_SCHEMA}.fun_group_memories SET summary = ? WHERE id = ? AND scope_key = ?`)
       .run(text, String(id), String(scopeKey));
