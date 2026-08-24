@@ -301,7 +301,11 @@ test('groupMemoryService: prompt preserva humor adulto contextual sem detalhes g
   }
 });
 
-test('groupMemoryService: persona respeita o limite configurado no prompt e no resultado', async () => {
+test('groupMemoryService: persona SEM limite de caracteres (envia tudo pro modelo)', async () => {
+  // Usuário pediu para remover todos os cortes — persona vai completo pro
+  // modelo, sem .slice(0, personaMax). O prompt de extração ainda menciona o
+  // teto configurado (instrução de tamanho), mas o texto persistido é a saída
+  // completa do modelo.
   const prev = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
   try {
@@ -328,8 +332,9 @@ test('groupMemoryService: persona respeita o limite configurado no prompt e no r
     assert.equal(result.ok, true);
     assert.match(input.system, /limite de caracteres informado/i);
     assert.doesNotMatch(input.system, /450 caracteres/i);
+    // prompt continua sugerindo o teto, mas o texto persistido vai completo.
     assert.match(input.prompt, /≤500 chars/);
-    assert.equal(result.text.length, 500);
+    assert.equal(result.text.length, 602);
   } finally {
     if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
     else process.env.FUN_DISABLE_LIVE_LLM = '1';

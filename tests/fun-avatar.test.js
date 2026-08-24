@@ -12,7 +12,7 @@ await initDb();
 
 const unique = (prefix) => prefix + Date.now() + Math.floor(Math.random() * 1e6);
 
-test('avatar: catálogo mantém IDs únicos e vinte novos itens distribuídos nos slots', () => {
+test('avatar: catálogo mantém IDs únicos, bases e itens distribuídos nos slots', () => {
   const catalog = listAvatarItems();
   const ids = catalog.map((item) => item.id);
   const countsBySlot = Object.fromEntries(AVATAR_SLOTS.map((slot) => [
@@ -20,12 +20,13 @@ test('avatar: catálogo mantém IDs únicos e vinte novos itens distribuídos no
     catalog.filter((item) => item.slot === slot).length,
   ]));
 
-  assert.equal(catalog.length, 29);
+  assert.equal(catalog.length, 42);
   assert.equal(new Set(ids).size, catalog.length);
   assert.deepEqual(countsBySlot, {
-    hair_face: 10,
-    outfit: 10,
-    optional_accessory: 9,
+    body: 3,
+    hair_face: 13,
+    outfit: 13,
+    optional_accessory: 13,
   });
   assert.ok(catalog.every((item) => AVATAR_SLOTS.includes(item.slot)));
   assert.ok(catalog.every((item) => item.cost >= 0 && item.unlockLevel >= 1));
@@ -33,9 +34,10 @@ test('avatar: catálogo mantém IDs únicos e vinte novos itens distribuídos no
 });
 
 test('avatar: chave visual muda quando qualquer slot equipado muda', () => {
-  const base = { slots: { hair_face: 'base_face', outfit: 'camiseta_beco', optional_accessory: 'sem_acessorio' } };
+  const base = { slots: { body: 'corpo_beco', hair_face: 'base_face', outfit: 'camiseta_beco', optional_accessory: 'sem_acessorio' } };
   const keys = [
     base,
+    { slots: { ...base.slots, body: 'corpo_beca' } },
     { slots: { ...base.slots, hair_face: 'cabelo_cacheado' } },
     { slots: { ...base.slots, outfit: 'uniforme_arcade' } },
     { slots: { ...base.slots, optional_accessory: 'mochila_lateral' } },
@@ -52,10 +54,12 @@ test('avatar: equipar por nível e comprar premium com ledger', () => {
   const user = unique('5513') + '@s.whatsapp.net';
 
   repository.addCoins({ userJid: user, scopeKey: scope, amount: 1000, reason: 'seed' });
+  assert.equal(service.equip({ scopeKey: scope, userJid: user, itemId: 'corpo_beca', funConfig: { avatarEnabled: true } }).ok, true);
   const bought = service.buy({ scopeKey: scope, userJid: user, itemId: 'oculos_pixel', funConfig: { avatarEnabled: true } });
 
   assert.equal(bought.ok, true);
   assert.equal(service.equip({ scopeKey: scope, userJid: user, itemId: 'oculos_pixel', funConfig: { avatarEnabled: true } }).ok, true);
+  assert.equal(service.get({ scopeKey: scope, userJid: user }).slots.body, 'corpo_beca');
   assert.equal(service.get({ scopeKey: scope, userJid: user }).slots.hair_face, 'oculos_pixel');
 });
 
