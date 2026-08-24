@@ -9,9 +9,11 @@ import {
   isValidApiKey,
 } from "@/lib/dashboardAuth";
 import { rateLimit } from "@/lib/rateLimit";
+import { getHouseRateLimitPolicy } from "@/lib/houseRateLimitPolicy.js";
 
 const RATE_MAX = Number(process.env.FUN_DASHBOARD_RATE_MAX || 60);
 const RATE_WINDOW_MS = Number(process.env.FUN_DASHBOARD_RATE_WINDOW_MS || 60_000);
+const HOUSE_SESSION_RATE_MAX = Number(process.env.FUN_DASHBOARD_HOUSE_SESSION_RATE_MAX || 20);
 
 function clientIp(req: NextRequest): string {
   return (
@@ -76,9 +78,18 @@ export function middleware(req: NextRequest) {
   }
 
   const ip = clientIp(req);
-  const rl = rateLimit(`dash:${ip}:${pathname.split("/")[1] || "root"}`, {
+  const housePolicy = getHouseRateLimitPolicy(pathname, req.method);
+  if (publicHouseRoute && housePolicy?.bypassGeneric) {
+    const res = NextResponse.next();
+    res.headers.set("X-RateLimit-Policy", "realtime-session");
+    return res;
+  }
+
+  const bucket = housePolicy?.bucket || pathname.split("/")[1] || "root";
+  const max = bucket === "house-session" ? HOUSE_SESSION_RATE_MAX : RATE_MAX;
+  const rl = rateLimit(`dash:${ip}:${bucket}`, {
     windowMs: RATE_WINDOW_MS,
-    max: RATE_MAX,
+    max,
   });
 
   if (!rl.ok) {

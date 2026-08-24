@@ -9,17 +9,23 @@ export const AVATAR_OUTFIT_COLORS = Object.freeze({
   macacao_oficina: 0xc58a35,
   jaqueta_colegial: 0x3f7d62,
   traje_astral: 0x354472,
+  saia_plissada: 0xe982b6,
+  conjunto_lilas: 0x8968cf,
+  vestido_noite: 0x38407b,
 });
 
 export const AVATAR_VISUAL_IDS = Object.freeze({
+  body: Object.freeze(['corpo_beco', 'corpo_beca', 'corpo_neutro']),
   hair_face: Object.freeze([
     'base_face', 'cabelo_caos', 'oculos_pixel', 'cabelo_cacheado', 'franja_azul',
     'bone_beco', 'bandana_pixel', 'mascara_misterio', 'cabelo_rosa', 'chapeu_pescador',
+    'cabelo_longo_lilas', 'marias_chiquinhas', 'trancas_aurora',
   ]),
   outfit: Object.freeze(Object.keys(AVATAR_OUTFIT_COLORS)),
   optional_accessory: Object.freeze([
     'sem_acessorio', 'corrente_brilho', 'coroa_papel', 'fones_neon', 'mochila_lateral',
     'asas_pixel', 'cachecol_estrelas', 'bolsa_cogumelo', 'aura_vinil',
+    'laco_neon', 'tiara_lua', 'bolsa_estelar', 'brincos_pixel',
   ]),
 });
 
@@ -36,5 +42,5 @@ export function hasAvatarVisual(slot, itemId) {
 /** @param {{ slots?: Record<string, string> } | null | undefined} avatar */
 export function getAvatarVisualKey(avatar) {
   const slots = avatar?.slots || {};
-  return [slots.hair_face || '', slots.outfit || '', slots.optional_accessory || ''].join('|');
+  return [slots.body || 'corpo_beco', slots.hair_face || '', slots.outfit || '', slots.optional_accessory || ''].join('|');
 }

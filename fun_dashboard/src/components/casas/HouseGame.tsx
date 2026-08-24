@@ -2,8 +2,8 @@
 
 import * as Phaser from "phaser";
 import { useEffect, useId, useRef, useState } from "react";
-import type { HouseItem, HouseShopItem, HouseView, NeighborhoodHouse } from "@/lib/types";
-import { getAvatarOutfitColor, getAvatarVisualKey } from "./avatarAppearance.js";
+import type { HouseItem, HousePlayer, HouseShopItem, HouseView, NeighborhoodHouse } from "@/lib/types";
+import { getAvatarVisualKey } from "./avatarAppearance.js";
 import {
   AVATAR_FLOOR_OFFSET_Y,
   GRID_COLUMNS,
@@ -12,7 +12,6 @@ import {
   TILE_HEIGHT,
   TILE_WIDTH,
   cellFromFurniturePosition,
-  findPathAStar,
   furnitureDepth,
   furnitureFloorPosition,
   furnitureRectanglePoints,
@@ -20,11 +19,20 @@ import {
   getGridOutline,
   isGridCellAvailable,
   normalizeFurnitureRotation,
-  normalizePolygonPoints,
   projectFurniturePoint,
   resolveDropCell,
   toIso,
 } from "./houseGeometry.js";
+import {
+  PAL,
+  REDUCED_MOTION_KEY,
+  motionAllowed,
+  motionDuration,
+  alive,
+  centeredPolygon,
+  createAvatarRig,
+} from "./avatarRigShared";
+import type { AvatarRig } from "./avatarRigShared";
 
 type WorldMode = "house" | "neighborhood";
 type ViewportMode = "desktop" | "portrait" | "landscape";
@@ -41,25 +49,14 @@ type HouseGameProps = {
   onSelectItem: (item: HouseItem) => void;
   onClearSelection: () => void;
   interactionLocked?: boolean;
+  remotePlayers?: HousePlayer[];
+  onAvatarMove?: (x: number, y: number, moving: boolean) => void;
   onMoveItem: (item: HouseItem, x: number, y: number) => boolean | Promise<boolean>;
 };
 
 const GAME_WIDTH = 960;
 const GAME_HEIGHT = 720;
 const WALL_HEIGHT = 126;
-
-const PAL = {
-  wallLeft: 0x3b2757,
-  wallRight: 0x30204b,
-  wallEdge: 0x241735,
-  floorA: 0x8d6bb0,
-  floorB: 0x7c5ca1,
-  floorHover: 0xb995d9,
-  floorValid: 0x7bd9a0,
-  floorInvalid: 0xe06a7a,
-  gold: 0xffd76a,
-  outline: 0x241735,
-};
 
 const FLOOR_THEMES: Record<string, { a: number; b: number; grid: number }> = {
   piso_lilas: { a: 0x8d6bb0, b: 0x7c5ca1, grid: 0xc9aee3 },
@@ -100,10 +97,6 @@ function diamondPoints(cx: number, cy: number, w = TILE_WIDTH, h = TILE_HEIGHT) 
     { x: cx, y: cy + h / 2 },
     { x: cx - w / 2, y: cy },
   ];
-}
-
-function centeredPolygon(scene: Phaser.Scene, x: number, y: number, points: number[], fillColor?: number, fillAlpha?: number) {
-  return scene.add.polygon(x, y, normalizePolygonPoints(points), fillColor, fillAlpha);
 }
 
 type FurniturePoint = { x: number; y: number };
@@ -156,20 +149,6 @@ function itemRotation(item: HouseItem) {
   return normalizeFurnitureRotation(item.rotation ?? item.rotated);
 }
 
-const REDUCED_MOTION_KEY = "casas-reduced-motion";
-
-function motionAllowed(scene: Phaser.Scene) {
-  return scene.registry.get(REDUCED_MOTION_KEY) !== true;
-}
-
-function motionDuration(scene: Phaser.Scene, duration: number) {
-  return motionAllowed(scene) ? duration : Math.min(60, duration);
-}
-
-function alive(target: Phaser.GameObjects.GameObject) {
-  return target.scene != null && target.active;
-}
-
 function destroyTree(scene: Phaser.Scene, target: Phaser.GameObjects.GameObject) {
   const container = target as Phaser.GameObjects.Container;
   if (container.list) {
@@ -193,262 +172,6 @@ function labelChip(scene: Phaser.Scene, text: string, fill: number, stroke: numb
   g.lineStyle(2, stroke, 1);
   g.strokeRoundedRect(-w / 2, -h / 2, w, h, 8);
   return scene.add.container(0, 0, [g, label]);
-}
-
-type AvatarRig = {
-  root: Phaser.GameObjects.Container;
-  bobber: Phaser.GameObjects.Container;
-  face: Phaser.GameObjects.Text;
-  breathing: Phaser.Tweens.Tween | null;
-  walkTweens: Phaser.Tweens.Tween[];
-  leanTween: Phaser.Tweens.Tween | null;
-  walking: boolean;
-};
-
-function avatarLines(scene: Phaser.Scene, color: number, width: number, segments: number[][]) {
-  const graphics = scene.add.graphics().lineStyle(width, color, 1);
-  segments.forEach(([x1, y1, x2, y2]) => graphics.lineBetween(x1, y1, x2, y2));
-  return graphics;
-}
-
-function addAvatarBackAccessory(scene: Phaser.Scene, bobber: Phaser.GameObjects.Container, accessory: string) {
-  if (accessory === "asas_pixel") {
-    bobber.add([
-      centeredPolygon(scene, -45, -34, [0, 12, -18, 12, -18, -2, -31, -2, -31, -24, -16, -24, -16, -12, 0, -12], 0xc8f1ff).setStrokeStyle(3, PAL.outline),
-      centeredPolygon(scene, 45, -34, [0, 12, 18, 12, 18, -2, 31, -2, 31, -24, 16, -24, 16, -12, 0, -12], 0xd9c8ff).setStrokeStyle(3, PAL.outline),
-    ]);
-  } else if (accessory === "aura_vinil") {
-    bobber.add([
-      scene.add.ellipse(0, -35, 112, 158, 0x000000, 0).setStrokeStyle(4, 0x8cf4ff, 0.9),
-      scene.add.ellipse(0, -35, 98, 142, 0x000000, 0).setStrokeStyle(2, 0xf79cff, 0.85),
-    ]);
-  }
-}
-
-function addAvatarOutfitDetails(scene: Phaser.Scene, bobber: Phaser.GameObjects.Container, outfit: string) {
-  if (outfit === "jaqueta_neon") {
-    bobber.add([
-      scene.add.rectangle(0, -8, 4, 48, 0xffe082, 0.92),
-      scene.add.triangle(-13, -27, -13, -8, 0, 10, 0, -12, 0xff82ba, 0.9).setStrokeStyle(2, 0xc22d70),
-      scene.add.triangle(13, -27, 13, -8, 0, 10, 0, -12, 0xff82ba, 0.9).setStrokeStyle(2, 0xc22d70),
-    ]);
-  } else if (outfit === "terno_suspeito") {
-    bobber.add([
-      scene.add.triangle(0, -31, -15, -31, 0, -6, 15, -31, 0xf4f1e9).setStrokeStyle(2, 0x24324b),
-      centeredPolygon(scene, 0, -11, [0, -10, 7, 0, 3, 19, -3, 19, -7, 0], 0xa33b4d).setStrokeStyle(2, 0x562331),
-      avatarLines(scene, 0x1e2a45, 3, [[-25, -28, -4, -3], [25, -28, 4, -3]]),
-    ]);
-  } else if (outfit === "moletom_nuvem") {
-    bobber.add([
-      centeredPolygon(scene, 0, -27, [-20, -9, 0, 4, 20, -9, 20, 5, 0, 15, -20, 5], 0xd8efff).setStrokeStyle(3, 0x38658b),
-      avatarLines(scene, 0xffffff, 2, [[-7, -21, -7, -7], [7, -21, 7, -7]]),
-      scene.add.ellipse(0, 5, 30, 10, 0xd8efff).setStrokeStyle(2, 0x38658b),
-    ]);
-  } else if (outfit === "camisa_xadrez") {
-    bobber.add(avatarLines(scene, 0xf5c7a9, 3, [
-      [-18, -35, -18, 20], [0, -35, 0, 20], [18, -35, 18, 20],
-      [-27, -20, 27, -20], [-27, 0, 27, 0],
-    ]));
-  } else if (outfit === "uniforme_arcade") {
-    bobber.add([
-      scene.add.rectangle(0, -26, 52, 14, 0x25254b),
-      scene.add.rectangle(0, 2, 30, 21, 0x182238).setStrokeStyle(3, 0x7dfff2),
-      avatarLines(scene, 0xffe15c, 3, [[-9, 2, -1, 2], [-5, -2, -5, 6], [7, 0, 10, 0]]),
-    ]);
-  } else if (outfit === "vestido_aurora") {
-    bobber.add([
-      avatarLines(scene, 0xffd6c4, 4, [[-22, -33, 0, -9], [0, -9, 22, -33]]),
-      centeredPolygon(scene, 0, 18, [-25, -8, 25, -8, 35, 28, -35, 28], 0xd96ea8).setStrokeStyle(3, PAL.outline),
-      avatarLines(scene, 0xffb38c, 3, [[-28, 18, 28, 18], [-31, 29, 31, 29]]),
-    ]);
-  } else if (outfit === "macacao_oficina") {
-    bobber.add([
-      avatarLines(scene, 0x5b4937, 5, [[-18, -35, -18, 5], [18, -35, 18, 5], [-18, -2, 18, -2]]),
-      scene.add.rectangle(0, -8, 20, 13, 0xf0be62).setStrokeStyle(2, 0x5b4937),
-      avatarLines(scene, 0xfff1b8, 2, [[-6, -8, 6, -8]]),
-    ]);
-  } else if (outfit === "jaqueta_colegial") {
-    bobber.add([
-      avatarLines(scene, 0xf7e5c1, 6, [[-20, -36, -20, 20], [20, -36, 20, 20]]),
-      avatarLines(scene, 0x173d36, 3, [[0, -36, 0, 21]]),
-      scene.add.rectangle(-8, -5, 12, 14, 0xf4c857).setStrokeStyle(2, 0x173d36),
-    ]);
-  } else if (outfit === "traje_astral") {
-    bobber.add([
-      avatarLines(scene, 0x9bc8ff, 4, [[-27, -28, 27, -28], [-24, 17, 24, 17]]),
-      scene.add.rectangle(0, -4, 28, 22, 0x111b39).setStrokeStyle(3, 0x6be3ff),
-      scene.add.circle(-5, -4, 4, 0xffdc75),
-      avatarLines(scene, 0xf58cff, 2, [[5, -8, 10, -8], [5, 0, 10, 0]]),
-    ]);
-  }
-}
-
-function addAvatarHairFace(scene: Phaser.Scene, bobber: Phaser.GameObjects.Container, hair: string) {
-  if (hair === "cabelo_caos") {
-    bobber.add([
-      scene.add.rectangle(0, -84, 58, 17, 0x633b2b).setStrokeStyle(3, PAL.outline),
-      scene.add.rectangle(-22, -73, 13, 22, 0x633b2b).setStrokeStyle(3, PAL.outline),
-      scene.add.rectangle(23, -73, 13, 22, 0x633b2b).setStrokeStyle(3, PAL.outline),
-    ]);
-  } else if (hair === "oculos_pixel") {
-    bobber.add([
-      scene.add.rectangle(-14, -54, 22, 15, 0x1b1430, 0.85).setStrokeStyle(3, 0x5fe8ff),
-      scene.add.rectangle(14, -54, 22, 15, 0x1b1430, 0.85).setStrokeStyle(3, 0x5fe8ff),
-      scene.add.rectangle(0, -54, 6, 4, 0x5fe8ff),
-    ]);
-  } else if (hair === "cabelo_cacheado") {
-    bobber.add([
-      scene.add.circle(-25, -82, 12, 0x412b43).setStrokeStyle(3, PAL.outline),
-      scene.add.circle(-10, -91, 13, 0x412b43).setStrokeStyle(3, PAL.outline),
-      scene.add.circle(7, -92, 14, 0x412b43).setStrokeStyle(3, PAL.outline),
-      scene.add.circle(23, -84, 13, 0x412b43).setStrokeStyle(3, PAL.outline),
-      scene.add.circle(-29, -68, 11, 0x412b43).setStrokeStyle(3, PAL.outline),
-      scene.add.circle(29, -69, 11, 0x412b43).setStrokeStyle(3, PAL.outline),
-    ]);
-  } else if (hair === "franja_azul") {
-    bobber.add(centeredPolygon(scene, 0, -79, [-31, 11, -31, -8, 0, -23, 31, -8, 31, 12, 19, -1, 10, 15, 0, -2, -11, 14, -20, -1], 0x398bc6).setStrokeStyle(4, PAL.outline));
-  } else if (hair === "bone_beco") {
-    bobber.add([
-      scene.add.rectangle(0, -86, 56, 18, 0x7257d9).setStrokeStyle(4, PAL.outline),
-      centeredPolygon(scene, 18, -76, [-18, -7, 29, -7, 36, 3, -18, 3], 0x513aa7).setStrokeStyle(3, PAL.outline),
-      scene.add.rectangle(-12, -87, 11, 6, 0xffd35c),
-    ]);
-  } else if (hair === "bandana_pixel") {
-    bobber.add([
-      scene.add.rectangle(0, -75, 60, 12, 0xef5d6f).setStrokeStyle(3, PAL.outline),
-      centeredPolygon(scene, 34, -68, [-7, -9, 15, -5, 4, 2, 15, 10, -9, 5], 0xef5d6f).setStrokeStyle(3, PAL.outline),
-      avatarLines(scene, 0xffd6a6, 3, [[-20, -75, -12, -75], [-3, -77, 5, -77], [14, -75, 22, -75]]),
-    ]);
-  } else if (hair === "mascara_misterio") {
-    bobber.add([
-      centeredPolygon(scene, 0, -53, [-29, -11, 0, -19, 29, -11, 23, 11, 0, 18, -23, 11], 0x5e3d8f).setStrokeStyle(3, PAL.outline),
-      scene.add.triangle(-13, -55, -19, -4, 0, -4, 6, 4, 0xffe6b0),
-      scene.add.triangle(13, -55, -6, -4, 19, -4, 0, 4, 0xffe6b0),
-    ]);
-  } else if (hair === "cabelo_rosa") {
-    bobber.add([
-      scene.add.rectangle(-27, -55, 14, 62, 0xe667a3).setStrokeStyle(4, PAL.outline),
-      scene.add.rectangle(27, -55, 14, 62, 0xe667a3).setStrokeStyle(4, PAL.outline),
-      centeredPolygon(scene, 0, -82, [-30, 11, -29, -9, 0, -24, 29, -9, 30, 12, 12, -4, 3, 12, -7, -4, -17, 12], 0xe667a3).setStrokeStyle(4, PAL.outline),
-    ]);
-  } else if (hair === "chapeu_pescador") {
-    bobber.add([
-      centeredPolygon(scene, 0, -88, [-21, 8, -15, -17, 15, -17, 22, 8], 0xd5ad62).setStrokeStyle(4, PAL.outline),
-      centeredPolygon(scene, 0, -76, [-39, -7, 39, -7, 49, 5, -49, 5], 0xe7c878).setStrokeStyle(4, PAL.outline),
-    ]);
-  }
-}
-
-function addAvatarFrontAccessory(scene: Phaser.Scene, bobber: Phaser.GameObjects.Container, accessory: string) {
-  if (accessory === "coroa_papel") {
-    bobber.add(centeredPolygon(scene, 0, -103, [-31, 12, -24, -15, -8, 4, 0, -18, 10, 4, 25, -15, 31, 12, 31, 23, -31, 23], 0xffe082).setStrokeStyle(4, 0x754e24));
-  } else if (accessory === "corrente_brilho") {
-    bobber.add([
-      avatarLines(scene, 0xffd34f, 4, [[-19, -29, 0, -16], [0, -16, 19, -29]]),
-      scene.add.circle(0, -13, 6, 0xffd34f).setStrokeStyle(3, 0x7b4d1b),
-    ]);
-  } else if (accessory === "fones_neon") {
-    bobber.add([
-      scene.add.ellipse(0, -66, 70, 62, 0x000000, 0).setStrokeStyle(5, 0x6cf5ff),
-      scene.add.rectangle(-34, -53, 13, 28, 0x7638a8).setStrokeStyle(3, PAL.outline),
-      scene.add.rectangle(34, -53, 13, 28, 0x7638a8).setStrokeStyle(3, PAL.outline),
-    ]);
-  } else if (accessory === "mochila_lateral") {
-    bobber.add([
-      avatarLines(scene, 0x45324f, 5, [[-16, -34, 34, 18]]),
-      scene.add.rectangle(35, 10, 23, 31, 0xdb8c53).setStrokeStyle(3, PAL.outline),
-      avatarLines(scene, 0xffe0a8, 3, [[26, 2, 44, 2]]),
-    ]);
-  } else if (accessory === "cachecol_estrelas") {
-    bobber.add([
-      centeredPolygon(scene, 0, -34, [-25, -8, 0, 2, 25, -8, 25, 5, 0, 15, -25, 5], 0x7056c8).setStrokeStyle(3, PAL.outline),
-      centeredPolygon(scene, 16, -2, [-7, -25, 8, -25, 18, 28, 2, 31], 0x7056c8).setStrokeStyle(3, PAL.outline),
-      scene.add.star(-10, -34, 5, 3, 7, 0xffe28b),
-    ]);
-  } else if (accessory === "bolsa_cogumelo") {
-    bobber.add([
-      avatarLines(scene, 0x6a3f47, 4, [[-20, -34, 33, 25]]),
-      scene.add.rectangle(34, 19, 20, 21, 0xf5d8a8).setStrokeStyle(3, PAL.outline),
-      scene.add.ellipse(34, 7, 30, 17, 0xee675f).setStrokeStyle(3, PAL.outline),
-      scene.add.circle(29, 5, 2.5, 0xfff0d2),
-      scene.add.circle(39, 7, 2.5, 0xfff0d2),
-    ]);
-  }
-}
-
-function createAvatarRig(scene: Phaser.Scene, avatar: HouseView["avatar"], name: string): AvatarRig {
-  const outfit = avatar.slots.outfit;
-  const hair = avatar.slots.hair_face;
-  const accessory = avatar.slots.optional_accessory;
-  const bodyColor = getAvatarOutfitColor(outfit);
-
-  const root = scene.add.container(0, 0);
-  const bobber = scene.add.container(0, 0);
-  addAvatarBackAccessory(scene, bobber, accessory);
-
-  const legL = scene.add.rectangle(-12, 2, 14, 30, 0x332f54).setStrokeStyle(3, PAL.outline).setOrigin(0.5, 0);
-  const legR = scene.add.rectangle(12, 2, 14, 30, 0x332f54).setStrokeStyle(3, PAL.outline).setOrigin(0.5, 0);
-  const body = scene.add.rectangle(0, -8, 56, 58, bodyColor).setStrokeStyle(4, PAL.outline);
-  const bodyShade = scene.add.rectangle(14, -8, 12, 58, 0x000000, 0.14);
-  const shirtHighlight = scene.add.rectangle(-13, -13, 9, 36, 0xffffff, 0.22);
-  const armL = scene.add.rectangle(-30, -30, 11, 34, bodyColor).setStrokeStyle(3, PAL.outline).setOrigin(0.5, 0).setRotation(0.16);
-  const armR = scene.add.rectangle(30, -30, 11, 34, bodyColor).setStrokeStyle(3, PAL.outline).setOrigin(0.5, 0).setRotation(-0.16);
-
-  const head = scene.add.container(0, -52);
-  head.add([
-    scene.add.circle(0, 0, 31, 0xffd6ba).setStrokeStyle(4, PAL.outline),
-    scene.add.circle(-15, 8, 5, 0xf5a88c, 0.55),
-    scene.add.circle(15, 8, 5, 0xf5a88c, 0.55),
-  ]);
-  const face = scene.add.text(0, -2, "•ᴗ•", { fontFamily: "monospace", fontSize: "19px", color: "#3a2740" }).setOrigin(0.5);
-  head.add(face);
-  bobber.add([legL, legR, armL, armR, body, bodyShade, shirtHighlight]);
-
-  addAvatarOutfitDetails(scene, bobber, outfit);
-
-  // O rosto precisa ficar acima das lapelas e detalhes da roupa.
-  bobber.add(head);
-
-  addAvatarHairFace(scene, bobber, hair);
-  addAvatarFrontAccessory(scene, bobber, accessory);
-
-  const nameplate = scene.add.text(0, -122, name.toUpperCase(), { fontFamily: "monospace", fontSize: "12px", color: "#fff5d2", backgroundColor: "#2a1b43", padding: { x: 7, y: 4 } }).setOrigin(0.5);
-  root.add([scene.add.ellipse(0, 30, 74, 20, 0x120d20, 0.32), bobber, nameplate]);
-
-  const ambientMotion = motionAllowed(scene);
-  const walkTweens = ambientMotion ? [
-    scene.tweens.add({ targets: legL, rotation: { from: -0.5, to: 0.5 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
-    scene.tweens.add({ targets: legR, rotation: { from: 0.5, to: -0.5 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
-    scene.tweens.add({ targets: armL, rotation: { from: 0.34, to: -0.06 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
-    scene.tweens.add({ targets: armR, rotation: { from: -0.06, to: 0.34 }, duration: 190, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }),
-    scene.tweens.add({ targets: bobber, y: -7, duration: 95, yoyo: true, repeat: -1, ease: "Quad.easeOut" }),
-  ] : [];
-  const rig: AvatarRig = {
-    root,
-    bobber,
-    face,
-    breathing: ambientMotion ? scene.tweens.add({ targets: bobber, y: -3, duration: 1800, yoyo: true, repeat: -1, ease: "Sine.easeInOut" }) : null,
-    walkTweens,
-    leanTween: null,
-    walking: false,
-  };
-  rig.walkTweens.forEach((tween) => tween.pause());
-
-  if (ambientMotion) {
-    scene.time.addEvent({
-      delay: 2600,
-      loop: true,
-      callback: () => {
-        if (!alive(face)) return;
-        face.setText("–ᴗ–");
-        scene.time.delayedCall(130, () => {
-          if (alive(face)) face.setText("•ᴗ•");
-        });
-      },
-    });
-  }
-
-  return rig;
 }
 
 function dustPuff(scene: Phaser.Scene, x: number, y: number) {
@@ -913,17 +636,17 @@ type FurnitureRig = {
   selection: Phaser.GameObjects.Container;
 };
 
-export default function HouseGame({ mode, house, catalog, neighborhood, owns, selectedItemId, interactionLocked = false, onExit, onOpenNeighbor, onSelectItem, onClearSelection, onMoveItem }: HouseGameProps) {
+export default function HouseGame({ mode, house, catalog, neighborhood, owns, selectedItemId, interactionLocked = false, remotePlayers = [], onAvatarMove, onExit, onOpenNeighbor, onSelectItem, onClearSelection, onMoveItem }: HouseGameProps) {
   const rawId = useId();
   const containerId = `house-game-${rawId.replace(/[^a-zA-Z0-9_-]/g, "")}`;
   const callbacksRef = useRef({ onExit, onOpenNeighbor, onSelectItem, onClearSelection, onMoveItem });
-  const propsRef = useRef({ mode, house, catalog, neighborhood, owns, selectedItemId, interactionLocked, viewportMode: "desktop" as ViewportMode, reducedMotion: false });
+  const propsRef = useRef({ mode, house, catalog, neighborhood, owns, selectedItemId, interactionLocked, remotePlayers, onAvatarMove, viewportMode: "desktop" as ViewportMode, reducedMotion: false });
   const sceneRef = useRef<(Phaser.Scene & BecoSceneAPI) | null>(null);
   const [viewportMode, setViewportMode] = useState<ViewportMode>("desktop");
   const [reducedMotion, setReducedMotion] = useState(false);
 
   callbacksRef.current = { onExit, onOpenNeighbor, onSelectItem, onClearSelection, onMoveItem };
-  propsRef.current = { mode, house, catalog, neighborhood, owns, selectedItemId, interactionLocked, viewportMode, reducedMotion };
+  propsRef.current = { mode, house, catalog, neighborhood, owns, selectedItemId, interactionLocked, remotePlayers, onAvatarMove, viewportMode, reducedMotion };
 
   useEffect(() => {
     const updateViewportMode = () => {
@@ -951,6 +674,7 @@ export default function HouseGame({ mode, house, catalog, neighborhood, owns, se
       private neighborHouses: Phaser.GameObjects.Container[] = [];
       private drifters: Drifter[] = [];
       private avatarRig: AvatarRig | null = null;
+      private remoteAvatarRigs = new Map<string, AvatarRig>();
       private lastAvatarKey: string | null = null;
       private lastHouseKey: string | null = null;
       private lastStructureKey: string | null = null;
@@ -1002,6 +726,7 @@ export default function HouseGame({ mode, house, catalog, neighborhood, owns, se
             return;
           }
           this.syncHouse();
+          this.syncRemotePlayers();
         }
         else this.syncNeighborhood();
       }
@@ -1023,6 +748,7 @@ export default function HouseGame({ mode, house, catalog, neighborhood, owns, se
         this.neighborHouses = [];
         this.drifters = [];
         this.avatarRig = null;
+        this.remoteAvatarRigs.clear();
         this.lastAvatarKey = null;
         this.lastHouseKey = null;
         this.lastStructureKey = null;
@@ -1110,6 +836,24 @@ export default function HouseGame({ mode, house, catalog, neighborhood, owns, se
             this.tweens.add({ targets: rig.bobber, scaleX: { from: 1.08, to: 1 }, scaleY: { from: 0.92, to: 1 }, duration: 190, ease: "Cubic.easeOut" });
           },
         });
+      }
+
+      private syncRemotePlayers() {
+        const activeIds = new Set(propsRef.current.remotePlayers.map((player) => player.id));
+        for (const [id, rig] of this.remoteAvatarRigs) {
+          if (!activeIds.has(id)) { destroyTree(this, rig.root); this.remoteAvatarRigs.delete(id); }
+        }
+        for (const player of propsRef.current.remotePlayers) {
+          let rig = this.remoteAvatarRigs.get(player.id);
+          if (!rig) {
+            rig = createAvatarRig(this, player.avatar, player.nickname);
+            const start = toIso(player.x, player.y);
+            rig.root.setPosition(start.x, start.y + AVATAR_FLOOR_OFFSET_Y).setAlpha(0.88);
+            this.remoteAvatarRigs.set(player.id, rig);
+          }
+          const target = toIso(player.x, player.y);
+          this.moveAvatar(rig, target.x, target.y);
+        }
       }
 
       private buildStaticHouse() {
@@ -1279,6 +1023,7 @@ export default function HouseGame({ mode, house, catalog, neighborhood, owns, se
             tile.on("pointerdown", () => {
               if (!propsRef.current.interactionLocked) callbacksRef.current.onClearSelection();
               if (this.avatarRig) this.moveAvatar(this.avatarRig, position.x, position.y);
+              propsRef.current.onAvatarMove?.(x, y, true);
               const ripple = this.add.graphics().setDepth(1090);
               ripple.lineStyle(3, 0xfff0b8, 0.9);
               ripple.strokePoints(diamondPoints(position.x, position.y, TILE_WIDTH * 0.7, TILE_HEIGHT * 0.7), true, true);
@@ -1293,6 +1038,7 @@ export default function HouseGame({ mode, house, catalog, neighborhood, owns, se
         this.avatarRig = createAvatarRig(this, house.avatar, owns ? "VOCÊ" : house.host?.nickname || "MORADOR");
         this.avatarRig.root.setPosition(avatarPosition.x, avatarPosition.y + AVATAR_FLOOR_OFFSET_Y).setDepth(avatarPosition.y + 80).setScale(motionAllowed(this) ? 0.96 : 1);
         if (motionAllowed(this)) this.tweens.add({ targets: this.avatarRig.root, scale: 1, alpha: { from: 0, to: 1 }, duration: 260, delay: 80, ease: "Cubic.easeOut" });
+        this.syncRemotePlayers();
       }
 
       private buildDoor() {
@@ -1653,7 +1399,7 @@ export default function HouseGame({ mode, house, catalog, neighborhood, owns, se
       pixelArt: false,
       roundPixels: false,
       backgroundColor: "#20142f",
-      scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH, width: GAME_WIDTH, height: GAME_HEIGHT },
+      scale: { mode: Phaser.Scale.EXPAND, autoCenter: Phaser.Scale.CENTER_BOTH, width: GAME_WIDTH, height: GAME_HEIGHT },
       scene: BecoScene,
     });
 
@@ -1679,7 +1425,7 @@ export default function HouseGame({ mode, house, catalog, neighborhood, owns, se
       return;
     }
     scene.syncDynamic();
-  }, [mode, house, catalog, neighborhood, owns, selectedItemId, containerId]);
+  }, [mode, house, catalog, neighborhood, owns, selectedItemId, remotePlayers, containerId]);
 
   return <div id={containerId} className="house-game-canvas" aria-label={mode === "house" ? "Casa isométrica interativa" : "Mapa interativo do bairro"} />;
 }

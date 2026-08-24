@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { ChevronRight, Plus } from "lucide-react";
+import { ChevronRight, Maximize2, Plus, RotateCw } from "lucide-react";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { funApi } from "@/lib/api";
 import type { HouseItem, HouseShopItem, HouseView, NeighborhoodHouse } from "@/lib/types";
@@ -10,8 +10,14 @@ import MobiInventoryModal from "@/components/casas/MobiInventoryModal";
 import HabboCatalogModal from "@/components/casas/HabboCatalogModal";
 import SpeechBubbleLayer, { type ChatMessage } from "@/components/casas/SpeechBubbleLayer";
 import { soundEngine } from "@/lib/soundEngine";
+import { useHouseRealtime } from "@/hooks/useHouseRealtime";
+import { useHouseVoice } from "@/hooks/useHouseVoice";
 
-const HouseGame = dynamic(() => import("@/components/casas/HouseGame"), {
+const HouseGame = dynamic(() => import("@/components/casas/HouseGame3D"), {
+  ssr: false,
+  loading: () => <div className="house-game-canvas casas-loading bg-[#251839]" />,
+});
+const StreetWorld = dynamic(() => import("@/components/casas/StreetWorld"), {
   ssr: false,
   loading: () => <div className="house-game-canvas casas-loading bg-[#251839]" />,
 });
@@ -97,6 +103,17 @@ export default function CasaPage({ params }: Props) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const realtimeAvatar = useMemo(() => ownHouse?.avatar || { slots: {}, level: 1 }, [ownHouse?.avatar]);
+  const realtimeScene = screen === "neighborhood" ? "street" as const : "house" as const;
+  const realtimeSceneId = screen === "neighbor" ? neighborView?.id || token : screen === "neighborhood" ? "street" : token;
+  const realtime = useHouseRealtime(token, realtimeScene, realtimeSceneId, realtimeAvatar);
+  const voice = useHouseVoice(realtime.players, realtime.lastSignal, realtime.signal);
+  const stopVoice = voice.stop;
+  useEffect(() => { stopVoice(); }, [realtime.sessionKey, stopVoice]);
+
+  useEffect(() => {
+    setChatMessages(realtime.messages.map((message) => ({ id: message.id, senderJid: message.senderId, nickname: message.senderId === "you" ? "Você" : "VIZINHO", text: message.text, createdAt: message.createdAt })));
+  }, [realtime.messages]);
 
   const refresh = useCallback(async () => {
     const [houseResponse, neighborhoodResponse] = await Promise.all([funApi.houses.get(token), funApi.houses.neighborhood(token)]);
@@ -182,6 +199,20 @@ export default function CasaPage({ params }: Props) {
     if (screen === "neighbor") setNeighborView(null);
   }, [screen]);
 
+  const enterFullscreenLandscape = useCallback(async () => {
+    try {
+      if (!document.fullscreenElement) await document.documentElement.requestFullscreen({ navigationUI: "hide" });
+    } catch {
+      // O layout continua ocupando 100dvh quando a API de fullscreen não é permitida.
+    }
+    try {
+      const orientation = window.screen.orientation as ScreenOrientation & { lock?: (value: "landscape") => Promise<void> };
+      await orientation.lock?.("landscape");
+    } catch {
+      // Safari/iOS e alguns navegadores só permitem que o usuário gire manualmente.
+    }
+  }, []);
+
   const selectedItem = useMemo(() => ownHouse?.items.find((item) => item.id === selectedItemId) || null, [ownHouse, selectedItemId]);
   const rotateSelectedItem = useCallback(async () => {
     if (!selectedItem || busy) return;
@@ -237,7 +268,7 @@ export default function CasaPage({ params }: Props) {
   const isHome = screen === "home";
   const isNeighbor = screen === "neighbor" && neighborView;
 
-  return <main className="house-page casas-world-page">
+  return <main className="house-page casas-world-page casas-world-page-fullscreen">
     <section className="casas-game-shell">
       <header className="casas-topbar">
         <div className="casas-heading">
@@ -245,6 +276,9 @@ export default function CasaPage({ params }: Props) {
           <div className="casas-title-row"><span aria-hidden="true">⌂</span><h1>{screen === "neighborhood" ? "Bairro do grupo" : isNeighbor ? displayedHouse.host?.nickname || "Casa de um vizinho" : "Sua casa"}</h1></div>
         </div>
         <div className="casas-topbar-actions">
+          <button type="button" className="casas-fullscreen-button" onClick={() => void enterFullscreenLandscape()} aria-label="Usar tela cheia em paisagem" title="Tela cheia">
+            <Maximize2 size={17} />
+          </button>
           <button type="button" className="casas-coin-pill" onClick={() => void openShop()} aria-label={`${coins} moedas. Abrir catálogo`}>
             <span aria-hidden="true">🪙</span><strong>{coins}</strong><span className="casas-coin-plus" aria-hidden="true"><Plus size={15} strokeWidth={3} /></span>
           </button>
@@ -254,6 +288,12 @@ export default function CasaPage({ params }: Props) {
 
       {error && <p className="casas-toast casas-toast-error">{error.includes("cooldown") ? "⏳ Aguarde alguns segundos para realizar esta ação novamente." : `⚠ ${error}`}</p>}
       {notice && <p className="casas-toast">✦ {notice}</p>}
+
+      <div className="absolute right-3 top-24 z-30 flex items-center gap-2 rounded-xl bg-[#241735]/90 px-3 py-2 text-xs text-white shadow-lg">
+        <span aria-live="polite">{voice.enabled ? voice.isSpeaking ? "🎙️ Falando" : "🎙️ Voz ativa" : "🔇 Voz desligada"}</span>
+        <button type="button" className="casas-small-button" onClick={() => void (voice.enabled ? voice.stop() : voice.start())}>{voice.enabled ? "Desligar" : "Ativar voz"}</button>
+        {voice.error ? <span className="text-red-200">{voice.error}</span> : null}
+      </div>
 
       <SpeechBubbleLayer
         messages={chatMessages}
@@ -269,15 +309,13 @@ export default function CasaPage({ params }: Props) {
           setChatMessages((prev) => [...prev.slice(-19), localMsg]);
           soundEngine.playChatBubbleSound();
           try {
-            await fetch(`/api/fun/houses/${token}/chat`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ text }),
-            });
-          } catch {}
+            await realtime.sendChat(text);
+          } catch {
+            setError("Mensagem não enviada. Verifique sua conexão.");
+          }
         }}
       />
-      <HouseGame mode={screen === "neighborhood" ? "neighborhood" : "house"} house={displayedHouse} catalog={shop} neighborhood={neighborhood} owns={isHome} selectedItemId={isHome ? selectedItemId : undefined} interactionLocked={busy || !shop.length || shopOpen || inventoryOpen || muralOpen} onExit={leaveScene} onOpenNeighbor={(neighbor) => void openNeighbor(neighbor)} onSelectItem={(item) => { setSelectedItemId(item.id); soundEngine.playRotateMobiSound(); }} onClearSelection={() => setSelectedItemId(undefined)} onMoveItem={(item, x, y) => { soundEngine.playPlaceMobiSound(); return runAction(() => funApi.houses.move(token, { itemId: item.id, x, y, rotation: item.rotation, rotated: item.rotated }), "Móvel reposicionado."); }} />
+      {screen === "neighborhood" ? <StreetWorld players={realtime.players} houses={neighborhood} localAvatar={ownHouse?.avatar} speaking={voice.isSpeaking} onMove={realtime.move} onOpenHouse={(neighbor) => void openNeighbor(neighbor)} /> : <HouseGame remotePlayers={realtime.players} speaking={voice.isSpeaking} onAvatarMove={realtime.move} mode="house" house={displayedHouse} catalog={shop} neighborhood={neighborhood} owns={isHome} selectedItemId={isHome ? selectedItemId : undefined} interactionLocked={busy || !shop.length || shopOpen || inventoryOpen || muralOpen} onExit={leaveScene} onOpenNeighbor={(neighbor) => void openNeighbor(neighbor)} onSelectItem={(item) => { setSelectedItemId(item.id); soundEngine.playRotateMobiSound(); }} onClearSelection={() => setSelectedItemId(undefined)} onMoveItem={(item, x, y) => { soundEngine.playPlaceMobiSound(); return runAction(() => funApi.houses.move(token, { itemId: item.id, x, y, rotation: item.rotation, rotated: item.rotated }), "Móvel reposicionado."); }} />}
 
       {isHome && <div className="casas-stage-status">
         <span className="casas-hud-stat">
@@ -335,13 +373,21 @@ export default function CasaPage({ params }: Props) {
       )}
     </div>}
 
-    {screen === "neighborhood" && <section className="casas-context-panel"><span className="casas-context-icon">🌆</span><div><p className="casas-kicker">MAPA SOCIAL</p><h2>Escolha uma porta e visite o bairro.</h2><p>Os moradores aparecem com a aparência que salvaram no avatar. A presença em tempo real ficará para uma futura etapa.</p></div></section>}
+    {screen === "neighborhood" && <section className="casas-context-panel casas-neighborhood-panel"><span className="casas-context-icon">🌆</span><div><p className="casas-kicker">MAPA SOCIAL</p><h2>Escolha uma porta e visite o bairro.</h2><p>Os moradores aparecem com a aparência que salvaram no avatar.</p></div></section>}
 
     {isNeighbor && <section className="casas-context-panel casas-visit-panel"><span className="casas-context-icon">👋</span><div className="min-w-0 flex-1"><p className="casas-kicker">VISITANDO</p><h2>Deixe sua marca no mural.</h2><div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]"><input value={visitNote} onChange={(event) => setVisitNote(event.target.value)} maxLength={120} placeholder="Passei para conhecer!" className="casas-field" /><button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.visitNeighbor(token, neighborView.id, visitNote), "Visita registrada no mural.", true)} className="casas-small-button">Visitar</button></div><div className="mt-3 flex flex-wrap gap-2"><input type="number" min="1" value={giftCoins} onChange={(event) => setGiftCoins(event.target.value)} className="casas-coin-input" /><button type="button" disabled={busy} onClick={() => { const amount = Math.floor(Number(giftCoins)); if (amount > 0) void runAction(() => funApi.houses.giftNeighbor(token, neighborView.id, amount), "Presente enviado.", true); else setError("Informe uma quantidade válida de coins."); }} className="casas-small-button casas-gift-button">🎁 Presentear</button><button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.robNeighbor(token, neighborView.id), "A tentativa de roubo foi resolvida.", true)} className="casas-small-button casas-rob-button">🕵️ Tentar roubo</button><button type="button" onClick={() => setMuralOpen(true)} className="casas-small-button">📌 Mural</button></div></div></section>}
 
     <footer className="casas-footer"><span>Casas do Beco</span><i aria-hidden="true" /><span>Seu cantinho no grupo.</span></footer>
 
     <nav className="casas-mobile-nav" aria-label="Navegação de Casas do Beco"><IconButton active={isHome} icon="🏠" label="Casa" onClick={() => { setNeighborView(null); setScreen("home"); }} /><IconButton active={screen === "neighborhood"} icon="🌆" label="Bairro" onClick={() => { setNeighborView(null); setScreen("neighborhood"); }} /><Link href={`/casas/${token}/avatar`} className="casas-nav-button"><span>🙂</span><span>Avatar</span></Link></nav>
+
+    <section className="casas-orientation-gate" role="dialog" aria-modal="true" aria-label="Gire o celular para jogar">
+      <span className="casas-orientation-icon" aria-hidden="true"><RotateCw size={34} /></span>
+      <p className="casas-kicker">MODO DE JOGO</p>
+      <h2>Gire o celular</h2>
+      <p>Casas do Beco usa a tela inteira em paisagem para mostrar o bairro, os controles e seus amigos.</p>
+      <button type="button" onClick={() => void enterFullscreenLandscape()}><Maximize2 size={17} /> Entrar em tela cheia</button>
+    </section>
 
     <MobiInventoryModal
       isOpen={inventoryOpen}

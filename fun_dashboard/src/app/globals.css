@@ -836,6 +836,11 @@
   pointer-events: none;
 }
 
+.avatar-studio-3d {
+  position: absolute;
+  inset: 0;
+}
+
 @keyframes casas-mirror-shine {
   0%, 60% { left: -40%; }
   90%, 100% { left: 130%; }
@@ -933,7 +938,7 @@
 
 .avatar-tabs {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.35rem;
   margin-top: 1.2rem;
   padding: 0.32rem;
@@ -1028,6 +1033,12 @@
   overflow: hidden;
   border-radius: 0.8rem;
   background: rgba(255, 225, 139, 0.11);
+}
+
+.avatar-item-preview-token {
+  color: #ffe8a5;
+  font-size: 1.28rem;
+  text-shadow: 0 3px 12px rgba(12, 5, 26, 0.44);
 }
 
 .avatar-item-preview .avatar-figure {
@@ -1404,6 +1415,197 @@
 }
 
 .casas-footer i { width: 3px; height: 3px; border-radius: 999px; background: #715b8d; }
+
+/* Casas é uma experiência de jogo: o canvas ocupa o viewport e a UI flutua sobre ele. */
+html:has(.casas-world-page-fullscreen),
+body:has(.casas-world-page-fullscreen) {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+.casas-world-page.casas-world-page-fullscreen {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  max-width: none;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+  margin: 0;
+  background: #111529;
+  padding: 0;
+}
+
+.casas-world-page-fullscreen .casas-game-shell {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding-bottom: 0;
+}
+
+.casas-world-page-fullscreen .house-game-canvas {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  aspect-ratio: auto;
+}
+
+.casas-world-page-fullscreen .casas-topbar {
+  position: absolute;
+  z-index: 40;
+  top: max(0.55rem, env(safe-area-inset-top));
+  right: max(0.7rem, env(safe-area-inset-right));
+  left: max(0.7rem, env(safe-area-inset-left));
+  width: auto;
+  max-width: none;
+  min-height: 0;
+  margin: 0;
+  pointer-events: none;
+}
+
+.casas-world-page-fullscreen .casas-heading,
+.casas-world-page-fullscreen .casas-topbar-actions {
+  pointer-events: auto;
+}
+
+.casas-world-page-fullscreen .casas-heading {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 1rem;
+  background: rgba(24, 21, 35, 0.8);
+  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.24);
+  padding: 0.45rem 0.7rem;
+  backdrop-filter: blur(14px);
+}
+
+.casas-fullscreen-button {
+  display: inline-grid;
+  width: 2.55rem;
+  height: 2.55rem;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 0.8rem;
+  background: rgba(24, 21, 35, 0.82);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(14px);
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+.casas-fullscreen-button:hover {
+  background: rgba(89, 58, 128, 0.92);
+  transform: translateY(-1px);
+}
+
+.casas-world-page-fullscreen .casas-actions-wrapper {
+  position: fixed;
+  z-index: 34;
+  right: max(0.65rem, env(safe-area-inset-right));
+  bottom: max(0.65rem, env(safe-area-inset-bottom));
+  display: grid;
+  width: min(47rem, calc(100vw - 1.3rem));
+  grid-template-columns: minmax(13rem, 1.2fr) minmax(0, 4fr);
+  margin: 0;
+  filter: drop-shadow(0 16px 30px rgba(0, 0, 0, 0.32));
+}
+
+.casas-world-page-fullscreen .casas-daily-banner,
+.casas-world-page-fullscreen .casas-dock-card {
+  min-height: 5.25rem;
+  padding: 0.65rem;
+}
+
+.casas-world-page-fullscreen .casas-dock-icon { font-size: 1.2rem; }
+.casas-world-page-fullscreen .casas-dock-copy small { display: none; }
+.casas-world-page-fullscreen .casas-footer,
+.casas-world-page-fullscreen .casas-mobile-nav { display: none; }
+
+.casas-world-page-fullscreen .casas-context-panel {
+  position: fixed;
+  z-index: 33;
+  right: max(0.75rem, env(safe-area-inset-right));
+  bottom: max(0.75rem, env(safe-area-inset-bottom));
+  width: auto;
+  max-width: 25rem;
+  margin: 0;
+  background: rgba(24, 21, 35, 0.82);
+  backdrop-filter: blur(14px);
+}
+
+.casas-world-page-fullscreen .casas-neighborhood-panel { display: none; }
+
+.casas-orientation-gate { display: none; }
+
+@media (orientation: portrait) and (max-width: 900px) {
+  .casas-orientation-gate {
+    position: fixed;
+    z-index: 1000;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 0.65rem;
+    background:
+      radial-gradient(circle at 50% 28%, rgba(139, 92, 246, 0.32), transparent 19rem),
+      #11101c;
+    color: #fff;
+    padding: max(2rem, env(safe-area-inset-top)) 2rem max(2rem, env(safe-area-inset-bottom));
+    text-align: center;
+  }
+
+  .casas-orientation-gate h2 {
+    margin: 0;
+    font-size: clamp(1.8rem, 8vw, 2.5rem);
+    letter-spacing: -0.05em;
+  }
+
+  .casas-orientation-gate > p:not(.casas-kicker) {
+    max-width: 23rem;
+    margin: 0;
+    color: #cfc4dc;
+    font-size: 0.88rem;
+    line-height: 1.55;
+  }
+
+  .casas-orientation-icon {
+    display: grid;
+    width: 4.4rem;
+    height: 4.4rem;
+    place-items: center;
+    border: 1px solid rgba(255, 225, 139, 0.34);
+    border-radius: 1.3rem;
+    background: rgba(255, 225, 139, 0.1);
+    color: #ffe18b;
+    animation: casas-rotate-phone 1.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
+  }
+
+  .casas-orientation-gate button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 0.9rem;
+    background: #8b5cf6;
+    color: #fff;
+    font-weight: 850;
+    padding: 0.8rem 1rem;
+  }
+}
+
+@keyframes casas-rotate-phone {
+  0%, 18%, 100% { transform: rotate(0deg); }
+  48%, 70% { transform: rotate(90deg); }
+}
 
 @media (max-width: 760px) {
   .casas-world-page { padding: 0.35rem 0.35rem 6rem; }
