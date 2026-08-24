@@ -8,33 +8,57 @@ import { URL } from 'url';
 import { getDefaultOutboundGuard } from '../../engine/outboundGuard.js';
 import { normalizeFunConfig, saveFunUserConfig } from '../config.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
+import { createHouseRealtimeHub } from '../services/houseRealtimeService.js';
 
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(payload),
-    'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, X-House-Token',
   });
   res.end(payload);
 }
 
-function readBody(req) {
+class HttpBodyError extends Error {
+  constructor(status, code) {
+    super(code);
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function readBody(req, maxBytes = 128 * 1024) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', (c) => chunks.push(c));
+    let size = 0;
+    let settled = false;
+    req.on('data', (chunk) => {
+      if (settled) return;
+      size += chunk.length;
+      if (size > maxBytes) {
+        settled = true;
+        chunks.length = 0;
+        reject(new HttpBodyError(413, 'body-too-large'));
+        return;
+      }
+      chunks.push(chunk);
+    });
     req.on('end', () => {
+      if (settled) return;
       try {
         const raw = Buffer.concat(chunks).toString('utf8');
-        if (!raw) return resolve({});
-        resolve(JSON.parse(raw));
-      } catch (err) {
-        reject(err);
+        settled = true;
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch {
+        settled = true;
+        reject(new HttpBodyError(400, 'invalid-json'));
       }
     });
-    req.on('error', reject);
+    req.on('error', (error) => {
+      if (!settled) reject(error);
+    });
   });
 }
 
@@ -101,8 +125,9 @@ export function startFunDashboardServer(deps = {}) {
     return s;
   }
 
-  // Hub de conexões SSE em tempo real por casa (scopeKey:houseToken)
+  // Hub legado preservado; novas sessões usam salas canônicas scope+cena.
   const roomStreams = new Map();
+  const realtimeHub = createHouseRealtimeHub();
 
   function broadcastRoomEvent(token, eventType, data) {
     const clients = roomStreams.get(token);
@@ -152,9 +177,30 @@ export function startFunDashboardServer(deps = {}) {
 
   const config = getConfig();
   const host = String(config.dashboardHost || '127.0.0.1');
-  const port = Number(config.dashboardPort) || 8790;
+  const configuredPort = deps.port ?? config.dashboardPort;
+  const port = Number.isInteger(Number(configuredPort)) && Number(configuredPort) >= 0
+    ? Number(configuredPort)
+    : 8790;
   const uiPort = Number(process.env.FUN_DASHBOARD_UI_PORT || 3001);
   const dashboardApiKey = String(process.env.FUN_DASHBOARD_API_KEY || '').trim();
+  const configuredOrigins = Array.isArray(config.dashboardAllowedOrigins)
+    ? config.dashboardAllowedOrigins
+    : String(process.env.FUN_DASHBOARD_ALLOWED_ORIGINS || '').split(',');
+  const allowedOrigins = new Set(configuredOrigins.map((value) => String(value).trim()).filter(Boolean));
+  allowedOrigins.add(`http://127.0.0.1:${uiPort}`);
+  allowedOrigins.add(`http://localhost:${uiPort}`);
+
+  function allowRequestOrigin(req, res) {
+    const origin = String(req.headers.origin || '').trim();
+    if (!origin) return true;
+    if (!allowedOrigins.has(origin)) {
+      sendJson(res, 403, { error: 'origin-not-allowed' });
+      return false;
+    }
+    res.setHeader('Access-Control-Allow-Origin', origin);
+    res.setHeader('Vary', 'Origin');
+    return true;
+  }
 
   function requireAdmin(req, res) {
     if (!dashboardApiKey) return true;
@@ -179,9 +225,9 @@ export function startFunDashboardServer(deps = {}) {
 
   const server = http.createServer(async (req, res) => {
     try {
+      if (!allowRequestOrigin(req, res)) return;
       if (req.method === 'OPTIONS') {
         res.writeHead(204, {
-          'Access-Control-Allow-Origin': '*',
           'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
           'Access-Control-Allow-Headers': 'Content-Type, X-House-Token',
         });
@@ -292,14 +338,53 @@ export function startFunDashboardServer(deps = {}) {
           return;
         }
 
+        // Transporte realtime v1; endpoints legados abaixo permanecem compatíveis.
+        if (req.method === 'POST' && action === 'session') {
+          const authToken = String(req.headers['x-house-token'] || '').trim();
+          const actor = authToken ? await resolveHouseToken(authToken) : null;
+          if (!actor) { sendJson(res, 401, { error: 'house-token-required' }); return; }
+          if (actor.scopeKey !== target.scopeKey) { sendJson(res, 403, { error: 'fora-do-bairro' }); return; }
+          const body = await readBody(req);
+          const scene = body.scene === 'street' ? 'street' : 'house';
+          const sceneId = scene === 'street' ? target.scopeKey : (body.sceneId || targetToken);
+          const { session } = realtimeHub.open({ actor, scopeKey: actor.scopeKey, scene, sceneId });
+          const streamTicket = realtimeHub.issueStreamTicket(session);
+          sendJson(res, 201, { sessionId: session.id, streamTicket, roomId: session.roomId, self: { id: session.participantId } });
+          return;
+        }
+
+        if (req.method === 'GET' && action === 'realtime/stream') {
+          const streamTicket = String(url.searchParams.get('ticket') || '');
+          const session = realtimeHub.consumeStreamTicket(streamTicket);
+          if (!session) { sendJson(res, 401, { error: 'invalid-or-expired-stream-ticket' }); return; }
+          res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+          const detach = realtimeHub.attach(session, res);
+          const ping = setInterval(() => { try { res.write(': keepalive\n\n'); } catch { clearInterval(ping); } }, 15000);
+          req.on('close', () => { clearInterval(ping); detach(); realtimeHub.close(session); });
+          return;
+        }
+
+        if (req.method === 'POST' && ['realtime/move', 'realtime/chat', 'realtime/signal', 'realtime/leave'].includes(action)) {
+          const authToken = String(req.headers['x-house-token'] || '').trim();
+          const actor = authToken ? await resolveHouseToken(authToken) : null;
+          if (!actor) { sendJson(res, 401, { error: 'house-token-required' }); return; }
+          const body = await readBody(req);
+          const session = realtimeHub.authorize(body.sessionId, actor);
+          if (!session) { sendJson(res, 403, { error: 'invalid-session' }); return; }
+          if (action === 'realtime/leave') { realtimeHub.close(session); sendJson(res, 200, { ok: true }); return; }
+          const method = action.slice('realtime/'.length);
+          const result = realtimeHub[method](session, body);
+          sendJson(res, result.status || (result.ok ? 200 : 400), result.ok ? { ok: true, event: result.event } : { error: result.error });
+          return;
+        }
+
         if (req.method === 'GET' && action === 'stream') {
           res.writeHead(200, {
             'Content-Type': 'text/event-stream',
             'Cache-Control': 'no-cache, no-transform',
             'Connection': 'keep-alive',
             'X-Accel-Buffering': 'no',
-            'Access-Control-Allow-Origin': '*',
-          });
+                  });
           res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, ts: Date.now() })}\n\n`);
 
           if (!roomStreams.has(targetToken)) {
@@ -1239,8 +1324,13 @@ export function startFunDashboardServer(deps = {}) {
 
       sendJson(res, 404, { error: 'not-found' });
     } catch (err) {
-      getLogger?.()?.error?.({ err: String(err?.message || err) }, 'fun dashboard error');
-      sendJson(res, 500, { error: String(err?.message || err) });
+      const status = Number(err?.status) || 500;
+      const code = err?.code || String(err?.message || err);
+      if (status >= 500) {
+        getLogger?.()?.error?.({ err: code }, 'fun dashboard error');
+      }
+      if (!res.headersSent) sendJson(res, status, { error: code });
+      else if (!res.writableEnded) res.end();
     }
   });
 

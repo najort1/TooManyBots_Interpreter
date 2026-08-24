@@ -353,6 +353,15 @@ export type HouseView = {
   mural: Array<{ id?: string; note: string; createdAt: number; nickname?: string }>;
 };
 
+export type HousePlayer = {
+  id: string;
+  nickname: string;
+  avatar: { slots: Record<string, string>; level: number };
+  x: number;
+  y: number;
+  online?: boolean;
+};
+
 export type AvatarState = {
   slots: Record<string, string>;
   unlocked: string[];
