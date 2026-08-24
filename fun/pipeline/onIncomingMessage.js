@@ -1011,7 +1011,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
               try {
                 groupLore = groupMemoryService.buildLoreContext(scope.scopeKey, {
                   userJids: [userJid],
-                  limit: 8,
+                  limit: Infinity,
                   funConfig,
                 });
               } catch {

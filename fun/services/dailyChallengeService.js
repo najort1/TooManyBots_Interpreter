@@ -223,7 +223,7 @@ export function createDailyChallengeService(deps = {}) {
     return getConfig() || {};
   }
 
-  function buildGroupLore(scopeKey, { limit = 4 } = {}) {
+  function buildGroupLore(scopeKey, { limit = Infinity } = {}) {
     if (!scopeKey || !groupMemoryService?.buildLoreContext) return '';
     try {
       return String(
@@ -567,7 +567,7 @@ export function createDailyChallengeService(deps = {}) {
     /* O corte por chars era menor que só o cabeçalho fixo das regras e mutilava
        o Clima/fatos (ex.: "Clima: • Ga"). Sem slice: o limite de fatos via limit já
        segura o tamanho; nunca cortar no meio de palavra. */
-    const lore = buildGroupLore(scopeKey, { limit: 4 });
+    const lore = buildGroupLore(scopeKey, { limit: Infinity });
     const system =
       'Voce e um curador de jogos para um desafio diário de WhatsApp em português brasileiro. ' +
       'Gere UM jogo (eletrônico, de tabuleiro, indie, retrô, AAA, cult, brasileiro ou nicho). ' +
@@ -605,7 +605,7 @@ export function createDailyChallengeService(deps = {}) {
       'Evite repetir enigmas muito classicos de forma identica; varie o estilo e o objeto. ' +
       'Responda APENAS no formato JSON: ' +
       '{"riddle":"O que e, o que e?...","answers":["resposta1","resposta2"]}' + recentTxt;
-    const lore = buildGroupLore(scopeKey, { limit: 4 });
+    const lore = buildGroupLore(scopeKey, { limit: Infinity });
     const user = [
       'Gere um enigma popular, claro e respondível agora.',
       lore ? `Clima do grupo para calibrar só o tom (não inclua nomes nem fatos do lore no enigma):\n${lore}` : '',
@@ -1337,7 +1337,7 @@ export function createDailyChallengeService(deps = {}) {
         '- Responda apenas com a dica, sem prefixos como "Dica:" ou "Resposta:".\n' +
         '- Responda em portugues brasileiro.\n' +
         '- ANTES de responder, verifique mentalmente: minha dica contém a palavra resposta ou um sinonimo obvio? Se sim, reescreva.';
-      const lore = buildGroupLore(challenge.scopeKey, { limit: 3 });
+      const lore = buildGroupLore(challenge.scopeKey, { limit: Infinity });
       const user =
         `Enigma: ${data.riddle || ''}\n` +
         `Resposta correta (para voce saber, NUNCA revele): ${answer}\n` +

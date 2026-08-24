@@ -13,7 +13,7 @@ export async function composeLlmBits(
   let groupLore = '';
   try {
     groupLore = groupMemoryService?.buildLoreContext?.(scopeKey, {
-      limit: 8,
+      limit: Infinity,
       funConfig,
     }) || '';
   } catch {
@@ -121,7 +121,7 @@ function buildEventsSummary(facts) {
   const lines = [];
   const b = facts.buckets || {};
   for (const [type, events] of Object.entries(b)) {
-    for (const e of (events || []).slice(0, 3)) {
+    for (const e of events || []) {
       const p = e.payload || {};
       const parts = [type];
       if (p.amount != null) parts.push(`${p.amount}c`);
@@ -131,5 +131,5 @@ function buildEventsSummary(facts) {
       lines.push(parts.join(' '));
     }
   }
-  return lines.slice(0, 40).join('\n') || 'poucos eventos';
+  return lines.join('\n') || 'poucos eventos';
 }

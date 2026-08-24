@@ -50,10 +50,11 @@ Só o texto final, pronto pra colar no zap. Comece direto na frase.`;
 /** Zen = mesmo system completo (modelo principal). */
 const ZEN_SYSTEM_PROMPT = SYSTEM_PROMPT;
 
-/** Quanto de lore/contexto de grupo cabe no prompt. */
-const LORE_MAX_FLAVOR = 6000;
-const LORE_MAX_CHAOS = 4000;
-const FACT_VALUE_MAX = 200;
+/**
+ * Lore/fatos vão SEM LIMITE para o modelo — usuário pediu para enviar
+ * tudo completo, sem truncar summary, fatos ou o bloco <group_lore>.
+ * (Valores passam pelo String(val) sem slice; nada é cortado.)
+ */
 
 /**
  * Roteiro de assalto — modelo inventa título, gênero e cenas; código fixa elenco + formato.
@@ -795,7 +796,7 @@ function buildUserPrompt(scenario, vars) {
         val != null &&
         String(val).trim() !== ''
     )
-    .map(([k, val]) => `${k}=${String(val).slice(0, FACT_VALUE_MAX)}`)
+    .map(([k, val]) => `${k}=${String(val)}`)
     .join('; ');
 
   // Situação factual só — o modelo inventa tom/humor/título do comentário.
@@ -871,8 +872,8 @@ EPÍLOGO
   const loreBlock = groupLore
     ? `\n${
         String(groupLore).includes('<group_lore>')
-          ? groupLore.slice(0, LORE_MAX_FLAVOR)
-          : `<group_lore>\nRegras: use para ser específico deste grupo; NUNCA troque o autor do fato; se não encaixar, IGNORE.\n${groupLore.slice(0, LORE_MAX_FLAVOR)}\n</group_lore>`
+          ? groupLore
+          : `<group_lore>\nRegras: use para ser específico deste grupo; NUNCA troque o autor do fato; se não encaixar, IGNORE.\n${groupLore}\n</group_lore>`
       }\n`
     : '';
 
@@ -1158,7 +1159,7 @@ export function createFlavorService(deps = {}) {
           ([k, v]) =>
             !skipMetaKeys.has(k) && v != null && String(v).trim() !== ''
         )
-        .map(([k, v]) => `${k}=${String(v).slice(0, FACT_VALUE_MAX)}`)
+        .map(([k, v]) => `${k}=${String(v)}`)
         .join('; ');
 
       // Prompt focado na TAREFA (nunca "lista de cenários")
@@ -1170,7 +1171,7 @@ export function createFlavorService(deps = {}) {
         russian_click: `Comente o click (câmara vazia) da roleta russa. Dados: ${facts || 'nenhum'}.`,
         russian_dead: `Comente a “morte” virtual na roleta. Dados: ${facts || 'nenhum'}.`,
         russian_start: `Abra a roleta russa no grupo. Dados: ${facts || 'nenhum'}.`,
-        roast_personal: `Roast de *${userName || 'Fulano'}*. Fatos:\n${String(vars?.facts || facts || 'poucos dados').slice(0, 900)}`,
+        roast_personal: `Roast de *${userName || 'Fulano'}*. Fatos:\n${String(vars?.facts || facts || 'poucos dados')}`,
         group_times: `Jornal The Group Times — DADOS DO DIA:
 mood=${vars?.mood || 'medio'}
 totals=${vars?.totals || 'sem dados'}
@@ -1178,7 +1179,7 @@ destaques=${vars?.destaques || 'nenhum'}
 ${vars?.recordes ? `recordes=${vars?.recordes}` : ''}
 ${vars?.personalidade ? `personalidade=${vars?.personalidade}` : ''}
 Eventos brutos:
-${String(vars?.events || 'nenhum').slice(0, 800)}
+${String(vars?.events || 'nenhum')}
 Total de eventos: ${vars?.count ?? '?'}.`,
       }[key] || `Escreva o texto do comando. Dados: ${facts || 'nenhum'}.`;
 
@@ -1205,8 +1206,8 @@ Total de eventos: ${vars?.count ?? '?'}.`,
           : null,
         groupLore
           ? String(groupLore).includes('<group_lore>')
-            ? groupLore.slice(0, LORE_MAX_CHAOS)
-            : `<group_lore>\nUse só se encaixar; NÃO troque autores; NÃO invente.\n${groupLore.slice(0, LORE_MAX_CHAOS)}\n</group_lore>`
+            ? groupLore
+            : `<group_lore>\nUse só se encaixar; NÃO troque autores; NÃO invente.\n${groupLore}\n</group_lore>`
           : null,
         banHint || null,
         key === 'group_times'
@@ -1254,7 +1255,7 @@ Total de eventos: ${vars?.count ?? '?'}.`,
             v != null &&
             String(v).trim() !== ''
         )
-        .map(([k, v]) => `${k}=${String(v).slice(0, FACT_VALUE_MAX)}`)
+        .map(([k, v]) => `${k}=${String(v)}`)
         .join(', ');
       const lore = String(vars?.groupLore || '').trim();
       const actorNameSimple = String(vars?.user || '').trim();
@@ -1268,8 +1269,8 @@ Total de eventos: ${vars?.count ?? '?'}.`,
         `Fatos: ${facts || 'nenhum'}.`,
         lore
           ? String(lore).includes('<group_lore>')
-            ? lore.slice(0, LORE_MAX_FLAVOR)
-            : `<group_lore>\n${lore.slice(0, LORE_MAX_FLAVOR)}\n</group_lore>`
+            ? lore
+            : `<group_lore>\n${lore}\n</group_lore>`
           : null,
         banHint || null,
         'Invente o comentário. NÃO repita placar/coins. Só o texto final:',

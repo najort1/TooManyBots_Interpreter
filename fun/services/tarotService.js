@@ -168,9 +168,9 @@ export function createTarotService({
     const loreContext = memories?.buildLoreContext
       ? memories.buildLoreContext(scopeKey, {
           userJids: [userJid],
-          limit: 3,
+          limit: Infinity,
           funConfig,
-        }).slice(0, 900)
+        })
       : '';
     const prompt = buildTarotUserPrompt({
       question,

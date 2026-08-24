@@ -70,8 +70,7 @@ const FALLBACK_LINES = [
 function anonymizeLine(text) {
   return String(text || '')
     .replace(/@\d{5,}/g, '[nome]')
-    .replace(/\b\d{10,}\b/g, '[nome]')
-    .slice(0, 200);
+    .replace(/\b\d{10,}\b/g, '[nome]');
 }
 
 function extractTokens(text) {
@@ -170,8 +169,10 @@ function pickRotation(i, arr) {
   return arr[i % arr.length];
 }
 
-function cleanPromptText(value, maxChars = 500) {
-  return String(value || '').replace(/[\r\n]+/g, ' ').trim().slice(0, maxChars);
+function cleanPromptText(value, maxChars = Infinity) {
+  const text = String(value || '').replace(/[\r\n]+/g, ' ').trim();
+  if (Number.isFinite(maxChars) && maxChars > 0) return text.slice(0, maxChars);
+  return text;
 }
 
 /**
@@ -180,8 +181,8 @@ function cleanPromptText(value, maxChars = 500) {
  * "membro" genérico. Autor sem nome → omite `name` (render cai em "membro").
  */
 function memberTurn(authorLabel, text) {
-  const name = String(authorLabel || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80);
-  return { role: 'membro', ...(name ? { name } : {}), text: String(text || '').slice(0, 200) };
+  const name = String(authorLabel || '').replace(/[\r\n]+/g, ' ').trim();
+  return { role: 'membro', ...(name ? { name } : {}), text: String(text || '') };
 }
 
 function memorySignalText(signal) {
@@ -550,7 +551,7 @@ export function createPersonaService({
     const contextTurns = responseContextPack?.threadContext?.topicSummary
       ? [...(threadContext || []), { role: 'contexto', text: responseContextPack.threadContext.topicSummary }]
       : threadContext;
-    const facts = responseContextPack?.confirmedFacts?.map((m) => cleanPromptText(m.factText, 220)).filter(Boolean).slice(0, 4) || [];
+    const facts = responseContextPack?.confirmedFacts?.map((m) => cleanPromptText(m.factText, Infinity)).filter(Boolean) || [];
     const system = [
       buildSystemPrompt({ styleBlock, threadContext: contextTurns, maxChars: o.maxChars, contextTurns: o.contextTurns }),
       facts.length ? `Fatos confirmados relevantes (não invente além deles):\n${facts.map((fact) => `- ${fact}`).join('\n')}` : '',

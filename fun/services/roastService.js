@@ -154,7 +154,7 @@ export function createRoastService({
               scopeKey,
               userJids: [userJid],
               funConfig,
-              limit: 8,
+              limit: Infinity,
             }
           )
         );

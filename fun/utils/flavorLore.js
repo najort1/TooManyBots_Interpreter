@@ -1,6 +1,7 @@
 /**
  * Injeta <group_lore> + identidade nos vars do flavor/chaos.
- * Sweet spot medido em probe live: ~6–8 fatos ranqueados (~0.8–2k chars), não dump de 4k+.
+ * SEM limite de fatos — usuário pediu para enviar toda a lore do grupo
+ * pro modelo, sem cap artificial de 8 fatos.
  */
 
 import { displayNameOnly } from './userLabel.js';
@@ -13,7 +14,7 @@ export function withGroupLore(
     scopeKey = '',
     userJids = [],
     funConfig = {},
-    limit = 8,
+    limit = Infinity,
   } = {}
 ) {
   const out = { ...(vars || {}) };
@@ -42,7 +43,7 @@ export function withGroupLore(
       lore =
         groupMemoryService.buildLoreContext(scope, {
           userJids: (userJids || []).filter(Boolean),
-          limit: Math.max(4, Math.min(12, Number(limit) || 8)),
+          limit: Number.isFinite(limit) && limit > 0 ? limit : Infinity,
           funConfig: funConfig || {},
         }) || '';
     }

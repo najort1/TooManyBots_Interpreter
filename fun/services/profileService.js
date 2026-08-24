@@ -324,7 +324,7 @@ export function parseProfileManual(text) {
     const bm = raw.match(
       /(?:conhecido\s+por|conhecida\s+por|sou\s+conhecido\s+por|sou\s+conhecida\s+por)\s+(.+?)(?=\s*[,.]|\s+niver|\s+anivers|\s+fa[cç]o|$)/i
     );
-    if (bm) out.bio = bm[1].trim().replace(/\s+/g, ' ').slice(0, 200);
+    if (bm) out.bio = bm[1].trim().replace(/\s+/g, ' ');
   }
   if (!out.birthday) {
     const dm = raw.match(
@@ -841,7 +841,7 @@ export function createProfileService({
       if (p.bio) bits.push(p.bio);
       if (p.birthdayMd) bits.push(`niver ${formatBirthdayDisplay(p.birthdayMd)}`);
       if (p.title) bits.push(`título: ${p.title}`);
-      if (p.extras) bits.push(`extras: ${String(p.extras).slice(0, 120)}`);
+      if (p.extras) bits.push(`extras: ${String(p.extras)}`);
       if (!bits.length) continue;
       lines.push(`- ${label}: ${bits.join(' · ')}`);
     }

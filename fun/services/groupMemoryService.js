@@ -291,14 +291,17 @@ export function normalizeFactScore(raw) {
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-export function validateExtractedFact(fact, { batchSize = 0, summaryMax = 160, batch = null } = {}) {
+export function validateExtractedFact(fact, { batchSize = 0, summaryMax = Infinity, batch = null } = {}) {
   if (!fact || typeof fact !== 'object') return null;
   const kind = normalizeFactKind(fact.kind);
 
   let summary = pickFactSummary(fact);
   if (summary.length < 12) return null;
   if (looksSensitive(summary)) return null;
-  summary = summary.slice(0, Math.max(80, Math.min(200, summaryMax)));
+  // sem limite: summary vai completo pro modelo (até o que o extrator retornou).
+  if (Number.isFinite(summaryMax) && summaryMax > 0) {
+    summary = summary.slice(0, summaryMax);
+  }
 
   const rawSubjects = normalizeSubjectsField(fact);
   const indices = [];
@@ -419,7 +422,8 @@ function looseParseFacts(text) {
  * Parse JSON de extract — aceita array, {facts:[]}, {items:[]}, ou objeto único.
  * Resiliente: se JSON.parse falha E o bloco {...} tem sintaxe quebrada (e.g. "subjects":,)
  * ainda extrai via regex para NÃO perder fato de modelo que manda JSON inválido.
- * maxFacts: teto pós-validação (default 8; extract passa maxExtract).
+ * maxFacts: teto pós-validação (default 8; extract passa maxExtract, derivado do o.maxFacts).
+ * summaryMax: summary vai sem limite pro modelo — caller controla o cap do summary.
  */
 export function parseFactsJson(
   raw,
@@ -427,7 +431,7 @@ export function parseFactsJson(
 ) {
   const text = String(raw || '').trim();
   if (!text) return [];
-  const cap = Math.max(1, Math.min(12, Math.floor(Number(maxFacts) || 8)));
+  const cap = Math.max(1, Math.min(120, Math.floor(Number(maxFacts) || 8)));
 
   let parsed = null;
   let loose = null;
@@ -501,7 +505,8 @@ export function createGroupMemoryService({
     return {
       enabled: funConfig.memoryEnabled !== false,
       maxFacts: Math.max(10, Math.min(120, Math.floor(numOr(funConfig.memoryMaxFacts, 50)))),
-      summaryMax: Math.max(80, Math.min(200, Math.floor(numOr(funConfig.memorySummaryMaxChars, 160)))),
+      // sem limite: summary vai completo pro modelo (usuário pediu pra não cortar).
+      summaryMax: Infinity,
       personaMax: Math.max(200, Math.min(800, Math.floor(numOr(funConfig.memoryPersonaMaxChars, 500)))),
       personaBullets: Math.max(3, Math.min(15, Math.floor(numOr(funConfig.memoryPersonaBullets, 8)))),
       // modelo grande: default ~100 msgs; clamp alto pra caber no orçamento de chars
@@ -687,7 +692,7 @@ export function createGroupMemoryService({
           const textSim = jaccard(tokenSet(hit.summary), tokenSet(fact.summary));
           const compatible = textSim >= TEXT_CONFLICT_THRESHOLD;
           memoryRepository.reinforceFact(hit.id, {
-            summary: fact.summary.slice(0, o.summaryMax),
+            summary: fact.summary,
             score: compatible ? fact.score : Math.round((hit.score + fact.score) / 2),
             keywords: fact.keywords,
             overwriteSummary: compatible,
@@ -699,7 +704,7 @@ export function createGroupMemoryService({
             const prev = existing[idx];
             existing[idx] = {
               ...prev,
-              summary: compatible ? fact.summary.slice(0, o.summaryMax) : prev.summary,
+              summary: compatible ? fact.summary : prev.summary,
               score: compatible
                 ? Math.max(prev.score, fact.score)
                 : Math.max(prev.score, Math.round((prev.score + fact.score) / 2)),
@@ -714,7 +719,7 @@ export function createGroupMemoryService({
           const rec = memoryRepository.insertFact({
             scopeKey,
             kind: fact.kind,
-            summary: fact.summary.slice(0, o.summaryMax),
+            summary: fact.summary,
             subjects: fact.subjects,
             keywords: fact.keywords,
             score: fact.score,
@@ -739,7 +744,7 @@ export function createGroupMemoryService({
           ns.log(scopeKey, 'notable_quote', {
             userJid: jid,
             payload: {
-              quote: fact.summary.slice(0, 200),
+              quote: fact.summary,
               kind: fact.kind,
             },
             now,
@@ -1151,10 +1156,9 @@ export function createGroupMemoryService({
       text = facts
         .slice(0, 5)
         .map((f) => `• ${f.summary}`)
-        .join('\n')
-        .slice(0, o.personaMax);
+        .join('\n');
     } else {
-      text = String(text).trim().slice(0, o.personaMax);
+      text = String(text).trim();
     }
 
     memoryRepository.setPersona(scopeKey, text, facts.length);
@@ -1188,15 +1192,18 @@ export function createGroupMemoryService({
   /**
    * Bloco estruturado <group_lore> pra injetar em prompts de flavor/caos.
    * Regras anti-alucinação + autor por primeiro nome (não JID cru).
+   * SEM LIMITE de fatos — usuário pediu para enviar toda a lore do grupo
+   * pro modelo (até o teto de `o.maxFacts` persistido, que já é o cap real).
    */
-  function buildLoreContext(scopeKey, { userJids = [], limit = 8, funConfig = {} } = {}) {
+  function buildLoreContext(scopeKey, { userJids = [], limit = Infinity, funConfig = {} } = {}) {
     const o = opts(funConfig);
     if (!o.enabled || !scopeKey) return '';
 
     const persona = getPersonaCached(scopeKey);
-    // Probe live: 4–8 fatos ranqueados > dump 24 (menos latência, mais hit de lore).
-    const cap = Math.max(4, Math.min(12, Number(limit) || 8));
-    const fetchLimit = Math.max(12, Math.min(24, cap * 2));
+    // Sem cap artificial: usa `o.maxFacts` (default 50) como teto prático,
+    // alinhado com o que o repositório já persiste.
+    const cap = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : o.maxFacts;
+    const fetchLimit = cap;
     const facts = memoryRepository.listFacts(scopeKey, {
       limit: fetchLimit,
       minScore: Math.max(0, o.minScore - 10),
@@ -1226,7 +1233,7 @@ export function createGroupMemoryService({
     if (persona.personaText) {
       lines.push(
         '',
-        `Clima: ${persona.personaText.replace(/\n+/g, ' · ').slice(0, 450)}`
+        `Clima: ${persona.personaText.replace(/\n+/g, ' · ')}`
       );
     }
     if (top.length) {

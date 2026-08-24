@@ -124,7 +124,10 @@ export function createImageGenerationService(deps = {}) {
     if (!base) return '';
     if (!withMemoryEnabled(funConfig) || !groupMemoryService) return base;
 
-    const maxLore = Math.max(0, Math.floor(Number(funConfig?.imageGenLoreMaxChars) || 1200));
+    const maxLore = Math.max(
+      0,
+      Math.floor(Number(funConfig?.imageGenLoreMaxChars) || Infinity)
+    );
     if (maxLore === 0) return base;
 
     let lore = '';
@@ -132,7 +135,7 @@ export function createImageGenerationService(deps = {}) {
       lore = String(
         groupMemoryService.buildLoreContext(scopeKey, {
           userJids: userJid ? [userJid] : [],
-          limit: 8,
+          limit: Infinity,
           funConfig,
         }) || ''
       ).trim();

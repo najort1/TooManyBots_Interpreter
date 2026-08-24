@@ -36,7 +36,7 @@ export async function handleFlipCommand({
     scopeKey,
     userJids: [userJid],
     funConfig,
-    limit: 8,
+    limit: Infinity,
   };
   const { amount, choice } = parseFlipArgs(args);
   const min = funConfig.flipMin || 5;
@@ -139,7 +139,7 @@ export async function handleJobCommand({
       scopeKey,
       userJids: [userJid],
       funConfig,
-      limit: 8,
+      limit: Infinity,
     }
   );
   await reply(
@@ -185,7 +185,7 @@ export async function handleLuckyCommand({
       scopeKey,
       userJids: [userJid],
       funConfig,
-      limit: 8,
+      limit: Infinity,
     }
   );
   if (result.hit) {
