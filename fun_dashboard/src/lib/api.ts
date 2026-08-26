@@ -16,6 +16,10 @@ import type {
   RankEntry,
   HouseView,
   HouseShopItem,
+  AvatarApplyError,
+  AvatarApplyResult,
+  AvatarPurchaseQuote,
+  AvatarSlots,
   AvatarState,
   NeighborhoodHouse,
 } from "./types";
@@ -44,9 +48,22 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     if (res.status === 429) {
       throw new Error("rate-limit — muitas requisições, aguarde um minuto");
     }
-    throw new Error(
+    const error = new Error(
       (data as { error?: string }).error || res.statusText || "request-failed"
-    );
+    ) as AvatarApplyError;
+    const details = data as {
+      reason?: string;
+      quote?: AvatarPurchaseQuote;
+      current?: AvatarState;
+      coins?: number;
+      need?: number;
+    };
+    error.code = details.reason || (data as { error?: string }).error;
+    error.quote = details.quote;
+    error.current = details.current;
+    error.coins = details.coins;
+    error.need = details.need;
+    throw error;
   }
   return data as T;
 }
@@ -190,6 +207,17 @@ export const funApi = {
     neighbor: (token: string, houseId: string) => request<HouseView>(`/api/fun/houses/${encodeURIComponent(token)}/neighbors/${encodeURIComponent(houseId)}`),
     shop: (token: string) => request<{ shop: HouseShopItem[]; coins: number }>(`/api/fun/houses/${encodeURIComponent(token)}/shop`),
     avatar: (token: string) => request<AvatarState>(`/api/fun/houses/${encodeURIComponent(token)}/avatar`),
+    applyAvatar: (token: string, body: {
+      slots: AvatarSlots;
+      expectedRevision: number;
+      catalogRevision: number;
+      idempotencyKey: string;
+      confirmedPurchase?: AvatarPurchaseQuote;
+    }) => request<AvatarApplyResult>(`/api/fun/houses/${encodeURIComponent(token)}/avatar`, {
+      method: "PUT",
+      headers: { "x-house-token": token },
+      body: JSON.stringify(body),
+    }),
     equipAvatar: (token: string, itemId: string) => request<{ ok: boolean }>(`/api/fun/houses/${encodeURIComponent(token)}/avatar`, { method: "PUT", headers: { "x-house-token": token }, body: JSON.stringify({ itemId }) }),
     buyAvatar: (token: string, itemId: string) => request<{ ok: boolean; coins: number }>(`/api/fun/houses/${encodeURIComponent(token)}/avatar/shop`, { method: "POST", headers: { "x-house-token": token }, body: JSON.stringify({ itemId }) }),
     visit: (token: string, note: string) => request<{ ok: boolean }>(`/api/fun/houses/${encodeURIComponent(token)}/visit`, { method: "POST", headers: { "x-house-token": token }, body: JSON.stringify({ note }) }),

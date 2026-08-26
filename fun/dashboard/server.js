@@ -9,15 +9,15 @@ import { getDefaultOutboundGuard } from '../../engine/outboundGuard.js';
 import { normalizeFunConfig, saveFunUserConfig } from '../config.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { createHouseRealtimeHub } from '../services/houseRealtimeService.js';
+import { getPublicBaseUrl } from '../utils/publicUrl.js';
 
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
-  res.writeHead(status, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(payload),
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-House-Token',
-  });
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  res.setHeader('Content-Length', Buffer.byteLength(payload));
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-House-Token');
+  res.writeHead(status);
   res.end(payload);
 }
 
@@ -171,7 +171,14 @@ export function startFunDashboardServer(deps = {}) {
   }
 
   function publicAvatar(state) {
-    return { slots: state?.slots || {}, level: Number(state?.level) || 1 };
+    return avatarService?.publicAvatar?.(state) || {
+      schemaVersion: Number(state?.schemaVersion) || 2,
+      revision: Number(state?.revision) || 1,
+      catalogRevision: Number(state?.catalogRevision) || 1,
+      slots: state?.slots || {},
+      legacySlots: state?.legacySlots || {},
+      level: Number(state?.level) || 1,
+    };
   }
 
 
@@ -190,10 +197,39 @@ export function startFunDashboardServer(deps = {}) {
   allowedOrigins.add(`http://127.0.0.1:${uiPort}`);
   allowedOrigins.add(`http://localhost:${uiPort}`);
 
+  /** Wildcard origin patterns (e.g. "*.trycloudflare.com") compiled from dashboardAllowedOrigins. */
+  const wildcardSuffixes = [...allowedOrigins]
+    .filter((entry) => entry.startsWith('*.'))
+    .map((entry) => entry.slice(1));  // "*.trycloudflare.com" → ".trycloudflare.com"
+
+  function isOriginAllowed(origin) {
+    if (allowedOrigins.has(origin)) return true;
+
+    // Dynamic match: publicBaseUrl from config.public.json (hot-reloaded)
+    try {
+      const publicUrl = getPublicBaseUrl(getConfig());
+      if (publicUrl && origin === publicUrl) return true;
+      // Also match if origin hostname ends with .trycloudflare.com (Cloudflare Quick Tunnels)
+      const publicHost = new URL(publicUrl).hostname;
+      const originHost = new URL(origin).hostname;
+      if (publicHost && originHost === publicHost) return true;
+    } catch { /* ignore parse errors */ }
+
+    // Wildcard suffix match (e.g. "*.trycloudflare.com" matches "https://abc.trycloudflare.com")
+    if (wildcardSuffixes.length) {
+      try {
+        const hostname = new URL(origin).hostname;
+        if (wildcardSuffixes.some((suffix) => hostname.endsWith(suffix))) return true;
+      } catch { /* ignore parse errors */ }
+    }
+
+    return false;
+  }
+
   function allowRequestOrigin(req, res) {
     const origin = String(req.headers.origin || '').trim();
     if (!origin) return true;
-    if (!allowedOrigins.has(origin)) {
+    if (!isOriginAllowed(origin)) {
       sendJson(res, 403, { error: 'origin-not-allowed' });
       return false;
     }
@@ -227,10 +263,9 @@ export function startFunDashboardServer(deps = {}) {
     try {
       if (!allowRequestOrigin(req, res)) return;
       if (req.method === 'OPTIONS') {
-        res.writeHead(204, {
-          'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type, X-House-Token',
-        });
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-House-Token');
+        res.writeHead(204);
         res.end();
         return;
       }
@@ -347,9 +382,17 @@ export function startFunDashboardServer(deps = {}) {
           const body = await readBody(req);
           const scene = body.scene === 'street' ? 'street' : 'house';
           const sceneId = scene === 'street' ? target.scopeKey : (body.sceneId || targetToken);
-          const { session } = realtimeHub.open({ actor, scopeKey: actor.scopeKey, scene, sceneId });
+          const actorAvatar = publicAvatar(avatarService?.get?.({ scopeKey: actor.scopeKey, userJid: actor.userJid }));
+          const { session } = realtimeHub.open({
+            actor,
+            scopeKey: actor.scopeKey,
+            scene,
+            sceneId,
+            nickname: getContactDisplayName(actor.userJid) || 'VIZINHO',
+            avatar: actorAvatar,
+          });
           const streamTicket = realtimeHub.issueStreamTicket(session);
-          sendJson(res, 201, { sessionId: session.id, streamTicket, roomId: session.roomId, self: { id: session.participantId } });
+          sendJson(res, 201, { sessionId: session.id, streamTicket, roomId: session.roomId, self: { id: session.participantId }, nextClientSeq: session.clientSeq + 1 });
           return;
         }
 
@@ -357,34 +400,39 @@ export function startFunDashboardServer(deps = {}) {
           const streamTicket = String(url.searchParams.get('ticket') || '');
           const session = realtimeHub.consumeStreamTicket(streamTicket);
           if (!session) { sendJson(res, 401, { error: 'invalid-or-expired-stream-ticket' }); return; }
-          res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('Connection', 'keep-alive');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.writeHead(200);
           const detach = realtimeHub.attach(session, res);
           const ping = setInterval(() => { try { res.write(': keepalive\n\n'); } catch { clearInterval(ping); } }, 15000);
           req.on('close', () => { clearInterval(ping); detach(); realtimeHub.close(session); });
           return;
         }
 
-        if (req.method === 'POST' && ['realtime/move', 'realtime/chat', 'realtime/signal', 'realtime/leave'].includes(action)) {
+        if (req.method === 'POST' && ['realtime/snapshot', 'realtime/poll', 'realtime/move', 'realtime/chat', 'realtime/signal', 'realtime/avatar', 'realtime/leave'].includes(action)) {
           const authToken = String(req.headers['x-house-token'] || '').trim();
           const actor = authToken ? await resolveHouseToken(authToken) : null;
           if (!actor) { sendJson(res, 401, { error: 'house-token-required' }); return; }
           const body = await readBody(req);
           const session = realtimeHub.authorize(body.sessionId, actor);
           if (!session) { sendJson(res, 403, { error: 'invalid-session' }); return; }
+          if (action === 'realtime/snapshot') { sendJson(res, 200, realtimeHub.snapshot(session)); return; }
+          if (action === 'realtime/poll') { sendJson(res, 200, realtimeHub.poll(session, body)); return; }
           if (action === 'realtime/leave') { realtimeHub.close(session); sendJson(res, 200, { ok: true }); return; }
-          const method = action.slice('realtime/'.length);
-          const result = realtimeHub[method](session, body);
+          const method = action === 'realtime/avatar' ? 'updateAvatar' : action.slice('realtime/'.length);
+          const result = realtimeHub[method](session, action === 'realtime/avatar' ? body.avatar : body);
           sendJson(res, result.status || (result.ok ? 200 : 400), result.ok ? { ok: true, event: result.event } : { error: result.error });
           return;
         }
 
         if (req.method === 'GET' && action === 'stream') {
-          res.writeHead(200, {
-            'Content-Type': 'text/event-stream',
-            'Cache-Control': 'no-cache, no-transform',
-            'Connection': 'keep-alive',
-            'X-Accel-Buffering': 'no',
-                  });
+          res.setHeader('Content-Type', 'text/event-stream');
+          res.setHeader('Cache-Control', 'no-cache, no-transform');
+          res.setHeader('Connection', 'keep-alive');
+          res.setHeader('X-Accel-Buffering', 'no');
+          res.writeHead(200);
           res.write(`event: connected\ndata: ${JSON.stringify({ ok: true, ts: Date.now() })}\n\n`);
 
           if (!roomStreams.has(targetToken)) {
@@ -538,8 +586,26 @@ export function startFunDashboardServer(deps = {}) {
         }
         if (req.method === 'PUT' && action === 'avatar') {
           if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
-          const result = avatarService.equip({ scopeKey: target.scopeKey, userJid: target.userJid, itemId: body.itemId, funConfig: cfg });
-          sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, avatar: publicAvatar(result.state) } : { error: result.reason });
+          const result = body.slots
+            ? avatarService.apply({
+                scopeKey: target.scopeKey,
+                userJid: target.userJid,
+                slots: body.slots,
+                expectedRevision: body.expectedRevision,
+                catalogRevision: body.catalogRevision,
+                idempotencyKey: body.idempotencyKey,
+                confirmedPurchase: body.confirmedPurchase,
+                funConfig: cfg,
+              })
+            : avatarService.equip({ scopeKey: target.scopeKey, userJid: target.userJid, itemId: body.itemId, funConfig: cfg });
+          const status = result.ok ? 200 : ['purchase-confirmation-required', 'appearance-revision-conflict', 'catalog-revision-conflict'].includes(result.reason) ? 409 : 400;
+          if (result.ok) {
+            const avatar = publicAvatar(result.state);
+            realtimeHub.updateActorAvatar(actor, avatar);
+            sendJson(res, status, { ok: true, avatar, state: result.state, coins: result.coins, purchased: result.purchased, replayed: result.replayed });
+          } else {
+            sendJson(res, status, { error: result.reason, reason: result.reason, errors: result.errors, quote: result.quote, current: result.current, need: result.need, coins: result.coins });
+          }
           return;
         }
         if (req.method === 'POST' && action === 'avatar/shop') {

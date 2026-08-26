@@ -512,7 +512,6 @@ export function createGroupMemoryService({
       // modelo grande: default ~100 msgs; clamp alto pra caber no orçamento de chars
       bufferSize: Math.max(8, Math.min(200, Math.floor(numOr(funConfig.memoryBufferSize, 100)))),
       flushMin: Math.max(3, Math.min(120, Math.floor(numOr(funConfig.memoryFlushMinMessages, 40)))),
-      flushMs: Math.max(60_000, Math.floor(numOr(funConfig.memoryFlushIntervalMs, 10 * 60_000))),
       minChars: Math.max(6, Math.floor(numOr(funConfig.memoryMinMsgChars, 12))),
       extractTimeout: Math.max(5_000, Math.floor(numOr(funConfig.memoryExtractTimeoutMs, 45_000))),
       ttlDays: Math.max(7, Math.floor(numOr(funConfig.memoryTtlDays, 45))),
@@ -642,19 +641,14 @@ export function createGroupMemoryService({
 
   /**
    * Critério de flush — o extract SÓ chama a LLM daqui / flushDueScopes.
-   * Antes: após restart lastFlushAt=0 e só contava ≥40 msgs → horas sem nenhuma chamada
-   * se o processo subia/descia ou o chat misturava muitos comandos.
+   * Trigger ÚNICO: contagem de mensagens (≥ memoryFlushMinMessages, default 40).
+   * O trigger por tempo (memoryFlushIntervalMs) foi removido a pedido:
+   * buffer abaixo do limite NÃO extrai, por mais velho que esteja.
    */
-  function shouldFlushBuffer(buf, o, now = Date.now()) {
+  function shouldFlushBuffer(buf, o) {
     if (!buf || buf.flushing) return false;
     if (buf.msgs.length < 3) return false;
-    if (buf.msgs.length >= o.flushMin) return true;
-    // tempo desde o último flush neste processo
-    if (buf.lastFlushAt > 0 && now - buf.lastFlushAt >= o.flushMs) return true;
-    // idade da msg mais antiga no buffer (funciona logo após restart, sem lastFlushAt)
-    const oldestAt = Number(buf.msgs[0]?.at) || 0;
-    if (oldestAt > 0 && now - oldestAt >= o.flushMs) return true;
-    return false;
+    return buf.msgs.length >= o.flushMin;
   }
 
   async function flushScope(scopeKey, funConfig = {}, now = Date.now()) {
@@ -1316,8 +1310,9 @@ export function createGroupMemoryService({
 
   /**
    * Varre todos os buffers e faz flush dos que estão due.
-   * Pensado para o world tick (~45s): extrai mesmo sem a “40ª mensagem”
-   * cair no processo (restart, quiet hours, chat esparso).
+   * Rede de segurança do world tick: só extrai buffer que JÁ bateu o limite
+   * de mensagens (memoryFlushMinMessages) mas não conseguiu extrair no observe
+   * (ex.: flush anterior ainda em andamento). NÃO extrai por tempo/idade.
    */
   async function flushDueScopes(funConfig = {}, now = Date.now()) {
     const o = opts(funConfig);

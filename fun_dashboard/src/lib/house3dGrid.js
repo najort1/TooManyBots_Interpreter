@@ -24,6 +24,20 @@ export function house3dWorldToGrid(x, z) {
   };
 }
 
+export function house3dNormalizedToWorld(x, y) {
+  return house3dGridToWorld(
+    clamp(Number(x) || 0, 0, 100) / 100 * (HOUSE_3D_GRID.columns - 1),
+    clamp(Number(y) || 0, 0, 100) / 100 * (HOUSE_3D_GRID.rows - 1),
+  );
+}
+
+export function house3dWorldToNormalized(x, z) {
+  return {
+    x: Math.round(clamp((Number(x) - HOUSE_3D_GRID_BOUNDS.minX) / (HOUSE_3D_GRID_BOUNDS.maxX - HOUSE_3D_GRID_BOUNDS.minX), 0, 1) * 100),
+    y: Math.round(clamp((Number(z) - HOUSE_3D_GRID_BOUNDS.minZ) / (HOUSE_3D_GRID_BOUNDS.maxZ - HOUSE_3D_GRID_BOUNDS.minZ), 0, 1) * 100),
+  };
+}
+
 export function house3dGridLines() {
   const first = house3dGridToWorld(0, 0);
   const last = house3dGridToWorld(HOUSE_3D_GRID.columns - 1, HOUSE_3D_GRID.rows - 1);

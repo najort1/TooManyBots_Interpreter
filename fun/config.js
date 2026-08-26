@@ -622,6 +622,9 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    dashboardAllowedOrigins: Array.isArray(raw.dashboardAllowedOrigins)
+      ? raw.dashboardAllowedOrigins.map((v) => String(v || '').trim()).filter(Boolean)
+      : (DEFAULT_FUN_CONFIG.dashboardAllowedOrigins || []),
     assaultFailFinePct: Number.isFinite(Number(raw.assaultFailFinePct))
       ? Math.min(0.1, Math.max(0, Number(raw.assaultFailFinePct)))
       : DEFAULT_FUN_CONFIG.assaultFailFinePct,
@@ -956,11 +959,6 @@ export function normalizeFunConfig(input) {
       raw.memoryFlushMinMessages,
       DEFAULT_FUN_CONFIG.memoryFlushMinMessages,
       { min: 3, max: 120, rounding: 'floor', clamp: true }
-    ),
-    memoryFlushIntervalMs: normalizeInt(
-      raw.memoryFlushIntervalMs,
-      DEFAULT_FUN_CONFIG.memoryFlushIntervalMs,
-      { min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }
     ),
     memoryMinMsgChars: normalizeInt(raw.memoryMinMsgChars, DEFAULT_FUN_CONFIG.memoryMinMsgChars, {
       min: 6,

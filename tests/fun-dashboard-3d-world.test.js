@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { HOUSE_3D_GRID, house3dGridToWorld, house3dWorldToGrid } from "../fun_dashboard/src/lib/house3dGrid.js";
+import { HOUSE_3D_GRID, house3dGridToWorld, house3dNormalizedToWorld, house3dWorldToGrid, house3dWorldToNormalized } from "../fun_dashboard/src/lib/house3dGrid.js";
 import { dampAngle, resolveStreetPosition, yawToPoint } from "../fun_dashboard/src/lib/streetNavigation.js";
 
 test("grid 3D preserva as quatro extremidades do grid 6x8", () => {
@@ -9,6 +9,12 @@ test("grid 3D preserva as quatro extremidades do grid 6x8", () => {
     const point = house3dGridToWorld(x, y);
     assert.deepEqual(house3dWorldToGrid(point.x, point.z), { x, y });
   }
+});
+
+test("grid 3D converte a posição realtime contínua sem arredondar para uma célula", () => {
+  const point = house3dNormalizedToWorld(50, 80);
+  assert.deepEqual(point, { x: 0, z: 2.7 });
+  assert.deepEqual(house3dWorldToNormalized(point.x, point.z), { x: 50, y: 80 });
 });
 
 test("colisão da rua bloqueia prédios e árvores sem mudar a direção do avatar", () => {

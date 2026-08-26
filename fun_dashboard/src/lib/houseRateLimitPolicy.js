@@ -1,5 +1,6 @@
 const REALTIME_METHODS = Object.freeze({
   "realtime/stream": "GET",
+  "realtime/snapshot": "POST",
   "realtime/move": "POST",
   "realtime/chat": "POST",
   "realtime/signal": "POST",

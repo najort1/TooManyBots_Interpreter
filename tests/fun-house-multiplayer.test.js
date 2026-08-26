@@ -5,20 +5,26 @@ import { createHouseRealtimeHub } from '../fun/services/houseRealtimeService.js'
 const actor = { userJid: 'u1@s.whatsapp.net', scopeKey: 'group@g.us' };
 const open = (hub, scene, sceneId = 'main') => hub.open({ actor, scopeKey: actor.scopeKey, scene, sceneId }).session;
 
-test('realtime movement: casa respeita grid 6x8, colisão e clientSeq crescente', () => {
-  const hub = createHouseRealtimeHub({ collision: ({ scene, x, y }) => scene === 'house' && x === 2 && y === 3 });
+test('realtime movement: casa aceita a escala normalizada do cliente 3D, colisão e clientSeq crescente', () => {
+  const hub = createHouseRealtimeHub({ collision: ({ scene, x, y }) => scene === 'house' && x === 20 && y === 30 });
   const session = open(hub, 'house', 'home');
-  assert.equal(hub.move(session, { x: 5, y: 7, clientSeq: 1 }).ok, true);
-  assert.match(hub.move(session, { x: 6, y: 7, clientSeq: 2 }).error, /bound|position|limit/i);
-  assert.match(hub.move(session, { x: 2, y: 3, clientSeq: 2 }).error, /collision|blocked/i);
-  assert.match(hub.move(session, { x: 4, y: 4, clientSeq: 1 }).error, /stale|sequence|seq/i);
-  assert.equal(session.x, 5); assert.equal(session.y, 7);
+  assert.equal(hub.move(session, { x: 50, y: 50, clientSeq: 1 }).ok, true);
+  assert.match(hub.move(session, { x: 101, y: 50, clientSeq: 2 }).error, /bound|position|limit/i);
+  assert.match(hub.move(session, { x: 20, y: 30, clientSeq: 2 }).error, /collision|blocked/i);
+  assert.match(hub.move(session, { x: 40, y: 40, clientSeq: 1 }).error, /stale|sequence|seq/i);
+  assert.equal(session.x, 50); assert.equal(session.y, 50);
 });
 
 test('realtime movement: rua aceita coordenadas além do grid doméstico', () => {
   const hub = createHouseRealtimeHub(); const session = open(hub, 'street');
   assert.equal(hub.move(session, { x: 40, y: 25, clientSeq: 1 }).ok, true);
   assert.equal(session.x, 40); assert.equal(session.y, 25);
+});
+
+test('realtime movement: casa inicia no mesmo ponto normalizado do renderer 3D', () => {
+  const hub = createHouseRealtimeHub();
+  const session = open(hub, 'house');
+  assert.deepEqual({ x: session.x, y: session.y }, { x: 50, y: 80 });
 });
 
 test('realtime chat: snapshot contém somente as 20 mensagens recentes', () => {

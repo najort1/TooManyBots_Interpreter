@@ -33,6 +33,7 @@ import { createFunUserPrefsRepository } from './db/funUserPrefsRepository.js';
 import { createFunPropertyRepository } from './db/funPropertyRepository.js';
 import { createFunHouseRepository } from './db/funHouseRepository.js';
 import { createFunAvatarRepository } from './db/funAvatarRepository.js';
+import { createFunAvatarV2Repository } from './db/funAvatarV2Repository.js';
 import { createFunNewsRepository } from './db/funNewsRepository.js';
 import { createFunAchievementRepository } from './db/funAchievementRepository.js';
 import { createFunSnapshotRepository } from './db/funSnapshotRepository.js';
@@ -168,6 +169,7 @@ export function createFunModule(deps = {}) {
     deps.propertyRepository || createFunPropertyRepository({ getDatabase });
   const houseRepository = deps.houseRepository || createFunHouseRepository({ getDatabase });
   const avatarRepository = deps.avatarRepository || createFunAvatarRepository({ getDatabase });
+  const avatarV2Repository = deps.avatarV2Repository || createFunAvatarV2Repository({ getDatabase });
   const newsRepository =
     deps.newsRepository || createFunNewsRepository({ getDatabase });
   const achievementRepository =
@@ -259,7 +261,12 @@ export function createFunModule(deps = {}) {
   const policeService = deps.policeService || createPoliceService({ getDatabase, repository, effectsRepository });
   const houseService = deps.houseService || createHouseService({ repository, houseRepository });
   const houseLinkService = deps.houseLinkService || createHouseLinkService({ houseRepository });
-  const avatarService = deps.avatarService || createAvatarService({ repository, avatarRepository });
+  const avatarService = deps.avatarService || createAvatarService({
+    repository,
+    avatarRepository,
+    avatarV2Repository,
+    getDatabase,
+  });
   const visitService = deps.visitService || createVisitService({ houseRepository });
   const giftService = deps.giftService || createGiftService({ repository, houseRepository });
   const robberyService = deps.robberyService || createRobberyService({ repository, houseRepository, policeService });
@@ -686,8 +693,9 @@ export function createFunModule(deps = {}) {
       }
     }
 
-    // Memória seletiva: flush por timer do mundo (não depende de “bater 40 msgs”
-    // no mesmo processo). Roda mesmo em quiet hours — só extrai buffer em RAM.
+    // Memória seletiva: varredura de segurança do world tick. O trigger de extração
+    // é SOMENTE contagem de msgs (memoryFlushMinMessages) — este sweep só flusa
+    // buffers que bateram o limite sem extrair no observe (ex.: flushing ocupado).
     if (groupMemoryService?.flushDueScopes) {
       try {
         const mem = await groupMemoryService.flushDueScopes(funConfig, now);
@@ -1299,6 +1307,7 @@ export function createFunModule(deps = {}) {
       propertyService,
       houseRepository,
       avatarRepository,
+      avatarV2Repository,
       policeService,
       houseService,
       houseLinkService,

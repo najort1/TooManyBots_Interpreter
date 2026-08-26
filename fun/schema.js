@@ -1032,6 +1032,30 @@ export function buildFunSchemaSql() {
       PRIMARY KEY (scope_key, user_jid)
     );
 
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_avatar_state_v2 (
+      scope_key TEXT NOT NULL,
+      user_jid TEXT NOT NULL,
+      schema_version INTEGER NOT NULL DEFAULT 2,
+      revision INTEGER NOT NULL DEFAULT 1,
+      catalog_revision INTEGER NOT NULL DEFAULT 1,
+      slots_json TEXT NOT NULL DEFAULT '{}',
+      unlocked_json TEXT NOT NULL DEFAULT '[]',
+      diagnostics_json TEXT NOT NULL DEFAULT '[]',
+      migrated_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, user_jid)
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_avatar_operations (
+      scope_key TEXT NOT NULL,
+      user_jid TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, user_jid, idempotency_key)
+    );
+
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_house_robberies (
       id TEXT PRIMARY KEY,
       scope_key TEXT NOT NULL,

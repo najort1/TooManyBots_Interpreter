@@ -155,9 +155,10 @@ function FrontAccessory({ id }: { id: string }) {
 }
 
 export function AvatarFigure({ avatar, compact = false, label }: AvatarFigureProps) {
-  const outfit = avatar.slots.outfit;
-  const hair = avatar.slots.hair_face;
-  const accessory = avatar.slots.optional_accessory;
+  const slots = avatar.slots as Record<string, string>;
+  const outfit = slots.top || slots.outfit;
+  const hair = slots.hair || slots.hair_face;
+  const accessory = slots.headAccessory || slots.backAccessory || slots.optional_accessory;
   const bodyColor = toCssColor(getAvatarOutfitColor(outfit));
 
   return <div className={`avatar-figure ${compact ? "avatar-figure-compact" : ""}`} aria-label={label || "Avatar"}>

@@ -2,9 +2,22 @@
 
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
-import type { HousePlayer, NeighborhoodHouse } from "@/lib/types";
+import type { AvatarSlots, HousePlayer, NeighborhoodHouse } from "@/lib/types";
 
 const StreetWorld = dynamic(() => import("@/components/casas/StreetWorld"), { ssr: false });
+
+const avatar = (slots: Partial<AvatarSlots>, level: number): HousePlayer["avatar"] => ({
+  schemaVersion: 2,
+  revision: 1,
+  catalogRevision: 1,
+  level,
+  slots: {
+    body: "corpo_beco", skinTone: "skin_warm", face: "face_beco", hair: "hair_short",
+    top: "camiseta_beco", bottom: "bottom_beco", shoes: "shoes_beco",
+    headAccessory: "none", faceAccessory: "none", neckAccessory: "none",
+    backAccessory: "none", waistAccessory: "none", ...slots,
+  },
+});
 
 const houses: NeighborhoodHouse[] = [
   { id: "1", nickname: "Casa da Bia", cleanliness: 88, securityLevel: 2 },
@@ -17,9 +30,9 @@ const houses: NeighborhoodHouse[] = [
 export default function StreetPreviewPage() {
   const [position, setPosition] = useState({ x: 50, y: 56 });
   const players = useMemo<HousePlayer[]>(() => [
-    { id: "bia", nickname: "Bia", avatar: { level: 8, slots: { outfit: "jaqueta_neon", hair_face: "cabelo_rosa", optional_accessory: "fones_neon" } }, x: 38, y: 54 },
-    { id: "nando", nickname: "Nando", avatar: { level: 5, slots: { outfit: "uniforme_arcade", hair_face: "oculos_pixel", optional_accessory: "corrente_brilho" } }, x: 63, y: 49 },
-    { id: "lua", nickname: "Lua", avatar: { level: 12, slots: { outfit: "traje_astral", hair_face: "franja_azul", optional_accessory: "asas_pixel" } }, x: 72, y: 73 },
+    { id: "bia", nickname: "Bia", avatar: avatar({ top: "jaqueta_neon", hair: "cabelo_rosa", headAccessory: "fones_neon" }, 8), x: 38, y: 54 },
+    { id: "nando", nickname: "Nando", avatar: avatar({ top: "uniforme_arcade", faceAccessory: "oculos_pixel", neckAccessory: "corrente_brilho" }, 5), x: 63, y: 49 },
+    { id: "lua", nickname: "Lua", avatar: avatar({ top: "traje_astral", hair: "franja_azul", backAccessory: "asas_pixel" }, 12), x: 72, y: 73 },
   ], []);
   return <main className="min-h-screen bg-[#101913] p-5 text-white">
     <div className="mx-auto max-w-[1500px]">

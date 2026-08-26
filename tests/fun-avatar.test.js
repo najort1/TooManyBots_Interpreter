@@ -59,8 +59,8 @@ test('avatar: equipar por nível e comprar premium com ledger', () => {
 
   assert.equal(bought.ok, true);
   assert.equal(service.equip({ scopeKey: scope, userJid: user, itemId: 'oculos_pixel', funConfig: { avatarEnabled: true } }).ok, true);
-  assert.equal(service.get({ scopeKey: scope, userJid: user }).slots.body, 'corpo_beca');
-  assert.equal(service.get({ scopeKey: scope, userJid: user }).slots.hair_face, 'oculos_pixel');
+  assert.equal(service.get({ scopeKey: scope, userJid: user }).legacySlots.body, 'corpo_beca');
+  assert.equal(service.get({ scopeKey: scope, userJid: user }).legacySlots.hair_face, 'oculos_pixel');
 });
 
 test('avatar: novos itens premium debitam o total exato e persistem em cada slot', () => {
@@ -91,9 +91,9 @@ test('avatar: novos itens premium debitam o total exato e persistem em cada slot
     ORDER BY created_at, reason
   `).all(scope, user);
 
-  assert.equal(state.slots.hair_face, 'bone_beco');
-  assert.equal(state.slots.outfit, 'vestido_aurora');
-  assert.equal(state.slots.optional_accessory, 'fones_neon');
+  assert.equal(state.legacySlots.hair_face, 'bone_beco');
+  assert.equal(state.legacySlots.outfit, 'vestido_aurora');
+  assert.equal(state.legacySlots.optional_accessory, 'fones_neon');
   assert.equal(repository.getUserStats(user, scope).coins, expectedCoins);
   assert.deepEqual(
     ledgerRows.map((row) => [row.reason, row.amount]).sort(),

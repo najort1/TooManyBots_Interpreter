@@ -9,6 +9,7 @@ const HOUSE = "/api/fun/houses/test-token";
 test("transporte realtime válido usa o limite por sessão do servidor", () => {
   const routes = [
     ["GET", `${HOUSE}/realtime/stream`],
+    ["POST", `${HOUSE}/realtime/snapshot`],
     ["POST", `${HOUSE}/realtime/move`],
     ["POST", `${HOUSE}/realtime/chat`],
     ["POST", `${HOUSE}/realtime/signal`],

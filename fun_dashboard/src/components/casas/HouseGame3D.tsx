@@ -7,13 +7,14 @@ import { RenderPass } from "three/examples/jsm/postprocessing/RenderPass.js";
 import { UnrealBloomPass } from "three/examples/jsm/postprocessing/UnrealBloomPass.js";
 import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import type { HouseItem, HousePlayer, HouseShopItem, HouseView, NeighborhoodHouse } from "@/lib/types";
-import { HOUSE_3D_GRID_BOUNDS, house3dGridLines, house3dGridToWorld, house3dWorldToGrid } from "@/lib/house3dGrid.js";
+import { HOUSE_3D_GRID_BOUNDS, house3dGridLines, house3dGridToWorld, house3dNormalizedToWorld, house3dWorldToGrid, house3dWorldToNormalized } from "@/lib/house3dGrid.js";
 import { shouldPublishMovement } from "@/lib/realtimeMovementPolicy.js";
-import { animateAvatar3D, createAvatar3D, disposeAvatar3D, type Avatar3DRig } from "./avatar3d";
+import { animateAvatar3D, createAvatar3D, disposeAvatar3D, updateAvatar3D, type Avatar3DRig } from "./avatar3d";
 
 type Props = {
   mode: "house" | "neighborhood";
   house: HouseView;
+  localAvatar?: HousePlayer["avatar"];
   catalog: HouseShopItem[];
   neighborhood: NeighborhoodHouse[];
   owns: boolean;
@@ -30,13 +31,11 @@ type Props = {
 };
 
 type FurnitureRig = { group: THREE.Group; item: HouseItem; baseY: number };
-type PlayerRig = { rig: Avatar3DRig; target: THREE.Vector3; moving: boolean };
+type PlayerRig = { rig: Avatar3DRig; target: THREE.Vector3; moving: boolean; reportedMoving: boolean };
 type Runtime = { sync: () => void };
 
 const ROOM_W = 14;
 const ROOM_D = 11;
-const GRID_W = 6;
-const GRID_D = 8;
 const itemNames: Record<string, string> = {
   sofa_inicial: "Sofá de entrada", planta_inicial: "Planta sobrevivente", tapete_rua: "Tapete da rua",
   mesa_cafe: "Mesa de café", vaso_flores: "Vaso florido", luminaria_neon: "Luminária neon",
@@ -78,6 +77,11 @@ function gridToWorld(x: number, y: number) {
 
 function worldToGrid(point: THREE.Vector3) {
   return house3dWorldToGrid(point.x, point.z);
+}
+
+function normalizedToWorld(x: number, y: number) {
+  const point = house3dNormalizedToWorld(x, y);
+  return new THREE.Vector3(point.x, 0, point.z);
 }
 
 function interactive(group: THREE.Group, item: HouseItem) {
@@ -274,8 +278,8 @@ export default function HouseGame3D(props: Props) {
     const room = addRoom(scene, current.current.house);
     const floor = room.floor;
     let furniture = new Map<string, FurnitureRig>();
-    const local = createAvatar3D(current.current.house.avatar, "VOCÊ");
-    local.root.position.set(0, .03, 2.7);
+    let local = createAvatar3D(current.current.localAvatar || current.current.house.avatar, "VOCÊ");
+    local.root.position.copy(normalizedToWorld(50, 80)).setY(.03);
     scene.add(local.root);
     const localTarget = local.root.position.clone();
     const remotes = new Map<string, PlayerRig>();
@@ -307,6 +311,17 @@ export default function HouseGame3D(props: Props) {
       if (selected) selection.position.set(selected.group.position.x, .05, selected.group.position.z);
     };
 
+    const syncLocalAvatar = () => {
+      const previous = local;
+      const replacement = updateAvatar3D(previous, current.current.localAvatar || current.current.house.avatar, "VOCÊ");
+      if (replacement === previous) return;
+      scene.add(replacement.root);
+      previous.root.removeFromParent();
+      disposeAvatar3D(previous);
+      local = replacement;
+      localTarget.copy(local.root.position);
+    };
+
     const syncRemotes = () => {
       const incoming = current.current.remotePlayers || [];
       const ids = new Set(incoming.map(player => player.id));
@@ -314,19 +329,29 @@ export default function HouseGame3D(props: Props) {
         if (!ids.has(id)) { scene.remove(remote.rig.root); disposeAvatar3D(remote.rig); remotes.delete(id); }
       });
       incoming.forEach(player => {
-        const target = gridToWorld(Math.round(player.x / 20), Math.round(player.y / 14.3));
+        const target = normalizedToWorld(player.x, player.y);
         let remote = remotes.get(player.id);
         if (!remote) {
           const rig = createAvatar3D(player.avatar, player.nickname);
           rig.root.position.copy(target);
           scene.add(rig.root);
-          remote = { rig, target, moving: false };
+          remote = { rig, target, moving: false, reportedMoving: false };
           remotes.set(player.id, remote);
+        } else {
+          const previous = remote.rig;
+          const replacement = updateAvatar3D(previous, player.avatar, player.nickname);
+          if (replacement !== previous) {
+            scene.add(replacement.root);
+            previous.root.removeFromParent();
+            disposeAvatar3D(previous);
+            remote.rig = replacement;
+          }
         }
         remote.target.copy(target);
+        remote.reportedMoving = Boolean(player.moving);
       });
     };
-    const sync = () => { rebuildFurniture(); syncRemotes(); };
+    const sync = () => { rebuildFurniture(); syncLocalAvatar(); syncRemotes(); };
     runtime.current = { sync };
     sync();
 
@@ -415,13 +440,16 @@ export default function HouseGame3D(props: Props) {
       }
       animateAvatar3D(local, elapsed, moving, 0, reducedMotion, delta, Boolean(current.current.speaking));
       remotes.forEach(remote => {
-        remote.moving = remote.rig.root.position.distanceTo(remote.target) > .04;
+        const before = remote.rig.root.position.clone();
+        remote.moving = remote.reportedMoving || before.distanceTo(remote.target) > .04;
         remote.rig.root.position.lerp(remote.target, 1 - Math.exp(-7 * delta));
+        const heading = remote.rig.root.position.clone().sub(before);
+        if (heading.lengthSq()) remote.rig.root.rotation.y = Math.atan2(heading.x, heading.z);
         animateAvatar3D(remote.rig, elapsed, remote.moving, 0, reducedMotion, delta);
       });
       if (shouldPublishMovement({ moving, wasMoving, elapsed, lastSent: lastMove, interval: .15 })) {
-        const cell = worldToGrid(local.root.position);
-        current.current.onAvatarMove?.(Math.round(cell.x / (GRID_W - 1) * 100), Math.round(cell.y / (GRID_D - 1) * 100), moving);
+        const point = house3dWorldToNormalized(local.root.position.x, local.root.position.z);
+        current.current.onAvatarMove?.(point.x, point.y, moving);
         lastMove = elapsed; wasMoving = moving;
       }
       selection.rotation.z += delta * .35;

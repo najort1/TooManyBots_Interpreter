@@ -794,6 +794,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   jobTokenSecret: '',
   jobLinkTtlMs: 15 * 60_000,
   dashboardUiPort: 3001,
+  dashboardAllowedOrigins: ['*.trycloudflare.com'],
   /** Multa de falha PvP desativada por padrão (piso/teto não forçam cobrança). */
   assaultFailFinePct: 0,
   assaultFailFineMin: 10,
@@ -908,7 +909,6 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // Modelo grande (~40k chars): manda contexto de conversa de verdade, não 8 linhas
   memoryBufferSize: 100,
   memoryFlushMinMessages: 40,
-  memoryFlushIntervalMs: 10 * 60_000,
   memoryMinMsgChars: 12,
   memoryExtractTimeoutMs: 45_000,
   memoryTtlDays: 45,

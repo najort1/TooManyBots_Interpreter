@@ -341,11 +341,50 @@ export type NeighborhoodHouse = {
   securityLevel: number;
 };
 
+export const AVATAR_SLOTS = [
+  "body", "skinTone", "face", "hair", "top", "bottom", "shoes",
+  "headAccessory", "faceAccessory", "neckAccessory", "backAccessory", "waistAccessory",
+] as const;
+
+export type AvatarSlot = (typeof AVATAR_SLOTS)[number];
+export type AvatarSlots = Record<AvatarSlot, string>;
+
+export type PublicAvatar = {
+  schemaVersion?: number;
+  revision?: number;
+  catalogRevision?: number;
+  slots: AvatarSlots;
+  legacySlots?: Record<string, string>;
+  level: number;
+};
+
+export type AvatarCatalogItem = {
+  id: string;
+  name: string;
+  description: string;
+  emoji: string;
+  slot: AvatarSlot;
+  rendererKey: string;
+  socket: string;
+  preview: string;
+  sourceProductId: string;
+  unlockLevel: number;
+  cost: number;
+  category: "free" | "level" | "premium";
+  owned: boolean;
+};
+
+export type AvatarPurchaseQuote = {
+  catalogRevision: number;
+  itemIds: string[];
+  total: number;
+};
+
 export type HouseView = {
   owns: boolean;
   house: { cleanliness: number; securityLevel: number; houseType: string; wallStyle: string; floorStyle: string; windowStyle: string };
   items: HouseItem[];
-  avatar: { slots: Record<string, string>; level: number };
+  avatar: PublicAvatar;
   cleanliness?: number;
   security?: number;
   coins?: number;
@@ -356,15 +395,35 @@ export type HouseView = {
 export type HousePlayer = {
   id: string;
   nickname: string;
-  avatar: { slots: Record<string, string>; level: number };
+  avatar: PublicAvatar;
   x: number;
   y: number;
+  moving?: boolean;
   online?: boolean;
 };
 
-export type AvatarState = {
-  slots: Record<string, string>;
+export type AvatarState = Omit<PublicAvatar, "schemaVersion" | "revision" | "catalogRevision"> & {
+  schemaVersion: number;
+  revision: number;
+  catalogRevision: number;
   unlocked: string[];
-  level: number;
-  catalog: Array<{ id: string; name: string; emoji: string; slot: string; unlockLevel: number; cost: number; category: string; owned: boolean }>;
+  coins: number;
+  catalog: AvatarCatalogItem[];
+  diagnostics?: Array<{ code: string; slot?: string; itemId?: string }>;
+};
+
+export type AvatarApplyResult = {
+  ok: true;
+  state: AvatarState;
+  coins: number;
+  purchased: string[];
+  replayed?: boolean;
+};
+
+export type AvatarApplyError = Error & {
+  code?: string;
+  quote?: AvatarPurchaseQuote;
+  current?: AvatarState;
+  coins?: number;
+  need?: number;
 };

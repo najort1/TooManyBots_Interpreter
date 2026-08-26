@@ -6,8 +6,8 @@ const apiTarget = process.env.FUN_API_URL || "http://127.0.0.1:8790";
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 
 const nextConfig: NextConfig = {
-  // monorepo: evita Next achar o lockfile da raiz do repo
-  outputFileTracingRoot: rootDir,
+  // O catálogo de avatar é compartilhado com o backend do monorepo.
+  outputFileTracingRoot: path.resolve(rootDir, ".."),
   allowedDevOrigins: ["*.trycloudflare.com", "localhost:3001", "127.0.0.1:3001"],
   async rewrites() {
     return [

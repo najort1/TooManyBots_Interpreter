@@ -9,7 +9,7 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import type { HousePlayer, NeighborhoodHouse } from "@/lib/types";
 import { shouldPublishMovement } from "@/lib/realtimeMovementPolicy.js";
 import { dampAngle, resolveStreetPosition, yawToPoint } from "@/lib/streetNavigation.js";
-import { animateAvatar3D, createAvatar3D, disposeAvatar3D, type Avatar3DRig } from "./avatar3d";
+import { animateAvatar3D, createAvatar3D, disposeAvatar3D, updateAvatar3D, type Avatar3DRig } from "./avatar3d";
 import { getAvatarVisualKey } from "./avatarAppearance.js";
 
 type Props = {
@@ -39,6 +39,7 @@ type AvatarBillboard = {
   target: THREE.Vector3;
   nickname: string;
   isMoving: boolean;
+  reportedMoving: boolean;
   seatedAmount: number;
   wantsSeated: boolean;
   activeSeat?: Seat;
@@ -520,16 +521,18 @@ function createAvatar(scene: THREE.Scene, avatar: HousePlayer["avatar"] | undefi
   const rig = createAvatar3D(avatar, nickname);
   group.add(rig.root);
   scene.add(group);
-  return { group, rig, target: position.clone(), nickname, isMoving: false, seatedAmount: 0, wantsSeated: false };
+  return { group, rig, target: position.clone(), nickname, isMoving: false, reportedMoving: false, seatedAmount: 0, wantsSeated: false };
 }
 
 function replaceAvatarTextures(rig: AvatarBillboard, avatar: HousePlayer["avatar"] | undefined) {
   if (getAvatarVisualKey(avatar) === rig.rig.visualKey) return;
-  const replacement = createAvatar3D(avatar, rig.nickname);
-  rig.group.remove(rig.rig.root);
-  disposeAvatar3D(rig.rig);
-  rig.rig = replacement;
+  const previous = rig.rig;
+  const replacement = updateAvatar3D(previous, avatar, rig.nickname);
+  if (replacement === previous) return;
   rig.group.add(replacement.root);
+  previous.root.removeFromParent();
+  disposeAvatar3D(previous);
+  rig.rig = replacement;
 }
 
 function interactionFor(object: THREE.Object3D | null): Interaction | undefined {
@@ -653,6 +656,7 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
           remotes.set(player.id, rig);
         }
         rig.target.copy(destination);
+        rig.reportedMoving = Boolean(player.moving);
         replaceAvatarTextures(rig, player.avatar);
       });
       replaceAvatarTextures(local, currentProps.current.localAvatar);
@@ -820,8 +824,12 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
       }
       updateAvatarPose(local, delta, elapsed);
       remotes.forEach(rig => {
-        rig.isMoving = rig.group.position.distanceTo(rig.target) > 0.05;
+        const before = rig.group.position.clone();
+        rig.isMoving = rig.reportedMoving || before.distanceTo(rig.target) > 0.05;
         rig.group.position.lerp(rig.target, 1 - Math.exp(-8 * delta));
+        if (rig.group.position.distanceToSquared(before) > .00001) {
+          rig.group.rotation.y = dampAngle(rig.group.rotation.y, yawToPoint(before, rig.group.position), 14, delta);
+        }
         updateAvatarPose(rig, delta, elapsed);
       });
       if (shouldPublishMovement({ moving: local.isMoving, wasMoving: lastMoving, elapsed, lastSent, interval: 0.14 })) {

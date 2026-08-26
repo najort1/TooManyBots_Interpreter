@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ChevronRight, Maximize2, Plus, RotateCw } from "lucide-react";
 import { use, useCallback, useEffect, useMemo, useState } from "react";
 import { funApi } from "@/lib/api";
-import type { HouseItem, HouseShopItem, HouseView, NeighborhoodHouse } from "@/lib/types";
+import type { HouseItem, HouseShopItem, HouseView, NeighborhoodHouse, PublicAvatar } from "@/lib/types";
 import MobiInventoryModal from "@/components/casas/MobiInventoryModal";
 import HabboCatalogModal from "@/components/casas/HabboCatalogModal";
 import SpeechBubbleLayer, { type ChatMessage } from "@/components/casas/SpeechBubbleLayer";
@@ -103,13 +103,34 @@ export default function CasaPage({ params }: Props) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const realtimeAvatar = useMemo(() => ownHouse?.avatar || { slots: {}, level: 1 }, [ownHouse?.avatar]);
+  const realtimeAvatar = useMemo<PublicAvatar>(() => ownHouse?.avatar || {
+    schemaVersion: 2,
+    revision: 1,
+    catalogRevision: 1,
+    slots: {
+      body: "corpo_beco", skinTone: "skin_warm", face: "face_beco", hair: "hair_short",
+      top: "camiseta_beco", bottom: "bottom_beco", shoes: "shoes_beco",
+      headAccessory: "none", faceAccessory: "none", neckAccessory: "none",
+      backAccessory: "none", waistAccessory: "none",
+    },
+    level: 1,
+  }, [ownHouse?.avatar]);
   const realtimeScene = screen === "neighborhood" ? "street" as const : "house" as const;
   const realtimeSceneId = screen === "neighbor" ? neighborView?.id || token : screen === "neighborhood" ? "street" : token;
   const realtime = useHouseRealtime(token, realtimeScene, realtimeSceneId, realtimeAvatar);
-  const voice = useHouseVoice(realtime.players, realtime.lastSignal, realtime.signal);
+  const voice = useHouseVoice(realtime.players, realtime.selfId, realtime.signals, realtime.signal);
   const stopVoice = voice.stop;
+  const setVoiceListenerPosition = voice.setListenerPosition;
+  const moveRealtimeAvatar = realtime.move;
   useEffect(() => { stopVoice(); }, [realtime.sessionKey, stopVoice]);
+  useEffect(() => {
+    setVoiceListenerPosition(50, realtimeScene === "house" ? 80 : 54);
+  }, [realtimeScene, setVoiceListenerPosition]);
+
+  const publishAvatarMovement = useCallback((x: number, y: number, moving: boolean) => {
+    setVoiceListenerPosition(x, y);
+    moveRealtimeAvatar(x, y, moving);
+  }, [moveRealtimeAvatar, setVoiceListenerPosition]);
 
   useEffect(() => {
     setChatMessages(realtime.messages.map((message) => ({ id: message.id, senderJid: message.senderId, nickname: message.senderId === "you" ? "Você" : "VIZINHO", text: message.text, createdAt: message.createdAt })));
@@ -290,7 +311,7 @@ export default function CasaPage({ params }: Props) {
       {notice && <p className="casas-toast">✦ {notice}</p>}
 
       <div className="absolute right-3 top-24 z-30 flex items-center gap-2 rounded-xl bg-[#241735]/90 px-3 py-2 text-xs text-white shadow-lg">
-        <span aria-live="polite">{voice.enabled ? voice.isSpeaking ? "🎙️ Falando" : "🎙️ Voz ativa" : "🔇 Voz desligada"}</span>
+        <span aria-live="polite">{voice.enabled ? voice.isSpeaking ? "🎙️ Falando · 🔊 3D" : "🎙️ Voz 3D ativa" : "🔇 Voz desligada"}</span>
         <button type="button" className="casas-small-button" onClick={() => void (voice.enabled ? voice.stop() : voice.start())}>{voice.enabled ? "Desligar" : "Ativar voz"}</button>
         {voice.error ? <span className="text-red-200">{voice.error}</span> : null}
       </div>
@@ -315,7 +336,7 @@ export default function CasaPage({ params }: Props) {
           }
         }}
       />
-      {screen === "neighborhood" ? <StreetWorld players={realtime.players} houses={neighborhood} localAvatar={ownHouse?.avatar} speaking={voice.isSpeaking} onMove={realtime.move} onOpenHouse={(neighbor) => void openNeighbor(neighbor)} /> : <HouseGame remotePlayers={realtime.players} speaking={voice.isSpeaking} onAvatarMove={realtime.move} mode="house" house={displayedHouse} catalog={shop} neighborhood={neighborhood} owns={isHome} selectedItemId={isHome ? selectedItemId : undefined} interactionLocked={busy || !shop.length || shopOpen || inventoryOpen || muralOpen} onExit={leaveScene} onOpenNeighbor={(neighbor) => void openNeighbor(neighbor)} onSelectItem={(item) => { setSelectedItemId(item.id); soundEngine.playRotateMobiSound(); }} onClearSelection={() => setSelectedItemId(undefined)} onMoveItem={(item, x, y) => { soundEngine.playPlaceMobiSound(); return runAction(() => funApi.houses.move(token, { itemId: item.id, x, y, rotation: item.rotation, rotated: item.rotated }), "Móvel reposicionado."); }} />}
+      {screen === "neighborhood" ? <StreetWorld players={realtime.players} houses={neighborhood} localAvatar={ownHouse?.avatar} speaking={voice.isSpeaking} onMove={publishAvatarMovement} onOpenHouse={(neighbor) => void openNeighbor(neighbor)} /> : <HouseGame remotePlayers={realtime.players} localAvatar={ownHouse.avatar} speaking={voice.isSpeaking} onAvatarMove={publishAvatarMovement} mode="house" house={displayedHouse} catalog={shop} neighborhood={neighborhood} owns={isHome} selectedItemId={isHome ? selectedItemId : undefined} interactionLocked={busy || !shop.length || shopOpen || inventoryOpen || muralOpen} onExit={leaveScene} onOpenNeighbor={(neighbor) => void openNeighbor(neighbor)} onSelectItem={(item) => { setSelectedItemId(item.id); soundEngine.playRotateMobiSound(); }} onClearSelection={() => setSelectedItemId(undefined)} onMoveItem={(item, x, y) => { soundEngine.playPlaceMobiSound(); return runAction(() => funApi.houses.move(token, { itemId: item.id, x, y, rotation: item.rotation, rotated: item.rotated }), "Móvel reposicionado."); }} />}
 
       {isHome && <div className="casas-stage-status">
         <span className="casas-hud-stat">

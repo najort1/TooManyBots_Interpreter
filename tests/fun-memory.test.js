@@ -438,7 +438,7 @@ test('memoryRepository: insert, reinforce overwrite summary, prune, forget', () 
   assert.equal(repo.countFacts(scope), 0);
 });
 
-test('shouldFlushBuffer / flushDueScopes: dispara extract sem esperar 40 msgs (timer)', async () => {
+test('shouldFlushBuffer / flushDueScopes: trigger é SOMENTE contagem — tempo/idade não extrai', async () => {
   const prev = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
   try {
@@ -473,7 +473,6 @@ test('shouldFlushBuffer / flushDueScopes: dispara extract sem esperar 40 msgs (t
     const cfg = resolveFunConfig({
       memoryEnabled: true,
       memoryFlushMinMessages: 40,
-      memoryFlushIntervalMs: 60_000,
       memoryBufferSize: 50,
       memoryMinMsgChars: 8,
       memoryMinScore: 20,
@@ -481,7 +480,8 @@ test('shouldFlushBuffer / flushDueScopes: dispara extract sem esperar 40 msgs (t
       ollamaEnabled: false,
     });
 
-    const t0 = Date.now() - 15 * 60_000; // msgs “antigas” (15 min) — due por idade
+    // msgs “antigas” (15 min) com flushMin=40 — NÃO devem disparar extract por idade
+    const t0 = Date.now() - 15 * 60_000;
     for (let i = 0; i < 5; i += 1) {
       mem.observeMessage({
         scopeKey: scope,
@@ -492,31 +492,38 @@ test('shouldFlushBuffer / flushDueScopes: dispara extract sem esperar 40 msgs (t
         isGroup: true,
       });
     }
-
-    // com flushMin=40, 5 msgs NÃO agendam no observe — mas devem estar due por idade
-    const stats = mem.getBufferStats().find((s) => s.scopeKey === scope);
-    assert.ok(stats);
-    assert.equal(stats.size, 5);
-    assert.equal(zenCalls, 0, 'observe com <40 msgs e lastFlushAt=0 não chama LLM no mesmo tick síncrono se due por idade... ');
-
-    // se observe já agendou por dueByAge, zenCalls pode ser >0 assíncrono — espera um pouco
     await new Promise((r) => setTimeout(r, 50));
 
-    // força o caminho do world tick
-    const due = await mem.flushDueScopes(cfg, Date.now());
-    // se observe já flusou, buffer vazio e due.flushed=0 — mas zenCalls >= 1
-    assert.ok(zenCalls >= 1, `esperava ≥1 chamada extract, got ${zenCalls}`);
-    if (due.flushed === 0) {
-      // flush já tinha acontecido no observe (due por idade) — ok
-      assert.ok(zenCalls >= 1);
-    } else {
-      assert.equal(due.flushed, 1);
-      assert.equal(due.results[0].ok, true);
-    }
+    assert.equal(zenCalls, 0, 'observe com <40 msgs não pode chamar a LLM por tempo/idade');
+    const stats = mem.getBufferStats().find((s) => s.scopeKey === scope);
+    assert.ok(stats);
+    assert.equal(stats.size, 5, 'buffer permanece intacto até bater o limite de msgs');
 
-    const facts = repo.listFacts(scope, { limit: 10, minScore: 0 });
-    assert.ok(facts.length >= 1, 'fato deve ter sido gravado');
-    assert.match(facts[0].summary, /Gabriel|treinar|sumiu/i);
+    // world tick NÃO extrai buffer abaixo do limite, mesmo com msgs velhas
+    const due = await mem.flushDueScopes(cfg, Date.now());
+    assert.equal(due.flushed, 0);
+    assert.equal(zenCalls, 0, 'flushDueScopes não extrai abaixo do limite de msgs');
+
+    // critério puro: contagem decide
+    const o = { flushMin: 40 };
+    assert.equal(mem.shouldFlushBuffer({ flushing: false, msgs: [] }, o), false);
+    assert.equal(
+      mem.shouldFlushBuffer(
+        { flushing: false, msgs: Array.from({ length: 39 }, () => ({ at: t0 })) },
+        o
+      ),
+      false
+    );
+    assert.equal(
+      mem.shouldFlushBuffer(
+        { flushing: false, msgs: Array.from({ length: 40 }, () => ({ at: Date.now() })) },
+        o
+      ),
+      true,
+      '40 msgs disparam flush independente da idade'
+    );
+
+    assert.equal(repo.listFacts(scope, { limit: 10, minScore: 0 }).length, 0);
   } finally {
     if (prev === undefined) delete process.env.FUN_DISABLE_LIVE_LLM;
     else process.env.FUN_DISABLE_LIVE_LLM = prev;
