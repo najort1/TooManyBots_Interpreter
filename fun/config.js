@@ -431,6 +431,8 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.reactionUserAgent,
     tenorApiKey:
       toText(raw.tenorApiKey, process.env.TENOR_API_KEY || DEFAULT_FUN_CONFIG.tenorApiKey) || '',
+    youtubeApiKey:
+      toText(raw.youtubeApiKey, process.env.YOUTUBE_API_KEY || DEFAULT_FUN_CONFIG.youtubeApiKey) || '',
     tenorClientKey:
       toText(raw.tenorClientKey, DEFAULT_FUN_CONFIG.tenorClientKey) ||
       DEFAULT_FUN_CONFIG.tenorClientKey,

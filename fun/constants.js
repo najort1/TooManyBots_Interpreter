@@ -568,6 +568,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   reactionAnimeProviderOrder: ['nekos_best', 'purrbot', 'waifu_pics', 'nekobot'],
   reactionUserAgent: 'TooManyBots-Fun/1.0 (https://github.com/anomalyco/TooManyBots_Interpreter)',
   tenorApiKey: '',
+  youtubeApiKey: '',
   tenorClientKey: 'toomanybots_fun',
   requireGroupWhitelist: true,
   // DM: comandos no privado se for membro de grupo na whitelist

@@ -1067,6 +1067,34 @@ export function buildFunSchemaSql() {
     );
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_house_robberies_robber
       ON fun_house_robberies(scope_key, robber_jid, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_sound_queue (
+      id TEXT PRIMARY KEY,
+      scope_key TEXT NOT NULL,
+      provider TEXT NOT NULL DEFAULT 'youtube',
+      media_id TEXT NOT NULL,
+      source_url TEXT NOT NULL,
+      title TEXT NOT NULL DEFAULT '',
+      thumbnail_url TEXT NOT NULL DEFAULT '',
+      requested_by_jid TEXT NOT NULL,
+      requested_by_name TEXT NOT NULL DEFAULT '',
+      duration_seconds INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'queued',
+      added_at INTEGER NOT NULL,
+      started_at INTEGER NOT NULL DEFAULT 0,
+      finished_at INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_sound_queue_scope_status
+      ON fun_sound_queue(scope_key, status, added_at ASC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_sound_state (
+      scope_key TEXT PRIMARY KEY,
+      current_item_id TEXT NOT NULL DEFAULT '',
+      started_at INTEGER NOT NULL DEFAULT 0,
+      revision INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL
+    );
   `;
 }
 

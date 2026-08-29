@@ -32,6 +32,7 @@ import { createFunJobRepository } from './db/funJobRepository.js';
 import { createFunUserPrefsRepository } from './db/funUserPrefsRepository.js';
 import { createFunPropertyRepository } from './db/funPropertyRepository.js';
 import { createFunHouseRepository } from './db/funHouseRepository.js';
+import { createFunSoundSystemRepository } from './db/funSoundSystemRepository.js';
 import { createFunAvatarRepository } from './db/funAvatarRepository.js';
 import { createFunAvatarV2Repository } from './db/funAvatarV2Repository.js';
 import { createFunNewsRepository } from './db/funNewsRepository.js';
@@ -51,6 +52,7 @@ import { createAvatarService } from './services/avatarService.js';
 import { createVisitService } from './services/visitService.js';
 import { createGiftService } from './services/giftService.js';
 import { createRobberyService } from './services/robberyService.js';
+import { createSoundSystemService } from './services/soundSystemService.js';
 import { createPoliceService } from './services/policeService.js';
 import { createRoastService } from './services/roastService.js';
 import { createNewsService } from './services/newsService.js';
@@ -168,6 +170,7 @@ export function createFunModule(deps = {}) {
   const propertyRepository =
     deps.propertyRepository || createFunPropertyRepository({ getDatabase });
   const houseRepository = deps.houseRepository || createFunHouseRepository({ getDatabase });
+  const soundSystemRepository = deps.soundSystemRepository || createFunSoundSystemRepository({ getDatabase });
   const avatarRepository = deps.avatarRepository || createFunAvatarRepository({ getDatabase });
   const avatarV2Repository = deps.avatarV2Repository || createFunAvatarV2Repository({ getDatabase });
   const newsRepository =
@@ -270,6 +273,10 @@ export function createFunModule(deps = {}) {
   const visitService = deps.visitService || createVisitService({ houseRepository });
   const giftService = deps.giftService || createGiftService({ repository, houseRepository });
   const robberyService = deps.robberyService || createRobberyService({ repository, houseRepository, policeService });
+  const soundSystemService = deps.soundSystemService || createSoundSystemService({
+    repository: soundSystemRepository,
+    getYouTubeApiKey: () => resolveFunConfig(getConfig() || {}).youtubeApiKey,
+  });
   const marketService =
     deps.marketService ||
     createMarketService({
@@ -1306,6 +1313,7 @@ export function createFunModule(deps = {}) {
       stockService,
       propertyService,
       houseRepository,
+      soundSystemRepository,
       avatarRepository,
       avatarV2Repository,
       policeService,
@@ -1315,6 +1323,7 @@ export function createFunModule(deps = {}) {
       visitService,
       giftService,
       robberyService,
+      soundSystemService,
       roastService,
       newsService,
       snapshotRepository,
