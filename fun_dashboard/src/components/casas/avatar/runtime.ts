@@ -14,6 +14,14 @@ import {
   getAvatarShoeProfile,
   getAvatarTopProfile,
 } from "./recipes.js";
+import {
+  avatarBoxGeometry,
+  avatarShadowMaterial,
+  avatarStandardMaterial,
+  isSharedAvatarGeometry,
+  isSharedAvatarMaterial,
+  shareAvatarGeometry,
+} from "./resources";
 
 export type Avatar3DStatus = "loading" | "ready" | "fallback" | "error";
 
@@ -53,11 +61,11 @@ const FLOOR_OFFSET = 0;
 const SEATED_DROP = 0.42;
 
 function material(color: number, roughness = 0.72, metalness = 0.03) {
-  return new THREE.MeshStandardMaterial({ color, roughness, metalness });
+  return avatarStandardMaterial(color, roughness, metalness);
 }
 
 function mesh(geometry: THREE.BufferGeometry, color: number, roughness = 0.72, metalness = 0.03) {
-  const value = new THREE.Mesh(geometry, material(color, roughness, metalness));
+  const value = new THREE.Mesh(shareAvatarGeometry(geometry), material(color, roughness, metalness));
   value.castShadow = true;
   value.receiveShadow = true;
   value.userData.avatarOwnedResource = true;
@@ -65,20 +73,14 @@ function mesh(geometry: THREE.BufferGeometry, color: number, roughness = 0.72, m
 }
 
 function glow(geometry: THREE.BufferGeometry, color: number, intensity = 0.8) {
-  const value = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({
-    color,
-    emissive: color,
-    emissiveIntensity: intensity,
-    roughness: 0.35,
-    metalness: 0.18,
-  }));
+  const value = new THREE.Mesh(shareAvatarGeometry(geometry), avatarStandardMaterial(color, 0.35, 0.18, color, intensity));
   value.castShadow = true;
   value.userData.avatarOwnedResource = true;
   return value;
 }
 
 function box(parent: THREE.Object3D, size: [number, number, number], color: number, position: [number, number, number], name = "") {
-  const value = mesh(new THREE.BoxGeometry(...size), color);
+  const value = mesh(avatarBoxGeometry(size), color);
   value.position.set(...position);
   value.name = name;
   parent.add(value);
@@ -103,7 +105,7 @@ function createLimb(parent: THREE.Object3D, x: number, y: number, skin: number, 
     skin,
     [0, -0.31 * scale, 0],
   );
-  upper.geometry.translate(0, -0.02, 0);
+  upper.position.y -= 0.02;
   const lower = new THREE.Group();
   lower.position.y = (isArm ? -0.64 : -0.72) * scale;
   pivot.add(lower);
@@ -149,7 +151,7 @@ function createBody(slots: Record<string, string>) {
   head.position.set(0, proportions.headY, 0);
   bodySocket.add(head);
   const headMesh = box(head, proportions.head, palette.skin, [0, 0, 0]);
-  headMesh.geometry.translate(0, 0.01, 0);
+  headMesh.position.y += 0.01;
 
   const leftArm = createLimb(bodySocket, -proportions.armX, 2.43, palette.skin, true, proportions.limbScale);
   const rightArm = createLimb(bodySocket, proportions.armX, 2.43, palette.skin, true, proportions.limbScale);
@@ -663,7 +665,7 @@ export function createAvatar3D(avatar: AvatarInput, labelText: string) {
   const root = new THREE.Group();
   root.name = "avatar-root";
   root.add(parts.model);
-  const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.78, 32), new THREE.MeshBasicMaterial({ color: 0x090810, transparent: true, opacity: 0.3, depthWrite: false }));
+  const shadow = new THREE.Mesh(shareAvatarGeometry(new THREE.CircleGeometry(0.78, 32)), avatarShadowMaterial());
   shadow.rotation.x = -Math.PI / 2;
   shadow.scale.y = 0.42;
   shadow.position.y = 0.008;
@@ -804,12 +806,14 @@ export function disposeAvatar3D(rig: Avatar3DRig) {
   rig.disposed = true;
   rig.root.traverse((object) => {
     if (!(object instanceof THREE.Mesh || object instanceof THREE.Sprite)) return;
-    object.geometry?.dispose?.();
+    if (!isSharedAvatarGeometry(object.geometry)) object.geometry?.dispose?.();
     const materials = Array.isArray(object.material) ? object.material : [object.material];
     materials.forEach((value) => {
       const candidate = value as THREE.Material & { map?: THREE.Texture };
-      candidate.map?.dispose();
-      candidate.dispose();
+      if (!isSharedAvatarMaterial(candidate)) {
+        candidate.map?.dispose();
+        candidate.dispose();
+      }
     });
   });
   rig.root.clear();
