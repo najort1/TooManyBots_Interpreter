@@ -22,6 +22,8 @@ import type {
   AvatarSlots,
   AvatarState,
   NeighborhoodHouse,
+  SoundSystemState,
+  YouTubeSearchResult,
 } from "./types";
 
 /**
@@ -204,6 +206,25 @@ export const funApi = {
     applyStyle: (token: string, itemId: string) => request<{ ok: boolean; coins: number; purchased: boolean }>(`/api/fun/houses/${encodeURIComponent(token)}/styles/apply`, { method: "PUT", headers: { "x-house-token": token }, body: JSON.stringify({ itemId }) }),
     sell: (token: string, itemId: string) => request<{ ok: boolean; coins: number }>(`/api/fun/houses/${encodeURIComponent(token)}/items/sell`, { method: "POST", headers: { "x-house-token": token }, body: JSON.stringify({ itemId }) }),
     neighborhood: (token: string) => request<{ houses: NeighborhoodHouse[] }>('/api/fun/houses/' + encodeURIComponent(token) + '/neighborhood'),
+    soundSystem: (token: string) => request<SoundSystemState>(`/api/fun/houses/${encodeURIComponent(token)}/sound-system`),
+    enqueueSound: (token: string, url: string) => request<{ ok: true; state: SoundSystemState }>(`/api/fun/houses/${encodeURIComponent(token)}/sound-system/queue`, {
+      method: "POST",
+      headers: { "x-house-token": token },
+      body: JSON.stringify({ url }),
+    }),
+    searchYouTube: (token: string, query: string) => request<{ ok: true; results: YouTubeSearchResult[] }>(`/api/fun/houses/${encodeURIComponent(token)}/sound-system/search?q=${encodeURIComponent(query)}`, {
+      headers: { "x-house-token": token },
+    }),
+    reportSoundDuration: (token: string, trackId: string, durationSeconds: number) => request<{ ok: true; state: SoundSystemState }>(`/api/fun/houses/${encodeURIComponent(token)}/sound-system/current/duration`, {
+      method: "PUT",
+      headers: { "x-house-token": token },
+      body: JSON.stringify({ trackId, durationSeconds }),
+    }),
+    advanceSound: (token: string, trackId: string) => request<{ ok: true; state: SoundSystemState }>(`/api/fun/houses/${encodeURIComponent(token)}/sound-system/current/advance`, {
+      method: "POST",
+      headers: { "x-house-token": token },
+      body: JSON.stringify({ trackId }),
+    }),
     neighbor: (token: string, houseId: string) => request<HouseView>(`/api/fun/houses/${encodeURIComponent(token)}/neighbors/${encodeURIComponent(houseId)}`),
     shop: (token: string) => request<{ shop: HouseShopItem[]; coins: number }>(`/api/fun/houses/${encodeURIComponent(token)}/shop`),
     avatar: (token: string) => request<AvatarState>(`/api/fun/houses/${encodeURIComponent(token)}/avatar`),

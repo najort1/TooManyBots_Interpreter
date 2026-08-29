@@ -108,6 +108,7 @@ export function startFunDashboardServer(deps = {}) {
     visitService = null,
     giftService = null,
     robberyService = null,
+    soundSystemService = null,
   } = funModule._services;
 
   /** Normaliza scope do path/query: aceita JID completo ou só o número do grupo. */
@@ -370,6 +371,51 @@ export function startFunDashboardServer(deps = {}) {
           } else {
             sendJson(res, 200, { owns: false, house: current.house, items: current.items.filter((item) => item.placed).map(publicHouseItem), avatar: publicAvatar(avatar), host: { nickname: getContactDisplayName(target.userJid) || 'Morador' }, mural });
           }
+          return;
+        }
+
+        if (action === 'sound-system' && req.method === 'GET') {
+          if (!soundSystemService) { sendJson(res, 503, { error: 'paredao-indisponivel' }); return; }
+          sendJson(res, 200, soundSystemService.getState({ scopeKey: target.scopeKey }));
+          return;
+        }
+
+        if (action === 'sound-system/search' && req.method === 'GET') {
+          if (!soundSystemService) { sendJson(res, 503, { error: 'paredao-indisponivel' }); return; }
+          const authToken = String(req.headers['x-house-token'] || '').trim();
+          const actor = authToken ? await resolveHouseToken(authToken) : null;
+          if (!actor) { sendJson(res, 401, { error: 'house-token-required' }); return; }
+          if (actor.scopeKey !== target.scopeKey) { sendJson(res, 403, { error: 'fora-do-bairro' }); return; }
+          const result = await soundSystemService.search({ query: url.searchParams.get('q') });
+          const status = result.ok ? 200 : result.reason === 'youtube-search-not-configured' ? 503 : result.reason === 'search-too-short' ? 400 : 502;
+          sendJson(res, status, result.ok ? result : { error: result.reason });
+          return;
+        }
+
+        if (['sound-system/queue', 'sound-system/current/advance', 'sound-system/current/duration'].includes(action)) {
+          if (!soundSystemService) { sendJson(res, 503, { error: 'paredao-indisponivel' }); return; }
+          const authToken = String(req.headers['x-house-token'] || '').trim();
+          const actor = authToken ? await resolveHouseToken(authToken) : null;
+          if (!actor) { sendJson(res, 401, { error: 'house-token-required' }); return; }
+          if (actor.scopeKey !== target.scopeKey) { sendJson(res, 403, { error: 'fora-do-bairro' }); return; }
+          const body = await readBody(req);
+          let result;
+          if (action === 'sound-system/queue' && req.method === 'POST') {
+            result = await soundSystemService.enqueue({
+              scopeKey: target.scopeKey,
+              userJid: actor.userJid,
+              requestedByName: getContactDisplayName(actor.userJid) || 'Morador',
+              url: body.url,
+            });
+          } else if (action === 'sound-system/current/duration' && req.method === 'PUT') {
+            result = soundSystemService.reportDuration({ scopeKey: target.scopeKey, trackId: body.trackId, durationSeconds: body.durationSeconds });
+          } else if (action === 'sound-system/current/advance' && req.method === 'POST') {
+            result = soundSystemService.advance({ scopeKey: target.scopeKey, trackId: body.trackId });
+          } else {
+            sendJson(res, 405, { error: 'method-not-allowed' });
+            return;
+          }
+          sendJson(res, result.ok ? 200 : result.reason === 'youtube-link-invalid' ? 400 : 409, result.ok ? result : { error: result.reason });
           return;
         }
 

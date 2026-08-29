@@ -9,6 +9,9 @@ import type { HouseItem, HouseShopItem, HouseView, NeighborhoodHouse, PublicAvat
 import MobiInventoryModal from "@/components/casas/MobiInventoryModal";
 import HabboCatalogModal from "@/components/casas/HabboCatalogModal";
 import SpeechBubbleLayer, { type ChatMessage } from "@/components/casas/SpeechBubbleLayer";
+import NeighborhoodSoundSystem from "@/components/casas/NeighborhoodSoundSystem";
+import GraphicsQualityControl from "@/components/casas/GraphicsQualityControl";
+import type { SoundSystemScreenRect } from "@/components/casas/StreetWorld";
 import { soundEngine } from "@/lib/soundEngine";
 import { useHouseRealtime } from "@/hooks/useHouseRealtime";
 import { useHouseVoice } from "@/hooks/useHouseVoice";
@@ -91,6 +94,8 @@ export default function CasaPage({ params }: Props) {
   const [shopOpen, setShopOpen] = useState(false);
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [muralOpen, setMuralOpen] = useState(false);
+  const [soundSystemOpen, setSoundSystemOpen] = useState(false);
+  const [soundSystemScreenRect, setSoundSystemScreenRect] = useState<SoundSystemScreenRect | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
   const catalogMap = useMemo(() => {
@@ -123,6 +128,7 @@ export default function CasaPage({ params }: Props) {
   const setVoiceListenerPosition = voice.setListenerPosition;
   const moveRealtimeAvatar = realtime.move;
   useEffect(() => { stopVoice(); }, [realtime.sessionKey, stopVoice]);
+  useEffect(() => { if (screen !== "neighborhood") setSoundSystemOpen(false); }, [screen]);
   useEffect(() => {
     setVoiceListenerPosition(50, realtimeScene === "house" ? 80 : 54);
   }, [realtimeScene, setVoiceListenerPosition]);
@@ -133,8 +139,14 @@ export default function CasaPage({ params }: Props) {
   }, [moveRealtimeAvatar, setVoiceListenerPosition]);
 
   useEffect(() => {
-    setChatMessages(realtime.messages.map((message) => ({ id: message.id, senderJid: message.senderId, nickname: message.senderId === "you" ? "Você" : "VIZINHO", text: message.text, createdAt: message.createdAt })));
-  }, [realtime.messages]);
+    setChatMessages(realtime.messages.map((message) => ({
+      id: message.id,
+      senderJid: message.senderId,
+      nickname: message.nickname || (message.senderId === realtime.selfId ? ownHouse?.host?.nickname || "Você" : "Vizinho"),
+      text: message.text,
+      createdAt: message.createdAt,
+    })));
+  }, [ownHouse?.host?.nickname, realtime.messages, realtime.selfId]);
 
   const refresh = useCallback(async () => {
     const [houseResponse, neighborhoodResponse] = await Promise.all([funApi.houses.get(token), funApi.houses.neighborhood(token)]);
@@ -297,6 +309,7 @@ export default function CasaPage({ params }: Props) {
           <div className="casas-title-row"><span aria-hidden="true">⌂</span><h1>{screen === "neighborhood" ? "Bairro do grupo" : isNeighbor ? displayedHouse.host?.nickname || "Casa de um vizinho" : "Sua casa"}</h1></div>
         </div>
         <div className="casas-topbar-actions">
+          <GraphicsQualityControl />
           <button type="button" className="casas-fullscreen-button" onClick={() => void enterFullscreenLandscape()} aria-label="Usar tela cheia em paisagem" title="Tela cheia">
             <Maximize2 size={17} />
           </button>
@@ -336,7 +349,7 @@ export default function CasaPage({ params }: Props) {
           }
         }}
       />
-      {screen === "neighborhood" ? <StreetWorld players={realtime.players} houses={neighborhood} localAvatar={ownHouse?.avatar} speaking={voice.isSpeaking} onMove={publishAvatarMovement} onOpenHouse={(neighbor) => void openNeighbor(neighbor)} /> : <HouseGame remotePlayers={realtime.players} localAvatar={ownHouse.avatar} speaking={voice.isSpeaking} onAvatarMove={publishAvatarMovement} mode="house" house={displayedHouse} catalog={shop} neighborhood={neighborhood} owns={isHome} selectedItemId={isHome ? selectedItemId : undefined} interactionLocked={busy || !shop.length || shopOpen || inventoryOpen || muralOpen} onExit={leaveScene} onOpenNeighbor={(neighbor) => void openNeighbor(neighbor)} onSelectItem={(item) => { setSelectedItemId(item.id); soundEngine.playRotateMobiSound(); }} onClearSelection={() => setSelectedItemId(undefined)} onMoveItem={(item, x, y) => { soundEngine.playPlaceMobiSound(); return runAction(() => funApi.houses.move(token, { itemId: item.id, x, y, rotation: item.rotation, rotated: item.rotated }), "Móvel reposicionado."); }} />}
+      {screen === "neighborhood" ? <StreetWorld players={realtime.players} houses={neighborhood} localAvatar={ownHouse?.avatar} speaking={voice.isSpeaking} onMove={publishAvatarMovement} onOpenHouse={(neighbor) => void openNeighbor(neighbor)} onOpenSoundSystem={() => setSoundSystemOpen(true)} onSoundSystemScreenRect={setSoundSystemScreenRect} /> : <HouseGame remotePlayers={realtime.players} localAvatar={ownHouse.avatar} speaking={voice.isSpeaking} onAvatarMove={publishAvatarMovement} mode="house" house={displayedHouse} catalog={shop} neighborhood={neighborhood} owns={isHome} selectedItemId={isHome ? selectedItemId : undefined} interactionLocked={busy || !shop.length || shopOpen || inventoryOpen || muralOpen} onExit={leaveScene} onOpenNeighbor={(neighbor) => void openNeighbor(neighbor)} onSelectItem={(item) => { setSelectedItemId(item.id); soundEngine.playRotateMobiSound(); }} onClearSelection={() => setSelectedItemId(undefined)} onMoveItem={(item, x, y) => { soundEngine.playPlaceMobiSound(); return runAction(() => funApi.houses.move(token, { itemId: item.id, x, y, rotation: item.rotation, rotated: item.rotated }), "Móvel reposicionado."); }} />}
 
       {isHome && <div className="casas-stage-status">
         <span className="casas-hud-stat">
@@ -409,6 +422,8 @@ export default function CasaPage({ params }: Props) {
       <p>Casas do Beco usa a tela inteira em paisagem para mostrar o bairro, os controles e seus amigos.</p>
       <button type="button" onClick={() => void enterFullscreenLandscape()}><Maximize2 size={17} /> Entrar em tela cheia</button>
     </section>
+
+    {screen === "neighborhood" ? <NeighborhoodSoundSystem token={token} open={soundSystemOpen} tvScreenRect={soundSystemScreenRect} onOpen={() => setSoundSystemOpen(true)} onClose={() => setSoundSystemOpen(false)} /> : null}
 
     <MobiInventoryModal
       isOpen={inventoryOpen}

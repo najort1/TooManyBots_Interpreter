@@ -402,6 +402,36 @@ export type HousePlayer = {
   online?: boolean;
 };
 
+export type SoundSystemTrack = {
+  id: string;
+  provider: "youtube";
+  videoId: string;
+  url: string;
+  title: string;
+  thumbnailUrl: string;
+  requestedBy: string;
+  durationSeconds: number;
+  addedAt: number;
+  startedAt: number;
+};
+
+export type SoundSystemState = {
+  ok: true;
+  serverNow: number;
+  revision: number;
+  current: SoundSystemTrack | null;
+  queue: SoundSystemTrack[];
+  searchEnabled: boolean;
+};
+
+export type YouTubeSearchResult = {
+  videoId: string;
+  title: string;
+  channelTitle: string;
+  thumbnailUrl: string;
+  url: string;
+};
+
 export type AvatarState = Omit<PublicAvatar, "schemaVersion" | "revision" | "catalogRevision"> & {
   schemaVersion: number;
   revision: number;
