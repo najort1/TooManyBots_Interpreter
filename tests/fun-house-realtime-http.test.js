@@ -12,6 +12,13 @@ async function fixture() {
   const services={
     repository:{}, houseRepository:{},
     houseService:noop, avatarService:noop, visitService:noop, giftService:noop, robberyService:noop,
+    soundSystemService: {
+      getState: ({scopeKey}) => ({ok:true,scopeKey,current:null,queue:[],serverNow:1,revision:0,searchEnabled:false}),
+      enqueue: async ({scopeKey,userJid,url}) => ({ok:true,scopeKey,userJid,url}),
+      search: async () => ({ok:false,reason:'youtube-search-not-configured'}),
+      reportDuration: () => ({ok:true}),
+      advance: () => ({ok:true}),
+    },
     houseLinkService:{resolve: async token => token==='house' ? owner : token==='actor' ? actor : token==='neighbor' ? neighbor : null},
   };
   const server=await startFunDashboardServer({port:0,getConfig:()=>({dashboardHost:'127.0.0.1',dashboardAllowedOrigins:['https://allowed.test']}),funModule:{_services:services}});
@@ -82,5 +89,19 @@ test('realtime HTTP: movimento da casa aceita a escala normalizada do cliente 3D
     assert.equal(res.status,201); const session=await res.json();
     res=await post(f.base,'/realtime/move',JSON.stringify({sessionId:session.sessionId,x:50,y:50,moving:true,clientSeq:session.nextClientSeq}));
     assert.equal(res.status,200);
+  } finally { await f.close(); }
+});
+
+test('paredão HTTP: estado é público pelo link e fila exige token do mesmo bairro',async()=>{
+  const f=await fixture(); try {
+    let res=await fetch(f.base+'/sound-system');
+    assert.equal(res.status,200);
+    assert.equal((await res.json()).scopeKey,scopeKey);
+    res=await fetch(f.base+'/sound-system/queue',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({url:'https://youtu.be/dQw4w9WgXcQ'})});
+    assert.equal(res.status,401);
+    res=await post(f.base,'/sound-system/queue',JSON.stringify({url:'https://youtu.be/dQw4w9WgXcQ'}));
+    assert.equal(res.status,200);
+    const body=await res.json();
+    assert.equal(body.userJid,actor.userJid);
   } finally { await f.close(); }
 });
