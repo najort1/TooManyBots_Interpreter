@@ -9,7 +9,12 @@ import { OutputPass } from "three/examples/jsm/postprocessing/OutputPass.js";
 import type { HouseItem, HousePlayer, HouseShopItem, HouseView, NeighborhoodHouse } from "@/lib/types";
 import { HOUSE_3D_GRID_BOUNDS, house3dGridLines, house3dGridToWorld, house3dNormalizedToWorld, house3dWorldToGrid, house3dWorldToNormalized } from "@/lib/house3dGrid.js";
 import { shouldPublishMovement } from "@/lib/realtimeMovementPolicy.js";
+import { reconcileFurnitureItems } from "@/lib/houseFurnitureReconciliation.js";
+import { createThreePerformanceMonitor } from "@/lib/threePerformanceMonitor";
 import { animateAvatar3D, createAvatar3D, disposeAvatar3D, updateAvatar3D, type Avatar3DRig } from "./avatar3d";
+import { useCasasGraphics } from "./CasasGraphicsProvider";
+import { isSharedAvatarGeometry, isSharedAvatarMaterial } from "./avatar/resources";
+import { createAvatarRenderBatch } from "./avatar/instancing";
 
 type Props = {
   mode: "house" | "neighborhood";
@@ -32,7 +37,12 @@ type Props = {
 
 type FurnitureRig = { group: THREE.Group; item: HouseItem; baseY: number };
 type PlayerRig = { rig: Avatar3DRig; target: THREE.Vector3; moving: boolean; reportedMoving: boolean };
-type Runtime = { sync: () => void };
+type Runtime = {
+  syncFurniture: () => void;
+  syncLocalAvatar: () => void;
+  syncRemotes: () => void;
+  syncSelection: () => void;
+};
 
 const ROOM_W = 14;
 const ROOM_D = 11;
@@ -222,9 +232,13 @@ function addRoom(scene: THREE.Scene, house: HouseView) {
 function dispose(root: THREE.Object3D) {
   root.traverse(object => {
     if (object instanceof THREE.Mesh || object instanceof THREE.Sprite) {
-      object.geometry?.dispose?.();
+      if (!isSharedAvatarGeometry(object.geometry)) object.geometry?.dispose?.();
       const materials = Array.isArray(object.material) ? object.material : [object.material];
-      materials.forEach(value => { (value as THREE.MeshStandardMaterial).map?.dispose(); value.dispose(); });
+      materials.forEach(value => {
+        if (isSharedAvatarMaterial(value)) return;
+        (value as THREE.MeshStandardMaterial).map?.dispose();
+        value.dispose();
+      });
     }
   });
 }
@@ -239,6 +253,7 @@ function findItem(object: THREE.Object3D | null): HouseItem | undefined {
 }
 
 export default function HouseGame3D(props: Props) {
+  const { acquireRenderer, preset, releaseRenderer } = useCasasGraphics();
   const id = useId().replace(/[^a-zA-Z0-9_-]/g, "");
   const host = useRef<HTMLDivElement>(null);
   const current = useRef(props);
@@ -256,8 +271,8 @@ export default function HouseGame3D(props: Props) {
     const camera = new THREE.PerspectiveCamera(43, 1, .1, 80);
     camera.position.set(12.4, 11.2, 14.8);
     camera.lookAt(0, 1.1, 0);
-    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
-    renderer.setPixelRatio(Math.min(devicePixelRatio, 1.65));
+    const renderer = acquireRenderer(mount);
+    renderer.setPixelRatio(preset.pixelRatio);
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.08;
@@ -266,23 +281,34 @@ export default function HouseGame3D(props: Props) {
     renderer.domElement.style.cssText = "display:block;width:100%;height:100%;touch-action:none";
     renderer.domElement.setAttribute("aria-label", "Interior 3D da casa");
     mount.appendChild(renderer.domElement);
-    const composer = new EffectComposer(renderer);
-    composer.addPass(new RenderPass(scene, camera));
-    composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), .13, .3, .93));
-    composer.addPass(new OutputPass());
+    let composer: EffectComposer | null = null;
+    if (preset.bloom) {
+      composer = new EffectComposer(renderer);
+      composer.setPixelRatio(preset.pixelRatio * preset.postProcessingScale);
+      composer.addPass(new RenderPass(scene, camera));
+      composer.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), .13, .3, .93));
+      composer.addPass(new OutputPass());
+    }
     scene.add(new THREE.HemisphereLight(0xb4c7ef, 0x2d2035, 1.8));
     const sun = new THREE.DirectionalLight(0xffe2b8, 3.4);
-    sun.position.set(8, 14, 9); sun.castShadow = true; sun.shadow.mapSize.set(2048, 2048);
+    sun.position.set(8, 14, 9); sun.castShadow = true; sun.shadow.mapSize.set(preset.shadowMapSize, preset.shadowMapSize);
     sun.shadow.camera.left = sun.shadow.camera.bottom = -12; sun.shadow.camera.right = sun.shadow.camera.top = 12;
     scene.add(sun);
     const room = addRoom(scene, current.current.house);
     const floor = room.floor;
-    let furniture = new Map<string, FurnitureRig>();
+    const furniture = new Map<string, FurnitureRig>();
     let local = createAvatar3D(current.current.localAvatar || current.current.house.avatar, "VOCÊ");
     local.root.position.copy(normalizedToWorld(50, 80)).setY(.03);
     scene.add(local.root);
     const localTarget = local.root.position.clone();
     const remotes = new Map<string, PlayerRig>();
+    const avatarBatch = createAvatarRenderBatch(scene);
+    let avatarBatchInitialized = false;
+    let avatarSavedDrawCalls = 0;
+    const rebuildAvatarBatch = () => {
+      avatarSavedDrawCalls = avatarBatch.rebuild([local, ...Array.from(remotes.values(), value => value.rig)]);
+      avatarBatchInitialized = true;
+    };
     const selection = new THREE.Mesh(new THREE.RingGeometry(.72, .86, 48), new THREE.MeshBasicMaterial({ color: 0xffd76a, transparent: true, opacity: .88, side: THREE.DoubleSide, depthWrite: false }));
     selection.rotation.x = -Math.PI / 2;
     selection.position.y = .045;
@@ -297,18 +323,41 @@ export default function HouseGame3D(props: Props) {
     let lastMove = 0;
     let wasMoving = false;
     let disposed = false;
+    const direction = new THREE.Vector3();
+    const movementBefore = new THREE.Vector3();
+    const movementHeading = new THREE.Vector3();
 
-    const rebuildFurniture = () => {
-      furniture.forEach(rig => { scene.remove(rig.group); dispose(rig.group); });
-      furniture = new Map();
-      current.current.house.items.filter(item => item.placed && !item.stolen).forEach(item => {
+    const syncSelection = () => {
+      const selected = current.current.selectedItemId ? furniture.get(current.current.selectedItemId) : undefined;
+      selection.visible = Boolean(selected);
+      if (selected) selection.position.set(selected.group.position.x, .05, selected.group.position.z);
+    };
+
+    const syncFurniture = () => {
+      const previousItems = [...furniture.values()].map((rig) => rig.item);
+      const reconciliation = reconcileFurnitureItems(previousItems, current.current.house.items);
+      reconciliation.removeIds.forEach((id) => {
+        const rig = furniture.get(id);
+        if (!rig) return;
+        scene.remove(rig.group);
+        dispose(rig.group);
+        furniture.delete(id);
+      });
+      reconciliation.createItems.forEach((item) => {
         const rig = createFurniture(item);
         furniture.set(item.id, rig);
         scene.add(rig.group);
       });
-      const selected = current.current.selectedItemId ? furniture.get(current.current.selectedItemId) : undefined;
-      selection.visible = Boolean(selected);
-      if (selected) selection.position.set(selected.group.position.x, .05, selected.group.position.z);
+      reconciliation.updateItems.forEach((item) => {
+        const rig = furniture.get(item.id);
+        if (!rig) return;
+        const position = gridToWorld(item.x, item.y);
+        rig.item = item;
+        rig.group.position.set(position.x, rig.baseY, position.z);
+        rig.group.rotation.y = -(item.rotation || 0) * Math.PI / 2;
+        interactive(rig.group, item);
+      });
+      syncSelection();
     };
 
     const syncLocalAvatar = () => {
@@ -320,13 +369,20 @@ export default function HouseGame3D(props: Props) {
       disposeAvatar3D(previous);
       local = replacement;
       localTarget.copy(local.root.position);
+      rebuildAvatarBatch();
     };
 
     const syncRemotes = () => {
       const incoming = current.current.remotePlayers || [];
       const ids = new Set(incoming.map(player => player.id));
+      let batchDirty = false;
       remotes.forEach((remote, id) => {
-        if (!ids.has(id)) { scene.remove(remote.rig.root); disposeAvatar3D(remote.rig); remotes.delete(id); }
+        if (!ids.has(id)) {
+          scene.remove(remote.rig.root);
+          disposeAvatar3D(remote.rig);
+          remotes.delete(id);
+          batchDirty = true;
+        }
       });
       incoming.forEach(player => {
         const target = normalizedToWorld(player.x, player.y);
@@ -337,6 +393,7 @@ export default function HouseGame3D(props: Props) {
           scene.add(rig.root);
           remote = { rig, target, moving: false, reportedMoving: false };
           remotes.set(player.id, remote);
+          batchDirty = true;
         } else {
           const previous = remote.rig;
           const replacement = updateAvatar3D(previous, player.avatar, player.nickname);
@@ -345,19 +402,22 @@ export default function HouseGame3D(props: Props) {
             previous.root.removeFromParent();
             disposeAvatar3D(previous);
             remote.rig = replacement;
+            batchDirty = true;
           }
         }
         remote.target.copy(target);
         remote.reportedMoving = Boolean(player.moving);
       });
+      if (batchDirty || !avatarBatchInitialized) rebuildAvatarBatch();
     };
-    const sync = () => { rebuildFurniture(); syncLocalAvatar(); syncRemotes(); };
-    runtime.current = { sync };
-    sync();
+    runtime.current = { syncFurniture, syncLocalAvatar, syncRemotes, syncSelection };
+    syncFurniture();
+    syncLocalAvatar();
+    syncRemotes();
 
     const resize = () => {
       const width = Math.max(1, mount.clientWidth), height = Math.max(1, mount.clientHeight);
-      camera.aspect = width / height; camera.updateProjectionMatrix(); renderer.setSize(width, height, false); composer.setSize(width, height);
+      camera.aspect = width / height; camera.updateProjectionMatrix(); renderer.setSize(width, height, false); composer?.setSize(width, height);
     };
     const observer = new ResizeObserver(resize); observer.observe(mount); resize();
     const pointerFrom = (event: PointerEvent) => {
@@ -424,7 +484,7 @@ export default function HouseGame3D(props: Props) {
       if (disposed) return;
       timer.update();
       const delta = Math.min(timer.getDelta(), .05), elapsed = timer.getElapsed();
-      const direction = new THREE.Vector3(Number(keys.has("KeyD") || keys.has("ArrowRight")) - Number(keys.has("KeyA") || keys.has("ArrowLeft")), 0, Number(keys.has("KeyS") || keys.has("ArrowDown")) - Number(keys.has("KeyW") || keys.has("ArrowUp")));
+      direction.set(Number(keys.has("KeyD") || keys.has("ArrowRight")) - Number(keys.has("KeyA") || keys.has("ArrowLeft")), 0, Number(keys.has("KeyS") || keys.has("ArrowDown")) - Number(keys.has("KeyW") || keys.has("ArrowUp")));
       if (direction.lengthSq()) {
         direction.normalize().multiplyScalar(4.2 * delta);
         localTarget.copy(local.root.position).add(direction);
@@ -433,38 +493,54 @@ export default function HouseGame3D(props: Props) {
       const distance = local.root.position.distanceTo(localTarget);
       const moving = distance > .045;
       if (moving) {
-        const before = local.root.position.clone();
+        movementBefore.copy(local.root.position);
         local.root.position.lerp(localTarget, Math.min(1, 4.2 * delta / Math.max(distance, .001)));
-        const heading = local.root.position.clone().sub(before);
-        if (heading.lengthSq()) local.root.rotation.y = Math.atan2(heading.x, heading.z);
+        movementHeading.copy(local.root.position).sub(movementBefore);
+        if (movementHeading.lengthSq()) local.root.rotation.y = Math.atan2(movementHeading.x, movementHeading.z);
       }
-      animateAvatar3D(local, elapsed, moving, 0, reducedMotion, delta, Boolean(current.current.speaking));
+      const localSpeaking = Boolean(current.current.speaking);
+      let avatarMatricesDirty = moving || local.walking > .001 || localSpeaking || local.voiceIndicator.visible !== localSpeaking;
+      if (avatarMatricesDirty) animateAvatar3D(local, elapsed, moving, 0, reducedMotion, delta, localSpeaking);
       remotes.forEach(remote => {
-        const before = remote.rig.root.position.clone();
-        remote.moving = remote.reportedMoving || before.distanceTo(remote.target) > .04;
+        movementBefore.copy(remote.rig.root.position);
+        remote.moving = remote.reportedMoving || movementBefore.distanceTo(remote.target) > .04;
         remote.rig.root.position.lerp(remote.target, 1 - Math.exp(-7 * delta));
-        const heading = remote.rig.root.position.clone().sub(before);
-        if (heading.lengthSq()) remote.rig.root.rotation.y = Math.atan2(heading.x, heading.z);
-        animateAvatar3D(remote.rig, elapsed, remote.moving, 0, reducedMotion, delta);
+        movementHeading.copy(remote.rig.root.position).sub(movementBefore);
+        const moved = movementHeading.lengthSq() > 0;
+        if (moved) remote.rig.root.rotation.y = Math.atan2(movementHeading.x, movementHeading.z);
+        const needsPose = remote.moving || remote.rig.walking > .001;
+        if (needsPose) animateAvatar3D(remote.rig, elapsed, remote.moving, 0, reducedMotion, delta);
+        avatarMatricesDirty = moved || needsPose || avatarMatricesDirty;
       });
+      if (avatarMatricesDirty) avatarBatch.update();
       if (shouldPublishMovement({ moving, wasMoving, elapsed, lastSent: lastMove, interval: .15 })) {
         const point = house3dWorldToNormalized(local.root.position.x, local.root.position.z);
         current.current.onAvatarMove?.(point.x, point.y, moving);
         lastMove = elapsed; wasMoving = moving;
       }
       selection.rotation.z += delta * .35;
-      composer.render(delta);
+      monitor.beginFrame();
+      if (composer) composer.render(delta);
+      else renderer.render(scene, camera);
+      monitor.frame();
     };
-    renderer.setAnimationLoop(animate);
+    const monitor = createThreePerformanceMonitor("house", renderer, avatarSavedDrawCalls);
+    const updateVisibility = () => renderer.setAnimationLoop(document.hidden ? null : animate);
+    document.addEventListener("visibilitychange", updateVisibility);
+    updateVisibility();
     return () => {
       disposed = true; timer.disconnect(); runtime.current = null; renderer.setAnimationLoop(null); observer.disconnect();
+      document.removeEventListener("visibilitychange", updateVisibility);
       renderer.domElement.removeEventListener("pointerdown", onDown); renderer.domElement.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp); window.removeEventListener("keydown", onKeyDown); window.removeEventListener("keyup", onKeyUp);
-      dispose(scene); composer.dispose(); renderer.dispose(); renderer.forceContextLoss(); renderer.domElement.remove();
+      avatarBatch.dispose(); dispose(scene); composer?.dispose(); monitor.dispose(); releaseRenderer(mount);
     };
-  }, []);
+  }, [acquireRenderer, preset, releaseRenderer]);
 
-  useEffect(() => { runtime.current?.sync(); }, [props.house, props.selectedItemId, props.remotePlayers]);
+  useEffect(() => { runtime.current?.syncFurniture(); }, [props.house.items]);
+  useEffect(() => { runtime.current?.syncLocalAvatar(); }, [props.house.avatar, props.localAvatar]);
+  useEffect(() => { runtime.current?.syncRemotes(); }, [props.remotePlayers]);
+  useEffect(() => { runtime.current?.syncSelection(); }, [props.selectedItemId]);
 
   return <div id={`house-3d-${id}`} className="relative h-full min-h-0 w-full overflow-hidden bg-[#171020]" data-testid="house-world-3d">
     <div ref={host} className="absolute inset-0" />

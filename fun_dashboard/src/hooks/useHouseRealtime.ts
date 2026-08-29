@@ -5,7 +5,7 @@ import type { HousePlayer, HouseView } from "@/lib/types";
 import { createRealtimeLifecycleController } from "@/lib/realtimeLifecycle";
 
 type WireEvent = { seq?: number; type: string; data: Record<string, unknown> };
-export type RealtimeChatMessage = { id: string; senderId: string; text: string; createdAt: number };
+export type RealtimeChatMessage = { id: string; senderId: string; nickname?: string; text: string; createdAt: number };
 export type RealtimeSignal = { id: string; fromParticipantId: string; toParticipantId: string; kind: "offer" | "answer" | "ice" | "ready"; payload: unknown };
 type SessionResponse = { sessionId: string; streamTicket: string; roomId: string; self: { id: string }; nextClientSeq?: number };
 type ActiveSession = Omit<SessionResponse, "streamTicket">;

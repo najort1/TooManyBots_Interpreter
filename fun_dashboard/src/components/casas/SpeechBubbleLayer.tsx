@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from "react";
 import { SendHorizontal } from "lucide-react";
+import { CHAT_BUBBLE_TTL_MS, getVisibleChatMessages } from "@/lib/chatBubblePolicy.js";
 
 export type ChatMessage = {
   id: string;
@@ -19,19 +20,20 @@ type SpeechBubbleLayerProps = {
 
 export default function SpeechBubbleLayer({ messages, onSendMessage }: SpeechBubbleLayerProps) {
   const [inputText, setInputText] = useState("");
-  const [activeBubbles, setActiveBubbles] = useState<ChatMessage[]>([]);
+  const [clock, setClock] = useState(() => Date.now());
 
   useEffect(() => {
-    setActiveBubbles(messages.slice(-5));
+    const now = Date.now();
+    const nextExpiration = messages
+      .map((message) => Number(message.createdAt) + CHAT_BUBBLE_TTL_MS)
+      .filter((expiresAt) => Number.isFinite(expiresAt) && expiresAt > now)
+      .sort((left, right) => left - right)[0];
+    if (!nextExpiration) return;
+    const timer = window.setTimeout(() => setClock(Date.now()), Math.max(16, nextExpiration - now + 16));
+    return () => window.clearTimeout(timer);
+  }, [clock, messages]);
 
-    // Desaparece com balões antigos após 7 segundos
-    const timer = setTimeout(() => {
-      const now = Date.now();
-      setActiveBubbles((prev) => prev.filter((msg) => now - msg.createdAt < 7000));
-    }, 7000);
-
-    return () => clearTimeout(timer);
-  }, [messages]);
+  const activeBubbles = getVisibleChatMessages(messages, clock) as ChatMessage[];
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
