@@ -35,6 +35,7 @@ export function createHouseRealtimeHub({
   now = Date.now,
   collision = () => false,
   positionStore = new Map(),
+  presenceTimeoutMs = 30_000,
   streetBounds = { minX: 0, maxX: 100, minY: 0, maxY: 100 },
   // Both the street and the 3D house client publish normalized coordinates.
   // Keeping one wire format avoids rejecting every house movement outside cell 5,7.
@@ -49,6 +50,21 @@ export function createHouseRealtimeHub({
   function roomFor(key) {
     if (!rooms.has(key)) rooms.set(key, { seq: 0, clients: new Map(), participants: new Map(), messages: [], signalQueues: new Map() });
     return rooms.get(key);
+  }
+  function hasActiveStream(room, participantId) {
+    return [...room.clients.values()].some((clientParticipantId) => clientParticipantId === participantId);
+  }
+  function expired(session, room) {
+    return !hasActiveStream(room, session.participantId)
+      && now() - session.lastSeenAt > presenceTimeoutMs;
+  }
+  function pruneExpired(room, exceptSessionId = '') {
+    for (const participant of [...room.participants.values()]) {
+      if (participant.id !== exceptSessionId && expired(participant, room)) close(participant);
+    }
+  }
+  function touch(session) {
+    session.lastSeenAt = now();
   }
   function consume(id, kind, max, windowMs = 1000) {
     const key = id + ':' + kind;
@@ -93,8 +109,13 @@ export function createHouseRealtimeHub({
     const id = randomUUID();
     const stableParticipantId = publicId(`${scopeKey}:${actor.userJid}`);
     const participantId = `${stableParticipantId}.${randomUUID().slice(0, 8)}`;
+    let room = roomFor(roomId);
+    pruneExpired(room);
+    for (const participant of [...room.participants.values()]) {
+      if (participant.stableParticipantId === stableParticipantId) close(participant);
+    }
+    room = roomFor(roomId);
     const saved = positionStore.get(`${roomId}:${stableParticipantId}`) || {};
-    const room = roomFor(roomId);
     const hasSavedPosition = Number(saved.clientSeq) > 0 && Number.isFinite(saved.x) && Number.isFinite(saved.y);
     const spawn = scene === 'street' ? streetSpawn(room, stableParticipantId) : HOUSE_SPAWN;
     const session = {
@@ -108,6 +129,7 @@ export function createHouseRealtimeHub({
       avatar: sanitizePublicAvatar(avatar),
       movedAt: now(),
       createdAt: now(),
+      lastSeenAt: now(),
     };
     sessions.set(id, session);
     room.participants.set(participantId, session);
@@ -115,7 +137,15 @@ export function createHouseRealtimeHub({
   }
   function authorize(sessionId, actor) {
     const session = sessions.get(String(sessionId || ''));
-    return session && session.actor.userJid === actor.userJid && session.scopeKey === actor.scopeKey ? session : null;
+    if (!session || session.actor.userJid !== actor.userJid || session.scopeKey !== actor.scopeKey) return null;
+    const room = rooms.get(session.roomId);
+    if (!room || expired(session, room)) {
+      close(session);
+      return null;
+    }
+    touch(session);
+    pruneExpired(room, session.id);
+    return session;
   }
   function publicParticipant(session) {
     return {
@@ -130,6 +160,7 @@ export function createHouseRealtimeHub({
   }
   function attach(session, res) {
     const room = roomFor(session.roomId);
+    touch(session);
     room.clients.set(res, session.participantId);
     emit(room, 'snapshot', snapshot(session));
     emit(room, 'presence', { roomId: session.roomId, action: 'join', participant: publicParticipant(session) });
@@ -137,6 +168,8 @@ export function createHouseRealtimeHub({
   }
   function snapshot(session) {
     const room = roomFor(session.roomId);
+    touch(session);
+    pruneExpired(room, session.id);
     return {
       roomId: session.roomId,
       selfId: session.participantId,
@@ -146,6 +179,8 @@ export function createHouseRealtimeHub({
   }
   function poll(session, input = {}) {
     const room = roomFor(session.roomId);
+    touch(session);
+    pruneExpired(room, session.id);
     const requestedAck = Number(input.afterSignalSeq);
     const acknowledged = Number.isSafeInteger(requestedAck)
       ? Math.max(Number(session.signalAckSeq) || 0, Math.min(requestedAck, room.seq))
@@ -162,6 +197,7 @@ export function createHouseRealtimeHub({
     };
   }
   function updateAvatar(session, avatar) {
+    touch(session);
     const next = sanitizePublicAvatar(avatar);
     if (!next || Number(next.revision) <= Number(session.avatar?.revision || 0)) {
       return { ok: false, status: 409, error: 'stale-avatar-revision' };
@@ -189,6 +225,7 @@ export function createHouseRealtimeHub({
     return { ok: true, updated };
   }
   function move(session, input) {
+    touch(session);
     if (!consume(session.id, 'move', 15)) return { ok: false, status: 429, error: 'rate-limit' };
     const x = Number(input.x);
     const y = Number(input.y);
@@ -213,15 +250,17 @@ export function createHouseRealtimeHub({
     return { ok: true, event };
   }
   function chat(session, input) {
+    touch(session);
     if (!consume(session.id, 'chat', 5, 5000)) return { ok: false, status: 429, error: 'rate-limit' };
     const text = String(input.text || '').trim();
     if (!text || text.length > CHAT_LIMIT) return { ok: false, status: 400, error: 'invalid-text' };
-    const room = roomFor(session.roomId); const message = { id: randomUUID(), senderId: session.participantId, text, createdAt: now() };
+    const room = roomFor(session.roomId); const message = { id: randomUUID(), senderId: session.participantId, nickname: session.nickname, text, createdAt: now() };
     room.messages.push(message);
     if (room.messages.length > HISTORY_LIMIT) room.messages.shift();
     return { ok: true, event: emit(room, 'chat', { roomId: session.roomId, ...message }) };
   }
   function signal(session, input) {
+    touch(session);
     if (!consume(session.id, 'signal', 30)) return { ok: false, status: 429, error: 'rate-limit' };
     if (!['offer','answer','ice','ready'].includes(input.kind) || Buffer.byteLength(JSON.stringify(input.payload || null)) > SIGNAL_LIMIT) return { ok: false, status: 400, error: 'invalid-signal' };
     const room = roomFor(session.roomId); if (!room.participants.has(input.toParticipantId)) return { ok: false, status: 404, error: 'peer-not-found' };
@@ -234,6 +273,7 @@ export function createHouseRealtimeHub({
     return { ok: true, event };
   }
   function close(session) {
+    if (!sessions.has(session.id)) return;
     const room = rooms.get(session.roomId);
     positionStore.set(`${session.roomId}:${session.stableParticipantId}`, {
       x: session.x, y: session.y, direction: session.direction, clientSeq: session.clientSeq,
@@ -246,6 +286,11 @@ export function createHouseRealtimeHub({
     emit(room, 'presence', {
       roomId: session.roomId, action: 'leave', participant: { id: session.participantId },
     });
+    for (const [res, participantId] of [...room.clients]) {
+      if (participantId !== session.participantId) continue;
+      room.clients.delete(res);
+      try { res.end?.(); } catch {}
+    }
     if (!room.clients.size && !room.participants.size) rooms.delete(session.roomId);
   }
   function issueStreamTicket(session, ttlMs = 30_000) {

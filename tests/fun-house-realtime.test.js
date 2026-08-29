@@ -133,3 +133,45 @@ test('realtime avatar: snapshot usa aparência de cada participante e update rej
   assert.equal(updated.updated, 1);
   assert.ok(chunks.some((chunk) => chunk.includes('event: avatar') && chunk.includes('"revision":4') && chunk.includes('corpo_neutro')));
 });
+
+test('realtime presence: polling remove sessão abandonada após o prazo de presença', () => {
+  let now = 1_000;
+  const hub = createHouseRealtimeHub({ now: () => now, presenceTimeoutMs: 15_000 });
+  const alice = open(hub, 'alice-presence@s.whatsapp.net');
+  const ghost = open(hub, 'ghost-presence@s.whatsapp.net');
+
+  now += 10_000;
+  hub.poll(alice.session);
+  now += 5_001;
+  const poll = hub.poll(alice.session);
+
+  assert.deepEqual(poll.snapshot.participants.map((participant) => participant.id), [alice.session.participantId]);
+  assert.equal(hub.authorize(ghost.session.id, actor('ghost-presence@s.whatsapp.net')), null);
+});
+
+test('realtime presence: nova sessão do mesmo morador substitui a sessão fantasma', () => {
+  const hub = createHouseRealtimeHub();
+  const first = open(hub, 'same-player@s.whatsapp.net');
+  const second = open(hub, 'same-player@s.whatsapp.net');
+  const snapshot = hub.snapshot(second.session);
+
+  assert.equal(hub.authorize(first.session.id, actor('same-player@s.whatsapp.net')), null);
+  assert.deepEqual(snapshot.participants.map((participant) => participant.id), [second.session.participantId]);
+});
+
+test('realtime chat: evento e histórico preservam o nome público do autor', () => {
+  const hub = createHouseRealtimeHub();
+  const { session } = hub.open({
+    actor: actor('lucas@s.whatsapp.net'),
+    scopeKey: 'group@g.us',
+    scene: 'street',
+    sceneId: 'main',
+    nickname: 'Lucas Santos',
+  });
+
+  const sent = hub.chat(session, { text: 'Olá, bairro!' });
+  const snapshot = hub.snapshot(session);
+
+  assert.equal(sent.event.data.nickname, 'Lucas Santos');
+  assert.equal(snapshot.recentMessages[0].nickname, 'Lucas Santos');
+});
