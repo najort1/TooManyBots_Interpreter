@@ -51,7 +51,7 @@ function computeClass(commandText = '', messageType = '') {
   const text = String(commandText ?? '').trim().toLowerCase();
   if (!text && !messageType) return QUEUE_CLASSES.FAST;
 
-  if (messageType === 'image' || messageType === 'video' || messageType === 'document' || messageType === 'audio') {
+  if (messageType === 'image' || messageType === 'video' || messageType === 'document' || messageType === 'audio' || messageType === 'album') {
     return QUEUE_CLASSES.HEAVY;
   }
 
