@@ -23,7 +23,7 @@ import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { PERSONA_CONTEXT_TURNS, PERSONA_DERIVE_INTERVAL_MS, PERSONA_TOKEN_HALF_LIFE_MS, PERSONA_TOP_TOKENS } from '../constants.js';
-import { buildPersonaToolManifest, parsePersonaEnvelope } from './personaToolProtocol.js';
+import { buildPersonaToolManifest, parsePersonaEnvelope, looksLikeRawJson } from './personaToolProtocol.js';
 import { isUsablePromptFact } from '../utils/promptFactSanitizer.js';
 import { resolveStickerPath } from './personaStickerCatalog.js';
 import { imageBufferToSticker } from '../utils/stickerConvert.js';
@@ -457,7 +457,7 @@ export function createPersonaService({
           }
 
           const legacy = sanitizeFlavor(raw, o.maxChars);
-          if (legacy && !looksLikeScoreboardEcho(legacy)) {
+          if (legacy && !looksLikeScoreboardEcho(legacy) && !looksLikeRawJson(legacy)) {
             return {
               text: legacy.slice(0, o.maxChars),
               actions: [{ type: 'text', text: legacy.slice(0, o.maxChars) }],
@@ -466,7 +466,7 @@ export function createPersonaService({
         }
 
         const clean = sanitizeFlavor(raw, o.maxChars);
-        if (clean && !looksLikeScoreboardEcho(clean)) {
+        if (clean && !looksLikeScoreboardEcho(clean) && !looksLikeRawJson(clean)) {
           return {
             text: clean.slice(0, o.maxChars),
             actions: [{ type: 'text', text: clean.slice(0, o.maxChars) }],

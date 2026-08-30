@@ -1002,7 +1002,7 @@ test('persona: reply ao bot com messageId que NÃO é da persona não continua t
     sock, identityMap, funConfig: cfg, now: 4_000_000,
   });
   const r = await svc.tryRespond({
-    scopeKey: scope, text: 'oi bot', quotedParticipant: botJ,
+    scopeKey: scope, text: 'kkkk discordo', quotedParticipant: botJ,
     quotedMessageId: 'some-command-echo-1', messageType: 'extended-text',
     authorJid: uniqueJid(), sock, identityMap, funConfig: cfg, now: 4_000_001,
   });

@@ -495,3 +495,96 @@ test('multi-action: despacha múltiplos balões e sticker com sock.sendMessage',
     else process.env.FUN_DISABLE_LIVE_LLM = previous;
   }
 });
+
+test('multi-action: envelope de ação única {"type":"sticker","slug":"entendi_nada"} envia sticker sem vazar JSON cru', async () => {
+  const groups = createFunGroupRepository({ getDatabase: getDb });
+  const persona = createFunPersonaRepository({ getDatabase: getDb });
+  const scope = uniqueGroup();
+  const messagesSent = [];
+
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+
+  try {
+    const botJid = uniqueJid('5588');
+    const authorJid = uniqueJid('5511');
+    const mockSock = {
+      user: { id: `${botJid.split('@')[0]}:0` },
+      sendMessage: async (jid, content, opts) => {
+        messagesSent.push({ jid, content, opts });
+        return { key: { id: `msg_${messagesSent.length}` } };
+      },
+    };
+
+    const service = createPersonaService({
+      personaRepository: persona,
+      groupRepository: groups,
+      personaToolExecutor: { execute: async () => ({ ok: true }) },
+      generateZen: async () => '{"type":"sticker","slug":"entendi_nada"}',
+    });
+
+    const res = await service.tryRespond({
+      scopeKey: scope,
+      authorJid,
+      text: 'bot qual figurinha combina com isso?',
+      messageType: 'text',
+      sock: mockSock,
+      identityMap: createIdentityMap(),
+      now: Date.now(),
+    });
+
+    assert.equal(res.responded, true);
+    assert.equal(messagesSent.length, 1);
+    assert.ok(messagesSent[0].content.sticker, 'Deve enviar um sticker');
+    assert.doesNotMatch(String(messagesSent[0].content.text || ''), /"type":"sticker"/, 'Não pode vazar JSON cru');
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('anti-raw-json: JSON inválido ou desconhecido nunca vaza como texto no chat', async () => {
+  const groups = createFunGroupRepository({ getDatabase: getDb });
+  const persona = createFunPersonaRepository({ getDatabase: getDb });
+  const scope = uniqueGroup();
+  const messagesSent = [];
+
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+
+  try {
+    const botJid = uniqueJid('5588');
+    const authorJid = uniqueJid('5511');
+    const mockSock = {
+      user: { id: `${botJid.split('@')[0]}:0` },
+      sendMessage: async (jid, content, opts) => {
+        messagesSent.push({ jid, content, opts });
+        return { key: { id: `msg_${messagesSent.length}` } };
+      },
+    };
+
+    const service = createPersonaService({
+      personaRepository: persona,
+      groupRepository: groups,
+      personaToolExecutor: { execute: async () => ({ ok: true }) },
+      generateZen: async () => '{"corrupted_json_action": 123}',
+    });
+
+    const res = await service.tryRespond({
+      scopeKey: scope,
+      authorJid,
+      text: 'bot?',
+      messageType: 'text',
+      sock: mockSock,
+      identityMap: createIdentityMap(),
+      now: Date.now(),
+    });
+
+    assert.equal(res.responded, true);
+    assert.equal(res.usedFallback, true, 'Deve usar fallback natural em vez de vazar JSON');
+    assert.doesNotMatch(messagesSent[0].content.text, /\{.*\}/, 'Mensagem enviada não pode ser JSON');
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});

@@ -59,10 +59,27 @@ test('[personaPromptBuilder] buildSocialHintBlock organiza pistas por tipo de si
 });
 
 test('[personaTriggerDetector] detectTrigger detecta vocativo, apelidos customizados e menções', () => {
-  // Vocativo no início
+  // Vocativo no início com saudações comuns
   assert.equal(detectTrigger({ text: 'bot tudo bem?' }).mention, true);
   assert.equal(detectTrigger({ text: 'ei bot me ajuda' }).mention, true);
+  assert.equal(detectTrigger({ text: 'Eae bot' }).mention, true);
+  assert.equal(detectTrigger({ text: 'eae, bot como tá?' }).mention, true);
+  assert.equal(detectTrigger({ text: 'E aí bot' }).mention, true);
+  assert.equal(detectTrigger({ text: 'fala bot' }).mention, true);
+  assert.equal(detectTrigger({ text: 'fala aí bot' }).mention, true);
+  assert.equal(detectTrigger({ text: 'salve bot' }).mention, true);
+  assert.equal(detectTrigger({ text: 'opa bot' }).mention, true);
+  assert.equal(detectTrigger({ text: 'oi bot' }).mention, true);
+  assert.equal(detectTrigger({ text: 'coé bot' }).mention, true);
+
+  // Palavras que começam com bot mas não são o bot
   assert.equal(detectTrigger({ text: 'botão grande' }).mention, false);
+  assert.equal(detectTrigger({ text: 'botox' }).mention, false);
+  assert.equal(detectTrigger({ text: 'bota isso ali' }).mention, false);
+
+  // Referências em 3ª pessoa continuam falsas para evitar falso positivo
+  assert.equal(detectTrigger({ text: 'esse bot travou' }).mention, false);
+  assert.equal(detectTrigger({ text: 'o bot respondeu' }).mention, false);
 
   // Apelidos customizados
   assert.equal(detectTrigger({ text: 'fala zezinho show', customAliases: ['zezinho'] }).mention, true);

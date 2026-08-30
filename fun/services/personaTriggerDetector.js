@@ -3,15 +3,24 @@
  *
  * Responsável por:
  * - Resolução e normalização de JIDs de identidade do bot.
- * - Detecção de gatilhos textuais: vocativos no início ("bot", "ei bot"),
+ * - Detecção de gatilhos textuais: vocativos no início ("bot", "ei bot", "eae bot", "fala bot", "salve bot", "opa bot", "oi bot"),
  *   citações naturais no meio da frase ("fala aí bot", "o que você acha, bot?") e
  *   apelidos/aliases customizados (ex: "jarvis", "zezin").
  * - Detecção de menções diretas via @ (participantes mencionados).
  * - Verificação de âncoras de resposta para continuação de threads de conversa.
  */
 
-/** Chamadas textuais inequívocas ao bot no início da mensagem. */
-const VOCATIVE_START_RE = /^\s*(?:bot(?:\s|[?!,.:;]|$)|ei\s+bot(?:\s|[?!,.:;]|$))/iu;
+/**
+ * Chamadas textuais inequívocas e saudações comuns direcionadas ao bot no início da mensagem.
+ * Exemplos aceitos:
+ * - "bot...", "bot?", "bot me ajuda"
+ * - "ei bot...", "ei, bot..."
+ * - "eae bot", "eai bot", "e aí bot", "e ae bot"
+ * - "fala bot", "fala ai bot", "fala aí bot"
+ * - "opa bot", "salve bot", "coe bot", "coé bot", "qual foi bot"
+ * - "oi bot", "ola bot", "olá bot"
+ */
+const VOCATIVE_START_RE = /^\s*(?:bot|(?:ei|e\s*a[eií]|fala(?:\s+a[íi])?|opa|salve|co[eé]|qual\s+foi|oi|ol[áa])\s*,?\s*bot)(?:\s|[?!,.:;]|$)/iu;
 
 /** Menções naturais ao bot com limites de palavra em qualquer parte da frase. */
 const WORD_BOT_RE = /(?:^|\s|[.,!?;:])bot(?=[.,!?;:]|\s|$)/iu;
@@ -98,7 +107,7 @@ export function detectTrigger({
   let mention = false;
 
   if (body) {
-    // 1. Vocativo padrão no início ("bot...", "ei bot...")
+    // 1. Vocativo e saudações padrão no início ("bot...", "ei bot...", "eae bot...", "fala bot...", "salve bot...")
     if (VOCATIVE_START_RE.test(body)) {
       mention = true;
     }

@@ -1208,11 +1208,10 @@ export function createGroupMemoryService({
   }
 
   const LORE_USAGE_RULES = [
-    '- Estes são fatos passados do grupo. Use-os APENAS se a mensagem atual tiver relação direta.',
-    '- É PROIBIDO conectar um fato novo a uma lore antiga se a relação não for óbvia.',
-    '- NUNCA altere o sujeito da lore. Se a lore diz que [Nome] fez X, não atribua a outra pessoa.',
-    '- Se não houver conexão clara, IGNORE a lore por completo.',
-    '- NÃO invente detalhes (números, medidas, causas) que não estejam no fato.',
+    '- Estes são fatos, histórias, micos e apelidos reais do grupo.',
+    '- Use a Lore ativamente para dar contexto, fazer piadas internas e zoar os membros pelas histórias deles.',
+    '- NUNCA altere o sujeito da lore. Se a lore diz que [Nome] fez X, use contra [Nome], não atribua a outra pessoa.',
+    '- NÃO invente detalhes absurdos que contradigam o fato registrado.',
   ];
 
   function renderLoreFacts(facts) {
