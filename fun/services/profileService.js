@@ -8,6 +8,7 @@ import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
+import { isUsablePromptFact } from '../utils/promptFactSanitizer.js';
 
 const EXTRACT_SYSTEM = `Você extrai apenas bio e extras de um texto livre em pt-BR (grupo WhatsApp).
 
@@ -838,10 +839,19 @@ export function createProfileService({
       const label = p.nickname || wa || String(jid).split('@')[0];
       const bits = [];
       if (p.nickname && wa && p.nickname !== wa) bits.push(`nick: ${p.nickname}`);
-      if (p.bio) bits.push(p.bio);
+      // Sanitiza: bio/extras vindos do extrator LLM podem trazer placeholder
+      // corrompido ("Adora comer ? e não informa quem adora") — não vai pro prompt.
+      if (p.bio && isUsablePromptFact(p.bio)) bits.push(p.bio);
       if (p.birthdayMd) bits.push(`niver ${formatBirthdayDisplay(p.birthdayMd)}`);
       if (p.title) bits.push(`título: ${p.title}`);
-      if (p.extras) bits.push(`extras: ${String(p.extras)}`);
+      if (p.extras) {
+        const usableExtras = String(p.extras)
+          .split(';')
+          .map((entry) => entry.trim())
+          .filter((entry) => entry && isUsablePromptFact(entry))
+          .join('; ');
+        if (usableExtras) bits.push(`extras: ${usableExtras}`);
+      }
       if (!bits.length) continue;
       lines.push(`- ${label}: ${bits.join(' · ')}`);
     }
