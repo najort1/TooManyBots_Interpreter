@@ -493,8 +493,18 @@ export function createGroupMemoryService({
   generateOllama = ollamaGenerate,
   getNewsService = null,
   evidenceRepository = null,
+  adapters = {},
+  parseGuard = null,
+  evidenceEnricher = null,
+  bufferLock = null,
+  batchDedup = null,
 } = {}) {
   if (!memoryRepository) throw new Error('[fun/groupMemoryService] memoryRepository required');
+
+  const effectiveParseGuard = parseGuard || adapters.parseGuard || null;
+  const effectiveEvidenceEnricher = evidenceEnricher || adapters.evidenceEnricher || null;
+  const effectiveBufferLock = bufferLock || adapters.bufferLock || null;
+  const effectiveBatchDedup = batchDedup || adapters.batchDedup || null;
 
   /** @type {Map<string, { msgs: object[], lastFlushAt: number, flushing: boolean }>} */
   const buffers = new Map();
@@ -622,6 +632,7 @@ export function createGroupMemoryService({
       name: displayOf(userJid),
       text: body.slice(0, o.msgMaxChars),
       at: Number(now) || Date.now(),
+      messageId: String(messageId || ''),
     });
     if (buf.msgs.length > o.bufferSize) {
       buf.msgs = buf.msgs.slice(-o.bufferSize);
@@ -654,114 +665,145 @@ export function createGroupMemoryService({
   async function flushScope(scopeKey, funConfig = {}, now = Date.now()) {
     const o = opts(funConfig);
     if (!o.enabled) return { ok: false, reason: 'disabled' };
-    const buf = getBuf(scopeKey);
-    if (buf.flushing) return { ok: false, reason: 'busy' };
-    if (buf.msgs.length < 3) return { ok: false, reason: 'too-few' };
 
-    buf.flushing = true;
-    // empacota o máximo de mensagens que couber no orçamento (~40k), priorizando as recentes
-    const batch = packBatchForExtract(buf.msgs.slice(-o.bufferSize), o);
-    buf.msgs = [];
-    buf.lastFlushAt = now;
+    const executeFlush = async () => {
+      const buf = getBuf(scopeKey);
+      if (buf.flushing) return { ok: false, reason: 'busy' };
+      if (buf.msgs.length < 3) return { ok: false, reason: 'too-few' };
 
-    const maxExtract = Math.max(2, Math.min(8, Math.round(batch.length / 12.5)));
+      buf.flushing = true;
+      let rawMsgs = buf.msgs.slice(-o.bufferSize);
 
-    try {
-      const existing = memoryRepository.listFacts(scopeKey, {
-        limit: o.maxFacts,
-        minScore: 0,
-      });
-      const extracted = await extractFacts(scopeKey, batch, existing, funConfig, o, maxExtract);
-      let inserted = 0;
-      let reinforced = 0;
-
-      for (const fact of extracted.slice(0, maxExtract)) {
-        if (fact.score < o.minScore) continue;
-        if (!fact.subjects?.length) continue;
-
-        const hit = findSimilar(existing, fact);
-        if (hit) {
-          // Anti-consolidação de erro: texto muito divergente do gravado não
-          // sobrescreve o summary nem infla o score — reforço convergindo pra média.
-          const textSim = jaccard(tokenSet(hit.summary), tokenSet(fact.summary));
-          const compatible = textSim >= TEXT_CONFLICT_THRESHOLD;
-          memoryRepository.reinforceFact(hit.id, {
-            summary: fact.summary,
-            score: compatible ? fact.score : Math.round((hit.score + fact.score) / 2),
-            keywords: fact.keywords,
-            overwriteSummary: compatible,
-            now,
-          });
-          reinforced += 1;
-          const idx = existing.findIndex((e) => e.id === hit.id);
-          if (idx >= 0) {
-            const prev = existing[idx];
-            existing[idx] = {
-              ...prev,
-              summary: compatible ? fact.summary : prev.summary,
-              score: compatible
-                ? Math.max(prev.score, fact.score)
-                : Math.max(prev.score, Math.round((prev.score + fact.score) / 2)),
-              keywords: [
-                ...new Set([...(prev.keywords || []), ...(fact.keywords || [])]),
-              ].slice(0, 12),
-              hits: (prev.hits || 1) + 1,
-              lastSeenAt: now,
-            };
-          }
-        } else {
-          const rec = memoryRepository.insertFact({
-            scopeKey,
-            kind: fact.kind,
-            summary: fact.summary,
-            subjects: fact.subjects,
-            keywords: fact.keywords,
-            score: fact.score,
-            source: 'chat',
-            now,
-          });
-          if (rec) {
-            existing.push(rec);
-            inserted += 1;
-          }
+      if (effectiveBatchDedup) {
+        const existingForDedup = memoryRepository.listFacts(scopeKey, {
+          limit: o.maxFacts,
+          minScore: 0,
+        });
+        const dedupRes = effectiveBatchDedup(rawMsgs, existingForDedup, { now });
+        if (dedupRes?.filteredBatch) {
+          rawMsgs = dedupRes.filteredBatch;
         }
       }
 
-      // Loga quotes notáveis no fun_daily_events para o jornal
-      const ns = typeof getNewsService === 'function' ? getNewsService() : null;
-      if (ns && typeof ns.log === 'function') {
-        for (const fact of extracted) {
-          if (!['catchphrase', 'running_gag', 'epic_fail'].includes(fact.kind)) continue;
-          if (fact.score < Math.max(o.minScore, 50)) continue;
-          const jid = fact.subjects?.[0];
-          if (!jid) continue;
-          ns.log(scopeKey, 'notable_quote', {
-            userJid: jid,
-            payload: {
-              quote: fact.summary,
+      // empacota o máximo de mensagens que couber no orçamento (~40k), priorizando as recentes
+      const batch = packBatchForExtract(rawMsgs, o);
+      buf.msgs = [];
+      buf.lastFlushAt = now;
+
+      const maxExtract = Math.max(2, Math.min(8, Math.round(batch.length / 12.5)));
+
+      try {
+        const existing = memoryRepository.listFacts(scopeKey, {
+          limit: o.maxFacts,
+          minScore: 0,
+        });
+        let extracted = await extractFacts(scopeKey, batch, existing, funConfig, o, maxExtract);
+
+        if (effectiveParseGuard && extracted.length) {
+          extracted = effectiveParseGuard(extracted, { scopeKey });
+        }
+        if (effectiveEvidenceEnricher && extracted.length) {
+          extracted = effectiveEvidenceEnricher(extracted, batch, scopeKey);
+        }
+
+        let inserted = 0;
+        let reinforced = 0;
+
+        for (const fact of extracted.slice(0, maxExtract)) {
+          if (fact.score < o.minScore) continue;
+          if (!fact.subjects?.length) continue;
+
+          const hit = findSimilar(existing, fact);
+          if (hit) {
+            // Anti-consolidação de erro: texto muito divergente do gravado não
+            // sobrescreve o summary nem infla o score — reforço convergindo pra média.
+            const textSim = jaccard(tokenSet(hit.summary), tokenSet(fact.summary));
+            const compatible = textSim >= TEXT_CONFLICT_THRESHOLD;
+            memoryRepository.reinforceFact(hit.id, {
+              summary: fact.summary,
+              score: compatible ? fact.score : Math.round((hit.score + fact.score) / 2),
+              keywords: fact.keywords,
+              overwriteSummary: compatible,
+              now,
+            });
+            reinforced += 1;
+            const idx = existing.findIndex((e) => e.id === hit.id);
+            if (idx >= 0) {
+              const prev = existing[idx];
+              existing[idx] = {
+                ...prev,
+                summary: compatible ? fact.summary : prev.summary,
+                score: compatible
+                  ? Math.max(prev.score, fact.score)
+                  : Math.max(prev.score, Math.round((prev.score + fact.score) / 2)),
+                keywords: [
+                  ...new Set([...(prev.keywords || []), ...(fact.keywords || [])]),
+                ].slice(0, 12),
+                hits: (prev.hits || 1) + 1,
+                lastSeenAt: now,
+              };
+            }
+          } else {
+            const rec = memoryRepository.insertFact({
+              scopeKey,
               kind: fact.kind,
-            },
-            now,
-          });
+              summary: fact.summary,
+              subjects: fact.subjects,
+              keywords: fact.keywords,
+              score: fact.score,
+              source: 'chat',
+              now,
+              _parseGuard: fact._parseGuard,
+              evidence: fact.evidence,
+            });
+            if (rec) {
+              existing.push(rec);
+              inserted += 1;
+            }
+          }
         }
+
+        // Loga quotes notáveis no fun_daily_events para o jornal
+        const ns = typeof getNewsService === 'function' ? getNewsService() : null;
+        if (ns && typeof ns.log === 'function') {
+          for (const fact of extracted) {
+            if (!['catchphrase', 'running_gag', 'epic_fail'].includes(fact.kind)) continue;
+            if (fact.score < Math.max(o.minScore, 50)) continue;
+            const jid = fact.subjects?.[0];
+            if (!jid) continue;
+            ns.log(scopeKey, 'notable_quote', {
+              userJid: jid,
+              payload: {
+                quote: fact.summary,
+                kind: fact.kind,
+              },
+              now,
+            });
+          }
+        }
+
+        memoryRepository.decayAndPurge(scopeKey, {
+          ttlDays: o.ttlDays,
+          minScore: o.minScore,
+          now,
+        });
+        memoryRepository.pruneToCap(scopeKey, o.maxFacts);
+
+        if (inserted + reinforced > 0 || random() < 0.35) {
+          await refreshPersona(scopeKey, funConfig, o);
+        }
+
+        return { ok: true, inserted, reinforced, batchSize: batch.length };
+      } finally {
+        // lock rigoroso: nunca deixa flushing preso após erro LLM
+        buf.flushing = false;
       }
+    };
 
-      memoryRepository.decayAndPurge(scopeKey, {
-        ttlDays: o.ttlDays,
-        minScore: o.minScore,
-        now,
-      });
-      memoryRepository.pruneToCap(scopeKey, o.maxFacts);
-
-      if (inserted + reinforced > 0 || random() < 0.35) {
-        await refreshPersona(scopeKey, funConfig, o);
-      }
-
-      return { ok: true, inserted, reinforced, batchSize: batch.length };
-    } finally {
-      // lock rigoroso: nunca deixa flushing preso após erro LLM
-      buf.flushing = false;
+    if (effectiveBufferLock) {
+      return effectiveBufferLock.withLock(scopeKey, executeFlush);
     }
+    return executeFlush();
   }
 
   /**
@@ -931,6 +973,7 @@ export function createGroupMemoryService({
       name: m.name,
       text: String(m.text || '').slice(0, msgMax),
       at: m.at,
+      messageId: m.messageId || '',
     }));
     if (!prepared.length) return [];
 

@@ -93,6 +93,7 @@ import { createFunImageGenerationRepository } from './db/funImageGenerationRepos
 import { createImageGenerationService } from './services/imageGenerationService.js';
 import { createFunFarewellRepository } from './db/funFarewellRepository.js';
 import { createFarewellService } from './services/farewellService.js';
+import { createExtractionAdapters } from './services/extractionAdapters/index.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
 import { nameOf } from './utils/userLabel.js';
 import { getDb } from '../db/context.js';
@@ -358,6 +359,12 @@ export function createFunModule(deps = {}) {
     });
   const personaRepository =
     deps.personaRepository || createFunPersonaRepository({ getDatabase });
+  const extractionAdapters =
+    deps.extractionAdapters ||
+    createExtractionAdapters({
+      funConfig: resolveFunConfig(getConfig() || {}),
+      logger: getLogger?.(),
+    });
   groupMemoryService =
     deps.groupMemoryService ||
     createGroupMemoryService({
@@ -369,6 +376,7 @@ export function createFunModule(deps = {}) {
       generateOllama: deps.ollamaGenerate || deps.generate,
       getNewsService: () => newsService,
       evidenceRepository,
+      adapters: extractionAdapters,
     });
   const personaSocialHintRepository = deps.personaSocialHintRepository || createFunPersonaSocialHintRepository({ getDatabase });
   const personaSocialHintService = deps.personaSocialHintService || createPersonaSocialHintService({
@@ -498,6 +506,7 @@ export function createFunModule(deps = {}) {
       personaToolExecutor,
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      adapters: extractionAdapters,
     });
   }
   const loreReconciliationService =

@@ -90,9 +90,13 @@ export function createPersonaService({
   generateZen = openaiChatComplete,
   getLogger = () => null,
   random = Math.random,
+  adapters = {},
+  promptContextBuilder = null,
 } = {}) {
   if (!personaRepository) throw new Error('[fun/personaService] personaRepository required');
   if (!groupRepository) throw new Error('[fun/personaService] groupRepository required');
+
+  const effectivePromptContextBuilder = promptContextBuilder || adapters.promptContextBuilder || null;
 
   const logger = getLogger();
 
@@ -300,6 +304,22 @@ export function createPersonaService({
       ? `Pistas de memória incertas (use apenas para calibrar a resposta; nunca afirme como fato):\n${[...inferredSignals, ...socialSignals].map((signal) => `- ${signal}`).join('\n')}`
       : '';
 
+    const authorJid = agentContext?.authorJid || '';
+    const authorProfile = authorJid && profileService?.getProfile
+      ? profileService.getProfile(authorJid, scopeKey)
+      : null;
+
+    const extraContextBlock = effectivePromptContextBuilder
+      ? effectivePromptContextBuilder({
+          scopeKey,
+          authorJid,
+          authorProfile,
+          groupIdentity,
+          activePersonaSummary: lore,
+          confirmedFacts: responseContextPack?.confirmedFacts || [],
+        })
+      : '';
+
     const styleBlock = [
       buildStyleBlock(scopeKey),
       identityStyle ? `Voz observada do grupo: ${identityStyle}.` : '',
@@ -308,6 +328,7 @@ export function createPersonaService({
       identityBlock,
       socialHintBlock,
       inferredBlock,
+      extraContextBlock,
     ].filter(Boolean).join('\n');
 
     const contextTurns = responseContextPack?.threadContext?.topicSummary

@@ -293,6 +293,13 @@ export async function startFunBot(options = {}) {
     }`
   );
 
+  const activeAdapters = Object.entries(config.extractionAdapters || {})
+    .filter(([_, v]) => v?.enabled)
+    .map(([k]) => k);
+  if (activeAdapters.length > 0) {
+    console.log(`[fun] Adaptadores de extração ativos: ${activeAdapters.join(', ')}`);
+  }
+
   const getConfig = () => config;
 
   let socketGeneration = 0;

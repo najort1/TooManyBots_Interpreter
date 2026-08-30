@@ -1283,6 +1283,58 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.outputQueueMax,
       { min: 100, max: 50000, rounding: 'floor', clamp: true }
     ),
+    extractionAdapters: {
+      parseGuard: {
+        enabled: normalizeBoolean(
+          raw.extractionAdapters?.parseGuard?.enabled,
+          DEFAULT_FUN_CONFIG.extractionAdapters?.parseGuard?.enabled ?? false
+        ),
+      },
+      evidenceEnricher: {
+        enabled: normalizeBoolean(
+          raw.extractionAdapters?.evidenceEnricher?.enabled,
+          DEFAULT_FUN_CONFIG.extractionAdapters?.evidenceEnricher?.enabled ?? false
+        ),
+      },
+      bufferLock: {
+        enabled: normalizeBoolean(
+          raw.extractionAdapters?.bufferLock?.enabled,
+          DEFAULT_FUN_CONFIG.extractionAdapters?.bufferLock?.enabled ?? false
+        ),
+      },
+      batchDedup: {
+        enabled: normalizeBoolean(
+          raw.extractionAdapters?.batchDedup?.enabled,
+          DEFAULT_FUN_CONFIG.extractionAdapters?.batchDedup?.enabled ?? false
+        ),
+        minScore: normalizeInt(
+          raw.extractionAdapters?.batchDedup?.minScore,
+          DEFAULT_FUN_CONFIG.extractionAdapters?.batchDedup?.minScore ?? 80,
+          { min: 0, max: 100, rounding: 'floor', clamp: true }
+        ),
+        windowHours: normalizeInt(
+          raw.extractionAdapters?.batchDedup?.windowHours,
+          DEFAULT_FUN_CONFIG.extractionAdapters?.batchDedup?.windowHours ?? 24,
+          { min: 1, max: 720, rounding: 'floor', clamp: true }
+        ),
+      },
+      promptContext: {
+        enabled: normalizeBoolean(
+          raw.extractionAdapters?.promptContext?.enabled,
+          DEFAULT_FUN_CONFIG.extractionAdapters?.promptContext?.enabled ?? false
+        ),
+      },
+      metricsRecorder: {
+        enabled: normalizeBoolean(
+          raw.extractionAdapters?.metricsRecorder?.enabled,
+          DEFAULT_FUN_CONFIG.extractionAdapters?.metricsRecorder?.enabled ?? false
+        ),
+        sink: toText(
+          raw.extractionAdapters?.metricsRecorder?.sink,
+          DEFAULT_FUN_CONFIG.extractionAdapters?.metricsRecorder?.sink ?? 'stdout'
+        ),
+      },
+    },
   };
 }
 

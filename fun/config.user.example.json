@@ -51,5 +51,13 @@
   "ollamaWarmupTimeoutMs": 120000,
   "ollamaKeepAliveRefreshMs": 600000,
   "replyCommandsInPrivate": true,
-  "adminJids": []
+  "adminJids": [],
+  "extractionAdapters": {
+    "parseGuard": { "enabled": false },
+    "evidenceEnricher": { "enabled": false },
+    "bufferLock": { "enabled": false },
+    "batchDedup": { "enabled": false, "minScore": 80, "windowHours": 24 },
+    "promptContext": { "enabled": false },
+    "metricsRecorder": { "enabled": false, "sink": "stdout" }
+  }
 }

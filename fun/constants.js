@@ -1047,6 +1047,15 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   imageGenResponseFormat: 'url',
   /** Teto de chars da lore injetada no /gerar (prefixo de memória). */
   imageGenLoreMaxChars: 1200,
+  // Adaptadores modulares de extração (Fase 1-5)
+  extractionAdapters: {
+    parseGuard: { enabled: false },
+    evidenceEnricher: { enabled: false },
+    bufferLock: { enabled: false },
+    batchDedup: { enabled: false, minScore: 80, windowHours: 24 },
+    promptContext: { enabled: false },
+    metricsRecorder: { enabled: false, sink: 'stdout' },
+  },
 });
 
 /**

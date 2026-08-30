@@ -177,3 +177,4 @@ HOTSPOTS por impacto (alto → baixo): `personaService` → `groupMemoryService`
 - JSON mode: somente `assault` e `group_times`.
 - Market journalist: default ON na fase própria.
 - Endpoint Zen padrão: `http://localhost:20128/v1` + `bot-zap`.
+- **Adaptadores de Extração (Fase 1-5)**: Implementados em `fun/services/extractionAdapters/` (ParseGuard, EvidenceEnricher, BufferLock, BatchDedup, PromptContextBuilder, MetricsRecorder). Contexto e identidade expandidos sem cortes artificiais de caracteres.
