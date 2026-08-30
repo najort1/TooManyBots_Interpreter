@@ -792,14 +792,80 @@ test('observeMessage: mídia/sistema não alimenta janela da persona', () => {
   assert.equal(r.reason, 'type');
 });
 
-test('tryRespond: ignora mensagens não-texto', async () => {
+test('tryRespond: ignora tipos de mensagem não suportados (áudio/vídeo/sticker)', async () => {
   const { svc, sock, identityMap, cfg } = setup();
+  for (const messageType of ['audio', 'video', 'sticker', 'ptt']) {
+    const r = await svc.tryRespond({
+      scopeKey: uniqueGroup(), text: 'bot olha isso', messageType, authorJid: uniqueJid(),
+      sock, identityMap, funConfig: cfg,
+    });
+    assert.equal(r.responded, false, `messageType ${messageType} deve ser ignorado`);
+    assert.equal(r.reason, 'message-type');
+  }
+});
+
+test('tryRespond: aceita mensagem com imagem direta e legenda chamando o bot', async () => {
+  const { svc, sock, identityMap, cfg } = setup();
+  sock.sendMessage = async () => ({ key: { id: 'img-resp-1' } });
   const r = await svc.tryRespond({
-    scopeKey: uniqueGroup(), text: 'bot olha isso', messageType: 'image', authorJid: uniqueJid(),
-    sock, identityMap, funConfig: cfg,
+    scopeKey: uniqueGroup(),
+    text: 'bot descreve essa imagem',
+    messageType: 'image',
+    authorJid: uniqueJid(),
+    sock,
+    identityMap,
+    funConfig: cfg,
   });
-  assert.equal(r.responded, false);
-  assert.equal(r.reason, 'message-type');
+  assert.equal(r.responded, true);
+  assert.ok(r.response.length > 0);
+});
+
+test('persona visão: passa imagens resolvidas para o LLM generateZen', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let capturedRequest = null;
+    const authorJid = uniqueJid('5514');
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      generateZen: async (input) => {
+        capturedRequest = input;
+        return 'Isso aí é um gato laranja dormindo numa caixa kkk';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-vision-1' } });
+
+    // Simula mensagem com imagem (rawMessage contendo imageMessage)
+    const rawMessage = {
+      key: { id: 'msg-img-123', remoteJid: uniqueGroup() },
+      message: {
+        imageMessage: {
+          url: 'https://example.com/cat.jpg',
+          mimetype: 'image/jpeg',
+          caption: 'bot, o que é isso aqui na foto?',
+        },
+      },
+    };
+
+    const response = await svc.tryRespond({
+      scopeKey: rawMessage.key.remoteJid,
+      text: 'bot, o que é isso aqui na foto?',
+      messageType: 'image',
+      rawMessage,
+      authorJid,
+      sock,
+      identityMap,
+      funConfig: cfg,
+    });
+
+    assert.equal(response.responded, true);
+    assert.equal(response.response, 'Isso aí é um gato laranja dormindo numa caixa kkk');
+    assert.ok(capturedRequest);
+    assert.match(capturedRequest.prompt, /bot, o que é isso aqui na foto\?/);
+    assert.match(capturedRequest.system, /Visão de Imagens/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
 });
 
 test('tryRespond: guarda in-flight evita resposta duplicada concorrente', async () => {

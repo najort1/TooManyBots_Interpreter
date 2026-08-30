@@ -734,6 +734,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           quotedMessageId,
           quotedText,
           quoteSource,
+          rawMessage: rawMessage || ctx.rawMessage || quoteSource,
           responseContextPack,
           authorJid: userJid,
           messageType,

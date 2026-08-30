@@ -267,8 +267,9 @@ export function extractChatText(data) {
  * @param {object} opts
  * @param {string} [opts.baseUrl] — ex. http://localhost:20128/v1
  * @param {string} [opts.model]
- * @param {string} opts.prompt
+ * @param {string} [opts.prompt]
  * @param {string} [opts.system]
+ * @param {string[]|string} [opts.images] — URLs ou data URLs base64 (`data:image/...;base64,...`)
  * @param {number} [opts.timeoutMs]
  * @param {number} [opts.maxTokens]
  * @param {number} [opts.temperature]
@@ -285,6 +286,7 @@ export async function openaiChatComplete({
   model = DEFAULT_FUN_CONFIG.zenModel,
   prompt,
   system = '',
+  images = [],
   timeoutMs = 20_000,
   maxTokens = 400,
   temperature = 0.85,
@@ -305,7 +307,10 @@ export async function openaiChatComplete({
   fetchImpl,
 } = {}) {
   const userText = String(prompt ?? '').trim();
-  if (!userText) return '';
+  const rawImages = Array.isArray(images) ? images : (images ? [images] : []);
+  const validImages = rawImages.filter((img) => typeof img === 'string' && img.trim().length > 0);
+
+  if (!userText && validImages.length === 0) return '';
 
   const fetchFn = fetchImpl || globalThis.fetch;
   if (typeof fetchFn !== 'function') {
@@ -316,7 +321,26 @@ export async function openaiChatComplete({
   if (String(system || '').trim()) {
     messages.push({ role: 'system', content: String(system).trim() });
   }
-  messages.push({ role: 'user', content: userText });
+
+  if (validImages.length > 0) {
+    const content = [];
+    if (userText) {
+      content.push({ type: 'text', text: userText });
+    }
+    for (const img of validImages) {
+      const cleanImg = img.trim();
+      const url = cleanImg.startsWith('data:') || cleanImg.startsWith('http://') || cleanImg.startsWith('https://')
+        ? cleanImg
+        : `data:image/jpeg;base64,${cleanImg}`;
+      content.push({
+        type: 'image_url',
+        image_url: { url },
+      });
+    }
+    messages.push({ role: 'user', content });
+  } else {
+    messages.push({ role: 'user', content: userText });
+  }
 
   const headers = {
     'Content-Type': 'application/json',

@@ -364,3 +364,31 @@ test('pickFlavorAngle retorna string do catálogo', () => {
   const a = pickFlavorAngle(() => 0);
   assert.ok(typeof a === 'string' && a.length > 3);
 });
+
+test('openaiChatComplete: envia imagens no formato multimodal da API OpenAI/Zen', async () => {
+  const { openaiChatComplete } = await import('../fun/llm/openaiClient.js');
+  let capturedBody = null;
+  const mockFetch = async (url, options) => {
+    capturedBody = JSON.parse(options.body);
+    return {
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: 'Vejo um cachorro caramelo feliz na praia kkk.' } }],
+      }),
+    };
+  };
+
+  const res = await openaiChatComplete({
+    prompt: 'descreva esta imagem',
+    images: ['data:image/jpeg;base64,AAAA', 'https://example.com/foto.png'],
+    fetchImpl: mockFetch,
+  });
+
+  assert.equal(res, 'Vejo um cachorro caramelo feliz na praia kkk.');
+  assert.ok(capturedBody);
+  const userMsg = capturedBody.messages.find((m) => m.role === 'user');
+  assert.ok(Array.isArray(userMsg.content));
+  assert.deepEqual(userMsg.content[0], { type: 'text', text: 'descreva esta imagem' });
+  assert.deepEqual(userMsg.content[1], { type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAAA' } });
+  assert.deepEqual(userMsg.content[2], { type: 'image_url', image_url: { url: 'https://example.com/foto.png' } });
+});

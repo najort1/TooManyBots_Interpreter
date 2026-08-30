@@ -27,6 +27,7 @@ import { buildPersonaToolManifest, parsePersonaEnvelope, looksLikeRawJson } from
 import { isUsablePromptFact } from '../utils/promptFactSanitizer.js';
 import { resolveStickerPath } from './personaStickerCatalog.js';
 import { imageBufferToSticker } from '../utils/stickerConvert.js';
+import { resolveMediaFromRawMessage, downloadResolvedMedia } from '../utils/mediaDownload.js';
 import {
   cleanPromptText,
   buildTemporalBlock,
@@ -271,6 +272,7 @@ export function createPersonaService({
 
   async function generateResponse({
     text,
+    images = [],
     scopeKey,
     funConfig,
     threadContext,
@@ -367,6 +369,7 @@ export function createPersonaService({
           baseUrl: ep.baseUrl,
           model: ep.model,
           prompt,
+          images,
           system: agentEnabled ? `${system}\n\n${buildPersonaToolManifest()}` : system,
           timeoutMs: Math.min(o.timeoutMs, zen.timeoutMs || 15_000),
           maxTokens: zen.maxTokens,
@@ -502,7 +505,12 @@ export function createPersonaService({
       if (botJids.has(authorRaw) || botJids.has(authorJid)) return { responded: false, reason: 'self-loop' };
 
       const now = Number(ctx.now) || Date.now();
-      if (!isTextMessage(ctx.messageType)) return { responded: false, reason: 'message-type' };
+      const rawMsg = ctx.rawMessage || ctx.quoteSource;
+      const mediaResolution = rawMsg ? resolveMediaFromRawMessage(rawMsg) : null;
+      const hasImageMedia = mediaResolution?.media?.kind === 'image' || mediaResolution?.media?.messageType === 'image' || mediaResolution?.media?.messageType === 'document-image';
+      const isEligibleMessageType = isTextMessage(ctx.messageType) || ctx.messageType === 'image' || ctx.messageType === 'album' || hasImageMedia;
+
+      if (!isEligibleMessageType) return { responded: false, reason: 'message-type' };
       if (inFlightScopes.has(scopeKey)) return { responded: false, reason: 'in-flight' };
 
       const { mention, atMention } = detectTriggerInternal({
@@ -529,6 +537,26 @@ export function createPersonaService({
       if (o.cooldownMs > 0 && !isContinuation && isInCooldown(scopeKey, now, o.cooldownMs)) return { responded: false, reason: 'cooldown' };
       if (o.maxTurns > 0 && isContinuation && thread && thread.turnCount >= thread.maxTurns) return { responded: false, reason: 'thread-limit' };
 
+      // Resolução / Download de imagens para visão da persona
+      const resolvedImages = [];
+      if (hasImageMedia && rawMsg) {
+        try {
+          const downloaded = await downloadResolvedMedia({
+            rawMsg,
+            sock: ctx.sock,
+            logger,
+            maxBytes: 8 * 1024 * 1024,
+          });
+          if (downloaded?.ok && downloaded.buffer && downloaded.buffer.length > 0) {
+            const mime = downloaded.mimeType || 'image/jpeg';
+            const dataUrl = `data:${mime};base64,${downloaded.buffer.toString('base64')}`;
+            resolvedImages.push(dataUrl);
+          }
+        } catch (mediaErr) {
+          logger?.debug?.('[personaService] download de imagem da persona falhou: %s', String(mediaErr?.message || mediaErr));
+        }
+      }
+
       let threadContext = [];
       if (thread?.context?.length) threadContext = thread.context;
 
@@ -537,9 +565,12 @@ export function createPersonaService({
         ? profileService.displayName(authorJid, scopeKey)
         : authorJid.split('@')[0] || 'membro';
 
+      const promptText = String(ctx.text || '').trim() || (resolvedImages.length > 0 ? (isContinuation ? 'O que você acha dessa imagem?' : 'Descreva e comente o que você vê nesta imagem.') : '');
+
       inFlightScopes.add(scopeKey);
       let genResult = await generateResponse({
-        text: ctx.text,
+        text: promptText,
+        images: resolvedImages,
         scopeKey,
         funConfig: ctx.funConfig,
         threadContext,
