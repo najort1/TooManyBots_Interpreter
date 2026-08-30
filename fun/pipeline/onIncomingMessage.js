@@ -80,7 +80,7 @@ function isCountableMessage({ text, messageType }) {
   if (t) return true;
   const type = String(messageType || '').toLowerCase();
   if (!type || type === 'unknown' || type === 'text') return false;
-  return ['image', 'video', 'audio', 'document', 'sticker', 'ptt'].includes(type);
+  return ['image', 'video', 'audio', 'document', 'sticker', 'ptt', 'album'].includes(type);
 }
 
 function extractPreferenceMemory(text) {

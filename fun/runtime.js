@@ -642,17 +642,23 @@ export async function startFunBot(options = {}) {
     const quick = msg?.message && typeof msg.message === 'object' ? msg.message : {};
     const conv = quick.conversationMessage || quick.conversation || '';
     const ext = quick.extendedTextMessage?.text || '';
+    const imgCaption = quick.imageMessage?.caption || '';
+    const vidCaption = quick.videoMessage?.caption || '';
+    const docCaption = quick.documentMessage?.caption || quick.documentWithCaptionMessage?.message?.documentMessage?.caption || '';
+    const albumCaption = quick.albumMessage?.caption || quick.albumMessage?.messages?.[0]?.imageMessage?.caption || '';
     const btn = quick.buttonsResponseMessage?.selectedButtonId || '';
     const list = quick.listResponseMessage?.singleSelectReply?.selectedRowId || '';
-    return String(conv || ext || btn || list || '').trim();
+    return String(conv || ext || imgCaption || vidCaption || docCaption || albumCaption || btn || list || '').trim();
   }
 
   function extractMessageType(msg) {
     const quick = msg?.message && typeof msg.message === 'object' ? msg.message : {};
+    if (quick.albumMessage) return 'album';
     if (quick.imageMessage) return 'image';
     if (quick.videoMessage) return 'video';
-    if (quick.documentMessage) return 'document';
+    if (quick.documentMessage || quick.documentWithCaptionMessage) return 'document';
     if (quick.audioMessage) return 'audio';
+    if (quick.stickerMessage) return 'sticker';
     return 'text';
   }
 
