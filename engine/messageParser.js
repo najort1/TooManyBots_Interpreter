@@ -5,6 +5,48 @@
  * Manipula text, listResponseMessage, buttonsResponseMessage, extendedTextMessage, etc.
  */
 
+function unwrapMessageContent(msgContent) {
+  let content = msgContent;
+  let depth = 0;
+  while (content && typeof content === 'object' && depth < 10) {
+    depth++;
+    if (content.ephemeralMessage?.message) {
+      content = content.ephemeralMessage.message;
+      continue;
+    }
+    if (content.viewOnceMessage?.message) {
+      content = content.viewOnceMessage.message;
+      continue;
+    }
+    if (content.viewOnceMessageV2?.message) {
+      content = content.viewOnceMessageV2.message;
+      continue;
+    }
+    if (content.viewOnceMessageV2Extension?.message) {
+      content = content.viewOnceMessageV2Extension.message;
+      continue;
+    }
+    if (content.documentWithCaptionMessage?.message) {
+      content = content.documentWithCaptionMessage.message;
+      continue;
+    }
+    if (content.editedMessage?.message) {
+      content = content.editedMessage.message;
+      continue;
+    }
+    if (content.deviceSentMessage?.message) {
+      content = content.deviceSentMessage.message;
+      continue;
+    }
+    if (content.botInvokeMessage?.message) {
+      content = content.botInvokeMessage.message;
+      continue;
+    }
+    break;
+  }
+  return content;
+}
+
 /**
  * @param {object} msg - mensagem bruta do Baileys messages.upsert
  * @returns {{
@@ -32,21 +74,8 @@ export function parseMessage(msg) {
   const jid = remoteJid.endsWith('@lid') && senderPn ? senderPn : remoteJid;
   const isGroup = remoteJid.endsWith('@g.us');
 
-  let content = msg.message;
+  let content = unwrapMessageContent(msg.message);
   if (!content) return null;
-
-  if (content.ephemeralMessage?.message) {
-    content = content.ephemeralMessage.message;
-  }
-  if (content.viewOnceMessage?.message) {
-    content = content.viewOnceMessage.message;
-  }
-  if (content.viewOnceMessageV2?.message) {
-    content = content.viewOnceMessageV2.message;
-  }
-  if (content.viewOnceMessageV2Extension?.message) {
-    content = content.viewOnceMessageV2Extension.message;
-  }
 
   // ── Resposta de botões ─────────────────────────────────────────────────────
   if (content.buttonsResponseMessage) {
@@ -91,6 +120,33 @@ export function parseMessage(msg) {
       mediaMimeType: '',
       mediaFileName: '',
       text: content.extendedTextMessage.text ?? '',
+      listId: null,
+    };
+  }
+
+  // ── Álbum (múltiplas mídias em uma mensagem) ──────────────────────────────────
+  if (content.albumMessage) {
+    const firstMsg = unwrapMessageContent(content.albumMessage.messages?.[0]) || {};
+    const caption =
+      content.albumMessage.caption ||
+      firstMsg.imageMessage?.caption ||
+      firstMsg.videoMessage?.caption ||
+      firstMsg.documentMessage?.caption ||
+      '';
+    const mime =
+      firstMsg.imageMessage?.mimetype ||
+      firstMsg.videoMessage?.mimetype ||
+      firstMsg.documentMessage?.mimetype ||
+      'image/jpeg';
+    return {
+      id: msg.key.id,
+      jid,
+      isGroup,
+      messageKey,
+      messageType: 'album',
+      mediaMimeType: String(mime).trim(),
+      mediaFileName: '',
+      text: caption,
       listId: null,
     };
   }
