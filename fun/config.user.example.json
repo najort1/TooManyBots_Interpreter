@@ -1,4 +1,7 @@
 {
+  "youtubeApiKey": "",
+  "meteredApiKey": "",
+  "meteredDomain": "chupebot.metered.live",
   "prefix": "/",
   "cooldownMs": 60000,
   "xpMin": 15,

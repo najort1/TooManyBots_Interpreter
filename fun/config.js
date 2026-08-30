@@ -433,6 +433,10 @@ export function normalizeFunConfig(input) {
       toText(raw.tenorApiKey, process.env.TENOR_API_KEY || DEFAULT_FUN_CONFIG.tenorApiKey) || '',
     youtubeApiKey:
       toText(raw.youtubeApiKey, process.env.YOUTUBE_API_KEY || DEFAULT_FUN_CONFIG.youtubeApiKey) || '',
+    meteredApiKey:
+      toText(raw.meteredApiKey, process.env.METERED_API_KEY || '') || '',
+    meteredDomain:
+      toText(raw.meteredDomain, process.env.METERED_DOMAIN || 'chupebot.metered.live') || 'chupebot.metered.live',
     tenorClientKey:
       toText(raw.tenorClientKey, DEFAULT_FUN_CONFIG.tenorClientKey) ||
       DEFAULT_FUN_CONFIG.tenorClientKey,
