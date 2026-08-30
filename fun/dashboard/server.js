@@ -566,6 +566,35 @@ export function startFunDashboardServer(deps = {}) {
           return;
         }
 
+        if (req.method === 'GET' && action === 'ice-servers') {
+          const meteredApiKey = cfg.meteredApiKey || process.env.METERED_API_KEY || '';
+          const meteredDomain = cfg.meteredDomain || process.env.METERED_DOMAIN || 'chupebot.metered.live';
+          const DEFAULT_STUN = [{ urls: 'stun:stun.l.google.com:19302' }];
+
+          if (!meteredApiKey) {
+            sendJson(res, 200, { iceServers: DEFAULT_STUN });
+            return;
+          }
+
+          try {
+            const meteredUrl = `https://${meteredDomain}/api/v1/turn/credentials?apiKey=${encodeURIComponent(meteredApiKey)}`;
+            const upstream = await fetch(meteredUrl, {
+              headers: { Accept: 'application/json' },
+              signal: AbortSignal.timeout(4000),
+            });
+            if (!upstream.ok) throw new Error(`metered-${upstream.status}`);
+            const data = await upstream.json();
+            if (Array.isArray(data) && data.length > 0) {
+              sendJson(res, 200, { iceServers: data });
+              return;
+            }
+          } catch (err) {
+            // Fallback para STUN
+          }
+          sendJson(res, 200, { iceServers: DEFAULT_STUN });
+          return;
+        }
+
         if (req.method === 'GET' && action === 'neighborhood') {
           const houses = (houseRepository?.listHouses?.(target.scopeKey) || []).filter((house) => house.userJid !== target.userJid).map((house) => ({ id: house.publicId, nickname: getContactDisplayName(house.userJid) || 'Morador', cleanliness: house.cleanliness, securityLevel: house.securityLevel }));
           sendJson(res, 200, { houses });
