@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
 import { formatHelp, resolveHelpTarget } from '../formatters/helpGuide.js';
 import { getReactionKind, normalizeReactionAction } from './reactionMediaService.js';
+import { resolveStickerPath, STICKER_SLUGS } from './personaStickerCatalog.js';
+import { imageBufferToSticker } from '../utils/stickerConvert.js';
 
 const VIRTUAL_RUSSIAN_ACTOR = '__persona_virtual_russian__';
 
@@ -247,6 +250,29 @@ export function createPersonaToolExecutor({
         ? ['👁️ *Illuminati*', chaosService.illuminatiTheory(label), '_Teoria aleatória. Nenhuma prova._'].join('\n')
         : ['👂 *Fofoca*', chaosService.gossipFake(label), '_Falsa. Inventada. Sem provas._'].join('\n');
       return { ...base, ok: true, text, target: label };
+    }
+
+    if (name === 'send_sticker') {
+      const slug = String(args.slug || '').trim();
+      if (!slug || !STICKER_SLUGS.includes(slug)) {
+        return { ...base, reason: 'invalid-slug', text: `Slug inválido. Opções: ${STICKER_SLUGS.slice(0, 8).join(', ')}…` };
+      }
+      if (typeof ctx.replySticker !== 'function') {
+        return { ...base, reason: 'unavailable', text: 'Não consigo mandar figurinha agora.' };
+      }
+      const filePath = resolveStickerPath(slug);
+      if (!filePath) {
+        return { ...base, reason: 'file-not-found', text: 'Figurinha não encontrada no disco.' };
+      }
+      let stickerBuffer;
+      try {
+        const raw = readFileSync(filePath);
+        stickerBuffer = await imageBufferToSticker(raw);
+      } catch (err) {
+        return { ...base, reason: 'convert-failed', text: 'Não consegui converter a figurinha.' };
+      }
+      await ctx.replySticker(stickerBuffer);
+      return { ...base, ok: true, text: '', summary: `Figurinha "${slug}" enviada.`, slug };
     }
 
     return { ...base, reason: 'unknown-tool', text: '' };
