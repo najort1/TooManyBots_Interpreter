@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   CASAS_GRAPHICS_PRESETS,
   normalizeCasasGraphicsQuality,
@@ -87,4 +88,16 @@ test('Casas: cenário determinístico aceita 30 jogadores na mesma rua', () => {
 
   assert.equal(snapshot.participants.length, 30);
   assert.equal(new Set(snapshot.participants.map((participant) => participant.id)).size, 30);
+});
+
+test('Casas: movimento não pode impedir o cálculo da animação dos avatares', async () => {
+  const source = await readFile(
+    new URL('../fun_dashboard/src/components/casas/StreetWorld.tsx', import.meta.url),
+    'utf8',
+  );
+
+  assert.doesNotMatch(source, /local\.isMoving\s*\|\|\s*updateAvatarPose\(/);
+  assert.doesNotMatch(source, /moved\s*\|\|\s*updateAvatarPose\(/);
+  assert.match(source, /const localPoseChanged = updateAvatarPose\(local, delta, elapsed\);/);
+  assert.match(source, /const remotePoseChanged = updateAvatarPose\(rig, delta, elapsed\);/);
 });

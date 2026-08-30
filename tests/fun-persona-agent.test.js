@@ -342,3 +342,156 @@ test('lore reconciliation: JSON inválido ou ambíguo não remove nada', async (
     else process.env.FUN_DISABLE_LIVE_LLM = previous;
   }
 });
+
+// ── send_sticker ──────────────────────────────────────────────────────────────
+
+import { STICKER_SLUGS, resolveStickerPath } from '../fun/services/personaStickerCatalog.js';
+
+test('send_sticker: protocolo aceita send_sticker na allowlist', () => {
+  const result = parsePersonaEnvelope('{"type":"tool_call","name":"send_sticker","arguments":{"slug":"joinha"}}');
+  assert.equal(result.ok, true);
+  assert.equal(result.envelope.name, 'send_sticker');
+  assert.equal(result.envelope.arguments.slug, 'joinha');
+});
+
+test('send_sticker: rejeita slug inválido', async () => {
+  const chaos = createChaosService({ repository: { getLeaderboard: () => [] } });
+  const executor = createPersonaToolExecutor({ chaosService: chaos });
+  const scope = uniqueGroup();
+  const stickersSent = [];
+  const ctx = {
+    scopeKey: scope,
+    authorJid: uniqueJid(),
+    text: 'bot manda uma figurinha',
+    funConfig: { ...DEFAULT_FUN_CONFIG },
+    now: Date.now(),
+    replySticker: async (buf) => stickersSent.push(buf),
+  };
+  const result = await executor.execute({ name: 'send_sticker', arguments: { slug: 'slug_inventado' } }, ctx);
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'invalid-slug');
+  assert.equal(stickersSent.length, 0);
+});
+
+test('send_sticker: catálogo resolve arquivo para slugs conhecidos (existsSync)', () => {
+  // Verifica que pelo menos os slugs presentes na pasta real resolvem para um caminho
+  const resolvable = STICKER_SLUGS.filter((slug) => resolveStickerPath(slug) !== null);
+  assert.ok(resolvable.length > 0, 'Deve haver ao menos um slug resolvível no disco');
+});
+
+test('send_sticker: replySticker é chamado e tool retorna ok', async () => {
+  // Encontra o primeiro slug disponível no disco para testar o caminho feliz
+  const slug = STICKER_SLUGS.find((s) => resolveStickerPath(s) !== null);
+  if (!slug) {
+    // Sem arquivos no disco (ex: CI sem assets) — testa só a guarda de unavailable
+    const chaos = createChaosService({ repository: { getLeaderboard: () => [] } });
+    const executor = createPersonaToolExecutor({ chaosService: chaos });
+    const result = await executor.execute(
+      { name: 'send_sticker', arguments: { slug: 'joinha' } },
+      { scopeKey: uniqueGroup(), authorJid: uniqueJid(), text: 'oi', funConfig: DEFAULT_FUN_CONFIG, now: Date.now() }
+    );
+    // Sem replySticker → unavailable ou file-not-found
+    assert.ok(['unavailable', 'file-not-found'].includes(result.reason));
+    return;
+  }
+
+  const chaos = createChaosService({ repository: { getLeaderboard: () => [] } });
+  const executor = createPersonaToolExecutor({ chaosService: chaos });
+  const scope = uniqueGroup();
+  const stickersSent = [];
+
+  const result = await executor.execute(
+    { name: 'send_sticker', arguments: { slug } },
+    {
+      scopeKey: scope,
+      authorJid: uniqueJid(),
+      text: 'manda figurinha bot',
+      funConfig: { ...DEFAULT_FUN_CONFIG },
+      now: Date.now(),
+      replySticker: async (buf) => { stickersSent.push(buf); },
+    }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.slug, slug);
+  assert.equal(stickersSent.length, 1);
+  assert.ok(Buffer.isBuffer(stickersSent[0]) && stickersSent[0].length > 0);
+});
+
+// ── Multi-Action / Multi-Bubble Protocol & Dispatch ────────────────────────────
+
+test('multi-action: parsePersonaEnvelope aceita sequência multi-ação (texto + sticker + react)', () => {
+  const payload = JSON.stringify({
+    type: 'actions',
+    actions: [
+      { type: 'text', text: 'Aee parabéns mano! 🎉' },
+      { type: 'sticker', slug: 'parabens' },
+      { type: 'react', emoji: '🎂' },
+      { type: 'text', text: 'Bora comemorar' },
+    ],
+  });
+  const parsed = parsePersonaEnvelope(payload);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.envelope.type, 'actions');
+  assert.equal(parsed.envelope.actions.length, 4);
+  assert.equal(parsed.envelope.actions[0].type, 'text');
+  assert.equal(parsed.envelope.actions[1].slug, 'parabens');
+  assert.equal(parsed.envelope.actions[2].emoji, '🎂');
+});
+
+test('multi-action: despacha múltiplos balões e sticker com sock.sendMessage', async () => {
+  const memory = createFunMemoryRepository({ getDatabase: getDb });
+  const groups = createFunGroupRepository({ getDatabase: getDb });
+  const persona = createFunPersonaRepository({ getDatabase: getDb });
+  const scope = uniqueGroup();
+  const messagesSent = [];
+
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+
+  try {
+    const botJid = uniqueJid('5588');
+    const authorJid = uniqueJid('5511');
+    const mockSock = {
+      user: { id: `${botJid.split('@')[0]}:0` },
+      sendMessage: async (jid, content, opts) => {
+        messagesSent.push({ jid, content, opts });
+        return { key: { id: `msg_${messagesSent.length}` } };
+      },
+    };
+
+    const service = createPersonaService({
+      personaRepository: persona,
+      groupRepository: groups,
+      personaToolExecutor: { execute: async () => ({ ok: true }) },
+      generateZen: async () => JSON.stringify({
+        type: 'actions',
+        actions: [
+          { type: 'text', text: 'Aeeeee parabéns! 🎉' },
+          { type: 'sticker', slug: 'parabens' },
+          { type: 'text', text: 'Felicidades!' },
+        ],
+      }),
+    });
+
+    const res = await service.tryRespond({
+      scopeKey: scope,
+      authorJid,
+      text: 'bot hoje é meu aniversario',
+      messageType: 'text',
+      sock: mockSock,
+      identityMap: createIdentityMap(),
+      now: Date.now(),
+    });
+
+    assert.equal(res.responded, true);
+    assert.match(res.response, /Aeeeee parabéns/);
+    assert.equal(messagesSent.length, 3);
+    assert.equal(messagesSent[0].content.text, 'Aeeeee parabéns! 🎉');
+    assert.ok(messagesSent[1].content.sticker);
+    assert.equal(messagesSent[2].content.text, 'Felicidades!');
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});

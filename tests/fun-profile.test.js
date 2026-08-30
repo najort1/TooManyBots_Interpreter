@@ -444,3 +444,29 @@ test('buildIdentityBlock', () => {
   const block = svc.buildIdentityBlock(g, [u], {});
   assert.match(block, /user_identity|Nina|figurinhas/i);
 });
+
+test('buildIdentityBlock: descarta bio/extras corrompidos (placeholder "?" e meta-comentário)', async () => {
+  const { isUsablePromptFact: _ } = await import('../fun/utils/promptFactSanitizer.js');
+  const repo = createFunProfileRepository({ getDatabase: getDb });
+  const u = uniqueJid('5597');
+  const g = uniqueGroup();
+  repo.upsertProfile({
+    userJid: u,
+    scopeKey: g,
+    nickname: 'Lucas',
+    bio: 'Adora comer ? e não informa quem adora',
+    extras: 'gosto:comer pizza; gosto:comer ?; torce pro time A',
+  });
+  const svc = createProfileService({
+    profileRepository: repo,
+    getContactDisplayName: () => 'Lucas',
+  });
+  const block = svc.buildIdentityBlock(g, [u], {});
+  // bio corrompido não aparece
+  assert.ok(!/Adora comer \?/.test(block), 'bio corrompido não vaza no bloco');
+  assert.ok(!/não informa quem adora/.test(block));
+  // extras corrompido filtrado
+  assert.ok(!/gosto:comer \?/.test(block), 'extra corrompido não vaza');
+  // extras bons permanecem
+  assert.match(block, /torce pro time A/);
+});
