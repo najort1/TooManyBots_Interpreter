@@ -1,4 +1,5 @@
 import { PERSONA_MEMORY_DEFAULTS } from '../constants.js';
+import { isUsablePromptFact } from '../utils/promptFactSanitizer.js';
 
 const preference = /\b(?:eu\s+)?(gosto|amo|prefiro|odeio)\s+(?:de\s+)?(.{2,80})/iu;
 const inferredPreference = /\b(?:acho|parece|talvez)\s+(?:que\s+)?(?:eu\s+)?(gosto|amo|prefiro|odeio)\s+(?:de\s+)?(.{2,80})/iu;
@@ -24,6 +25,11 @@ export function createMemoryIngestionService({ conversationMemoryRepository, get
     if (explicit || inferred) {
       const match = explicit || inferred;
       const subject = normalize(match[2]);
+      // Referência não resolvida ("gosto de comer ? e quem eu adoro"):
+      // gravar isso persistiria um fato corrompido com placeholder "?".
+      if (!isUsablePromptFact(subject) || /\bquem\b/iu.test(subject)) {
+        return { ok: false, reason: 'unresolved-reference' };
+      }
       const factKey = `preference:${subject}`;
       const existing = conversationMemoryRepository.listRankable({ scopeKey, now, limit: 200 })
         .find((item) => item.subjectUserJid === authorJid && item.factKey === factKey && item.factText === `${match[1].toLowerCase()}:${subject}`);
