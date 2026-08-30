@@ -352,13 +352,16 @@ export default function NeighborhoodSoundSystem({ token, open, tvScreenRect, onO
   const current = state?.current || null;
   const elapsed = current ? desiredSeconds(current) : 0;
   const activePlayerRect = open ? browserPlayerRect : tvScreenRect;
+  // No mobile Safari, se opacity for 0 ou tamanho for 0x0, o WebKit congela o iframe.
+  // Mantemos visibilidade mínima para áudio contínuo.
   const playerSurfaceStyle: CSSProperties = activePlayerRect ? {
     left: activePlayerRect.left,
     top: activePlayerRect.top,
-    width: activePlayerRect.width,
-    height: activePlayerRect.height,
-    opacity: current && activePlayerRect.visible ? 1 : 0,
-  } : { opacity: 0 };
+    width: Math.max(1, activePlayerRect.width),
+    height: Math.max(1, activePlayerRect.height),
+    opacity: current && activePlayerRect.visible ? 1 : 0.001,
+    pointerEvents: open ? "auto" : "none",
+  } : { opacity: 0.001, width: 1, height: 1, pointerEvents: "none" };
 
   return <>
     <div className={`paredao-live-player ${open ? "is-browser" : "is-street"}`} style={playerSurfaceStyle} aria-label={open ? "Player de vídeo do paredão" : "Vídeo tocando na TV ao lado do paredão"}>

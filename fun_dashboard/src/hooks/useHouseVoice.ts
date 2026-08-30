@@ -13,7 +13,38 @@ type SpatialPeer = {
   gain: GainNode;
 };
 
-export function useHouseVoice(players: HousePlayer[], selfId: string, signals: RealtimeSignal[], sendSignal: SendSignal) {
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [{ urls: "stun:stun.l.google.com:19302" }];
+let memoryIceServers: RTCIceServer[] | null = null;
+let memoryIceServersExpiry = 0;
+
+async function fetchHouseIceServers(token?: string): Promise<RTCIceServer[]> {
+  const now = Date.now();
+  if (memoryIceServers && now < memoryIceServersExpiry) {
+    return memoryIceServers;
+  }
+
+  if (!token) return DEFAULT_ICE_SERVERS;
+
+  try {
+    const res = await fetch(`/api/fun/houses/${encodeURIComponent(token)}/ice-servers`, {
+      cache: "no-store",
+      headers: { "Content-Type": "application/json", "X-House-Token": token },
+      signal: AbortSignal.timeout(3500),
+    });
+    if (!res.ok) throw new Error("ice-servers-fetch-failed");
+    const data = (await res.json()) as { iceServers?: RTCIceServer[] };
+    if (Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+      memoryIceServers = data.iceServers;
+      memoryIceServersExpiry = now + 15 * 60 * 1000; // 15 minutos de cache local
+      return memoryIceServers;
+    }
+  } catch {
+    // Fallback gracioso para STUN caso a rota falhe ou offline
+  }
+  return DEFAULT_ICE_SERVERS;
+}
+
+export function useHouseVoice(players: HousePlayer[], selfId: string, signals: RealtimeSignal[], sendSignal: SendSignal, token?: string) {
   const [enabled, setEnabled] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [error, setError] = useState("");
@@ -33,6 +64,19 @@ export function useHouseVoice(players: HousePlayer[], selfId: string, signals: R
   const signalQueueRef = useRef(Promise.resolve());
   const retryTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
   const [peerRetryVersion, setPeerRetryVersion] = useState(0);
+  const iceServersRef = useRef<RTCIceServer[]>(DEFAULT_ICE_SERVERS);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchHouseIceServers(token).then((servers) => {
+      if (!cancelled && servers?.length) {
+        iceServersRef.current = servers;
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [token]);
 
   const setSpeaking = useCallback((next: boolean) => {
     if (speakingRef.current === next) return;
@@ -148,7 +192,7 @@ export function useHouseVoice(players: HousePlayer[], selfId: string, signals: R
   const peerFor = useCallback((id: string) => {
     const existing = peersRef.current.get(id);
     if (existing) return existing;
-    const peer = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    const peer = new RTCPeerConnection({ iceServers: iceServersRef.current });
     streamRef.current?.getTracks().forEach((track) => peer.addTrack(track, streamRef.current!));
     peer.onicecandidate = (event) => {
       if (event.candidate) void sendSignal({ toParticipantId: id, kind: "ice", payload: event.candidate.toJSON() });

@@ -14,6 +14,8 @@ import {
   getAvatarShoeProfile,
   getAvatarTopProfile,
 } from "./recipes.js";
+import { disposeBlenderAvatarAnimationRig, updateBlenderAvatarAnimation } from "./blenderAnimationRig";
+import type { BlenderAvatarAnimationRig } from "./blenderAnimationRig";
 import {
   avatarBoxGeometry,
   avatarShadowMaterial,
@@ -37,8 +39,13 @@ export type Avatar3DRig = {
   root: THREE.Group;
   model: THREE.Group;
   fallback: THREE.Group;
+  hips: THREE.Group;
+  torso: THREE.Group;
+  head: THREE.Group;
   leftArm: THREE.Group;
   rightArm: THREE.Group;
+  leftForearm: THREE.Group;
+  rightForearm: THREE.Group;
   leftLeg: THREE.Group;
   rightLeg: THREE.Group;
   leftKnee: THREE.Group;
@@ -52,6 +59,9 @@ export type Avatar3DRig = {
   appearance: THREE.Group;
   sockets: AvatarSockets;
   label: THREE.Sprite;
+  blenderAnimation?: BlenderAvatarAnimationRig;
+  pendingBlenderAnimation?: string;
+  blenderAnimationLoading?: boolean;
   disposed?: boolean;
 };
 
@@ -679,8 +689,13 @@ export function createAvatar3D(avatar: AvatarInput, labelText: string) {
     root,
     model: parts.model,
     fallback: new THREE.Group(),
+    hips: parts.sockets.body,
+    torso: parts.torso,
+    head: parts.head,
     leftArm: parts.leftArm.pivot,
     rightArm: parts.rightArm.pivot,
+    leftForearm: parts.leftArm.lower,
+    rightForearm: parts.rightArm.lower,
     leftLeg: parts.leftLeg.pivot,
     rightLeg: parts.rightLeg.pivot,
     leftKnee: parts.leftLeg.lower,
@@ -776,6 +791,7 @@ export function updateAvatar3D(rig: Avatar3DRig, avatar: AvatarInput, labelText 
   replacement.root.scale.copy(rig.root.scale);
   replacement.walking = rig.walking;
   replacement.seated = rig.seated;
+  replacement.pendingBlenderAnimation = rig.pendingBlenderAnimation;
   replacement.voiceIndicator.visible = rig.voiceIndicator.visible;
   replacement.model.position.copy(rig.model.position);
   replacement.model.rotation.copy(rig.model.rotation);
@@ -799,11 +815,13 @@ export function animateAvatar3D(rig: Avatar3DRig, elapsed: number, moving: boole
   rig.shadow.scale.setScalar(THREE.MathUtils.lerp(1, 1.2, sit));
   rig.voiceIndicator.visible = speaking;
   if (speaking && !reducedMotion) rig.voiceIndicator.scale.setScalar(0.9 + Math.sin(elapsed * 13) * 0.16);
+  updateBlenderAvatarAnimation(rig, delta);
 }
 
 export function disposeAvatar3D(rig: Avatar3DRig) {
   if (rig.disposed) return;
   rig.disposed = true;
+  if (rig.blenderAnimation) disposeBlenderAvatarAnimationRig(rig.blenderAnimation);
   rig.root.traverse((object) => {
     if (!(object instanceof THREE.Mesh || object instanceof THREE.Sprite)) return;
     if (!isSharedAvatarGeometry(object.geometry)) object.geometry?.dispose?.();

@@ -123,7 +123,7 @@ export default function CasaPage({ params }: Props) {
   const realtimeScene = screen === "neighborhood" ? "street" as const : "house" as const;
   const realtimeSceneId = screen === "neighbor" ? neighborView?.id || token : screen === "neighborhood" ? "street" : token;
   const realtime = useHouseRealtime(token, realtimeScene, realtimeSceneId, realtimeAvatar);
-  const voice = useHouseVoice(realtime.players, realtime.selfId, realtime.signals, realtime.signal);
+  const voice = useHouseVoice(realtime.players, realtime.selfId, realtime.signals, realtime.signal, token);
   const stopVoice = voice.stop;
   const setVoiceListenerPosition = voice.setListenerPosition;
   const moveRealtimeAvatar = realtime.move;

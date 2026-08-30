@@ -12,6 +12,7 @@ import { shouldPublishMovement } from "@/lib/realtimeMovementPolicy.js";
 import { reconcileFurnitureItems } from "@/lib/houseFurnitureReconciliation.js";
 import { createThreePerformanceMonitor } from "@/lib/threePerformanceMonitor";
 import { animateAvatar3D, createAvatar3D, disposeAvatar3D, updateAvatar3D, type Avatar3DRig } from "./avatar3d";
+import { attachBlenderAvatarAnimationRig } from "./avatar/blenderAnimationRig";
 import { useCasasGraphics } from "./CasasGraphicsProvider";
 import { isSharedAvatarGeometry, isSharedAvatarMaterial } from "./avatar/resources";
 import { createAvatarRenderBatch } from "./avatar/instancing";
@@ -298,6 +299,7 @@ export default function HouseGame3D(props: Props) {
     const floor = room.floor;
     const furniture = new Map<string, FurnitureRig>();
     let local = createAvatar3D(current.current.localAvatar || current.current.house.avatar, "VOCÊ");
+    attachBlenderAvatarAnimationRig(local);
     local.root.position.copy(normalizedToWorld(50, 80)).setY(.03);
     scene.add(local.root);
     const localTarget = local.root.position.clone();
@@ -368,6 +370,7 @@ export default function HouseGame3D(props: Props) {
       previous.root.removeFromParent();
       disposeAvatar3D(previous);
       local = replacement;
+      attachBlenderAvatarAnimationRig(local);
       localTarget.copy(local.root.position);
       rebuildAvatarBatch();
     };
@@ -389,6 +392,7 @@ export default function HouseGame3D(props: Props) {
         let remote = remotes.get(player.id);
         if (!remote) {
           const rig = createAvatar3D(player.avatar, player.nickname);
+          attachBlenderAvatarAnimationRig(rig);
           rig.root.position.copy(target);
           scene.add(rig.root);
           remote = { rig, target, moving: false, reportedMoving: false };
@@ -402,6 +406,7 @@ export default function HouseGame3D(props: Props) {
             previous.root.removeFromParent();
             disposeAvatar3D(previous);
             remote.rig = replacement;
+            attachBlenderAvatarAnimationRig(remote.rig);
             batchDirty = true;
           }
         }
