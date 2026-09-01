@@ -9,6 +9,10 @@ import { createFunFactionRepository } from './db/funFactionRepository.js';
 import { createFunSocialRepository } from './db/funSocialRepository.js';
 import { createFunMissionRepository } from './db/funMissionRepository.js';
 import { createFunEventRepository } from './db/funEventRepository.js';
+import { createEventRepository } from './db/eventRepository.js';
+import { createEventExtractorService } from './events/eventExtractorService.js';
+import { createEventAggregationService } from './events/eventAggregationService.js';
+import { createEventReminderService } from './events/eventReminderService.js';
 import { createXpService } from './services/xpService.js';
 import { createRankService } from './services/rankService.js';
 import { createDailyService } from './services/dailyService.js';
@@ -144,6 +148,7 @@ export function createFunModule(deps = {}) {
   const socialRepository = createFunSocialRepository({ getDatabase });
   const missionRepository = createFunMissionRepository({ getDatabase });
   const eventRepository = createFunEventRepository({ getDatabase });
+  const groupEventRepository = deps.groupEventRepository || createEventRepository({ getDatabase });
   const casinoRepository = createFunCasinoRepository({ getDatabase });
   const marketRepository =
     deps.marketRepository || createFunMarketRepository({ getDatabase });
@@ -516,6 +521,26 @@ export function createFunModule(deps = {}) {
       adapters: extractionAdapters,
     });
   }
+  const eventExtractorService =
+    deps.eventExtractorService ||
+    createEventExtractorService({
+      getLogger,
+      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+    });
+  const eventAggregationService =
+    deps.eventAggregationService ||
+    createEventAggregationService({
+      eventRepository: groupEventRepository,
+      eventExtractorService,
+      getLogger,
+    });
+  const eventReminderService =
+    deps.eventReminderService ||
+    createEventReminderService({
+      eventRepository: groupEventRepository,
+      personaService,
+      getLogger,
+    });
   const loreReconciliationService =
     deps.loreReconciliationService ||
     createLoreReconciliationService({
@@ -614,6 +639,7 @@ export function createFunModule(deps = {}) {
         qmpService,
         casinoRepository,
         groupMemoryService,
+        eventAggregationService,
         personaSocialHintService,
         personaService,
         personaContextService,
@@ -825,6 +851,28 @@ export function createFunModule(deps = {}) {
 
     for (const scopeKey of groups) {
       if (!scopeKey || !String(scopeKey).endsWith('@g.us')) continue;
+
+      // Lembretes de eventos reais: o gate de quiet hours acima garante que a
+      // pendência continue no banco até o primeiro tick permitido.
+      if (eventReminderService?.tick) {
+        try {
+          const reminders = await eventReminderService.tick({
+            scopeKey,
+            sock,
+            sendText: post,
+            funConfig,
+            now,
+          });
+          if (reminders?.length) results.push(...reminders);
+        } catch (err) {
+          results.push({
+            scopeKey,
+            kind: 'event-reminder',
+            ok: false,
+            reason: err?.message || 'event-reminder-tick-error',
+          });
+        }
+      }
 
       const userFmt = createUserFormatter({
         getContactDisplayName: nameResolver,
@@ -1356,6 +1404,10 @@ export function createFunModule(deps = {}) {
       casinoRepository,
       chaosService,
       chaosEventService,
+      groupEventRepository,
+      eventExtractorService,
+      eventAggregationService,
+      eventReminderService,
       groupMemoryService,
       memoryRepository,
       evidenceRepository,

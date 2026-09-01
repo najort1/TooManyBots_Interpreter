@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '32';
+export const FUN_SCHEMA_VERSION = '33';
 
 export const PERSONA_MEMORY_TYPES = Object.freeze(['thread', 'episodic', 'semantic', 'social']);
 export const PERSONA_MEMORY_EVIDENCE = Object.freeze(['explicit', 'corroborated', 'inferred']);
@@ -636,6 +636,16 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   worldQuietHourStart: 1,
   worldQuietHourEnd: 6,
   worldTimezone: 'America/Sao_Paulo',
+  /** Detecção LLM de anúncios reais de rolês, churrascos e encontros. */
+  groupEventsEnabled: true,
+  /** Janela máxima para complementar anúncios fragmentados do mesmo autor. */
+  groupEventFragmentWindowMs: 30 * 60_000,
+  /** Lembretes relativos ao horário persistido do evento. */
+  groupEventReminderThreeDaysEnabled: true,
+  groupEventReminderThreeHoursEnabled: true,
+  /** Limites de segurança para buffer e varredura em cada world tick. */
+  groupEventFragmentMaxMessages: 4,
+  groupEventReminderBatchSize: 12,
   selfHealEnabled: true,
   selfHealDryRun: true,
   selfHealIntervalMs: 10 * 60_000,

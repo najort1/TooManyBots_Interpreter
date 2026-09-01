@@ -538,6 +538,57 @@ export function buildFunSchemaSql() {
       PRIMARY KEY (user_jid, scope_key, job_id)
     );
 
+    -- Eventos reais anunciados no grupo e seus lembretes autônomos.
+    -- scope_key também é a chave da persona/memória do grupo.
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_group_events (
+      id                         TEXT PRIMARY KEY,
+      scope_key                  TEXT NOT NULL,
+      author_jid                 TEXT NOT NULL,
+      status                     TEXT NOT NULL DEFAULT 'active',
+      title                      TEXT NOT NULL DEFAULT '',
+      event_type                 TEXT NOT NULL DEFAULT 'other',
+      starts_at                  INTEGER NOT NULL,
+      timezone                   TEXT NOT NULL DEFAULT 'America/Sao_Paulo',
+      location                   TEXT NOT NULL DEFAULT '',
+      items_json                 TEXT NOT NULL DEFAULT '[]',
+      organizer_jid              TEXT NOT NULL DEFAULT '',
+      organizer_name             TEXT NOT NULL DEFAULT '',
+      fingerprint                TEXT NOT NULL DEFAULT '',
+      source_message_id          TEXT NOT NULL,
+      source_message_ids_json    TEXT NOT NULL DEFAULT '[]',
+      extraction_json            TEXT NOT NULL DEFAULT '{}',
+      created_at                 INTEGER NOT NULL,
+      updated_at                 INTEGER NOT NULL,
+      cancelled_at               INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_group_events_source
+      ON fun_group_events(scope_key, source_message_id);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_group_events_scope_start
+      ON fun_group_events(scope_key, status, starts_at ASC);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_group_events_match
+      ON fun_group_events(scope_key, author_jid, status, starts_at ASC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_group_event_reminders (
+      event_id                   TEXT NOT NULL,
+      reminder_kind              TEXT NOT NULL,
+      due_at                     INTEGER NOT NULL,
+      status                     TEXT NOT NULL DEFAULT 'pending',
+      attempt_count              INTEGER NOT NULL DEFAULT 0,
+      lease_token                TEXT NOT NULL DEFAULT '',
+      lease_until                INTEGER NOT NULL DEFAULT 0,
+      last_error                 TEXT NOT NULL DEFAULT '',
+      sent_at                    INTEGER NOT NULL DEFAULT 0,
+      created_at                 INTEGER NOT NULL,
+      updated_at                 INTEGER NOT NULL,
+      PRIMARY KEY (event_id, reminder_kind)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_group_event_reminders_due
+      ON fun_group_event_reminders(status, due_at ASC, lease_until ASC);
+
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_group_memories (
       id            TEXT PRIMARY KEY,
       scope_key     TEXT    NOT NULL,

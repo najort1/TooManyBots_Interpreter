@@ -504,6 +504,73 @@ export function createPersonaService({
     return pickRotation(rotationIndex || 0, FALLBACK_LINES);
   }
 
+  /**
+   * Compõe uma fala autônoma e texto-apenas da persona. Serviços de domínio usam
+   * esta API para anúncios factuais sem simular uma mensagem de membro, abrir
+   * thread, disparar ferramentas ou enviar diretamente ao WhatsApp.
+   */
+  async function composeSystemAnnouncement({ scopeKey, kind = 'announcement', data = {}, funConfig = {}, now = Date.now() } = {}) {
+    const o = opts(funConfig);
+    const scope = String(scopeKey || '').trim();
+    if (!o.enabled) return { ok: false, reason: 'disabled-global' };
+    if (!scope.endsWith('@g.us')) return { ok: false, reason: 'invalid' };
+    const settings = groupRepository.getGroupSettings(scope);
+    if (settings?.personaEnabled === false) return { ok: false, reason: 'disabled-group' };
+
+    const facts = Object.entries(data && typeof data === 'object' ? data : {})
+      .filter(([, value]) => value !== '' && value !== null && value !== undefined)
+      .map(([key, value]) => {
+        const rendered = Array.isArray(value) ? value.join(', ') : String(value);
+        return `- ${key}: ${cleanPromptText(rendered, 300)}`;
+      })
+      .filter(Boolean)
+      .slice(0, 12);
+    if (!facts.length) return { ok: false, reason: 'empty-data' };
+
+    const styleBlock = buildStyleBlock(scope);
+    const system = [
+      'Você é um membro natural deste grupo de WhatsApp. Escreva um lembrete curto, caloroso e informal em pt-BR.',
+      'Use somente os fatos fornecidos. Não invente detalhes, não faça perguntas e não use JSON, markdown de sistema, ferramentas, stickers ou reações.',
+      'Não diga que é IA, sistema ou automação. Produza uma única mensagem de até 420 caracteres.',
+      styleBlock ? `Voz observada do grupo:\n${styleBlock}` : '',
+      buildTemporalBlock(Number(now) || Date.now(), o.timezone),
+    ].filter(Boolean).join('\n\n');
+    const prompt = [
+      `Tipo de anúncio: ${cleanPromptText(kind, 80)}.`,
+      'Fatos confirmados:',
+      ...facts,
+      'Escreva agora apenas a mensagem que será enviada ao grupo.',
+    ].join('\n');
+
+    if (process.env.FUN_DISABLE_LIVE_LLM === '1' || funConfig.zenEnabled === false) {
+      return { ok: false, reason: 'llm-disabled' };
+    }
+
+    const zen = resolveZenTaskParams('persona', funConfig);
+    const endpoint = resolveZenEndpoint(funConfig);
+    try {
+      const raw = await generateZen({
+        baseUrl: endpoint.baseUrl,
+        model: endpoint.model,
+        apiKey: endpoint.apiKey,
+        system,
+        prompt,
+        timeoutMs: Math.min(o.timeoutMs, zen.timeoutMs || o.timeoutMs),
+        maxTokens: zen.maxTokens,
+        temperature: zen.temperature,
+        sendSamplingParams: funConfig.zenSendSamplingParams !== false,
+      });
+      const announcement = sanitizeFlavor(raw, Math.min(420, Math.max(80, o.maxChars + 140)));
+      if (!announcement || looksLikeRawJson(announcement) || looksLikeScoreboardEcho(announcement)) {
+        return { ok: false, reason: 'invalid-generation' };
+      }
+      return { ok: true, text: announcement, usedFallback: false };
+    } catch (error) {
+      logger?.debug?.('[personaService] anúncio autônomo falhou: %s', String(error?.message || error));
+      return { ok: false, reason: 'generation-error' };
+    }
+  }
+
   async function tryRespond(ctx = {}) {
     try {
       const o = opts(ctx.funConfig);
@@ -779,6 +846,7 @@ export function createPersonaService({
     buildStyleBlock,
     buildSystemPrompt,
     generateResponse,
+    composeSystemAnnouncement,
     fallbackResponse,
     _cooldowns: cooldowns,
     _inFlightScopes: inFlightScopes,

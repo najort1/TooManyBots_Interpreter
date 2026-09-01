@@ -124,6 +124,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     factionService,
     bridgeService,
     missionService,
+    eventAggregationService,
     eventService,
     casinoService,
     tarotService,
@@ -643,6 +644,24 @@ export async function handleFunIncomingMessage(deps, ctx) {
     } catch {
       // lore nunca quebra o fluxo
     }
+  }
+
+  // Eventos de grupo são observacionais: a extração pode usar LLM, mas nunca atrasa
+  // comandos, XP ou a persona. `msgTimeMs` mantém "amanhã" ancorado no envio real.
+  if (isGroup && eventAggregationService?.observeMessage && scope.scopeKey) {
+    void eventAggregationService.observeMessage({
+      scopeKey: scope.scopeKey,
+      userJid,
+      text,
+      messageId,
+      quotedText,
+      mentionedJids,
+      msgTimeMs,
+      funConfig,
+      isGroup: true,
+    }).catch((err) => {
+      getLogger?.()?.debug?.('[fun/events] observação falhou: %s', String(err?.message || err));
+    });
   }
 
   // Inferência social roda em lote e nunca aguarda o LLM no caminho da mensagem.

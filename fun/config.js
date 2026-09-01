@@ -179,6 +179,30 @@ export function normalizeFunConfig(input) {
     worldTimezone:
       toText(raw.worldTimezone, DEFAULT_FUN_CONFIG.worldTimezone) ||
       DEFAULT_FUN_CONFIG.worldTimezone,
+    groupEventsEnabled: normalizeBoolean(raw.groupEventsEnabled, DEFAULT_FUN_CONFIG.groupEventsEnabled),
+    groupEventFragmentWindowMs: normalizeInt(
+      raw.groupEventFragmentWindowMs,
+      DEFAULT_FUN_CONFIG.groupEventFragmentWindowMs,
+      { min: 60_000, max: 6 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    groupEventReminderThreeDaysEnabled: normalizeBoolean(
+      raw.groupEventReminderThreeDaysEnabled,
+      DEFAULT_FUN_CONFIG.groupEventReminderThreeDaysEnabled
+    ),
+    groupEventReminderThreeHoursEnabled: normalizeBoolean(
+      raw.groupEventReminderThreeHoursEnabled,
+      DEFAULT_FUN_CONFIG.groupEventReminderThreeHoursEnabled
+    ),
+    groupEventFragmentMaxMessages: normalizeInt(
+      raw.groupEventFragmentMaxMessages,
+      DEFAULT_FUN_CONFIG.groupEventFragmentMaxMessages,
+      { min: 2, max: 12, rounding: 'floor', clamp: true }
+    ),
+    groupEventReminderBatchSize: normalizeInt(
+      raw.groupEventReminderBatchSize,
+      DEFAULT_FUN_CONFIG.groupEventReminderBatchSize,
+      { min: 1, max: 100, rounding: 'floor', clamp: true }
+    ),
     selfHealEnabled: normalizeBoolean(raw.selfHealEnabled, DEFAULT_FUN_CONFIG.selfHealEnabled),
     selfHealDryRun: normalizeBoolean(raw.selfHealDryRun, DEFAULT_FUN_CONFIG.selfHealDryRun),
     selfHealIntervalMs: normalizeInt(raw.selfHealIntervalMs, DEFAULT_FUN_CONFIG.selfHealIntervalMs, {
