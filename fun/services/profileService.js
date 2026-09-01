@@ -831,12 +831,19 @@ export function createProfileService({
     for (const jid of userJids || []) {
       if (!jid) continue;
       const p = getProfile(jid, scopeKey);
-      if (p.empty) continue;
       const wa =
         typeof getContactDisplayName === 'function'
           ? String(getContactDisplayName(jid) || '').trim()
           : '';
-      const label = p.nickname || wa || String(jid).split('@')[0];
+      const localPart = String(jid).split('@')[0];
+      const label = p.nickname || wa || localPart;
+
+      // Se o perfil está vazio, ainda incluímos a identificação básica
+      if (p.empty) {
+        lines.push(`- ${label} [JID: ${localPart}]: sem perfil preenchido (nome via WhatsApp)`);
+        continue;
+      }
+
       const bits = [];
       if (p.nickname && wa && p.nickname !== wa) bits.push(`nick: ${p.nickname}`);
       // Sanitiza: bio/extras vindos do extrator LLM podem trazer placeholder
@@ -852,8 +859,11 @@ export function createProfileService({
           .join('; ');
         if (usableExtras) bits.push(`extras: ${usableExtras}`);
       }
-      if (!bits.length) continue;
-      lines.push(`- ${label}: ${bits.join(' · ')}`);
+      if (!bits.length) {
+        lines.push(`- ${label} [JID: ${localPart}]: perfil vazio`);
+      } else {
+        lines.push(`- ${label} [JID: ${localPart}]: ${bits.join(' · ')}`);
+      }
     }
     if (!lines.length) return '';
     return ['<user_identity>', 'Identidade do grupo (não invente além disso):', ...lines, '</user_identity>'].join(

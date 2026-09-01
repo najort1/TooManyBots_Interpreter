@@ -3,6 +3,7 @@
  *
  * Reúne de forma estruturada:
  * - Perfil e apelido do interlocutor atual (authorProfile)
+ * - Perfis e fatos dos usuários MENCIONADOS na mensagem (mentionedUsers, targetProfiles)
  * - Tópicos quentes e dinâmicas recentes do grupo
  * - Clima ativo consolidado (lore e persona recente)
  *
@@ -10,6 +11,7 @@
  */
 
 import { isUsablePromptFact } from '../../utils/promptFactSanitizer.js';
+import { resolveMentionedUsers, buildMentionedUsersContextBlock } from '../../utils/mentionResolver.js';
 
 /**
  * Constrói o bloco de contexto de identidade e ambiente social do grupo.
@@ -32,6 +34,10 @@ export function buildExpandedPromptContext({
   activePersonaSummary = '',
   recentTopics = [],
   confirmedFacts = [],
+  mentionedJids = [],
+  getDisplayName = null,
+  getProfile = null,
+  loreFacts = [],
 } = {}) {
   const sections = [];
 
@@ -45,6 +51,21 @@ export function buildExpandedPromptContext({
 
     if (profileParts.length) {
       sections.push(`Perfil de quem falou (${authorJid.split('@')[0]}):\n${profileParts.map((p) => `- ${p}`).join('\n')}`);
+    }
+  }
+
+  // 2. Usuários mencionados na mensagem (via @menção)
+  if (Array.isArray(mentionedJids) && mentionedJids.length && typeof getDisplayName === 'function' && typeof getProfile === 'function') {
+    const mentionedUsersMap = resolveMentionedUsers(mentionedJids, getDisplayName, scopeKey);
+    if (mentionedUsersMap.size > 0) {
+      const mentionedBlock = buildMentionedUsersContextBlock(mentionedUsersMap, {
+        getProfile,
+        scopeKey,
+        loreFacts,
+      });
+      if (mentionedBlock) {
+        sections.push(mentionedBlock);
+      }
     }
   }
 

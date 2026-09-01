@@ -37,6 +37,7 @@ import {
   buildSocialHintBlock,
   memorySignalText,
 } from './personaPromptBuilder.js';
+import { resolveMentionsInText } from '../utils/mentionResolver.js';
 import {
   normalizeJid,
   resolveJid,
@@ -319,6 +320,14 @@ export function createPersonaService({
           groupIdentity,
           activePersonaSummary: lore,
           confirmedFacts: responseContextPack?.confirmedFacts || [],
+          mentionedJids: agentContext?.mentionedJids || [],
+          getDisplayName: profileService?.displayName
+            ? (jid) => profileService.displayName(jid, scopeKey)
+            : null,
+          getProfile: profileService?.getProfile
+            ? (jid) => profileService.getProfile(jid, scopeKey)
+            : null,
+          loreFacts: responseContextPack?.loreFacts || [],
         })
       : '';
 
@@ -565,7 +574,23 @@ export function createPersonaService({
         ? profileService.displayName(authorJid, scopeKey)
         : authorJid.split('@')[0] || 'membro';
 
-      const promptText = String(ctx.text || '').trim() || (resolvedImages.length > 0 ? (isContinuation ? 'O que você acha dessa imagem?' : 'Descreva e comente o que você vê nesta imagem.') : '');
+      const rawPromptText = String(ctx.text || '').trim() || (resolvedImages.length > 0 ? (isContinuation ? 'O que você acha dessa imagem?' : 'Descreva e comente o que você vê nesta imagem.') : '');
+      const mentionMap = new Map();
+      for (const jid of ctx.mentionedJids || []) {
+        const normalized = normalizeJid(jid);
+        if (!normalized || mentionMap.has(normalized)) continue;
+        const localPart = normalized.split('@')[0];
+        const displayName = profileService?.displayName
+          ? profileService.displayName(normalized, scopeKey)
+          : localPart;
+        mentionMap.set(normalized, {
+          jid: normalized,
+          localPart,
+          displayName: String(displayName || localPart),
+          nickname: '',
+        });
+      }
+      const promptText = resolveMentionsInText(rawPromptText, mentionMap);
 
       inFlightScopes.add(scopeKey);
       let genResult = await generateResponse({
@@ -637,7 +662,7 @@ export function createPersonaService({
         : undefined;
 
       // ── DESPACHO MULTI-AÇÃO COM HUMAN PACING ──
-      let responseMessageId = '';
+      const responseMessageIds = [];
       const hasSock = ctx.sock?.sendMessage && typeof ctx.sock.sendMessage === 'function';
 
       for (let i = 0; i < actions.length; i += 1) {
@@ -647,8 +672,8 @@ export function createPersonaService({
         try {
           if (action.type === 'text' && hasSock) {
             const sent = await ctx.sock.sendMessage(scopeKey, { text: action.text }, quoted ? { quoted } : undefined);
-            if (!responseMessageId && sent?.key?.id) {
-              responseMessageId = String(sent.key.id);
+            if (sent?.key?.id) {
+              responseMessageIds.push(String(sent.key.id));
             }
           } else if (action.type === 'sticker' && hasSock) {
             const stickerPath = resolveStickerPath(action.slug);
@@ -656,8 +681,8 @@ export function createPersonaService({
               const rawSticker = readFileSync(stickerPath);
               const stickerBuffer = await imageBufferToSticker(rawSticker);
               const sent = await ctx.sock.sendMessage(scopeKey, { sticker: stickerBuffer }, quoted ? { quoted } : undefined);
-              if (!responseMessageId && sent?.key?.id) {
-                responseMessageId = String(sent.key.id);
+              if (sent?.key?.id) {
+                responseMessageIds.push(String(sent.key.id));
               }
             }
           } else if (action.type === 'react' && hasSock && ctx.quoteSource?.key) {
@@ -700,10 +725,13 @@ export function createPersonaService({
         });
       }
 
+      const uniqueResponseMessageIds = [...new Set(responseMessageIds.filter(Boolean))];
+      if (!uniqueResponseMessageIds.length) uniqueResponseMessageIds.push(randomUUID());
+
       if (thread?.id) {
         const anchored = personaRepository.setAnchor({
           threadId: thread.id,
-          anchorMessageId: responseMessageId || randomUUID(),
+          anchorMessageIds: uniqueResponseMessageIds,
           anchorText: responseText,
           now,
         });
@@ -711,11 +739,14 @@ export function createPersonaService({
       }
 
       const threadKey = String(ctx.responseContextPack?.threadContext?.threadKey || '');
-      if (responseMessageId && threadKey) {
+      if (threadKey) {
         threadContextService?.anchorResponse?.({
           scopeKey,
           threadKey,
-          anchorMessageId: responseMessageId,
+          anchorMessageId: uniqueResponseMessageIds[0],
+          ...(uniqueResponseMessageIds.length > 1
+            ? { anchorMessageIds: uniqueResponseMessageIds }
+            : {}),
           now,
         });
       }
