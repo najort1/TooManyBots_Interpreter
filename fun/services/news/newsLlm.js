@@ -15,6 +15,7 @@ export async function composeLlmBits(
     groupLore = groupMemoryService?.buildLoreContext?.(scopeKey, {
       limit: Infinity,
       funConfig,
+      now: facts.now,
     }) || '';
   } catch {
     groupLore = '';

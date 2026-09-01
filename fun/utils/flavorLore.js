@@ -15,6 +15,7 @@ export function withGroupLore(
     userJids = [],
     funConfig = {},
     limit = Infinity,
+    now = Date.now(),
   } = {}
 ) {
   const out = { ...(vars || {}) };
@@ -45,6 +46,7 @@ export function withGroupLore(
           userJids: (userJids || []).filter(Boolean),
           limit: Number.isFinite(limit) && limit > 0 ? limit : Infinity,
           funConfig: funConfig || {},
+          now,
         }) || '';
     }
   } catch {

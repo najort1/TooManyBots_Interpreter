@@ -26,6 +26,7 @@ export function createPersonaContextService({
       if (identity && groupMemoryService?.buildPersonaLoreContext) {
         const lore = groupMemoryService.buildPersonaLoreContext(event.scopeKey, {
           funConfig: event.funConfig || {},
+          now: event.occurredAt,
         });
         if (lore) identity.groupLoreSummary = lore;
       } else if (identity && groupMemoryService?.getPersonaCached) {

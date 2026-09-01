@@ -29,6 +29,21 @@ test('promptContextBuilder: constrói bloco completo com perfil, clima, tópicos
   assert.ok(context.includes('Lucas pagou a rodada de pizza'));
 });
 
+test('promptContextBuilder: fatos estruturados incluem a data de criação', () => {
+  const context = buildExpandedPromptContext({
+    timeZone: 'UTC',
+    confirmedFacts: [
+      {
+        factText: 'Max aceitou enfrentar Jonas no vôlei amanhã',
+        firstSeenAt: Date.UTC(2026, 7, 28),
+      },
+    ],
+  });
+
+  assert.match(context, /data_do_fato=2026-08-28/);
+  assert.match(context, /Max aceitou enfrentar Jonas no vôlei amanhã/);
+});
+
 test('promptContextBuilder: lida graciosamente com perfil ausente', () => {
   const context = buildExpandedPromptContext({
     scopeKey: '12345@g.us',

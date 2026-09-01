@@ -3,6 +3,7 @@ import { formatHelp, resolveHelpTarget } from '../formatters/helpGuide.js';
 import { getReactionKind, normalizeReactionAction } from './reactionMediaService.js';
 import { resolveStickerPath, STICKER_SLUGS } from './personaStickerCatalog.js';
 import { imageBufferToSticker } from '../utils/stickerConvert.js';
+import { formatDatedFact } from '../utils/factTemporalContext.js';
 
 const VIRTUAL_RUSSIAN_ACTOR = '__persona_virtual_russian__';
 
@@ -122,7 +123,12 @@ export function createPersonaToolExecutor({
         ...base,
         ok: true,
         text: matches.length
-          ? ['🧠 *Lore lembrada*', ...matches.map((fact) => `• ${clean(fact.summary, 180)}`)].join('\n')
+          ? [
+              '🧠 *Lore lembrada*',
+              ...matches.map((fact) =>
+                `• ${formatDatedFact(fact, clean(fact.summary, 180), ctx.funConfig?.worldTimezone)}`
+              ),
+            ].join('\n')
           : 'Não achei um fato de lore confiável sobre isso por aqui.',
       };
     }

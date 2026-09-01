@@ -2,6 +2,7 @@ import { randomUUID } from 'crypto';
 import { isWorldQuietHours } from '../utils/worldQuietHours.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { validateFindingsPayload, validateEvidenceFinding } from './selfHealingValidators.js';
+import { buildFactTemporalContext, resolveFactTimeZone } from '../utils/factTemporalContext.js';
 
 export function createSelfHealingService({ selfHealRepository, evidenceRepository, memoryRepository, conversationMemoryRepository, statsRepository, marketRepository, profileRepository, getLogger = () => null, generateZen, getConfig = () => ({}) } = {}) {
   if (!selfHealRepository || !evidenceRepository || !memoryRepository) throw new Error('[fun/selfHealingService] repositories required');
@@ -44,6 +45,14 @@ export function createSelfHealingService({ selfHealRepository, evidenceRepositor
     };
     if (typeof generateZen !== 'function') return { ok: false, reason: 'llm-unavailable', runId, tools };
     const prompt = [
+      ...(domain === 'memory_lore'
+        ? [
+            buildFactTemporalContext({
+              now,
+              timeZone: resolveFactTimeZone(config.worldTimezone),
+            }),
+          ]
+        : []),
       'Audite somente os dados públicos e auditáveis abaixo. Não há escrita nesta chamada.',
       `Retorne APENAS JSON válido: {"domain":"${domain}","findings":[...]}.`,
       'Cada finding deve respeitar o contrato selfheal: targetId, action, confidence (0-100), reason e campos exigidos pela action. Não invente dados nem fatos.',

@@ -71,11 +71,13 @@ test('buildMentionedUsersContextBlock filtra fatos pelo sujeito mencionado', () 
   const block = buildMentionedUsersContextBlock(map, {
     getProfile: () => ({ empty: false, nickname: 'Dudu', bio: 'Figura do grupo' }),
     scopeKey: 'grupo@g.us',
+    timeZone: 'UTC',
     loreFacts: [
       {
         kind: 'running_gag',
         summary: 'Eduardo odeia GTA por causa da Lucia',
         subjects: [eduardoJid],
+        createdAt: Date.UTC(2026, 7, 28),
       },
       {
         kind: 'epic_fail',
@@ -86,6 +88,7 @@ test('buildMentionedUsersContextBlock filtra fatos pelo sujeito mencionado', () 
   });
 
   assert.match(block, /Eduardo odeia GTA/);
+  assert.match(block, /data_do_fato=2026-08-28/);
   assert.doesNotMatch(block, /Paulo caiu da cadeira/);
 });
 

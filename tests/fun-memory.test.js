@@ -1004,12 +1004,15 @@ test('buildLoreContext: persona cache hit', () => {
   const repo = createFunMemoryRepository({ getDatabase: getDb });
   const scope = uniqueGroup();
   const u = uniqueJid('5510');
+  const factCreatedAt = Date.UTC(2026, 7, 28, 20, 0, 0);
+  const promptNow = Date.UTC(2026, 8, 1, 12, 0, 0);
   repo.insertFact({
     scopeKey: scope,
     kind: 'event',
     summary: 'Fato cacheavel de teste de persona no grupo',
     subjects: [u],
     score: 70,
+    now: factCreatedAt,
   });
   repo.setPersona(scope, 'Grupo caótico de testes', 1);
 
@@ -1017,10 +1020,19 @@ test('buildLoreContext: persona cache hit', () => {
     memoryRepository: repo,
     getContactDisplayName: () => 'Tester',
   });
-  const a = mem.buildLoreContext(scope, { limit: 3, funConfig: {} });
-  const b = mem.buildLoreContext(scope, { limit: 3, funConfig: {} });
+  const contextOptions = {
+    limit: 3,
+    funConfig: { worldTimezone: 'UTC' },
+    now: promptNow,
+  };
+  const a = mem.buildLoreContext(scope, contextOptions);
+  const b = mem.buildLoreContext(scope, contextOptions);
   assert.match(a, /<group_lore>/);
   assert.match(a, /Grupo caótico|Fato cacheavel|Tester/i);
+  assert.match(a, /data_atual=2026-09-01/);
+  assert.match(a, /data_do_fato=2026-08-28/);
+  assert.match(a, /fuso=UTC/);
+  assert.match(a, /"amanhã".*data_do_fato/);
   assert.equal(mem._personaCache.has(scope), true);
   assert.match(b, /group_lore/);
 });

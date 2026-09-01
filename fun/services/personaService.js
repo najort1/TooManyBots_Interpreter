@@ -25,6 +25,7 @@ import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { PERSONA_CONTEXT_TURNS, PERSONA_DERIVE_INTERVAL_MS, PERSONA_TOKEN_HALF_LIFE_MS, PERSONA_TOP_TOKENS } from '../constants.js';
 import { buildPersonaToolManifest, parsePersonaEnvelope, looksLikeRawJson } from './personaToolProtocol.js';
 import { isUsablePromptFact } from '../utils/promptFactSanitizer.js';
+import { buildFactTemporalContext, formatDatedFact } from '../utils/factTemporalContext.js';
 import { resolveStickerPath } from './personaStickerCatalog.js';
 import { imageBufferToSticker } from '../utils/stickerConvert.js';
 import { resolveMediaFromRawMessage, downloadResolvedMedia } from '../utils/mediaDownload.js';
@@ -328,6 +329,7 @@ export function createPersonaService({
             ? (jid) => profileService.getProfile(jid, scopeKey)
             : null,
           loreFacts: responseContextPack?.loreFacts || [],
+          timeZone: o.timezone,
         })
       : '';
 
@@ -346,13 +348,19 @@ export function createPersonaService({
       ? [...(threadContext || []), { role: 'contexto', text: responseContextPack.threadContext.topicSummary }]
       : threadContext;
 
+    const currentNow = Number(agentContext?.now) || Date.now();
     const facts = (responseContextPack?.confirmedFacts || [])
-      .map((m) => cleanPromptText(m.factText, Infinity))
-      .filter((fact) => Boolean(fact) && isUsablePromptFact(fact));
+      .map((memory) => {
+        const text = cleanPromptText(memory.factText, Infinity);
+        if (!text || !isUsablePromptFact(text)) return '';
+        return formatDatedFact(memory, text, o.timezone);
+      })
+      .filter(Boolean);
 
     const system = [
       buildPersonaSystemPrompt({ styleBlock, threadContext: contextTurns, maxChars: o.maxChars, contextTurns: o.contextTurns }),
-      buildTemporalBlock(Date.now(), o.timezone),
+      buildTemporalBlock(currentNow, o.timezone),
+      buildFactTemporalContext({ now: currentNow, timeZone: o.timezone }),
       facts.length ? `Fatos confirmados relevantes (não invente além deles):\n${facts.map((fact) => `- ${fact}`).join('\n')}` : '',
       'Sinais inferidos são apenas pistas: jamais os apresente como fato.',
     ].filter(Boolean).join('\n');

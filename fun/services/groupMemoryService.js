@@ -9,6 +9,11 @@ import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
+import {
+  buildFactTemporalContext,
+  formatDatedFact,
+  resolveFactTimeZone,
+} from '../utils/factTemporalContext.js';
 
 const VALID_KINDS = new Set([
   'running_gag',
@@ -508,12 +513,13 @@ export function createGroupMemoryService({
 
   /** @type {Map<string, { msgs: object[], lastFlushAt: number, flushing: boolean }>} */
   const buffers = new Map();
-  /** @type {Map<string, { text: string, factCount: number, at: number }>} */
+  /** @type {Map<string, { text: string, factCount: number, updatedAt: number, at: number }>} */
   const personaCache = new Map();
 
   function opts(funConfig = {}) {
     return {
       enabled: funConfig.memoryEnabled !== false,
+      timeZone: resolveFactTimeZone(funConfig.worldTimezone),
       maxFacts: Math.max(10, Math.min(120, Math.floor(numOr(funConfig.memoryMaxFacts, 50)))),
       // sem limite: summary vai completo pro modelo (usuário pediu pra não cortar).
       summaryMax: Infinity,
@@ -577,7 +583,7 @@ export function createGroupMemoryService({
         scopeKey: k,
         personaText: hit.text,
         factCount: hit.factCount,
-        updatedAt: hit.at,
+        updatedAt: hit.updatedAt,
         fromCache: true,
       };
     }
@@ -585,6 +591,7 @@ export function createGroupMemoryService({
     personaCache.set(k, {
       text: row.personaText || '',
       factCount: row.factCount || 0,
+      updatedAt: row.updatedAt || 0,
       at: Date.now(),
     });
     return { ...row, fromCache: false };
@@ -790,7 +797,7 @@ export function createGroupMemoryService({
         memoryRepository.pruneToCap(scopeKey, o.maxFacts);
 
         if (inserted + reinforced > 0 || random() < 0.35) {
-          await refreshPersona(scopeKey, funConfig, o);
+          await refreshPersona(scopeKey, funConfig, o, now);
         }
 
         return { ok: true, inserted, reinforced, batchSize: batch.length };
@@ -1014,7 +1021,7 @@ export function createGroupMemoryService({
           .filter(Boolean)
           .slice(0, 3)
           .join(', ');
-        return `- [${f.kind}] (${who || '?'}) ${f.summary}`;
+        return `- ${formatDatedFact(f, `[${f.kind}] (${who || '?'}) ${f.summary}`, o.timeZone)}`;
       })
       .join('\n');
 
@@ -1035,6 +1042,7 @@ export function createGroupMemoryService({
     ].filter(Boolean);
 
     const prompt = [
+      buildFactTemporalContext({ now: batch.at(-1)?.at || Date.now(), timeZone: o.timeZone }),
       `Analise as seguintes mensagens do grupo (${batch.length} msgs, IDs entre colchetes).`,
       ...contextBlocks,
       contextBlocks.length ? '' : null,
@@ -1140,7 +1148,12 @@ export function createGroupMemoryService({
     return [];
   }
 
-  async function refreshPersona(scopeKey, funConfig = {}, o = opts(funConfig)) {
+  async function refreshPersona(
+    scopeKey,
+    funConfig = {},
+    o = opts(funConfig),
+    now = Date.now()
+  ) {
     // Alimenta fatos suficientes para os bullets configurados (ex.: 8 bullets → 32 fatos)
     const facts = memoryRepository.listFacts(scopeKey, {
       limit: Math.max(15, Math.min(60, o.personaBullets * 4)),
@@ -1155,7 +1168,7 @@ export function createGroupMemoryService({
     const list = facts
       .map((f) => {
         const who = (f.subjects || []).map((s) => firstName(s)).join(', ');
-        return `• (${f.kind}, ${f.score}, ${who || '?'}) ${f.summary}`;
+        return `• ${formatDatedFact(f, `(${f.kind}, ${f.score}, ${who || '?'}) ${f.summary}`, o.timeZone)}`;
       })
       .join('\n');
     let text = '';
@@ -1170,7 +1183,7 @@ export function createGroupMemoryService({
             baseUrl: ep.baseUrl,
             model: ep.model,
             system: buildPersonaSystem(o.personaBullets),
-            prompt: `Fatos do grupo:\n${list}\n\nResuma o clima em ${o.personaBullets} bullets (≤${o.personaMax} chars). NÃO invente fatos novos. Só os bullets:`,
+            prompt: `${buildFactTemporalContext({ now, timeZone: o.timeZone })}\nFatos do grupo:\n${list}\n\nResuma o clima em ${o.personaBullets} bullets (≤${o.personaMax} chars). NÃO invente fatos novos. Só os bullets:`,
             timeoutMs: Math.max(o.extractTimeout, task.timeoutMs),
             maxTokens: task.maxTokens,
             temperature: task.temperature,
@@ -1202,6 +1215,7 @@ export function createGroupMemoryService({
     personaCache.set(String(scopeKey || ''), {
       text,
       factCount: facts.length,
+      updatedAt: now,
       at: Date.now(),
     });
     return { ok: true, text };
@@ -1214,14 +1228,14 @@ export function createGroupMemoryService({
     '- NÃO invente detalhes absurdos que contradigam o fato registrado.',
   ];
 
-  function renderLoreFacts(facts) {
+  function renderLoreFacts(facts, timeZone) {
     return (facts || []).map((fact) => {
       const authors = (fact.subjects || [])
         .map((subject) => firstName(subject))
         .filter(Boolean)
         .slice(0, 3);
       const who = authors.length ? authors.join(', ') : '?';
-      return `- [${fact.kind}] (Autor: ${who}): ${fact.summary}`;
+      return `- ${formatDatedFact(fact, `[${fact.kind}] (Autor: ${who}): ${fact.summary}`, timeZone)}`;
     });
   }
 
@@ -1231,7 +1245,10 @@ export function createGroupMemoryService({
    * SEM LIMITE de fatos — usuário pediu para enviar toda a lore do grupo
    * pro modelo (até o teto de `o.maxFacts` persistido, que já é o cap real).
    */
-  function buildLoreContext(scopeKey, { userJids = [], limit = Infinity, funConfig = {} } = {}) {
+  function buildLoreContext(
+    scopeKey,
+    { userJids = [], limit = Infinity, funConfig = {}, now = Date.now() } = {}
+  ) {
     const o = opts(funConfig);
     if (!o.enabled || !scopeKey) return '';
 
@@ -1262,6 +1279,7 @@ export function createGroupMemoryService({
     const top = scored.slice(0, cap).map((x) => x.f);
     const lines = [
       '<group_lore>',
+      buildFactTemporalContext({ now, timeZone: o.timeZone }),
       'Regras de uso da Lore:',
       ...LORE_USAGE_RULES,
     ];
@@ -1269,11 +1287,11 @@ export function createGroupMemoryService({
     if (persona.personaText) {
       lines.push(
         '',
-        `Clima: ${persona.personaText.replace(/\n+/g, ' · ')}`
+        `Clima: ${formatDatedFact(persona, persona.personaText.replace(/\n+/g, ' · '), o.timeZone)}`
       );
     }
     if (top.length) {
-      lines.push('', 'Fatos:', ...renderLoreFacts(top));
+      lines.push('', 'Fatos:', ...renderLoreFacts(top, o.timeZone));
     }
     lines.push('</group_lore>');
     return lines.join('\n');
@@ -1283,7 +1301,7 @@ export function createGroupMemoryService({
    * Lore integral exclusiva da persona: todos os fatos persistidos, sem ranking,
    * filtro de score ou corte por caracteres. Outros consumidores usam buildLoreContext.
    */
-  function buildPersonaLoreContext(scopeKey, { funConfig = {} } = {}) {
+  function buildPersonaLoreContext(scopeKey, { funConfig = {}, now = Date.now() } = {}) {
     const o = opts(funConfig);
     if (!o.enabled || !scopeKey) return '';
 
@@ -1292,11 +1310,12 @@ export function createGroupMemoryService({
 
     return [
       '<group_lore>',
+      buildFactTemporalContext({ now, timeZone: o.timeZone }),
       'Regras de uso da Lore:',
       ...LORE_USAGE_RULES,
       '',
       'Fatos:',
-      ...renderLoreFacts(facts),
+      ...renderLoreFacts(facts, o.timeZone),
       '</group_lore>',
     ].join('\n');
   }

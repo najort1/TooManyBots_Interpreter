@@ -8,6 +8,8 @@ import {
   createFunStatsRepository,
 } from '../fun/db/funStatsRepository.js';
 import { createFunNewsRepository } from '../fun/db/funNewsRepository.js';
+import { createFunMemoryRepository } from '../fun/db/funMemoryRepository.js';
+import { createGroupMemoryService } from '../fun/services/groupMemoryService.js';
 import {
   createNewsService,
   isGroupNewsWindow,
@@ -25,6 +27,45 @@ test('news: isGroupNewsWindow 23:59 e 00:02', () => {
   // We only assert function returns boolean consistently for now timestamps
   const cfg = { worldTimezone: 'America/Sao_Paulo', groupNewsHour: 23, groupNewsMinute: 59 };
   assert.equal(typeof isGroupNewsWindow(Date.now(), cfg), 'boolean');
+});
+
+test('news: prompt ancora FORESHADOW na data atual e na data do fato', async () => {
+  const scope = uniqueGroup();
+  const factCreatedAt = Date.UTC(2026, 7, 28, 20, 0, 0);
+  const now = Date.UTC(2026, 8, 1, 23, 59, 30);
+  const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
+  memoryRepository.insertFact({
+    scopeKey: scope,
+    kind: 'rivalry',
+    summary: 'Max aceitou enfrentar Jonas no vôlei amanhã',
+    subjects: ['max@s.whatsapp.net', 'jonas@s.whatsapp.net'],
+    score: 88,
+    now: factCreatedAt,
+  });
+  const groupMemoryService = createGroupMemoryService({ memoryRepository });
+  let promptLore = '';
+  const newsService = createNewsService({
+    newsRepository: createFunNewsRepository({ getDatabase: getDb }),
+    groupMemoryService,
+    flavorService: {
+      async line(_scenario, vars) {
+        promptLore = String(vars.groupLore || '');
+        return 'CAPA: Jornal com contexto\nINTRO: A redação recebeu os fatos datados corretamente.\nFORESHADOW: A redação compara as datas antes de prever.';
+      },
+      lastProvider: () => 'zen',
+    },
+  });
+
+  await newsService.composeEdition(
+    scope,
+    { worldTimezone: 'UTC', memoryEnabled: true, memoryMinScore: 60 },
+    now
+  );
+
+  assert.match(promptLore, /data_atual=2026-09-01/);
+  assert.match(promptLore, /data_do_fato=2026-08-28/);
+  assert.match(promptLore, /Max aceitou enfrentar Jonas no vôlei amanhã/);
+  assert.match(promptLore, /"amanhã".*data_do_fato/);
 });
 
 test('news: log, compose template, publish dedup', async () => {

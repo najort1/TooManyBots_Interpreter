@@ -6,6 +6,7 @@
  */
 
 import { jidLocalPart, normalizeMentionJid } from './userLabel.js';
+import { formatDatedFact } from './factTemporalContext.js';
 
 /**
  * Resolve nomes legíveis de JIDs mencionados.
@@ -108,7 +109,10 @@ export function resolveMentionsInText(text, mentionedUsersMap) {
  * @param {Array<object>} options.loreFacts - Fatos de lore do grupo (opcional, para filtrar por subject)
  * @returns {string} Bloco formatado
  */
-export function buildMentionedUsersContextBlock(mentionedUsersMap, { getProfile, scopeKey, loreFacts = [] } = {}) {
+export function buildMentionedUsersContextBlock(
+  mentionedUsersMap,
+  { getProfile, scopeKey, loreFacts = [], timeZone } = {}
+) {
   if (!mentionedUsersMap?.size) return '';
 
   const sections = [];
@@ -156,7 +160,7 @@ export function buildMentionedUsersContextBlock(mentionedUsersMap, { getProfile,
     if (userFacts.length) {
       const factLines = userFacts
         .slice(0, 5)
-        .map((f) => `  - [${f.kind}] ${f.summary}`);
+        .map((f) => `  - ${formatDatedFact(f, `[${f.kind}] ${f.summary}`, timeZone)}`);
       lines.push('Fatos de Lore sobre este membro:');
       lines.push(...factLines);
     }

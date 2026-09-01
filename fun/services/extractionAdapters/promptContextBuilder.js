@@ -12,6 +12,7 @@
 
 import { isUsablePromptFact } from '../../utils/promptFactSanitizer.js';
 import { resolveMentionedUsers, buildMentionedUsersContextBlock } from '../../utils/mentionResolver.js';
+import { formatDatedFact } from '../../utils/factTemporalContext.js';
 
 /**
  * Constrói o bloco de contexto de identidade e ambiente social do grupo.
@@ -38,6 +39,7 @@ export function buildExpandedPromptContext({
   getDisplayName = null,
   getProfile = null,
   loreFacts = [],
+  timeZone = 'America/Sao_Paulo',
 } = {}) {
   const sections = [];
 
@@ -62,6 +64,7 @@ export function buildExpandedPromptContext({
         getProfile,
         scopeKey,
         loreFacts,
+        timeZone,
       });
       if (mentionedBlock) {
         sections.push(mentionedBlock);
@@ -86,11 +89,15 @@ export function buildExpandedPromptContext({
   // 4. Fatos confirmados adicionais de lore recente
   if (Array.isArray(confirmedFacts) && confirmedFacts.length) {
     const usable = confirmedFacts
-      .map((f) => (typeof f === 'string' ? f : f?.summary || f?.factText))
-      .filter((text) => Boolean(text) && isUsablePromptFact(text));
+      .map((fact) => {
+        const text = typeof fact === 'string' ? fact : fact?.summary || fact?.factText;
+        if (!text || !isUsablePromptFact(text)) return '';
+        return formatDatedFact(typeof fact === 'string' ? {} : fact, text, timeZone);
+      })
+      .filter(Boolean);
 
     if (usable.length) {
-      sections.push(`Fatos recentes de lore do grupo:\n${usable.map((f) => `- ${f}`).join('\n')}`);
+      sections.push(`Fatos recentes de lore do grupo:\n${usable.map((fact) => `- ${fact}`).join('\n')}`);
     }
   }
 
