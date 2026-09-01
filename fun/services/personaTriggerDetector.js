@@ -154,12 +154,14 @@ export function isThreadContinuation({
   if (!quotedIsBot || !thread) return false;
 
   const quotedId = String(quotedMessageId || '').trim();
-  const anchorId = String(thread?.anchorMessageId || '').trim();
+  const anchorIds = Array.isArray(thread?.anchorMessageIds) && thread.anchorMessageIds.length
+    ? thread.anchorMessageIds.map((id) => String(id || '').trim()).filter(Boolean)
+    : [String(thread?.anchorMessageId || '').trim()].filter(Boolean);
   const anchorText = String(thread?.anchorText || '').trim();
   const quotedTextNorm = normalizeAnchorText(quotedText);
   const anchorTextNorm = normalizeAnchorText(anchorText);
   const quotedIdIsReal = GENERIC_ID_RE.test(quotedId);
-  const idMatches = quotedIdIsReal && quotedId === anchorId;
+  const idMatches = quotedIdIsReal && anchorIds.includes(quotedId);
   const textMatches = Boolean(anchorTextNorm && quotedTextNorm && quotedTextNorm === anchorTextNorm);
 
   const quotePointsToAnchor = (idMatches || (!quotedId && !quotedTextNorm) || (quotedIdIsReal && textMatches));

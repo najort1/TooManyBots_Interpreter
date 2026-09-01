@@ -496,6 +496,76 @@ test('multi-action: despacha múltiplos balões e sticker com sock.sendMessage',
   }
 });
 
+test('multi-action: reply ao segundo ou terceiro balão continua a thread da persona', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+
+  try {
+    for (const targetBubble of [2, 3]) {
+      const groups = createFunGroupRepository({ getDatabase: getDb });
+      const persona = createFunPersonaRepository({ getDatabase: getDb });
+      const scope = uniqueGroup();
+      const botJid = uniqueJid('5588');
+      const authorJid = uniqueJid('5511');
+      let sentCount = 0;
+      const mockSock = {
+        user: { id: `${botJid.split('@')[0]}:0` },
+        sendMessage: async () => ({ key: { id: `persona-bubble-${++sentCount}` } }),
+      };
+
+      const service = createPersonaService({
+        personaRepository: persona,
+        groupRepository: groups,
+        personaToolExecutor: { execute: async () => ({ ok: true }) },
+        generateZen: async () => JSON.stringify({
+          type: 'actions',
+          actions: [
+            { type: 'text', text: 'primeiro balão' },
+            { type: 'text', text: 'segundo balão' },
+            { type: 'text', text: 'terceiro balão' },
+          ],
+        }),
+      });
+
+      const first = await service.tryRespond({
+        scopeKey: scope,
+        authorJid,
+        text: 'bot manda três mensagens',
+        messageType: 'text',
+        sock: mockSock,
+        identityMap: createIdentityMap(),
+        now: 7_000_000 + targetBubble,
+      });
+      assert.equal(first.responded, true);
+
+      const thread = persona.getActiveThread(scope, { now: 7_000_000 + targetBubble });
+      assert.deepEqual(thread.anchorMessageIds, [
+        'persona-bubble-1',
+        'persona-bubble-2',
+        'persona-bubble-3',
+      ]);
+
+      const reply = await service.tryRespond({
+        scopeKey: scope,
+        authorJid,
+        text: `respondendo ao balão ${targetBubble}`,
+        quotedParticipant: botJid,
+        quotedMessageId: `persona-bubble-${targetBubble}`,
+        messageType: 'extended-text',
+        sock: mockSock,
+        identityMap: createIdentityMap(),
+        now: 7_000_100 + targetBubble,
+      });
+
+      assert.equal(reply.responded, true, `reply ao balão ${targetBubble} deve continuar a persona`);
+      assert.equal(persona.getActiveThread(scope, { now: 7_000_100 + targetBubble }).turnCount, 1);
+    }
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
 test('multi-action: envelope de ação única {"type":"sticker","slug":"entendi_nada"} envia sticker sem vazar JSON cru', async () => {
   const groups = createFunGroupRepository({ getDatabase: getDb });
   const persona = createFunPersonaRepository({ getDatabase: getDb });

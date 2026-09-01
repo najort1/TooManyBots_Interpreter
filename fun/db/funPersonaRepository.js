@@ -38,8 +38,16 @@ function mapProfileRow(row) {
   };
 }
 
+function parseAnchorMessageIds(raw) {
+  const value = String(raw || '').trim();
+  if (!value) return [];
+  if (!value.startsWith('[')) return [value];
+  return parseJsonArray(value).map((id) => String(id || '').trim()).filter(Boolean);
+}
+
 function mapThreadRow(row) {
   if (!row) return null;
+  const anchorMessageIds = parseAnchorMessageIds(row.anchor_message_id);
   return {
     id: Number(row.id) || 0,
     scopeKey: String(row.scope_key || ''),
@@ -47,7 +55,8 @@ function mapThreadRow(row) {
     maxTurns: Number(row.max_turns) || 0,
     lastActivityAt: Number(row.last_activity_at) || 0,
     context: parseJsonArray(row.context),
-    anchorMessageId: String(row.anchor_message_id || ''),
+    anchorMessageId: anchorMessageIds[0] || '',
+    anchorMessageIds,
     anchorText: String(row.anchor_text || ''),
     createdAt: Number(row.created_at) || 0,
   };
@@ -169,23 +178,35 @@ export function createFunPersonaRepository({ getDatabase = getDb } = {}) {
   }
 
   /**
-   * Grava a âncora da última resposta da persona nesta thread: o messageId
-   * (se o socket devolver) ou um fallback determinístico, mais o texto da
-   * resposta (reconciliação quando não há messageId).
+   * Grava todas as âncoras da última resposta da persona nesta thread.
+   * Respostas multi-balão persistem cada messageId em JSON na coluna legada;
+   * respostas simples continuam armazenadas como string para compatibilidade.
    */
-  function setAnchor({ threadId, anchorMessageId = '', anchorText = '', now = Date.now() } = {}) {
+  function setAnchor({
+    threadId,
+    anchorMessageId = '',
+    anchorMessageIds = [],
+    anchorText = '',
+    now = Date.now(),
+  } = {}) {
     ensureSchema();
     const db = getDatabase();
     const id = Number(threadId) || 0;
     if (!id) return { ok: false, reason: 'invalid' };
-    const anchor = String(anchorMessageId || '').trim();
+
+    const ids = [...new Set([
+      ...(Array.isArray(anchorMessageIds) ? anchorMessageIds : []),
+      anchorMessageId,
+    ].map((value) => String(value || '').trim()).filter(Boolean))];
+    const storedAnchor = ids.length > 1 ? JSON.stringify(ids) : (ids[0] || '');
     const text = String(anchorText || '').trim();
-    if (!anchor && !text) return { ok: false, reason: 'invalid' };
+    if (!storedAnchor && !text) return { ok: false, reason: 'invalid' };
+
     db.prepare(
       `UPDATE ${ANALYTICS_SCHEMA}.fun_persona_thread
         SET anchor_message_id = ?, anchor_text = ?, last_activity_at = ?
         WHERE id = ?`
-    ).run(anchor, text.slice(0, 400), Number(now) || Date.now(), id);
+    ).run(storedAnchor, text.slice(0, 400), Number(now) || Date.now(), id);
     return { ok: true, thread: getThreadById(id) };
   }
 
