@@ -48,7 +48,7 @@ O **TooManyBots Interpreter** resolve o problema de criar bots de WhatsApp compl
 |------------|--------|-----------|
 | **Node.js** | 18+ | Runtime principal |
 | **better-sqlite3** | ^12.8.0 | Banco de dados SQLite síncrono |
-| **baileys** | ^7.0.0 | Biblioteca WhatsApp (@whiskeysockets/baileys) |
+| **baileys** | 7.0.0-rc14 | Biblioteca WhatsApp (Baileys v7) |
 | **pino** | ^8.19.0 | Logging estruturado |
 | **pino-pretty** | ^11.0.0 | Formatação de logs |
 

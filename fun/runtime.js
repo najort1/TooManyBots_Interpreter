@@ -7,8 +7,9 @@
 import makeWASocket, {
   DisconnectReason,
   fetchLatestBaileysVersion,
+  jidNormalizedUser,
   makeCacheableSignalKeyStore,
-} from '@whiskeysockets/baileys';
+} from 'baileys';
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
@@ -69,6 +70,7 @@ async function sendStickerMessage(sock, jid, buffer, options = {}) {
   return enqueueFunOutput(jid, opts, () => sendStickerMessageOriginal(sock, jid, buffer, { ...opts, skipGuard: true }));
 }
 import { resolveIncomingActorJid } from '../runtime/contactUtils.js';
+import { createLidIdentityMigrationService } from '../runtime/lidIdentityMigration.js';
 import { createInstanceLock } from '../runtime/instanceLock.js';
 import { createReconnectController } from '../runtime/reconnectController.js';
 import { createFunModule } from './index.js';
@@ -76,7 +78,7 @@ import { loadFunUserConfig, FUN_DEFAULT_DATA_DIR } from './config.js';
 import { runFunSetupWizard, shouldRunFunWizard } from './wizard.js';
 import { startFunDashboardServer } from './dashboard/server.js';
 import { extractMentionedJids } from './utils/mentions.js';
-import { loadGroupIdentity } from './utils/identity.js';
+import { loadGroupIdentity, looksLikeOpaqueLid, resolveContactIdentity } from './utils/identity.js';
 import { createAuditBus } from './tui/auditBus.js';
 import { createRenderer } from './tui/renderer.js';
 import { createFunTui } from './tui/index.js';
@@ -146,6 +148,86 @@ export function extractQuotedText(msg) {
   return '';
 }
 
+export function persistFunContactIdentity(contact, {
+  identityMap = null,
+  source = 'fun-runtime-contact',
+  now = Date.now(),
+  upsert = upsertContactDisplayName,
+} = {}) {
+  const { jid, displayName } = resolveContactIdentity(contact, identityMap);
+  if (!jid || !displayName || typeof upsert !== 'function') return { jid, displayName, persisted: false };
+
+  const persisted = Boolean(upsert({
+    jid,
+    displayName,
+    source,
+    updatedAt: Number(now) || Date.now(),
+  }));
+  return { jid, displayName, persisted };
+}
+
+/**
+ * Extrai a identidade de quem enviou uma WAMessage. O histórico do Baileys
+ * entrega WAMessage em `messaging-history.set`; ele não passa por
+ * `messages.upsert` de tipo `notify`.
+ */
+export function persistFunMessageIdentity(message, {
+  actorJid = '',
+  identityMap = null,
+  source = 'fun-runtime-message',
+  now = Date.now(),
+  upsert = upsertContactDisplayName,
+} = {}) {
+  const item = message && typeof message === 'object' ? message : {};
+  const key = item.key && typeof item.key === 'object' ? item.key : {};
+  if (key.fromMe) return { jid: '', displayName: '', persisted: false };
+
+  return persistFunContactIdentity({
+    id: actorJid || key.participant || key.senderJid || key.remoteJid || key.participantAlt || '',
+    lid: key.participantLid || key.participant_lid || key.senderLid || key.sender_lid || '',
+    phoneNumber: key.participantAlt || key.participant_alt || key.remoteJidAlt || key.remote_jid_alt || key.participantPn || key.participant_pn || key.senderPn || key.sender_pn || '',
+    name: item.pushName || item.pushname || '',
+  }, {
+    identityMap,
+    source,
+    now,
+    upsert,
+  });
+}
+
+/**
+ * O Baileys 7 mantém o vínculo LID→PN recebido do WhatsApp. O LID continua
+ * sendo a identidade primária; o PN retornado aqui só viabiliza a migração
+ * idempotente dos dados legados.
+ */
+export async function resolveBaileysLidMappings(sock, jids, identityMap = null) {
+  const getPNForLID = sock?.signalRepository?.lidMapping?.getPNForLID;
+  if (typeof getPNForLID !== 'function' || !Array.isArray(jids)) return [];
+
+  const mappings = [];
+  const seenLids = new Set();
+  for (const rawJid of jids) {
+    const raw = String(rawJid || '').trim();
+    if (!raw || !looksLikeOpaqueLid(raw)) continue;
+    const localPart = raw.split('@')[0];
+    const lid = raw.endsWith('@lid') ? raw : `${localPart}@lid`;
+    if (seenLids.has(lid)) continue;
+    seenLids.add(lid);
+
+    try {
+      const pn = String(await getPNForLID(lid) || '').trim();
+      if (!pn) continue;
+      const canonicalPn = jidNormalizedUser(pn);
+      identityMap?.remember?.(lid, canonicalPn);
+      mappings.push({ lid, pn: canonicalPn });
+    } catch {
+      // O mapa pode ainda não estar sincronizado; o fallback de metadata segue ativo.
+    }
+  }
+
+  return mappings;
+}
+
 function extractQuotedParticipant(msg) {
   const queue = [msg?.message || {}];
   const seen = new Set();
@@ -170,7 +252,7 @@ function extractQuotedParticipant(msg) {
     ];
 
     for (const ctx of contexts) {
-      const p = String(ctx?.participantPn || ctx?.participant || '').trim();
+      const p = String(ctx?.participant || ctx?.participantAlt || ctx?.participantPn || '').trim();
       if (p) return p;
     }
 
@@ -284,6 +366,7 @@ export async function startFunBot(options = {}) {
   const logger = baileysLogger;
 
   await initDb();
+  const lidIdentityMigration = createLidIdentityMigrationService({ getLogger: () => logger });
   console.log(`[fun] Banco isolado em: ${dataDir}`);
   console.log(
     `[fun] Respostas de comando: ${
@@ -340,6 +423,18 @@ export async function startFunBot(options = {}) {
     getSock: () => currentSocket,
   });
   funModule.init();
+
+  function registerLidMapping(mapping, source) {
+    const lid = String(mapping?.lid || '').trim();
+    const pn = String(mapping?.pn || '').trim();
+    if (!lid || !pn) return { ok: false, reason: 'invalid-mapping' };
+    funModule.identityMap?.remember?.(lid, pn);
+    const result = lidIdentityMigration.migratePair({ lid, pn });
+    if (!result.ok) {
+      logger.warn?.({ lid, pn, source, conflicts: result.conflicts, reason: result.reason }, 'LID migration deferred');
+    }
+    return result;
+  }
   let saveCreds = null;
   let dashboardStarted = false;
   let messagesEnabled = false;
@@ -642,7 +737,22 @@ export async function startFunBot(options = {}) {
 
   function extractQueueActorJid(msg, chatJid) {
     const key = msg?.key && typeof msg.key === 'object' ? msg.key : {};
-    return String(key.participantPn ?? key.participant ?? chatJid ?? '').trim();
+    const candidates = [
+      key.participant,
+      key.participantLid,
+      key.participant_lid,
+      key.senderJid,
+      key.senderLid,
+      key.sender_lid,
+      key.participantPn,
+      key.participant_pn,
+      key.senderPn,
+      key.sender_pn,
+      key.participantAlt,
+      key.participant_alt,
+      chatJid,
+    ].map((jid) => String(jid || '').trim()).filter(Boolean);
+    return candidates.find((jid) => jid.endsWith('@lid')) || candidates.find((jid) => jid.endsWith('@s.whatsapp.net')) || candidates[0] || '';
   }
 
   function extractCommandText(msg) {
@@ -671,6 +781,80 @@ export async function startFunBot(options = {}) {
 
   const reportDebug = (hypothesisId, location, msg, data = {}) => { void Promise.resolve().then(() => fetch(process.env.DEBUG_SERVER_URL || 'http://127.0.0.1:7777/event', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: process.env.DEBUG_SESSION_ID || 'persona-runtime-signals', runId: 'pre-fix', hypothesisId, location, msg: `[DEBUG] ${msg}`, data, ts: Date.now() }) })).catch(() => {}); };
   const jidDomain = (jid) => String(jid || '').includes('@') ? `@${String(jid).split('@').pop()}` : '';
+  const historyIdentityFetchAtByChat = new Map();
+
+  const hasPersistedDisplayName = (jid) => {
+    const raw = String(jid || '').trim();
+    const localPart = raw.split('@')[0];
+    if (!localPart) return false;
+    return [raw, `${localPart}@lid`, `${localPart}@s.whatsapp.net`]
+      .some((candidate) => Boolean(getContactDisplayName(candidate)));
+  };
+
+  async function hydrateMentionedNamesFromHistory(sock, message, groupJid, mentionedJids) {
+    const unresolvedMentions = (mentionedJids || []).filter((jid) => !hasPersistedDisplayName(jid));
+    const messageKey = message?.key;
+    const messageTimestamp = Number(message?.messageTimestamp || 0);
+    const chatJid = String(groupJid || '').trim();
+    const lastRequestAt = Number(historyIdentityFetchAtByChat.get(chatJid) || 0);
+
+    if (
+      unresolvedMentions.length === 0 ||
+      !chatJid.endsWith('@g.us') ||
+      !messageKey?.id ||
+      !messageKey?.remoteJid ||
+      !messageTimestamp ||
+      typeof sock?.fetchMessageHistory !== 'function' ||
+      Date.now() - lastRequestAt < 5 * 60_000
+    ) return false;
+
+    historyIdentityFetchAtByChat.set(chatJid, Date.now());
+    if (config.debugMode) {
+      console.log('[fun] consulta de histórico para resolver menção', {
+        chatJid,
+        mentionedJids: unresolvedMentions,
+        messageId: messageKey.id,
+        messageTimestamp,
+      });
+    }
+
+    let settle = null;
+    const historyResult = new Promise((resolve) => {
+      const timeout = setTimeout(() => finish(false), 1_500);
+      const finish = (result) => {
+        clearTimeout(timeout);
+        sock.ev.off('messaging-history.set', onHistory);
+        resolve(result);
+      };
+      const onHistory = ({ messages }) => {
+        const isRequestedGroup = Array.isArray(messages) && messages.some(
+          (historicalMessage) => historicalMessage?.key?.remoteJid === chatJid
+        );
+        if (isRequestedGroup) {
+          if (config.debugMode) {
+            console.log('[fun] histórico recebido para resolver menção', {
+              chatJid,
+              messageCount: messages.length,
+            });
+          }
+          finish(true);
+        }
+      };
+      settle = finish;
+      sock.ev.on('messaging-history.set', onHistory);
+    });
+
+    try {
+      await sock.fetchMessageHistory(50, messageKey, messageTimestamp);
+      return await historyResult;
+    } catch {
+      if (config.debugMode) {
+        console.warn('[fun] não foi possível solicitar histórico para resolver menção', { chatJid });
+      }
+      settle?.(false);
+      return false;
+    }
+  }
 
   async function processIncoming({ sock, msg, type }) {
     if (!messagesEnabled) return;
@@ -679,15 +863,17 @@ export async function startFunBot(options = {}) {
     const parsed = parseMessage(msg);
     if (!parsed) return;
 
+    const messageKey = msg?.key || parsed.messageKey || {};
+    const identityMap = funModule.identityMap;
     const actorJid = resolveIncomingActorJid(parsed);
-    const pushName = String(msg?.pushName || msg?.pushname || '').trim();
-    if (actorJid && pushName) {
+    if (String(msg?.pushName || msg?.pushname || '').trim()) {
       try {
-        upsertContactDisplayName({
-          jid: actorJid,
-          displayName: pushName,
-          source: 'fun-runtime',
-          updatedAt: Date.now(),
+        // Em grupos LID, a chave pode não conter PN. Persiste o próprio LID
+        // como alias para que uma menção futura ainda encontre o pushName.
+        persistFunMessageIdentity(msg, {
+          actorJid,
+          identityMap,
+          source: 'fun-runtime-message',
         });
       } catch {
         // non-fatal
@@ -695,32 +881,65 @@ export async function startFunBot(options = {}) {
     }
 
     let mentionedJids = extractMentionedJids(msg);
+    // A persona precisa do identificador exatamente como ele apareceu no texto
+    // para substituir @LID por @Nome. Os demais subsistemas usam o LID
+    // resolvido abaixo; o PN só serve como alias durante a migração.
+    const rawMentionedJids = [...mentionedJids];
     let quotedParticipant = extractQuotedParticipant(msg);
     const quotedMessageId = extractQuotedMessageId(msg);
     const quotedText = extractQuotedText(msg);
-    const identityMap = funModule.identityMap;
 
     // #region debug-point persona-runtime-A
     reportDebug('A', 'runtime.processIncoming.before-loadGroupIdentity', 'sinais extraídos', { remoteDomain: jidDomain(parsed.jid), isGroup: Boolean(parsed.isGroup), messageType: parsed.messageType || extractMessageType(msg), mentionedCount: mentionedJids.length, mentionedDomains: [...new Set(mentionedJids.map(jidDomain).filter(Boolean))], hasQuotedParticipant: Boolean(quotedParticipant), quotedDomain: jidDomain(quotedParticipant), hasQuotedMessageId: Boolean(quotedMessageId), hasParticipantPn: Boolean(msg?.message?.extendedTextMessage?.contextInfo?.participantPn), hasParticipant: Boolean(msg?.message?.extendedTextMessage?.contextInfo?.participant) });
     // #endregion
 
-    // Aprende lid→pn sempre que o actor real (PN) chega com key de participante LID.
+    // Aprende e migra o par LID/PN antes de encaminhar a mensagem aos serviços.
     if (actorJid) {
       identityMap?.learnFromMessageKey?.(msg?.key || parsed.messageKey, actorJid);
+      const pn = identityMap?.getPn?.(actorJid);
+      if (pn) registerLidMapping({ lid: actorJid, pn }, 'message-key');
     }
 
+    const baileysLidMappings = await resolveBaileysLidMappings(
+      sock,
+      [...mentionedJids, quotedParticipant],
+      identityMap
+    );
+    for (const mapping of baileysLidMappings) registerLidMapping(mapping, 'signal-repository');
+
+    const needsIdentityHydration = (jid) => {
+      const resolved = identityMap?.resolve?.(jid) || jid;
+      return !identityMap?.getPn?.(resolved) && !hasPersistedDisplayName(resolved);
+    };
     const hasUnresolvedCandidate =
-      mentionedJids.some((jid) => !identityMap?.resolve?.(jid)) ||
-      Boolean(quotedParticipant && !identityMap?.resolve?.(quotedParticipant));
+      mentionedJids.some(needsIdentityHydration) ||
+      Boolean(quotedParticipant && needsIdentityHydration(quotedParticipant));
     if (parsed.isGroup && hasUnresolvedCandidate) {
-      await loadGroupIdentity(sock, parsed.jid, identityMap);
+      const participants = await loadGroupIdentity(sock, parsed.jid, identityMap);
+      for (const participant of participants) {
+        persistFunContactIdentity(participant, {
+          identityMap,
+          source: 'fun-runtime-group-metadata',
+        });
+      }
     }
 
     mentionedJids = mentionedJids.map((jid) => identityMap?.resolve?.(jid) || jid);
     quotedParticipant = identityMap?.resolve?.(quotedParticipant) || quotedParticipant;
 
+    const hydratedFromHistory = await hydrateMentionedNamesFromHistory(
+      sock,
+      msg,
+      parsed.jid,
+      mentionedJids
+    );
+    if (hydratedFromHistory) {
+      mentionedJids = mentionedJids.map((jid) => identityMap?.resolve?.(jid) || jid);
+      quotedParticipant = identityMap?.resolve?.(quotedParticipant) || quotedParticipant;
+    }
+
     // #region debug-point persona-runtime-B
-    reportDebug('B', 'runtime.processIncoming.after-identity-resolution', 'identidades mapeadas', { mentionedCount: mentionedJids.length, mentionedDomains: [...new Set(mentionedJids.map(jidDomain).filter(Boolean))], quotedFormat: jidDomain(quotedParticipant), hasQuotedParticipant: Boolean(quotedParticipant), identityMapAvailable: Boolean(identityMap?.resolve) });
+    reportDebug('B', 'runtime.processIncoming.after-identity-resolution', 'identidades mapeadas', { mentionedCount: mentionedJids.length, mentionedDomains: [...new Set(mentionedJids.map(jidDomain).filter(Boolean))], quotedFormat: jidDomain(quotedParticipant), hasQuotedParticipant: Boolean(quotedParticipant), identityMapAvailable: Boolean(identityMap?.resolve), hydratedFromHistory, baileysLidMappingCount: baileysLidMappings.length });
     // #endregion
 
     if (config.debugMode) {
@@ -730,6 +949,9 @@ export async function startFunBot(options = {}) {
         isGroup: parsed.isGroup,
         text: String(parsed.text || '').slice(0, 80),
         mentions: mentionedJids,
+        hydratedFromHistory,
+        baileysLidMappingCount: baileysLidMappings.length,
+        mentionedNamesKnown: mentionedJids.filter(hasPersistedDisplayName).length,
       });
     }
 
@@ -744,6 +966,7 @@ export async function startFunBot(options = {}) {
       messageId: parsed.id || '',
       messageKey: parsed.messageKey || msg?.key,
       mentionedJids,
+      rawMentionedJids,
       quotedParticipant,
       quotedMessageId,
       quotedText,
@@ -771,7 +994,10 @@ export async function startFunBot(options = {}) {
       printQRInTerminal: false,
       browser: ['TMB Fun Bot', 'Chrome', '120.0.0'],
       markOnlineOnConnect: false,
-      syncFullHistory: false,
+      // A sincronização inicial fornece contatos e mensagens com pushName.
+      // Somente as identidades dessas mensagens históricas são consumidas.
+      syncFullHistory: true,
+      shouldSyncHistoryMessage: () => true,
     });
 
     currentSocket = sock;
@@ -861,6 +1087,61 @@ export async function startFunBot(options = {}) {
       if (isSocketReady(sock)) {
         openGate?.signalOpen('user-ready');
       }
+    });
+
+    const syncContacts = (contacts, source) => {
+      if (!Array.isArray(contacts)) return 0;
+      let persistedCount = 0;
+      for (const contact of contacts) {
+        const result = persistFunContactIdentity(contact, {
+          identityMap: funModule.identityMap,
+          source,
+        });
+        if (result.persisted) persistedCount += 1;
+      }
+      return persistedCount;
+    };
+
+    const syncHistoricalMessageIdentities = (messages) => {
+      if (!Array.isArray(messages)) return 0;
+      let persistedCount = 0;
+      for (const message of messages) {
+        const result = persistFunMessageIdentity(message, {
+          identityMap: funModule.identityMap,
+          source: 'fun-runtime-history-message',
+        });
+        if (result.persisted) persistedCount += 1;
+      }
+      return persistedCount;
+    };
+
+    sock.ev.on('messaging-history.set', ({ contacts, messages }) => {
+      if (currentGeneration !== socketGeneration) return;
+      const contactsPersisted = syncContacts(contacts, 'fun-runtime-history-sync');
+      const messagesPersisted = syncHistoricalMessageIdentities(messages);
+      if (config.debugMode) {
+        console.log('[fun] sincronização de histórico', {
+          contactCount: Array.isArray(contacts) ? contacts.length : 0,
+          messageCount: Array.isArray(messages) ? messages.length : 0,
+          contactsPersisted,
+          messagesPersisted,
+        });
+      }
+    });
+
+    sock.ev.on('lid-mapping.update', (mapping) => {
+      if (currentGeneration !== socketGeneration) return;
+      registerLidMapping(mapping, 'lid-mapping.update');
+    });
+
+    sock.ev.on('contacts.upsert', (contacts) => {
+      if (currentGeneration !== socketGeneration) return;
+      syncContacts(contacts, 'fun-runtime-contacts-upsert');
+    });
+
+    sock.ev.on('contacts.update', (contacts) => {
+      if (currentGeneration !== socketGeneration) return;
+      syncContacts(contacts, 'fun-runtime-contacts-update');
     });
 
     sock.ev.on('messages.upsert', ({ messages, type: upsertType }) => {

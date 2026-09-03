@@ -70,8 +70,9 @@ export function parseMessage(msg) {
   const remoteJid = messageKey.remoteJid ?? messageKey.remote_jid ?? '';
   if (remoteJid === 'status@broadcast') return null;
   if (!remoteJid) return null;
-  const senderPn = messageKey.senderPn ?? messageKey.sender_pn ?? '';
-  const jid = remoteJid.endsWith('@lid') && senderPn ? senderPn : remoteJid;
+  // Baileys v7 usa o JID primário (LID) em remoteJid. remoteJidAlt é PN
+  // legado e só deve servir à migração de dados, nunca substituir a identidade.
+  const jid = remoteJid;
   const isGroup = remoteJid.endsWith('@g.us');
 
   let content = unwrapMessageContent(msg.message);

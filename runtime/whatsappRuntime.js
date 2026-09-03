@@ -1,6 +1,6 @@
 import makeWASocket, {
   makeCacheableSignalKeyStore,
-} from '@whiskeysockets/baileys';
+} from 'baileys';
 import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode-terminal';
 
@@ -44,6 +44,7 @@ export function createWhatsAppRuntimeController({
   isReloadInProgress,
   getRuntimeSetupPromise,
   noteSocketCallbackDuration,
+  migrateLidIdentity,
 } = {}) {
   async function connectToWhatsApp({ state, version }) {
     if (!getReconnectController?.()) {
@@ -71,6 +72,17 @@ export function createWhatsAppRuntimeController({
       if (currentGeneration !== getSocketGeneration?.()) return;
       noteSocketEvent?.('creds.update');
       scheduleCredsSave?.('creds.update');
+    });
+
+    sock.ev.on('lid-mapping.update', mapping => {
+      if (currentGeneration !== getSocketGeneration?.()) return;
+      const result = migrateLidIdentity?.(mapping);
+      if (result && result.ok === false) {
+        getLogger?.()?.warn?.(
+          { mapping, reason: result.reason, conflicts: result.conflicts },
+          'LID migration deferred'
+        );
+      }
     });
 
     sock.ev.on('messaging-history.set', ({ contacts, chats }) => {

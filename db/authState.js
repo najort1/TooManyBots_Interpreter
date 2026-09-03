@@ -10,7 +10,7 @@
  * - Batch de escritas via transaction() para performance em keys.set()
  */
 
-import { BufferJSON, initAuthCreds } from '@whiskeysockets/baileys';
+import { BufferJSON, initAuthCreds } from 'baileys';
 import { getDb, getStmts } from './index.js';
 
 const SESSION_KEY_PREFIX = 'session-';

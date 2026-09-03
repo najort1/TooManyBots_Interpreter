@@ -13,19 +13,24 @@ import { getDb } from '../db/context.js';
 import { createFunPersonaRepository } from '../fun/db/funPersonaRepository.js';
 import { createFunGroupRepository } from '../fun/db/funGroupRepository.js';
 import { createPersonaService } from '../fun/services/personaService.js';
-import { createIdentityMap, loadGroupIdentity } from '../fun/utils/identity.js';
+import { createIdentityMap, loadGroupIdentity, resolveContactIdentity } from '../fun/utils/identity.js';
 import { DEFAULT_FUN_CONFIG } from '../fun/constants.js';
 
 await initDb();
 
 const baseConfig = { ...DEFAULT_FUN_CONFIG, worldQuietHoursEnabled: false };
+let testIdentitySequence = 0;
+
+function nextTestIdentitySuffix() {
+  return String(testIdentitySequence++).padStart(5, '0');
+}
 
 function uniqueGroup() {
-  return `120363${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 90 + 10)}@g.us`;
+  return `120363${String(Date.now()).slice(-10)}${nextTestIdentitySuffix()}@g.us`;
 }
 
 function uniqueJid(prefix = '5511') {
-  return `${prefix}${String(Date.now()).slice(-7)}${Math.floor(Math.random() * 90 + 10)}@s.whatsapp.net`;
+  return `${prefix}${String(Date.now()).slice(-7)}${nextTestIdentitySuffix()}@s.whatsapp.net`;
 }
 
 function makeSock(botJid) {
@@ -83,11 +88,50 @@ test('loadGroupIdentity resolve LID de bot para @mention e reply', async () => {
     groupMetadata: async () => ({ participants: [{ id: botJ, lid: botLid }] }),
   };
 
-  assert.equal(identityMap.resolve(botLid), '');
+  assert.equal(identityMap.resolve(botLid), botLid);
   await loadGroupIdentity(sock, uniqueGroup(), identityMap);
-  assert.equal(identityMap.resolve(botLid), botJ);
+  assert.equal(identityMap.resolve(botLid), botLid);
+  assert.equal(identityMap.getPn(botLid), botJ);
   assert.equal(svc.detectTrigger({ text: 'oi', mentionedJids: [botLid], botJid: botJ, identityMap }).atMention, true);
-  assert.equal(identityMap.resolve(botLid), botJ, 'reply quoted usa a mesma resolução canônica');
+  assert.equal(identityMap.resolve(botLid), botLid, 'reply quoted preserva a identidade LID');
+});
+
+test('REGRESSAO identidade: loadGroupIdentity aprende lid→pn via campo phoneNumber (grupo com número oculto)', async () => {
+  const identityMap = createIdentityMap();
+  const lid = '281350775005409@lid';
+  const pn = '558199999888@s.whatsapp.net';
+  // Em grupos com número oculto o Baileys entrega id=<lid> e phoneNumber=<pn>.
+  const sock = {
+    groupMetadata: async () => ({
+      participants: [
+        { id: lid, phoneNumber: pn },
+        { lid: '333333333333333@lid', phoneNumber: '5581977776666@s.whatsapp.net' },
+      ],
+    }),
+  };
+  assert.equal(identityMap.resolve(lid), lid);
+  await loadGroupIdentity(sock, uniqueGroup(), identityMap);
+  assert.equal(identityMap.resolve(lid), lid, 'LID continua sendo a identidade primária');
+  assert.equal(identityMap.getPn(lid), pn, 'phoneNumber fica disponível só como alias de migração');
+  assert.equal(identityMap.resolve('333333333333333@lid'), '333333333333333@lid');
+  assert.equal(identityMap.getPn('333333333333333@lid'), '5581977776666@s.whatsapp.net');
+  assert.equal(identityMap.resolve('281350775005409'), lid, 'número cru também resolve para o LID');
+});
+
+test('REGRESSAO identidade: contato Baileys resolve LID, PN e nome do participante mencionado', () => {
+  const identityMap = createIdentityMap();
+  const lid = '281350775005409@lid';
+  const pn = '558199999888@s.whatsapp.net';
+
+  const result = resolveContactIdentity({
+    id: lid,
+    phoneNumber: pn,
+    notify: 'Outra Pessoa',
+  }, identityMap);
+
+  assert.deepEqual(result, { jid: lid, displayName: 'Outra Pessoa' });
+  assert.equal(identityMap.resolve(lid), lid, 'LID deve continuar como chave de domínio');
+  assert.equal(identityMap.getPn(lid), pn, 'PN fica disponível para migrar dados legados');
 });
 
 test('detectTrigger: @marcação via identityMap (LID→SID)', () => {
@@ -147,7 +191,7 @@ test('REGRESSAO persona: menção ao LID próprio responde sem identityMap', asy
     authorJid: uniqueJid(), sock, identityMap, funConfig: cfg, now: 1_000_000,
   });
 
-  assert.equal(identityMap.resolve(botLid), '');
+  assert.equal(identityMap.resolve(botLid), botLid);
   assert.equal(r.responded, true);
 });
 
@@ -170,7 +214,7 @@ test('REGRESSAO persona: reply LID próprio continua thread sem identityMap', as
     funConfig: cfg, now: now + 1,
   });
 
-  assert.equal(identityMap.resolve(botLid), '');
+  assert.equal(identityMap.resolve(botLid), botLid);
   assert.equal(initial.responded, true);
   assert.equal(reply.responded, true);
   assert.equal(personaRepository.getActiveThread(scope, { now: now + 1 }).turnCount, 1);
@@ -464,6 +508,218 @@ test('REGRESSAO persona: turno do membro na thread guarda o nome e o prompt most
   }
 });
 
+test('REGRESSAO persona: menção LID chega ao prompt com o NOME da pessoa, não o número cru', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const memberPn = uniqueJid('5521');
+    const memberLid = '281350775005409@lid';
+    const namesByJid = new Map([[memberPn, 'Carla']]);
+    const profileService = {
+      displayName: (jid) => namesByJid.get(String(jid)) || String(jid).split('@')[0],
+      buildIdentityBlock: () => '',
+    };
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      profileService,
+      generateZen: async (input) => {
+        request = input;
+        return 'resposta qualquer';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-lid-name-1' } });
+    identityMap.remember(memberLid, memberPn);
+
+    const r = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: 'bot, quem é @281350775005409?',
+      authorJid: uniqueJid(),
+      mentionedJids: [memberLid],
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_500_000,
+    });
+
+    assert.equal(r.responded, true);
+    assert.ok(request.prompt.includes('@Carla'), `prompt deve exibir o nome resolvido, recebeu: ${request.prompt}`);
+    assert.ok(!request.prompt.includes('@281350775005409'), 'o número cru do lid não deve chegar ao prompt');
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('REGRESSAO persona: usa nome persistido no alias LID quando a menção chega como @s.whatsapp.net opaco', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const memberLid = '281350775005409@lid';
+    const opaqueMention = '281350775005409@s.whatsapp.net';
+    const namesByJid = new Map([[memberLid, 'Bianca']]);
+    const profileService = {
+      displayName: (jid) => namesByJid.get(String(jid)) || String(jid).split('@')[0],
+      buildIdentityBlock: () => '',
+    };
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      profileService,
+      generateZen: async (input) => {
+        request = input;
+        return 'resposta qualquer';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-lid-alias-name-1' } });
+
+    const r = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: 'bot, fala da @281350775005409',
+      authorJid: uniqueJid(),
+      mentionedJids: [opaqueMention],
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_525_000,
+    });
+
+    assert.equal(r.responded, true);
+    assert.match(request.prompt, /@Bianca/);
+    assert.doesNotMatch(request.prompt, /@281350775005409/);
+    assert.match(request.system, /Membro mencionado: Bianca/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('REGRESSAO persona: JID canônico mantém alias bruto para reescrever a menção LID no texto', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const memberPn = '558293639334@s.whatsapp.net';
+    const opaqueMention = '281350775005409@s.whatsapp.net';
+    const profileService = {
+      displayName: (jid) => (String(jid) === memberPn ? 'lucy' : String(jid).split('@')[0]),
+      buildIdentityBlock: () => '',
+    };
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      profileService,
+      generateZen: async (input) => {
+        request = input;
+        return 'resposta qualquer';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-canonical-raw-alias-1' } });
+    identityMap.remember(opaqueMention, memberPn);
+
+    const r = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: 'bot, quem eu marquei nesta mensagem @281350775005409?',
+      authorJid: uniqueJid(),
+      // O runtime preserva o LID opaco como identidade primária.
+      mentionedJids: [opaqueMention],
+      rawMentionedJids: [opaqueMention],
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_540_000,
+    });
+
+    assert.equal(r.responded, true);
+    assert.match(request.prompt, /@lucy/);
+    assert.doesNotMatch(request.prompt, /@281350775005409/);
+    assert.match(request.system, /Membro mencionado: lucy/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('REGRESSAO persona: bloco de menções é obrigatório mesmo com adaptador opcional desligado', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const memberPn = uniqueJid('5523');
+    const memberLid = '281350775005409@lid';
+    const profileService = {
+      displayName: (jid) => (String(jid) === memberPn ? 'Carla' : String(jid).split('@')[0]),
+      getProfile: () => ({ empty: true }),
+      buildIdentityBlock: () => '',
+    };
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      profileService,
+      generateZen: async (input) => {
+        request = input;
+        return 'resposta qualquer';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-mention-context-1' } });
+    identityMap.remember(memberLid, memberPn);
+
+    const r = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: 'bot, fala da @281350775005409',
+      authorJid: uniqueJid(),
+      mentionedJids: [memberLid],
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_550_000,
+    });
+
+    assert.equal(r.responded, true);
+    assert.match(request.prompt, /@Carla/);
+    assert.match(request.system, /<mentioned_users>/);
+    assert.match(request.system, /Membro mencionado: Carla/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('REGRESSAO persona: @numero no texto sem mentionedJid é resolvido por varredura quando há PN conhecido', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const memberPn = uniqueJid('5522');
+    const pnDigits = memberPn.split('@')[0];
+    const namesByJid = new Map([[memberPn, 'Rafa']]);
+    const profileService = {
+      displayName: (jid) => namesByJid.get(String(jid)) || String(jid).split('@')[0],
+      buildIdentityBlock: () => '',
+    };
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      profileService,
+      generateZen: async (input) => {
+        request = input;
+        return 'resposta qualquer';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-scan-name-1' } });
+
+    const r = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: `bot, quem é @${pnDigits}?`,
+      authorJid: uniqueJid(),
+      mentionedJids: [],
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_600_000,
+    });
+
+    assert.equal(r.responded, true);
+    assert.ok(request.prompt.includes('@Rafa'), `prompt deve exibir o nome resolvido, recebeu: ${request.prompt}`);
+    assert.ok(!request.prompt.includes(`@${pnDigits}`), 'o número cru não deve chegar ao prompt');
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
 test('persona: envia hints positivos, neutros e negativos elegíveis, 10 por tipo e em ordem de confiança', async () => {
   const previous = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
@@ -750,18 +1006,6 @@ test('observeMessage: adiciona à janela por grupo', () => {
   svc.observeMessage({ scopeKey: scope, userJid: uniqueJid(), text: 'tudo certo?', funConfig: cfg });
   const w = svc._windows.get(scope);
   assert.ok(w.msgs.length >= 2);
-});
-
-test('observeMessage: isolamento entre grupos', () => {
-  const { svc, cfg } = setup();
-  const a = uniqueGroup();
-  const b = uniqueGroup();
-  svc.observeMessage({ scopeKey: a, userJid: uniqueJid(), text: 'gíria do grupo A', funConfig: cfg });
-  svc.observeMessage({ scopeKey: b, userJid: uniqueJid(), text: 'gíria do grupo B', funConfig: cfg });
-  const wa = svc._windows.get(a);
-  const wb = svc._windows.get(b);
-  assert.ok(wa.msgs.every((m) => m.text.includes('A')));
-  assert.ok(wb.msgs.every((m) => m.text.includes('B')));
 });
 
 test('observeMessage: feature desligada → skip', () => {

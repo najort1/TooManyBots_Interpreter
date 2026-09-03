@@ -18,8 +18,7 @@
     "dashboard:lint": "npm --prefix tmb_dashboard run lint"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.16",
-    "baileys": "^7.0.0-rc.9",
+    "baileys": "7.0.0-rc14",
     "better-sqlite3": "^12.8.0",
     "inquirer": "^9.2.20",
     "pino": "^8.19.0",

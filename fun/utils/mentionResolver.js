@@ -82,18 +82,26 @@ export function resolveMentionsInText(text, mentionedUsersMap) {
   // Padrão: @ + parte local do JID (números/LID)
   // Ex: @551199999999, @123456789012345678
   for (const [jid, info] of mentionedUsersMap) {
-    const local = info.localPart;
-    if (!local) continue;
-
-    // Escapa caracteres especiais para regex
-    const escapedLocal = local.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // info.localParts inclui o número renderizado no texto (lid) e o do JID
+    // canônico (pn) — após resolução de identidade ambos podem divergir.
+    const locals = Array.isArray(info.localParts) && info.localParts.length
+      ? info.localParts
+      : [info.localPart];
 
     // Substitui @551199999999 -> @Eduardo (ou @Apelido se houver)
-    const replacement = info.nickname ? `@${info.nickname}` : `@${info.displayName}`;
+    const replacementName = info.nickname || info.displayName || '';
+    if (!replacementName) continue;
 
-    // Regex que captura @localPart como palavra inteira (boundary)
-    const regex = new RegExp(`@${escapedLocal}\\b`, 'g');
-    result = result.replace(regex, replacement);
+    for (const local of locals) {
+      if (!local) continue;
+      // Pula no-op @numero -> @numero
+      if (String(replacementName) === String(local)) continue;
+      // Escapa caracteres especiais para regex
+      const escapedLocal = String(local).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Regex que captura @localPart como palavra inteira (boundary)
+      const regex = new RegExp(`@${escapedLocal}\\b`, 'g');
+      result = result.replace(regex, `@${replacementName}`);
+    }
   }
 
   return result;

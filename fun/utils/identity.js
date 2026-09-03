@@ -1,6 +1,7 @@
 /**
  * Identidade canônica de usuário no Fun.
- * WhatsApp multi-device manda menções como @lid; XP/coins usam @s.whatsapp.net (PN).
+ * Baileys v7 entrega LID como identidade primária. O PN é mantido somente
+ * como alias transitório para migrar dados criados antes do v7.
  */
 
 import { isUserJid, isLidJid, isLikelyRealUserJid } from '../../runtime/contactUtils.js';
@@ -32,99 +33,131 @@ export function looksLikeOpaqueLid(jid = '') {
 }
 
 /**
- * PN válido para economia/rank (não LID disfarçado).
+ * Identidade de usuário válida para o domínio: LID primário ou PN legado.
  */
 export function isCanonicalUserJid(jid = '') {
-  if (!isLikelyRealUserJid(jid)) return false;
-  if (looksLikeOpaqueLid(jid)) return false;
-  return true;
+  return isLikelyRealUserJid(jid);
+}
+
+function toLidJid(value = '') {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  if (isLidJid(raw)) return raw;
+  return looksLikeOpaqueLid(raw) ? `${jidLocalPart(raw)}@lid` : '';
+}
+
+function toPnJid(value = '') {
+  const raw = String(value || '').trim();
+  return raw.endsWith('@s.whatsapp.net') && !looksLikeOpaqueLid(raw) && isLikelyRealUserJid(raw)
+    ? raw
+    : '';
 }
 
 /**
- * Mapa mutável lidLocal|fullLid → pnJid
+ * Resolve a identidade utilizável de um Contact do Baileys. Em v7 `id`/`lid`
+ * são preferidos; o `phoneNumber` serve para associar e migrar o registro PN.
+ */
+export function resolveContactIdentity(contact = {}, identityMap = null) {
+  const item = contact && typeof contact === 'object' ? contact : {};
+  const phoneNumber = String(item.phoneNumber || item.phone_number || '').trim();
+  const phoneJid = phoneNumber ? (phoneNumber.includes('@') ? phoneNumber : `${phoneNumber}@s.whatsapp.net`) : '';
+  const lidJid = [item.lid, item.id, item.jid].map(toLidJid).find(Boolean) || '';
+  const pnJid = [phoneJid, item.pn, item.participantPn, item.participant_pn, item.id, item.jid]
+    .map(toPnJid)
+    .find(Boolean) || '';
+
+  if (lidJid && pnJid) identityMap?.remember?.(lidJid, pnJid);
+  const jid = identityMap?.resolve?.(lidJid || pnJid) || lidJid || pnJid;
+
+  const displayName = [item.name, item.notify, item.verifiedName]
+    .map((value) => String(value || '').replace(/^~+\s*/, '').trim())
+    .find((value) => value && value !== jid && value !== jidLocalPart(jid)) || '';
+
+  return { jid, displayName };
+}
+
+/**
+ * Mapa mutável de aliases PN/LID para o LID primário.
  */
 export function createIdentityMap() {
+  /** @type {Map<string, string>} */
+  const aliasesToLid = new Map();
   /** @type {Map<string, string>} */
   const lidToPn = new Map();
 
   function remember(lidOrKey, pnJid) {
-    const pn = String(pnJid || '').trim();
-    if (!isCanonicalUserJid(pn)) return false;
-    const key = String(lidOrKey || '').trim();
-    if (!key) return false;
-    lidToPn.set(key, pn);
-    lidToPn.set(normalizeIdentityKey(key), pn);
-    if (key.includes('@')) {
-      lidToPn.set(normalizeIdentityKey(key), pn);
-    } else {
-      lidToPn.set(`${key}@lid`, pn);
-    }
+    const lid = toLidJid(lidOrKey);
+    const pn = toPnJid(pnJid);
+    if (!lid || !pn) return false;
+    aliasesToLid.set(lid, lid);
+    aliasesToLid.set(normalizeIdentityKey(lid), lid);
+    aliasesToLid.set(pn, lid);
+    aliasesToLid.set(normalizeIdentityKey(pn), lid);
+    lidToPn.set(lid, pn);
     return true;
   }
 
   function resolve(raw) {
     const jid = String(raw || '').trim();
     if (!jid) return '';
-    if (isCanonicalUserJid(jid)) return jid;
-    if (lidToPn.has(jid)) return lidToPn.get(jid) || '';
+    const lid = toLidJid(jid);
+    if (lid) return lid;
+    if (aliasesToLid.has(jid)) return aliasesToLid.get(jid) || '';
     const local = normalizeIdentityKey(jid);
-    if (lidToPn.has(local)) return lidToPn.get(local) || '';
-    if (isLidJid(jid) && lidToPn.has(jid)) return lidToPn.get(jid) || '';
-    return '';
+    if (aliasesToLid.has(local)) return aliasesToLid.get(local) || '';
+    return toPnJid(jid);
   }
 
-  function learnFromMessageKey(messageKey = {}, actorPn = '') {
-    const key = messageKey && typeof messageKey === 'object' ? messageKey : {};
-    const pn =
-      String(actorPn || '').trim() ||
-      String(key.participantPn || key.participant_pn || key.senderPn || key.sender_pn || '').trim();
-    if (!isCanonicalUserJid(pn)) return;
+  function getPn(raw) {
+    const lid = resolve(raw);
+    return lidToPn.get(lid) || '';
+  }
 
+  function learnFromMessageKey(messageKey = {}, actorJid = '') {
+    const key = messageKey && typeof messageKey === 'object' ? messageKey : {};
     const lidCandidates = [
       key.participantLid,
       key.participant_lid,
       key.sender_lid,
       key.senderLid,
       key.participant,
-      key.participantAlt,
+      key.senderJid,
+      actorJid,
     ];
-    for (const c of lidCandidates) {
-      const j = String(c || '').trim();
-      if (!j) continue;
-      if (isLidJid(j) || (!j.includes('@') && /^\d{10,20}$/.test(j))) {
-        remember(j.endsWith('@lid') ? j : j.includes('@') ? j : `${j}@lid`, pn);
-      }
-      // LID às vezes vem como número longo @s.whatsapp.net (inválido como PN de verdade para o app)
-      if (j.endsWith('@s.whatsapp.net') && !isCanonicalUserJid(j)) {
-        remember(j, pn);
-        remember(jidLocalPart(j), pn);
-      }
-    }
+    const pnCandidates = [
+      key.participantAlt,
+      key.participant_alt,
+      key.remoteJidAlt,
+      key.remote_jid_alt,
+      key.participantPn,
+      key.participant_pn,
+      key.senderPn,
+      key.sender_pn,
+      actorJid,
+    ];
+    const pn = pnCandidates.map(toPnJid).find(Boolean) || '';
+    if (!pn) return;
+    for (const candidate of lidCandidates) remember(candidate, pn);
   }
 
   function learnFromGroupParticipants(participants = []) {
     for (const p of participants) {
-      const pn = String(p?.jid || '').trim();
-      const id = String(p?.id || '').trim();
-      const lid = String(p?.lid || '').trim();
-      const phoneJid = isCanonicalUserJid(pn)
-        ? pn
-        : isCanonicalUserJid(id)
-          ? id
-          : '';
-      if (!phoneJid) continue;
-      if (lid) remember(lid, phoneJid);
-      if (id && (isLidJid(id) || id !== phoneJid)) remember(id, phoneJid);
+      const pn = [p?.phoneNumber, p?.phone_number, p?.pn, p?.jid, p?.id, p?.participantPn, p?.participant_pn]
+        .map(toPnJid)
+        .find(Boolean) || '';
+      if (!pn) continue;
+      for (const candidate of [p?.lid, p?.id, p?.jid]) remember(candidate, pn);
     }
   }
 
   return {
     remember,
     resolve,
+    getPn,
     learnFromMessageKey,
     learnFromGroupParticipants,
     /** @internal */
-    _map: lidToPn,
+    _map: aliasesToLid,
   };
 }
 
@@ -188,7 +221,7 @@ export function findJidByDisplayName(query, contacts = []) {
 }
 
 /**
- * Carrega participantes do grupo e alimenta o mapa lid→pn.
+ * Carrega participantes do grupo e alimenta o mapa de aliases LID/PN.
  */
 export async function loadGroupIdentity(sock, groupJid, identityMap) {
   if (!sock || typeof sock.groupMetadata !== 'function') return [];
@@ -205,14 +238,14 @@ export async function loadGroupIdentity(sock, groupJid, identityMap) {
 }
 
 /**
- * Lista membros de um grupo com JIDs canônicos. Carrega metadata uma vez e
- * reaproveita o mapa LID→PN para não mandar identificadores opacos aos serviços.
+ * Lista membros de um grupo com LIDs canônicos. Carrega metadata uma vez e
+ * reaproveita o mapa de aliases para não voltar a usar PN nos serviços.
  */
 export async function listCanonicalGroupParticipantJids(sock, groupJid, identityMap) {
   const participants = await loadGroupIdentity(sock, groupJid, identityMap);
   const ids = [];
   for (const participant of participants) {
-    const candidates = [participant?.jid, participant?.id, participant?.lid];
+    const candidates = [participant?.lid, participant?.id, participant?.jid];
     for (const raw of candidates) {
       const value = String(raw || '').trim();
       const resolved = identityMap?.resolve?.(value) || value;
@@ -225,7 +258,8 @@ export async function listCanonicalGroupParticipantJids(sock, groupJid, identity
 }
 
 /**
- * Resolve um raw jid (pn, lid, ou lid@s.whatsapp.net) para PN canônico.
+ * Resolve um raw jid para LID canônico quando o mapeamento já é conhecido.
+ * Um PN legado sem mapeamento continua sendo aceito para não perder dados.
  */
 export async function resolveCanonicalUserJid(raw, {
   identityMap = null,
@@ -237,13 +271,18 @@ export async function resolveCanonicalUserJid(raw, {
   const input = String(raw || '').trim();
   if (!input) return '';
 
-  // Mapa lid→pn SEMPRE primeiro (inclusive quando LID vem como @s.whatsapp.net)
+  // O mapa de aliases SEMPRE primeiro (inclusive quando LID vem como @s.whatsapp.net).
   if (identityMap) {
     const mapped = identityMap.resolve(input);
-    if (isCanonicalUserJid(mapped)) return mapped;
+    if (isLidJid(mapped)) return mapped;
   }
 
-  if (isCanonicalUserJid(input)) return input;
+  if (isLidJid(input)) return input;
+
+  // Um PN legado só é devolvido quando não há metadata disponível para
+  // associá-lo ao LID atual do membro. Isso impede que comandos por nome ou
+  // número recriem dados PN depois da migração para Baileys v7.
+  if (isCanonicalUserJid(input) && (!sock || !groupJid || !identityMap)) return input;
 
   // nome explícito
   if (nameQuery) {
@@ -258,22 +297,20 @@ export async function resolveCanonicalUserJid(raw, {
       const mapped2 = identityMap.resolve(input);
       if (isCanonicalUserJid(mapped2)) return mapped2;
     }
-    // match local part against participants.jid/lid
+    // Match da parte local contra participantes e promove o LID como resultado.
     const local = normalizeIdentityKey(input);
     try {
       const meta = await sock.groupMetadata(groupJid);
       for (const p of meta?.participants || []) {
-        const pn = isCanonicalUserJid(p?.jid)
-          ? p.jid
-          : isCanonicalUserJid(p?.id)
-            ? p.id
-            : '';
-        if (!pn) continue;
+        const lid = [p?.lid, p?.id, p?.jid].map(toLidJid).find(Boolean) || '';
+        const pn = [p?.phoneNumber, p?.phone_number, p?.pn, p?.jid, p?.id].map(toPnJid).find(Boolean) || '';
+        if (lid && pn) identityMap.remember(lid, pn);
+        const primary = identityMap.resolve(lid || pn);
+        if (!primary) continue;
         const lidLocal = normalizeIdentityKey(p?.lid || '');
         const idLocal = normalizeIdentityKey(p?.id || '');
-        if (local && (local === lidLocal || local === idLocal || local === normalizeIdentityKey(pn))) {
-          identityMap.remember(input, pn);
-          return pn;
+        if (local && (local === lidLocal || local === idLocal || local === normalizeIdentityKey(pn) || local === normalizeIdentityKey(primary))) {
+          return primary;
         }
       }
     } catch {
@@ -334,25 +371,38 @@ export async function resolveUserTarget({
   if (nameQuery) {
     // tenta contatos conhecidos
     let byName = findJidByDisplayName(nameQuery, contacts);
-    if (byName && byName !== exclude) return { jid: byName, via: 'name' };
+    if (byName) {
+      const jid = await resolveCanonicalUserJid(byName, {
+        identityMap,
+        sock,
+        groupJid,
+        contacts,
+      });
+      if (jid && jid !== exclude) return { jid, via: 'name' };
+    }
 
     // tenta nomes dos participantes do grupo
     if (sock && groupJid) {
       const participants = await loadGroupIdentity(sock, groupJid, identityMap);
       const groupContacts = participants
         .map(p => {
-          const jid = isCanonicalUserJid(p?.jid)
-            ? p.jid
-            : isCanonicalUserJid(p?.id)
-              ? p.id
-              : '';
+          const raw = [p?.lid, p?.id, p?.jid].map((value) => String(value || '').trim()).find(Boolean) || '';
+          const jid = identityMap?.resolve?.(raw) || raw;
           const name = p?.name || p?.notify || p?.verifiedName || '';
           return jid ? { jid, name } : null;
         })
         .filter(Boolean);
       // merge com lista de contatos do app (pushName persistido)
       byName = findJidByDisplayName(nameQuery, [...contacts, ...groupContacts]);
-      if (byName && byName !== exclude) return { jid: byName, via: 'group-name' };
+      if (byName) {
+        const jid = await resolveCanonicalUserJid(byName, {
+          identityMap,
+          sock,
+          groupJid,
+          contacts: [...contacts, ...groupContacts],
+        });
+        if (jid && jid !== exclude) return { jid, via: 'group-name' };
+      }
     }
   }
 

@@ -58,10 +58,6 @@ export function createIngestionPipelineController({
     const messageKey = msg?.key && typeof msg.key === 'object' ? msg.key : {};
     const remoteJid = String(messageKey.remoteJid ?? messageKey.remote_jid ?? '').trim();
     if (!remoteJid) return '';
-    const senderPn = String(messageKey.senderPn ?? messageKey.sender_pn ?? '').trim();
-    if (remoteJid.endsWith('@lid') && senderPn) {
-      return senderPn;
-    }
     return remoteJid;
   }
 

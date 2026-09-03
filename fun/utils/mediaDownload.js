@@ -2,7 +2,7 @@
  * Download de mídia Baileys (mensagem atual, citada ou álbum).
  */
 
-import { downloadMediaMessage, downloadContentFromMessage } from '@whiskeysockets/baileys';
+import { downloadMediaMessage, downloadContentFromMessage } from 'baileys';
 
 /**
  * Desembrulha recursivamente contêineres de mensagem do Baileys/WhatsApp

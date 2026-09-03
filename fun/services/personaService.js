@@ -38,7 +38,7 @@ import {
   buildSocialHintBlock,
   memorySignalText,
 } from './personaPromptBuilder.js';
-import { resolveMentionsInText } from '../utils/mentionResolver.js';
+import { buildMentionedUsersContextBlock, resolveMentionsInText } from '../utils/mentionResolver.js';
 import {
   normalizeJid,
   resolveJid,
@@ -282,6 +282,7 @@ export function createPersonaService({
     participantJids = [],
     authorLabel = '',
     quotedText = '',
+    mentionedUsersMap = null,
     agentContext = null,
   }) {
     const o = opts(funConfig);
@@ -332,6 +333,15 @@ export function createPersonaService({
           timeZone: o.timezone,
         })
       : '';
+    const mentionedUsersBlock = buildMentionedUsersContextBlock(mentionedUsersMap, {
+      getProfile: profileService?.getProfile
+        ? (jid) => profileService.getProfile(jid, scopeKey)
+        : null,
+      scopeKey,
+      loreFacts: responseContextPack?.loreFacts || [],
+      timeZone: o.timezone,
+    });
+    const mentionContextIsAlreadyPresent = extraContextBlock.includes('<mentioned_users>');
 
     const styleBlock = [
       buildStyleBlock(scopeKey),
@@ -342,6 +352,7 @@ export function createPersonaService({
       socialHintBlock,
       inferredBlock,
       extraContextBlock,
+      mentionContextIsAlreadyPresent ? '' : mentionedUsersBlock,
     ].filter(Boolean).join('\n');
 
     const contextTurns = responseContextPack?.threadContext?.topicSummary
@@ -644,26 +655,103 @@ export function createPersonaService({
       let threadContext = [];
       if (thread?.context?.length) threadContext = thread.context;
 
-      const participantJids = [authorJid, ...(ctx.mentionedJids || []), quotedRaw].filter(Boolean);
+      const canonicalMentionedJidsFromContext = (ctx.mentionedJids || []).map((jid) => {
+        const normalized = normalizeJid(jid);
+        return resolveJid(normalized, ctx.identityMap) || normalized;
+      }).filter(Boolean);
+      const participantJids = [authorJid, ...canonicalMentionedJidsFromContext, quotedRaw].filter(Boolean);
       const authorLabel = profileService?.displayName
         ? profileService.displayName(authorJid, scopeKey)
         : authorJid.split('@')[0] || 'membro';
 
       const rawPromptText = String(ctx.text || '').trim() || (resolvedImages.length > 0 ? (isContinuation ? 'O que você acha dessa imagem?' : 'Descreva e comente o que você vê nesta imagem.') : '');
       const mentionMap = new Map();
-      for (const jid of ctx.mentionedJids || []) {
-        const normalized = normalizeJid(jid);
-        if (!normalized || mentionMap.has(normalized)) continue;
-        const localPart = normalized.split('@')[0];
-        const displayName = profileService?.displayName
-          ? profileService.displayName(normalized, scopeKey)
-          : localPart;
-        mentionMap.set(normalized, {
-          jid: normalized,
-          localPart,
-          displayName: String(displayName || localPart),
+      const canonicalMentionedJids = [];
+      const looksLikeRawNumber = (value) => /^\d{8,20}$/.test(String(value || '').trim());
+      const resolveMentionDisplayName = (candidateJids) => {
+        if (!profileService?.displayName) return '';
+        const candidates = new Set(candidateJids.map((jid) => String(jid || '').trim()).filter(Boolean));
+        // V7 mantém o LID como identidade do domínio. O PN é consultado
+        // apenas como alias transitório para nomes ainda não migrados.
+        for (const candidate of [...candidates]) {
+          const pn = ctx.identityMap?.getPn?.(candidate);
+          if (pn) candidates.add(pn);
+        }
+        for (const candidate of candidates) {
+          const name = String(profileService.displayName(candidate, scopeKey) || '').trim();
+          if (name && !looksLikeRawNumber(name)) return name;
+        }
+        return '';
+      };
+      const resolveMention = (rawJid) => {
+        const rawNormalized = normalizeJid(rawJid);
+        if (!rawNormalized) return '';
+        // Resolve para o LID primário. O PN, quando houver, é usado somente
+        // como alias de leitura em resolveMentionDisplayName.
+        const canonical = resolveJid(rawNormalized, ctx.identityMap) || rawNormalized;
+        if (mentionMap.has(canonical)) return canonical;
+        // rawLocal é o número exatamente como aparece renderizado no texto
+        // (para lid, o número do lid); canonicalLocal, o do JID resolvido.
+        const rawLocal = rawNormalized.split('@')[0];
+        const canonicalLocal = canonical.split('@')[0];
+        // Alguns snapshots expõem o nome no LID, mas a menção vem como um
+        // número opaco em @s.whatsapp.net. Consulta todos os aliases estáveis.
+        const displayName = resolveMentionDisplayName([
+          canonical,
+          rawNormalized,
+          `${rawLocal}@lid`,
+          `${rawLocal}@s.whatsapp.net`,
+        ]);
+        mentionMap.set(canonical, {
+          jid: canonical,
+          localPart: rawLocal || canonicalLocal,
+          localParts: [...new Set([rawLocal, canonicalLocal].filter(Boolean))],
+          displayName: displayName || rawLocal || 'alguém',
+          hasRealName: Boolean(displayName),
           nickname: '',
         });
+        if (!canonicalMentionedJids.includes(canonical)) canonicalMentionedJids.push(canonical);
+        return canonical;
+      };
+      // O runtime entrega JIDs canônicos para a economia/memória, mas conserva
+      // os JIDs originais aqui para que o número que o WhatsApp renderizou no
+      // texto (@LID) também seja substituído pelo nome real.
+      const mentionRenderAliases = Array.isArray(ctx.rawMentionedJids) && ctx.rawMentionedJids.length > 0
+        ? ctx.rawMentionedJids
+        : ctx.mentionedJids || [];
+      for (const jid of mentionRenderAliases) resolveMention(jid);
+      for (const jid of ctx.mentionedJids || []) resolveMention(jid);
+
+      // Fallback: menções que chegam só como @numero no texto (contextInfo sem
+      // mentionedJid do Baileys). Tenta achar cada número como lid ou PN e só
+      // injeta no mapa quando um nome real é resolvido.
+      for (const match of String(rawPromptText).matchAll(/(^|[\s(:>])@(\d{8,20})\b/g)) {
+        const digits = match[2];
+        const alreadyKnown = [...mentionMap.values()].some((info) => info.localParts?.includes?.(digits) || info.localPart === digits);
+        if (alreadyKnown) continue;
+        for (const candidate of [`${digits}@lid`, `${digits}@s.whatsapp.net`]) {
+          const canonical = resolveJid(normalizeJid(candidate), ctx.identityMap);
+          if (!canonical) continue;
+          const name = resolveMentionDisplayName([
+            canonical,
+            candidate,
+            `${digits}@lid`,
+            `${digits}@s.whatsapp.net`,
+          ]);
+          if (!name) continue;
+          if (!mentionMap.has(canonical)) {
+            mentionMap.set(canonical, {
+              jid: canonical,
+              localPart: digits,
+              localParts: [...new Set([digits, canonical.split('@')[0]].filter(Boolean))],
+              displayName: name,
+              hasRealName: true,
+              nickname: '',
+            });
+            if (!canonicalMentionedJids.includes(canonical)) canonicalMentionedJids.push(canonical);
+          }
+          break;
+        }
       }
       const promptText = resolveMentionsInText(rawPromptText, mentionMap);
 
@@ -678,9 +766,12 @@ export function createPersonaService({
         participantJids,
         authorLabel,
         quotedText: ctx.quotedText,
+        mentionedUsersMap: mentionMap,
         agentContext: {
           authorJid,
-          mentionedJids: ctx.mentionedJids || [],
+          mentionedJids: canonicalMentionedJids.length
+            ? canonicalMentionedJids
+            : canonicalMentionedJidsFromContext,
           quotedParticipant: quotedRaw,
           getContactDisplayName: profileService?.displayName
             ? (jid) => profileService.displayName(jid, scopeKey)

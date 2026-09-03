@@ -73,8 +73,11 @@ export function toJidString(value) {
   if (typeof value === 'object') {
     if (typeof value.remoteJid === 'string') return value.remoteJid.trim();
     if (typeof value.remote_jid === 'string') return value.remote_jid.trim();
+    if (typeof value.remoteJidAlt === 'string') return value.remoteJidAlt.trim();
+    if (typeof value.remote_jid_alt === 'string') return value.remote_jid_alt.trim();
     if (typeof value.jid === 'string') return value.jid.trim();
     if (typeof value.id === 'string') return value.id.trim();
+    if (typeof value.participantAlt === 'string') return value.participantAlt.trim();
     if (typeof value.senderPn === 'string') return value.senderPn.trim();
     if (typeof value.sender_pn === 'string') return value.sender_pn.trim();
     if (typeof value.participantPn === 'string') return value.participantPn.trim();
@@ -86,17 +89,29 @@ export function toJidString(value) {
 
 function extractPersonJidFromMessageKey(messageKey = {}) {
   const candidates = [
+    // Baileys v7: participant é o LID primário; participantAlt é só PN legado.
+    messageKey.participant,
+    messageKey.senderJid,
+    messageKey.participantLid,
+    messageKey.participant_lid,
+    messageKey.senderLid,
+    messageKey.sender_lid,
     messageKey.participantPn,
     messageKey.participant_pn,
     messageKey.senderPn,
     messageKey.sender_pn,
-    messageKey.participant,
-    messageKey.senderJid,
+    messageKey.participantAlt,
+    messageKey.participant_alt,
+    // Em DM remoteJid é o LID primário e remoteJidAlt é o PN legado.
+    messageKey.remoteJid,
+    messageKey.remote_jid,
+    messageKey.remoteJidAlt,
+    messageKey.remote_jid_alt,
   ];
 
   for (const candidate of candidates) {
     const jid = toJidString(candidate);
-    if (jid.endsWith('@s.whatsapp.net')) return jid;
+    if (isUserJid(jid)) return jid;
   }
 
   return '';
@@ -122,11 +137,21 @@ function toJidSet(values = []) {
 }
 
 export function isUserJid(jid) {
-  return String(jid ?? '').endsWith('@s.whatsapp.net');
+  const value = String(jid ?? '');
+  return value.endsWith('@s.whatsapp.net') || value.endsWith('@lid');
 }
 
 export function isLidJid(jid) {
   return String(jid ?? '').endsWith('@lid');
+}
+
+function preferPrimaryUserJids(candidates = []) {
+  const userJids = [...new Set(candidates.filter(isUserJid))];
+  const lids = userJids.filter(isLidJid);
+  // Baileys v7 fornece o PN como alternativa de compatibilidade. Mantê-lo
+  // como uma segunda entrada no cache faria a UI e os fluxos tratarem a mesma
+  // pessoa como dois contatos; só o usamos se o LID não foi fornecido.
+  return lids.length ? lids : userJids;
 }
 
 export function isGroupJid(jid) {
@@ -168,7 +193,7 @@ export function normalizeManualTargetJid(raw) {
   const local = value.slice(0, atIndex).trim();
   const domain = value.slice(atIndex + 1).trim().toLowerCase();
   if (!local) return '';
-  if (domain !== 's.whatsapp.net' && domain !== 'g.us') return '';
+  if (domain !== 's.whatsapp.net' && domain !== 'lid' && domain !== 'g.us') return '';
   return `${local}@${domain}`;
 }
 
@@ -234,20 +259,26 @@ export function mergeContactCacheEntry(contactCache, input) {
     toJidString(input.remoteJid),
     toJidString(input.remote_jid),
     toJidString(input.participant),
+    toJidString(input.participantAlt),
+    toJidString(input.participant_alt),
     toJidString(input.participantPn),
     toJidString(input.participant_pn),
     toJidString(input.senderPn),
     toJidString(input.sender_pn),
     toJidString(messageKey.participant),
+    toJidString(messageKey.participantAlt),
+    toJidString(messageKey.participant_alt),
     toJidString(messageKey.participantPn),
     toJidString(messageKey.participant_pn),
     toJidString(messageKey.senderPn),
     toJidString(messageKey.sender_pn),
     toJidString(messageKey.remoteJid),
     toJidString(messageKey.remote_jid),
+    toJidString(messageKey.remoteJidAlt),
+    toJidString(messageKey.remote_jid_alt),
   ].filter(Boolean);
 
-  const personJids = directJidCandidates.filter(jid => isUserJid(jid) || isLidJid(jid));
+  const personJids = preferPrimaryUserJids(directJidCandidates);
   if (personJids.length === 0) return;
 
   const explicitName = normalizeCandidateName(
@@ -390,19 +421,17 @@ function extractSelectableJidsFromMessage(msg) {
   const candidates = [
     toJidString(messageKey.remoteJid),
     toJidString(messageKey.remote_jid),
+    toJidString(messageKey.remoteJidAlt),
+    toJidString(messageKey.remote_jid_alt),
     toJidString(messageKey.senderPn),
     toJidString(messageKey.sender_pn),
     toJidString(messageKey.participant),
+    toJidString(messageKey.participantAlt),
+    toJidString(messageKey.participant_alt),
     toJidString(messageKey.participantPn),
     toJidString(messageKey.participant_pn),
   ];
-  const result = new Set();
-  for (const candidate of candidates) {
-    if (isSelectableTestTargetJid(candidate)) {
-      result.add(candidate);
-    }
-  }
-  return Array.from(result);
+  return preferPrimaryUserJids(candidates);
 }
 
 export function subscribeToRealtimeJidDiscovery({ sock, contactCache, onDiscoveredJid }) {

@@ -1,5 +1,5 @@
 import path from 'path';
-import { DisconnectReason, downloadMediaMessage } from '@whiskeysockets/baileys';
+import { DisconnectReason, downloadMediaMessage } from 'baileys';
 
 import { createInstanceLock } from './instanceLock.js';
 import { createDashboardBridgeController } from './dashboardBridge.js';
@@ -9,6 +9,7 @@ import { createFlowRuntimeManager } from './flowRuntimeManager.js';
 import { createSetupConfigController } from './setupConfigController.js';
 import { createSetupRuntimeStateController } from './setupRuntimeState.js';
 import { createWhatsAppRuntimeController } from './whatsappRuntime.js';
+import { createLidIdentityMigrationService } from './lidIdentityMigration.js';
 import { createRuntimeGuardController } from './runtimeGuardController.js';
 import { createRuntimeDiagnosticsController } from './runtimeDiagnosticsController.js';
 import { createRuntimeLoggingController } from './runtimeLoggingController.js';
@@ -38,6 +39,7 @@ import {
   runDatabaseMaintenance,
   addConversationEvent,
   getActiveSessions,
+  getDb,
 } from '../db/index.js';
 import { getAuthStateStorageStats, cleanupAuthSignalSessions } from '../db/authState.js';
 import {
@@ -173,6 +175,10 @@ export function initRuntimeContainer(deps) {
 
   // 1. instanceLock
   const instanceLock = createInstanceLock(RUNTIME_LOCK_FILE);
+  const lidIdentityMigration = createLidIdentityMigrationService({
+    getDatabase: getDb,
+    getLogger: () => getLogger(),
+  });
 
   // 2. dashboardBridge
   const dashboardBridge = createDashboardBridgeController({
@@ -351,6 +357,7 @@ export function initRuntimeContainer(deps) {
     isReloadInProgress: () => flowRuntimeManager.isReloadInProgress(),
     getRuntimeSetupPromise,
     noteSocketCallbackDuration: durationMs => runtimeDiagnosticsController.noteSocketCallbackDuration(durationMs),
+    migrateLidIdentity: mapping => lidIdentityMigration.migratePair(mapping),
   });
 
   // 11. runtimeLoggingController

@@ -4,7 +4,7 @@ import {
   DisconnectReason,
   fetchLatestBaileysVersion,
   downloadMediaMessage,
-} from '@whiskeysockets/baileys';
+} from 'baileys';
 
 import {
   initDb,

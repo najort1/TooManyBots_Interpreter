@@ -59,7 +59,7 @@ function parseGroupJidsInput(raw) {
 
 /**
  * @param {object} options
- * @param {import('@whiskeysockets/baileys').WASocket} options.sock
+ * @param {import('baileys').WASocket} options.sock
  * @param {object} [options.currentConfig]
  * @param {boolean} [options.force]
  * @param {Map|null} [options.contactCache]
