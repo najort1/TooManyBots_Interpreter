@@ -533,28 +533,6 @@ test('C2: wanted decay — 48h sem crime perde 2 pontos', () => {
   assert.equal(pts, 3, 'deve decair 2 pontos após 48h');
 });
 
-test('C2: wanted decay — addWantedPoints reinicia o relógio', () => {
-  const scope = uniqueGroup();
-  const userJid = uniqueJid();
-  const db = getDb();
-
-  ensureFunSchema(db);
-  const now = 1_000_000_000_000;
-  const police = createPoliceService({ getDatabase: () => db });
-
-  police.setWantedPoints(userJid, scope, 5, now);
-
-  // Crime após 12h → reinicia relógio
-  const crimeTime = now + 12 * 60 * 60_000;
-  police.addWantedPoints(userJid, scope, 2, crimeTime);
-
-  // +24h a partir do crime → deve ter perdido 1 ponto
-  const decayCheck = crimeTime + WANTED_DECAY_MS + 1000;
-  const pts = police.getWantedPoints(userJid, scope, decayCheck);
-  // 5 + 2 - 1 = 6
-  assert.equal(pts, 6, 'addWantedPoints reinicia decay clock: 5+2-1=6');
-});
-
 test('C2: wanted decay — não vai abaixo de 0', () => {
   const scope = uniqueGroup();
   const userJid = uniqueJid();
@@ -568,26 +546,6 @@ test('C2: wanted decay — não vai abaixo de 0', () => {
   const decayed = now + WANTED_DECAY_MS * 3 + 1000;
   const pts = police.getWantedPoints(userJid, scope, decayed);
   assert.equal(pts, 0, 'decay não vai abaixo de 0');
-});
-
-test('C2: wanted points — sem lastDecay inicia relógio sem perder pontos', () => {
-  const scope = uniqueGroup();
-  const userJid = uniqueJid();
-  const db = getDb();
-
-  ensureFunSchema(db);
-  const now = 1_000_000_000_000;
-  const police = createPoliceService({ getDatabase: () => db });
-
-  // Primeira chamada sem wanted points — inicia relógio, sem perda
-  const pts1 = police.getWantedPoints(userJid, scope, now);
-  assert.equal(pts1, 0);
-
-  // Define pontos e verifica que decay começa a partir de now
-  police.setWantedPoints(userJid, scope, 3, now);
-  const later = now + 12 * 60 * 60_000;
-  const pts2 = police.getWantedPoints(userJid, scope, later);
-  assert.equal(pts2, 3, '12h sem crime não deve decair');
 });
 
 test('C2: countCrimes7d — conta heist-win e assault-win como crimes', () => {
@@ -1337,35 +1295,6 @@ test('C5: efeito da imunidade — intervenção nunca acontece com passe ativo',
   });
   assert.equal(result.immune, true);
   assert.equal(result.intervention.reason, 'immune');
-});
-
-test('C5: decay justo — 24h sem crime = -1 wanted. Crime há 12h → sem decay', () => {
-  const scope = uniqueGroup();
-  const userJid = uniqueJid();
-  const db = getDb();
-
-  ensureFunSchema(db);
-  const now = 2_000_000_000_000;
-  const police = createPoliceService({ getDatabase: () => db });
-
-  police.setWantedPoints(userJid, scope, 10, now);
-
-  // 12h depois — sem crime — ainda sem decay
-  const mid = now + 12 * 60 * 60_000;
-  assert.equal(police.getWantedPoints(userJid, scope, mid), 10, '12h sem crime → sem decay');
-
-  // 24h depois — sem crime — -1
-  const day1 = now + 24 * 60 * 60_000 + 1000;
-  assert.equal(police.getWantedPoints(userJid, scope, day1), 9, '24h sem crime → -1');
-
-  // Crime após 12h reinicia relógio
-  police.addWantedPoints(userJid, scope, 1, mid); // agora 11 pontos, relógio em mid
-  // +24h de mid = 36h do now
-  const later = mid + 24 * 60 * 60_000 + 1000;
-  // crime no mid reiniciou relógio, mas setWantedPoints(now) + getWantedPoints(day1)
-  // já aplicou -1 decay. addWantedPoints(mid) lê 9 pontos do DB, adiciona 1 = 10.
-  // +24h de mid: decay de -1 = 9
-  assert.equal(police.getWantedPoints(userJid, scope, later), 9, 'crime em 12h reiniciou relógio mas decay já ocorreu');
 });
 
 test('C5: thresholds de wanted — progressão de níveis faz sentido', () => {

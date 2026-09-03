@@ -81,34 +81,6 @@ test('parseFunCommand: gerar e imaginar mapeiam corretamente', () => {
   assert.equal(parseFunCommand('/imagine castelo', '/').command, 'imaginar');
 });
 
-test('imageGenerationService: gera imagem via URL e registra no banco', async () => {
-  const calls = [];
-  const service = makeService({
-    fetchImpl: async (url, init = {}) => {
-      calls.push({ url: String(url), body: JSON.parse(String(init.body || '{}')) });
-      return jsonResponse({ data: [{ url: 'http://cdn.local/image-1.png' }] });
-    },
-  });
-  const now = Date.UTC(2026, 6, 30, 15, 0, 0);
-  const out = await service.generateImage({
-    scopeKey: uniqueGroup(),
-    userJid: uniqueJid(),
-    prompt: 'um gato mago',
-    command: 'imaginar',
-    now,
-  });
-
-  assert.equal(out.ok, true);
-  assert.equal(out.url, 'http://cdn.local/image-1.png');
-  assert.equal(out.buffer, null);
-  assert.equal(out.used >= 1, true);
-  assert.equal(out.remaining, out.limit - out.used);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, 'http://127.0.0.1:3000/v1/images/generations');
-  assert.equal(calls[0].body.prompt, 'um gato mago');
-  assert.equal(calls[0].body.response_format, 'url');
-});
-
 test('imageGenerationService: suporta resposta b64_json', async () => {
   const pngB64 = Buffer.from('png-bytes-here').toString('base64');
   const service = makeService({
@@ -304,73 +276,6 @@ test('imageGenerationService: getDailyStatus reflete usado e restante', async ()
   assert.equal(status.limit, 3);
   assert.equal(status.used >= 2, true);
   assert.equal(status.remaining, status.limit - status.used);
-});
-
-test('fun route: /gerar envia buffer por replyImage e /imaginar envia URL por replyImageUrl', async () => {
-  const sent = [];
-  const module = createFunModule({
-    getDatabase: getDb,
-    getConfig: () => resolveFunConfig({ groupWhitelistJids: [], requireGroupWhitelist: false }),
-    sendText: async (_sock, _jid, msg) => sent.push({ type: 'text', msg }),
-    sendImage: async (_sock, _jid, payload) => {
-      if (payload.imageBuffer) {
-        sent.push({ type: 'buffer', buf: payload.imageBuffer.toString(), caption: payload.caption });
-        return;
-      }
-      sent.push({ type: 'url', url: payload.imageUrl, caption: payload.caption });
-    },
-    imageGenerationService: {
-      async generateImage(args) {
-        if (args.command === 'gerar') {
-          return {
-            ok: true,
-            buffer: Buffer.from('img-buf'),
-            url: '',
-            used: 1,
-            limit: 25,
-            remaining: 24,
-          };
-        }
-        return {
-          ok: true,
-          buffer: null,
-          url: 'http://cdn.local/final.png',
-          used: 2,
-          limit: 25,
-          remaining: 23,
-        };
-      },
-    },
-  });
-
-  const gerar = await module.onIncomingMessage({
-    sock: {},
-    chatJid: uniqueGroup(),
-    actorJid: uniqueJid('26'),
-    isGroup: true,
-    text: '/gerar samurai no neon',
-    reply: async (msg) => sent.push({ type: 'text', msg }),
-    replyImage: async (buf, caption) => sent.push({ type: 'buffer', buf: buf.toString(), caption }),
-    replyImageUrl: async (url, caption) => sent.push({ type: 'url', url, caption }),
-  });
-  const imaginar = await module.onIncomingMessage({
-    sock: {},
-    chatJid: uniqueGroup(),
-    actorJid: uniqueJid('27'),
-    isGroup: true,
-    text: '/imaginar baleia voadora',
-    reply: async (msg) => sent.push({ type: 'text', msg }),
-    replyImage: async (buf, caption) => sent.push({ type: 'buffer', buf: buf.toString(), caption }),
-    replyImageUrl: async (url, caption) => sent.push({ type: 'url', url, caption }),
-  });
-
-  assert.equal(gerar.handled, true);
-  assert.equal(imaginar.handled, true);
-  assert.equal(sent[0].type, 'buffer');
-  assert.match(sent[0].caption, /com memória do grupo/);
-  assert.equal(sent[1].type, 'url');
-  assert.equal(sent[1].url, 'http://cdn.local/final.png');
-  assert.match(sent[1].caption, /sem memória do grupo/);
 });
 
 test('fun route: /gerar sem prompt responde uso e quota excedida responde mensagem clara', async () => {

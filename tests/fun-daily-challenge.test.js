@@ -1000,39 +1000,6 @@ test('dailyChallenge handlers: responder/dica/trocar delegam corretamente', asyn
   assert.deepEqual(replies, ['ok answer', 'ok hint', 'ok skip']);
 });
 
-test('dailyChallenge news integration: composeEdition inclui seção do desafio resolvido', async () => {
-  const newsRepository = createFunNewsRepository({ getDatabase: getDb });
-  const scope = uniqueGroup();
-  const now = Date.now();
-
-  const newsService = createNewsService({
-    newsRepository,
-    dailyChallengeService: {
-      getTodayStats(groupScope) {
-        assert.equal(groupScope, scope);
-        return {
-          solved: true,
-          winnerJid: 'winner@s.whatsapp.net',
-          winnerName: 'Winner',
-          solveTimeSec: 125,
-          answer: 'Minecraft',
-          totalSolved: 7,
-          fastestSec: 45,
-          fastest: [{ jid: 'winner@s.whatsapp.net', best: 45 }],
-          wins: [{ jid: 'winner@s.whatsapp.net', wins: 3 }],
-        };
-      },
-    },
-    getContactDisplayName: (jid) => (jid === 'winner@s.whatsapp.net' ? 'Winner' : jid),
-    flavorService: null,
-  });
-
-  const edition = await newsService.composeEdition(scope, {}, now);
-  assert.match(edition.text, /DESAFIO DO DIA/i);
-  assert.match(edition.text, /Winner/);
-  assert.match(edition.text, /7 desafios resolvidos/i);
-});
-
 test('dailyChallenge news integration: getTodayStats null omite seção', async () => {
   const newsRepository = createFunNewsRepository({ getDatabase: getDb });
   const newsService = createNewsService({

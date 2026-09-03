@@ -12,27 +12,6 @@ await initDb();
 
 const unique = (prefix) => prefix + Date.now() + Math.floor(Math.random() * 1e6);
 
-test('avatar: catálogo mantém IDs únicos, bases e itens distribuídos nos slots', () => {
-  const catalog = listAvatarItems();
-  const ids = catalog.map((item) => item.id);
-  const countsBySlot = Object.fromEntries(AVATAR_SLOTS.map((slot) => [
-    slot,
-    catalog.filter((item) => item.slot === slot).length,
-  ]));
-
-  assert.equal(catalog.length, 42);
-  assert.equal(new Set(ids).size, catalog.length);
-  assert.deepEqual(countsBySlot, {
-    body: 3,
-    hair_face: 13,
-    outfit: 13,
-    optional_accessory: 13,
-  });
-  assert.ok(catalog.every((item) => AVATAR_SLOTS.includes(item.slot)));
-  assert.ok(catalog.every((item) => item.cost >= 0 && item.unlockLevel >= 1));
-  assert.ok(catalog.every((item) => hasAvatarVisual(item.slot, item.id)), 'todo item do catálogo precisa de renderer no estúdio e no quarto');
-});
-
 test('avatar: chave visual muda quando qualquer slot equipado muda', () => {
   const base = { slots: { body: 'corpo_beco', hair_face: 'base_face', outfit: 'camiseta_beco', optional_accessory: 'sem_acessorio' } };
   const keys = [

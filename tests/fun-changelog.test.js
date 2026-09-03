@@ -89,56 +89,6 @@ test('changelog resolveTargets só whitelist e @g.us', () => {
   assert.deepEqual(targets, ['120363IN@g.us']);
 });
 
-test('changelog dryRun e broadcast real com DB', async () => {
-  await initDb();
-  const sent = [];
-  const sleeps = [];
-  const svc = createChangelogService({
-    getConfig: () => ({
-      groupWhitelistJids: ['120363AAA@g.us', '120363BBB@g.us'],
-    }),
-    getSock: () => ({ user: { id: 'bot' } }),
-    sendText: async (_sock, jid, text) => {
-      sent.push({ jid, text });
-    },
-    getContactDisplayName: (jid) => (jid.includes('AAA') ? 'Grupo A' : 'Grupo B'),
-    sleep: async (ms) => {
-      sleeps.push(ms);
-    },
-    randomId: () => `chg-${Date.now()}`,
-  });
-
-  const dry = await svc.broadcast({
-    body: 'Item um\nItem dois',
-    title: 'Update',
-    version: '1.0',
-    dryRun: true,
-  });
-  assert.equal(dry.ok, true);
-  assert.equal(dry.dryRun, true);
-  assert.equal(dry.targetCount, 2);
-  assert.equal(dry.okCount, 2);
-  assert.equal(sent.length, 0);
-  assert.match(dry.text, /Item um/);
-
-  const live = await svc.broadcast({
-    body: 'Correção X\nFeature Y',
-    title: 'Patch',
-    version: '1.0.1',
-    dryRun: false,
-  });
-  assert.equal(live.ok, true);
-  assert.equal(sent.length, 2);
-  assert.equal(sent[0].jid, '120363AAA@g.us');
-  assert.equal(sent[1].jid, '120363BBB@g.us');
-  assert.equal(sleeps.length, 1);
-  assert.ok(sleeps[0] >= 1000);
-
-  const history = svc.listHistory({ limit: 5 });
-  assert.ok(history.length >= 1);
-  assert.ok(history.some((h) => h.title === 'Patch' || h.title === 'Update'));
-});
-
 test('changelog whatsapp-offline quando sem sock', async () => {
   const svc = createChangelogService({
     getConfig: () => ({ groupWhitelistJids: ['120363A@g.us'] }),

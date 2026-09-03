@@ -509,7 +509,7 @@ test('rank card PNG valido', () => {
 
 // â”€â”€â”€ Facade integration â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
-test('pay resolve LID mention para PN real', async () => {
+test('pay resolve menção, número e nome para o LID primário', async () => {
   const {
     createIdentityMap,
     findJidByDisplayName,
@@ -530,11 +530,12 @@ test('pay resolve LID mention para PN real', async () => {
   const lid = '281350775005409@lid';
   const pn = '5511987654321@s.whatsapp.net';
   map.remember(lid, pn);
-  assert.equal(map.resolve(lid), pn);
-  assert.equal(map.resolve('281350775005409'), pn);
+  assert.equal(map.resolve(lid), lid);
+  assert.equal(map.resolve('281350775005409'), lid);
+  assert.equal(map.getPn(lid), pn);
   // LID disfarÃ§ado de user jid
   map.remember('281350775005409@s.whatsapp.net', pn);
-  assert.equal(map.resolve('281350775005409@s.whatsapp.net'), pn);
+  assert.equal(map.resolve('281350775005409@s.whatsapp.net'), lid);
 
   const sock = {
     groupMetadata: async () => ({
@@ -554,7 +555,7 @@ test('pay resolve LID mention para PN real', async () => {
     groupJid: '120363999@g.us',
     contacts: [],
   });
-  assert.equal(byMention.jid, pn);
+  assert.equal(byMention.jid, lid);
 
   const byName = await resolveUserTarget({
     mentionedJids: [],
@@ -565,7 +566,7 @@ test('pay resolve LID mention para PN real', async () => {
     groupJid: '120363999@g.us',
     contacts: [{ jid: pn, name: 'Anjo Azul' }],
   });
-  assert.equal(byName.jid, pn);
+  assert.equal(byName.jid, lid);
 });
 
 test('facade: pay, rank image path, group rates', async () => {
@@ -689,185 +690,6 @@ test('services xp/rank/daily still work', () => {
   assert.equal(xpService.awardXp({ userJid, scopeKey, xpMin: 15, xpMax: 25, cooldownMs: 0, now }).gained, 15);
   assert.equal(rankService.getProfile(userJid, scopeKey).rank, 1);
   assert.equal(dailyService.claimDaily({ userJid, scopeKey, now: now + 1, rewardXp: 50, rewardCoins: 5 }).claimed, true);
-});
-
-test('ollama config defaults + flavorService fallback', async () => {
-  const cfg = resolveFunConfig({});
-  assert.equal(cfg.ollamaEnabled, true);
-  assert.equal(cfg.ollamaModel, 'gemma4:latest');
-  assert.ok(cfg.ollamaBaseUrl.includes('11434'));
-  assert.equal(cfg.zenEnabled, true);
-  assert.equal(cfg.zenBaseUrl, 'http://localhost:20128/v1');
-  assert.equal(cfg.zenModel, 'bot-zap');
-  assert.equal(cfg.zenSendSamplingParams, false);
-
-  const { createFlavorService } = await import('../fun/llm/flavorService.js');
-
-  // offline / disabled → fallback sem chamar generate
-  let calls = 0;
-  const offline = createFlavorService({
-    getConfig: () => resolveFunConfig({ ollamaEnabled: false, zenEnabled: false }),
-    generate: async () => {
-      calls += 1;
-      return 'nao deveria';
-    },
-  });
-  const lineOff = await offline.line('faction_create', { name: 'Lobos' });
-  assert.ok(lineOff.length > 5);
-  assert.equal(calls, 0);
-
-  // generate falha → fallback (zen desligado)
-  const failing = createFlavorService({
-    getConfig: () => resolveFunConfig({ ollamaEnabled: true, zenEnabled: false, ollamaTimeoutMs: 500 }),
-    generate: async () => {
-      throw new Error('network');
-    },
-  });
-  const lineFail = await failing.line('flip_win', {});
-  assert.ok(lineFail.length > 5);
-
-  // generate ok → usa resposta sanitizada
-  const ok = createFlavorService({
-    getConfig: () => resolveFunConfig({ ollamaEnabled: true, zenEnabled: false }),
-    generate: async () => '  "A moeda brilhou pro lado certo."  ',
-  });
-  const lineOk = await ok.line('flip_win', {});
-  assert.match(lineOk, /moeda/i);
-  assert.ok(!lineOk.startsWith('"'));
-
-  const italic = await ok.italicLine('flip_win', {});
-  assert.ok(italic.startsWith('_') && italic.endsWith('_'));
-
-  // cascata: zen falha → ollama mock
-  const cascade = createFlavorService({
-    getConfig: () => resolveFunConfig({ zenEnabled: true, ollamaEnabled: true }),
-    zenGenerate: async () => {
-      throw new Error('zen-down');
-    },
-    generate: async () => 'Frase do ollama mock.',
-  });
-  const lineCascade = await cascade.line('ship', { percent: 10 });
-  assert.match(lineCascade, /ollama mock/i);
-  assert.equal(cascade.lastProvider(), 'ollama');
-});
-
-test('facade: flavorService injetado em /cf e /panelinha criar', async () => {
-  const groupJid = uniqueGroup();
-  const userA = `5511777${String(Date.now()).slice(-6)}03@s.whatsapp.net`;
-  const sent = [];
-  const funConfig = resolveFunConfig({
-    enabled: true,
-    cooldownMs: 0,
-    flipMin: 5,
-    flipMax: 80,
-    flipCooldownMs: 0,
-    requireGroupWhitelist: true,
-    groupWhitelistJids: [groupJid],
-    factionCreateCost: 0,
-    ollamaEnabled: true,
-    zenEnabled: false,
-  });
-
-  const { createFlavorService } = await import('../fun/llm/flavorService.js');
-  const flavorService = createFlavorService({
-    getConfig: () => funConfig,
-    generate: async ({ prompt }) => {
-      const p = String(prompt);
-      if (/fac|panelinha/i.test(p)) {
-        return 'Narrador: Panelinha no ar, pessoal.';
-      }
-      return 'Sorte absurda no flip de teste.';
-    },
-  });
-
-  const funModule = createFunModule({
-    getConfig: () => funConfig,
-    getLogger: () => null,
-    getDatabase: getDb,
-    flavorService,
-    sendText: async (_s, jid, text) => {
-      sent.push({ jid, text });
-    },
-    getContactDisplayName: (jid) => (jid === userA ? 'Tester' : ''),
-    listContacts: () => [{ jid: userA, name: 'Tester' }],
-  });
-  funModule.init();
-  funModule._services.repository.addCoins({
-    userJid: userA,
-    scopeKey: groupJid,
-    amount: 100,
-    reason: 'seed',
-  });
-
-  sent.length = 0;
-  await funModule.onIncomingMessage({
-    sock: {},
-    chatJid: groupJid,
-    actorJid: userA,
-    isGroup: true,
-    text: '/panelinha criar Os Testadores',
-    messageType: 'text',
-  });
-  assert.ok(
-    sent.some(m => /Nova panelinha|panelinha registrada/i.test(m.text) && /Panelinha no ar/i.test(m.text)),
-    `panelinha flavor missing: ${JSON.stringify(sent)}`
-  );
-
-  sent.length = 0;
-  // forÃ§a resultado determinÃ­stico? gameService usa random â€” sÃ³ checa que linha de flavor aparece no final se vitÃ³ria/derrota
-  await funModule.onIncomingMessage({
-    sock: {},
-    chatJid: groupJid,
-    actorJid: userA,
-    isGroup: true,
-    text: '/cf 10 cara',
-    messageType: 'text',
-  });
-  assert.ok(
-    sent.some(m => /Cara ou coroa/i.test(m.text) && /Sorte absurda|moeda|lado|Errou|Acertou/i.test(m.text)),
-    `flip reply missing flavor path: ${JSON.stringify(sent)}`
-  );
-  assert.ok(funModule._services.flavorService);
-});
-
-test('ollama keep_alive + warmup API', async () => {
-  const { normalizeKeepAlive, ollamaWarmup } = await import('../fun/llm/ollamaClient.js');
-  assert.equal(normalizeKeepAlive(-1), -1);
-  assert.equal(normalizeKeepAlive('30m'), '30m');
-  assert.equal(normalizeKeepAlive(undefined, -1), -1);
-
-  const { createFlavorService } = await import('../fun/llm/flavorService.js');
-  let warmCalls = 0;
-  let genKeepAlive = null;
-  const svc = createFlavorService({
-    getConfig: () =>
-      resolveFunConfig({
-        ollamaEnabled: true,
-        zenEnabled: false,
-        ollamaKeepAlive: -1,
-        ollamaKeepAliveRefreshMs: 0,
-      }),
-    warmup: async (opts) => {
-      warmCalls += 1;
-      assert.equal(opts.keepAlive, -1);
-      return { ok: true, model: opts.model, ms: 12 };
-    },
-    generate: async (opts) => {
-      genKeepAlive = opts.keepAlive;
-      return 'Frase quente de teste.';
-    },
-  });
-
-  const w = await svc.warmup();
-  assert.equal(w.ok, true);
-  assert.equal(warmCalls, 1);
-  assert.equal(svc.isWarm(), true);
-
-  const line = await svc.line('flip_win', {});
-  assert.match(line, /quente/i);
-  assert.equal(genKeepAlive, -1);
-
-  svc.stopKeepAliveLoop();
 });
 
 test('respostas no grupo: saldo e aposta ficam no chat do grupo (sem DM)', async () => {

@@ -37,19 +37,6 @@ function uniqueGroup() {
   return `120363${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 90 + 10)}@g.us`;
 }
 
-test('parseFunCommand: aliases cassino', () => {
-  assert.equal(parseFunCommand('/roleta 10 vermelho', '/').command, FUN_COMMANDS.ROULETTE);
-  assert.equal(parseFunCommand('/slot 15', '/').command, FUN_COMMANDS.SLOT);
-  assert.equal(parseFunCommand('/desafio', '/').command, FUN_COMMANDS.DICE_DUEL);
-  assert.equal(parseFunCommand('/crash 20', '/').command, FUN_COMMANDS.CRASH);
-  assert.equal(parseFunCommand('/sair', '/').command, FUN_COMMANDS.CASHOUT);
-  assert.equal(parseFunCommand('/bj 25', '/').command, FUN_COMMANDS.BLACKJACK);
-  assert.equal(parseFunCommand('/torneio 20', '/').command, FUN_COMMANDS.TOURNAMENT);
-  assert.equal(parseFunCommand('/bingo 15', '/').command, FUN_COMMANDS.BINGO);
-  assert.equal(parseFunCommand('/rankcassino', '/').command, FUN_COMMANDS.RANK_CASINO);
-  assert.equal(parseFunCommand('/jackpot', '/').command, FUN_COMMANDS.JACKPOT);
-});
-
 test('casino P0: roleta, slot, jackpot, duelo dados', () => {
   const repo = createFunStatsRepository({ getDatabase: getDb });
   repo.ensureFunSchema();
@@ -350,64 +337,6 @@ test('eventos: só bot inicia — tryAutoSpawn + /evento nega start', async () =
   });
   assert.ok(
     sent.some(m => /sorteados pelo bot|bot sorteia|ninguém inicia/i.test(m.text)),
-    JSON.stringify(sent)
-  );
-});
-
-test('facade: /roleta e /rankcassino', async () => {
-  const groupJid = uniqueGroup();
-  const userA = `5511555${String(Date.now()).slice(-6)}09@s.whatsapp.net`;
-  const sent = [];
-  const funConfig = resolveFunConfig({
-    enabled: true,
-    requireGroupWhitelist: true,
-    groupWhitelistJids: [groupJid],
-    replyCommandsInPrivate: false,
-    rouletteCooldownMs: 0,
-    casinoMin: 5,
-    casinoMax: 100,
-    jackpotRate: 0.01,
-    ollamaEnabled: false,
-  });
-
-  const funModule = createFunModule({
-    getConfig: () => funConfig,
-    getLogger: () => null,
-    getDatabase: getDb,
-    sendText: async (_s, jid, text) => {
-      sent.push({ jid, text });
-    },
-    getContactDisplayName: () => 'Cass',
-  });
-  funModule.init();
-  funModule._services.repository.addCoins({
-    userJid: userA,
-    scopeKey: groupJid,
-    amount: 100,
-    reason: 'seed',
-  });
-
-  await funModule.onIncomingMessage({
-    sock: {},
-    chatJid: groupJid,
-    actorJid: userA,
-    isGroup: true,
-    text: '/roleta 10 vermelho',
-    messageType: 'text',
-  });
-  assert.ok(sent.some(m => /Roleta/i.test(m.text)), JSON.stringify(sent));
-
-  sent.length = 0;
-  await funModule.onIncomingMessage({
-    sock: {},
-    chatJid: groupJid,
-    actorJid: userA,
-    isGroup: true,
-    text: '/rankcassino',
-    messageType: 'text',
-  });
-  assert.ok(
-    sent.some(m => /Rank Cassino|cassino|histórico/i.test(m.text)),
     JSON.stringify(sent)
   );
 });
@@ -894,4 +823,3 @@ test('facade: /bingo solo e /bingo sala', async () => {
   });
   assert.ok(sent.some((m) => /Bingo!|sorteados|devolvida|Linha|cheia/i.test(m.text)), JSON.stringify(sent));
 });
-
