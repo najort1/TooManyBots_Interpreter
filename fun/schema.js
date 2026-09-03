@@ -712,6 +712,24 @@ export function buildFunSchemaSql() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_daily_events_scope
       ON fun_daily_events(scope_key, created_at DESC);
 
+    -- Texto bruto de curta retenção para o Jornal das 23:59.
+    -- Todo acesso é por group scope + intervalo cronológico; snapshots não copiam texto.
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_journal_messages (
+      scope_key             TEXT NOT NULL,
+      message_id            TEXT NOT NULL,
+      author_jid            TEXT NOT NULL DEFAULT '',
+      source                TEXT NOT NULL DEFAULT 'human',
+      message_type          TEXT NOT NULL DEFAULT 'text',
+      message_text          TEXT NOT NULL,
+      quoted_text           TEXT NOT NULL DEFAULT '',
+      mentioned_jids_json   TEXT NOT NULL DEFAULT '[]',
+      occurred_at           INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, message_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_journal_messages_scope_time
+      ON fun_journal_messages(scope_key, occurred_at ASC, message_id ASC);
+
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_group_news_meta (
       scope_key              TEXT PRIMARY KEY,
       last_daily_news_day    TEXT NOT NULL DEFAULT '',

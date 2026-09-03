@@ -10,7 +10,7 @@ import { createFunSocialRepository } from './db/funSocialRepository.js';
 import { createFunMissionRepository } from './db/funMissionRepository.js';
 import { createFunEventRepository } from './db/funEventRepository.js';
 import { createEventRepository } from './db/eventRepository.js';
-import { createEventExtractorService } from './events/eventExtractorService.js';
+import { createEventBatchExtractor } from './events/eventBatchExtractor.js';
 import { createEventAggregationService } from './events/eventAggregationService.js';
 import { createEventReminderService } from './events/eventReminderService.js';
 import { createXpService } from './services/xpService.js';
@@ -40,6 +40,7 @@ import { createFunSoundSystemRepository } from './db/funSoundSystemRepository.js
 import { createFunAvatarRepository } from './db/funAvatarRepository.js';
 import { createFunAvatarV2Repository } from './db/funAvatarV2Repository.js';
 import { createFunNewsRepository } from './db/funNewsRepository.js';
+import { createFunJournalMessageRepository } from './db/funJournalMessageRepository.js';
 import { createFunAchievementRepository } from './db/funAchievementRepository.js';
 import { createFunSnapshotRepository } from './db/funSnapshotRepository.js';
 import { createGroupMembershipService } from './utils/groupMembership.js';
@@ -132,12 +133,20 @@ export function createFunModule(deps = {}) {
   const sendImage = deps.sendImage || sendImageMessage;
   const sendSticker = deps.sendSticker || sendStickerMessage;
   const getSock = typeof deps.getSock === 'function' ? deps.getSock : () => null;
-  const resolveContactName = deps.getContactDisplayName || getContactDisplayName;
+  const identityMap = deps.identityMap || createIdentityMap();
+  const getStoredContactName = deps.getContactDisplayName || getContactDisplayName;
+  // Dados novos ficam sob LID. Enquanto uma sessão ainda tem um nome legado
+  // sob PN, usa o alias somente para leitura até a migração idempotente rodar.
+  const resolveContactName = (jid) => {
+    const direct = String(getStoredContactName(jid) || '').trim();
+    if (direct) return direct;
+    const pn = identityMap.getPn?.(jid);
+    return pn ? String(getStoredContactName(pn) || '').trim() : '';
+  };
   const resolveContactList = deps.listContacts || (() => listContactDisplayNames(5000));
   const resolveWhitelist =
     deps.getGroupWhitelistJids ||
     ((cfg) => getFunGroupWhitelistSet(cfg));
-  const identityMap = deps.identityMap || createIdentityMap();
 
   const repository = createFunStatsRepository({ getDatabase });
   const groupRepository = createFunGroupRepository({ getDatabase });
@@ -181,6 +190,8 @@ export function createFunModule(deps = {}) {
   const avatarV2Repository = deps.avatarV2Repository || createFunAvatarV2Repository({ getDatabase });
   const newsRepository =
     deps.newsRepository || createFunNewsRepository({ getDatabase });
+  const journalMessageRepository =
+    deps.journalMessageRepository || createFunJournalMessageRepository({ getDatabase });
   const achievementRepository =
     deps.achievementRepository || createFunAchievementRepository({ getDatabase });
   const snapshotRepository =
@@ -481,6 +492,7 @@ export function createFunModule(deps = {}) {
     deps.newsService ||
     createNewsService({
       newsRepository,
+      journalMessageRepository,
       snapshotRepository,
       statsRepository: repository,
       achievementRepository,
@@ -521,9 +533,9 @@ export function createFunModule(deps = {}) {
       adapters: extractionAdapters,
     });
   }
-  const eventExtractorService =
-    deps.eventExtractorService ||
-    createEventExtractorService({
+  const eventBatchExtractor =
+    deps.eventBatchExtractor ||
+    createEventBatchExtractor({
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
     });
@@ -531,7 +543,7 @@ export function createFunModule(deps = {}) {
     deps.eventAggregationService ||
     createEventAggregationService({
       eventRepository: groupEventRepository,
-      eventExtractorService,
+      eventBatchExtractor,
       getLogger,
     });
   const eventReminderService =
@@ -634,11 +646,13 @@ export function createFunModule(deps = {}) {
         robberyService,
         roastService,
         newsService,
+        journalMessageRepository,
         achievementService,
         cardService,
         qmpService,
         casinoRepository,
         groupMemoryService,
+        groupEventRepository,
         eventAggregationService,
         personaSocialHintService,
         personaService,
@@ -682,6 +696,7 @@ export function createFunModule(deps = {}) {
         quotedMessageId: ctx.quotedMessageId ?? '',
         quotedText: ctx.quotedText ?? '',
         mentionedJids: ctx.mentionedJids || ctx.parsed?.mentionedJids || [],
+        rawMentionedJids: ctx.rawMentionedJids || [],
         quotedParticipant: ctx.quotedParticipant || '',
         rawMessage: ctx.rawMessage || ctx.msg || null,
         appConfig: funConfig,
@@ -725,7 +740,35 @@ export function createFunModule(deps = {}) {
       return { ok: false, reason: 'no-whitelist', results: [] };
     }
 
-    const post = sendFn || sendText;
+    const rawPost = sendFn || sendText;
+    const post =
+      typeof rawPost === 'function'
+        ? async (socket, toJid, body, options) => {
+            const sent = await rawPost(socket, toJid, body, options);
+            const messageId = String(sent?.key?.id || '').trim();
+            if (
+              funConfig.groupNewsMessageHistoryEnabled !== false &&
+              String(toJid || '').endsWith('@g.us') &&
+              messageId &&
+              String(body || '').trim()
+            ) {
+              try {
+                journalMessageRepository.recordMessage({
+                  scopeKey: toJid,
+                  messageId,
+                  source: 'bot',
+                  messageType: 'text',
+                  text: String(body),
+                  now,
+                  prefix: funConfig.prefix,
+                });
+              } catch {
+                // registro observacional: falha nunca impede uma publicação
+              }
+            }
+            return sent;
+          }
+        : null;
     const nameResolver = nameFn || resolveContactName;
     const results = [];
     const quiet = isWorldQuietHours(funConfig, now);
@@ -781,6 +824,15 @@ export function createFunModule(deps = {}) {
       }
     }
 
+    if (eventAggregationService?.flushDueScopes) {
+      try {
+        const eventBatches = await eventAggregationService.flushDueScopes(funConfig, now);
+        if (eventBatches?.results?.length) results.push(...eventBatches.results);
+      } catch (err) {
+        results.push({ kind: 'group-event-batch', ok: false, reason: err?.message || 'group-event-batch-tick-error' });
+      }
+    }
+
     const postWithMentions = async (toJid, msg, userFmt) => {
       if (!msg || !post || !sock) return;
       const mentions = userFmt?.takeMentions?.() || [];
@@ -811,6 +863,7 @@ export function createFunModule(deps = {}) {
               newsDay: edition.newsDay,
               provider: edition.provider || null,
               eventCount: edition.eventCount ?? null,
+              messageCount: edition.messageCount ?? null,
             };
           }
           return {
@@ -833,7 +886,7 @@ export function createFunModule(deps = {}) {
         results.push(r);
         if (r.ok) {
           console.log(
-            `[fun/news] published ${String(r.scopeKey).slice(0, 28)} provider=${r.provider} events=${r.eventCount}`
+            `[fun/news] published ${String(r.scopeKey).slice(0, 28)} provider=${r.provider} messages=${r.messageCount ?? 0}`
           );
         }
       }
@@ -1391,6 +1444,7 @@ export function createFunModule(deps = {}) {
       roastService,
       newsService,
       snapshotRepository,
+      journalMessageRepository,
       changelogService,
       achievementService,
       cardService,
@@ -1405,7 +1459,7 @@ export function createFunModule(deps = {}) {
       chaosService,
       chaosEventService,
       groupEventRepository,
-      eventExtractorService,
+      eventBatchExtractor,
       eventAggregationService,
       eventReminderService,
       groupMemoryService,

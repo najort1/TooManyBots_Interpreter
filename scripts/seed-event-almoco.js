@@ -9,16 +9,28 @@
 // "siqueira@s.whatsapp.net" — sem JID real, esse valor é apenas um placeholder
 // para organização da autoria do registro.
 
-import { initDb } from '../db/index.js';
-import { createEventRepository } from '../fun/db/eventRepository.js';
-import { createEventFingerprint, zonedLocalDateTimeToMs } from '../fun/events/eventTime.js';
+import { peekFunDataDirFromDisk } from '../fun/config.js';
+
+// O banco fixa TMB_DATA_DIR no carregamento do módulo. Alinha o seed ao mesmo
+// diretório isolado que `fun/start.js` usa, antes de importar a camada de banco.
+process.env.TMB_DATA_DIR = peekFunDataDirFromDisk();
+
+const [
+  { initDb },
+  { createEventRepository },
+  { createEventFingerprint, zonedLocalDateTimeToMs },
+] = await Promise.all([
+  import('../db/index.js'),
+  import('../fun/db/eventRepository.js'),
+  import('../fun/events/eventTime.js'),
+]);
 
 await initDb();
 const repository = createEventRepository();
 
 const SCOPE_KEY = '120363390006674987@g.us';
 const AUTHOR_JID = 'siqueira@s.whatsapp.net';
-const SOURCE_MESSAGE_ID = `seed-almoco-2026-09-26-${Date.now()}`;
+const SOURCE_MESSAGE_ID = 'seed-almoco-2026-09-26';
 const TIMEZONE = 'America/Sao_Paulo';
 
 const eventStartsAt = zonedLocalDateTimeToMs({
@@ -90,6 +102,7 @@ if (!result.ok) {
   process.exit(1);
 }
 
+console.log('Banco Fun:', process.env.TMB_DATA_DIR);
 console.log('Evento registrado:', JSON.stringify({
   id: result.event.id,
   scopeKey: result.event.scopeKey,

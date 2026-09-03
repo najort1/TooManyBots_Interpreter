@@ -3,134 +3,85 @@ import assert from 'node:assert/strict';
 
 import { initDb } from '../db/index.js';
 import { getDb } from '../db/context.js';
-import {
-  _resetDefaultFunStatsRepository,
-  createFunStatsRepository,
-} from '../fun/db/funStatsRepository.js';
 import { createFunNewsRepository } from '../fun/db/funNewsRepository.js';
-import { createFunMemoryRepository } from '../fun/db/funMemoryRepository.js';
-import { createGroupMemoryService } from '../fun/services/groupMemoryService.js';
-import {
-  createNewsService,
-  isGroupNewsWindow,
-} from '../fun/services/newsService.js';
+import { createFunJournalMessageRepository } from '../fun/db/funJournalMessageRepository.js';
+import { createFunSnapshotRepository } from '../fun/db/funSnapshotRepository.js';
+import { createNewsService, isGroupNewsWindow } from '../fun/services/newsService.js';
 
 await initDb();
-_resetDefaultFunStatsRepository();
 
 function uniqueGroup() {
   return `120363${String(Date.now()).slice(-10)}${Math.floor(Math.random() * 90 + 10)}@g.us`;
 }
 
 test('news: isGroupNewsWindow 23:59 e 00:02', () => {
-  // fixed instants hard: use local construction via Date.UTC and tz is SP
-  // We only assert function returns boolean consistently for now timestamps
   const cfg = { worldTimezone: 'America/Sao_Paulo', groupNewsHour: 23, groupNewsMinute: 59 };
   assert.equal(typeof isGroupNewsWindow(Date.now(), cfg), 'boolean');
 });
 
-test('news: prompt ancora FORESHADOW na data atual e na data do fato', async () => {
+test('news: publica conversa do grupo, não placar de eventos, e deduplica', async () => {
   const scope = uniqueGroup();
-  const factCreatedAt = Date.UTC(2026, 7, 28, 20, 0, 0);
-  const now = Date.UTC(2026, 8, 1, 23, 59, 30);
-  const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
-  memoryRepository.insertFact({
-    scopeKey: scope,
-    kind: 'rivalry',
-    summary: 'Max aceitou enfrentar Jonas no vôlei amanhã',
-    subjects: ['max@s.whatsapp.net', 'jonas@s.whatsapp.net'],
-    score: 88,
-    now: factCreatedAt,
-  });
-  const groupMemoryService = createGroupMemoryService({ memoryRepository });
-  let promptLore = '';
+  const newsRepository = createFunNewsRepository({ getDatabase: getDb });
+  const journalMessageRepository = createFunJournalMessageRepository({ getDatabase: getDb });
+  const snapshotRepository = createFunSnapshotRepository({ getDatabase: getDb });
+  const now = Date.UTC(2026, 8, 2, 23, 59, 30);
+
+  journalMessageRepository.recordMessage({ scopeKey: scope, messageId: 'one', authorJid: 'ana@s.whatsapp.net', text: 'A fofoca do churrasco começou cedo.', now: now - 10_000 });
+  journalMessageRepository.recordMessage({ scopeKey: scope, messageId: 'two', authorJid: 'bia@s.whatsapp.net', text: 'Eu avisei que isso ia render.', now: now - 5_000 });
+  journalMessageRepository.recordMessage({ scopeKey: scope, messageId: 'three', authorJid: 'ana@s.whatsapp.net', text: 'A pauta continuou e ninguém conseguiu mudar de assunto.', now: now - 2_000 });
+  journalMessageRepository.recordMessage({ scopeKey: scope, messageId: 'four', authorJid: 'bia@s.whatsapp.net', text: 'A churrasqueira segue oficialmente sob investigação.', now: now - 1_000 });
+
   const newsService = createNewsService({
-    newsRepository: createFunNewsRepository({ getDatabase: getDb }),
-    groupMemoryService,
+    newsRepository,
+    journalMessageRepository,
+    snapshotRepository,
     flavorService: {
-      async line(_scenario, vars) {
-        promptLore = String(vars.groupLore || '');
-        return 'CAPA: Jornal com contexto\nINTRO: A redação recebeu os fatos datados corretamente.\nFORESHADOW: A redação compara as datas antes de prever.';
+      async line() {
+        return [
+          'CAPA: Churrasco rende temporada extra',
+          'MANCHETES: A pauta do churrasco dominou a tarde.',
+          'DETALHES: Ana abriu os trabalhos e Bia confirmou que a história ainda tinha capítulos.',
+          'CITACOES: Bia: “Eu avisei que isso ia render.”',
+          'FECHO: A churrasqueira segue sob investigação.',
+        ].join('\n');
       },
       lastProvider: () => 'zen',
     },
+    getContactDisplayName: (jid) => ({ 'ana@s.whatsapp.net': 'Ana', 'bia@s.whatsapp.net': 'Bia' })[jid],
   });
 
-  await newsService.composeEdition(
-    scope,
-    { worldTimezone: 'UTC', memoryEnabled: true, memoryMinScore: 60 },
-    now
-  );
+  const published = await newsService.tryPublish(scope, {
+    groupNewsEnabled: true,
+    worldTimezone: 'UTC',
+    groupNewsHour: 23,
+    groupNewsMinute: 59,
+  }, now);
 
-  assert.match(promptLore, /data_atual=2026-09-01/);
-  assert.match(promptLore, /data_do_fato=2026-08-28/);
-  assert.match(promptLore, /Max aceitou enfrentar Jonas no vôlei amanhã/);
-  assert.match(promptLore, /"amanhã".*data_do_fato/);
+  assert.equal(published.ok, true);
+  assert.equal(published.provider, 'llm-enhanced');
+  assert.equal(published.messageCount, 4);
+  assert.match(published.text, /Churrasco rende temporada extra/);
+  assert.match(published.text, /A churrasqueira segue oficialmente sob investigação/);
+  assert.doesNotMatch(published.text, /RANKINGS|coins|cassino|ECONOMIA/i);
+  assert.deepEqual(Object.keys(snapshotRepository.getSnapshot(scope, published.newsDay).payload).sort(), ['mood', 'participantCount', 'timeline', 'totalMessageCount']);
+
+  const again = await newsService.tryPublish(scope, {
+    groupNewsEnabled: true,
+    worldTimezone: 'UTC',
+    groupNewsHour: 23,
+    groupNewsMinute: 59,
+  }, now + 15_000);
+  assert.equal(again.reason, 'already-today');
 });
 
-test('news: log, compose template, publish dedup', async () => {
-  const repository = createFunStatsRepository({ getDatabase: getDb });
-  repository.ensureFunSchema();
-  const newsRepository = createFunNewsRepository({ getDatabase: getDb });
-  const newsService = createNewsService({ newsRepository, flavorService: null });
-  const scope = uniqueGroup();
-
-  newsService.log(scope, 'crash_loss', {
-    userJid: 'x@s.whatsapp.net',
-    payload: { amount: 80 },
-  });
-  newsService.log(scope, 'marry', {
-    payload: { a: 'A', b: 'B' },
-  });
-
-  const edition = await newsService.composeEdition(scope, {}, Date.now());
-  assert.ok(edition.text.includes('THE GROUP TIMES'));
-  assert.equal(edition.provider, 'deterministic');
-  assert.ok(edition.eventCount >= 2);
-
-  // force publish by faking window via direct set + try with stubbed window
-  // unit: setNewsDay + getMeta
-  newsRepository.setNewsDay(scope, '2099-01-01', Date.now());
-  assert.equal(newsRepository.getNewsMeta(scope).lastDailyNewsDay, '2099-01-01');
-
-  // tryPublish outside window → not-window
-  const mid = await newsService.tryPublish(
-    scope,
-    {
-      groupNewsEnabled: true,
-      worldTimezone: 'UTC',
-      groupNewsHour: 23,
-      groupNewsMinute: 59,
-    },
-    Date.UTC(2020, 0, 1, 12, 0, 0)
-  );
-  assert.equal(mid.ok, false);
-  assert.equal(mid.reason, 'not-window');
-
-  // inside window UTC 23:59
-  const once = await newsService.tryPublish(
-    scope,
-    {
-      groupNewsEnabled: true,
-      worldTimezone: 'UTC',
-      groupNewsHour: 23,
-      groupNewsMinute: 59,
-    },
-    Date.UTC(2020, 5, 10, 23, 59, 30)
-  );
-  assert.equal(once.ok, true);
-  assert.ok(once.text);
-
-  const twice = await newsService.tryPublish(
-    scope,
-    {
-      groupNewsEnabled: true,
-      worldTimezone: 'UTC',
-      groupNewsHour: 23,
-      groupNewsMinute: 59,
-    },
-    Date.UTC(2020, 5, 10, 23, 59, 45)
-  );
-  assert.equal(twice.ok, false);
-  assert.equal(twice.reason, 'already-today');
+test('news: fora da janela não publica', async () => {
+  const newsService = createNewsService({ newsRepository: createFunNewsRepository({ getDatabase: getDb }) });
+  const result = await newsService.tryPublish(uniqueGroup(), {
+    groupNewsEnabled: true,
+    worldTimezone: 'UTC',
+    groupNewsHour: 23,
+    groupNewsMinute: 59,
+  }, Date.UTC(2026, 8, 2, 12, 0, 0));
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'not-window');
 });

@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '33';
+export const FUN_SCHEMA_VERSION = '34';
 
 export const PERSONA_MEMORY_TYPES = Object.freeze(['thread', 'episodic', 'semantic', 'social']);
 export const PERSONA_MEMORY_EVIDENCE = Object.freeze(['explicit', 'corroborated', 'inferred']);
@@ -112,6 +112,9 @@ export const FUN_COMMANDS = Object.freeze({
   // Despedidas — /despedir (poema) + /despedida rank (ranking)
   DESPEDIR: 'despedir',
   DESPEDIDA_RANK: 'despedida_rank',
+  // Rolês reais detectados nas conversas do grupo
+  ROLES: 'roles',
+  REMOVE_ROLE: 'remove_role',
 });
 
 /**
@@ -170,6 +173,8 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     // geração de imagem: resposta precisa voltar no grupo
     FUN_COMMANDS.GERAR,
     FUN_COMMANDS.IMAGINAR,
+    FUN_COMMANDS.ROLES,
+    FUN_COMMANDS.REMOVE_ROLE,
   ])
 );
 
@@ -499,6 +504,10 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   // Despedidas (sem cooldown; não conflitam com /demitir do emprego)
   despedir: FUN_COMMANDS.DESPEDIR,
   despedida: FUN_COMMANDS.DESPEDIDA_RANK,
+  roles: FUN_COMMANDS.ROLES,
+  rolesidentificados: FUN_COMMANDS.ROLES,
+  removerrole: FUN_COMMANDS.REMOVE_ROLE,
+  removerroles: FUN_COMMANDS.REMOVE_ROLE,
   adeus: FUN_COMMANDS.DESPEDIR,
   dispensar: FUN_COMMANDS.DESPEDIR,
 });
@@ -643,7 +652,16 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   /** Lembretes relativos ao horário persistido do evento. */
   groupEventReminderThreeDaysEnabled: true,
   groupEventReminderThreeHoursEnabled: true,
-  /** Limites de segurança para buffer e varredura em cada world tick. */
+  /** Lote completo enviado à LLM para extrair anúncios reais de evento. */
+  groupEventBatchSize: 40,
+  /** Mensagens já processadas reenviadas apenas como contexto no próximo lote. */
+  groupEventBatchContextMessages: 10,
+  /** Tentativas adicionais quando a LLM falha antes de reencadear o lote. */
+  groupEventBatchMaxRetries: 3,
+  /** Limites de payload e operações extraídas em cada lote. */
+  groupEventBatchMessageMaxChars: 700,
+  groupEventBatchMaxOperations: 12,
+  /** Limites de segurança legados para fallback de resolução de alvo. */
   groupEventFragmentMaxMessages: 4,
   groupEventReminderBatchSize: 12,
   selfHealEnabled: true,
@@ -908,6 +926,14 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   groupNewsEnabled: true,
   groupNewsHour: 23,
   groupNewsMinute: 59,
+  /** Guarda mensagens elegíveis para o jornal conversacional. */
+  groupNewsMessageHistoryEnabled: true,
+  /** Retenção curta de texto bruto; snapshots diários nunca guardam citações. */
+  groupNewsMessageRetentionDays: 3,
+  /** Teto de mensagens lidas numa edição, sempre em ordem cronológica. */
+  groupNewsMessageReadLimit: 1200,
+  /** Teto de caracteres de conversa enviado à pauta do jornal. */
+  groupNewsConversationMaxChars: 28_000,
   // Conquistas
   achievementsEnabled: true,
   // Memória persistente por grupo (lore seletiva)

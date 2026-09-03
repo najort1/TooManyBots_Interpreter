@@ -99,6 +99,7 @@ import {
 import { handleGerarCommand, handleImaginarCommand } from './handlers/image.js';
 import { handleDespedirCommand } from './handlers/despedir.js';
 import { handleDespedidaRankCommand } from './handlers/despedidaRank.js';
+import { handleRolesCommand, handleRemoveRoleCommand } from './handlers/roles.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -170,6 +171,7 @@ export async function routeFunCommand(ctx) {
     bridgeService,
     missionService,
     eventService,
+    groupEventRepository,
     casinoService,
     tarotService,
     marketService,
@@ -256,6 +258,7 @@ export async function routeFunCommand(ctx) {
     bridgeService,
     missionService,
     eventService,
+    groupEventRepository,
     casinoService,
     tarotService,
     marketService,
@@ -480,6 +483,10 @@ export async function routeFunCommand(ctx) {
       return handleDespedirCommand(base);
     case FUN_COMMANDS.DESPEDIDA_RANK:
       return handleDespedidaRankCommand(base);
+    case FUN_COMMANDS.ROLES:
+      return handleRolesCommand(base);
+    case FUN_COMMANDS.REMOVE_ROLE:
+      return handleRemoveRoleCommand(base);
     default:
       return { handled: false };
   }

@@ -3,26 +3,20 @@ import assert from 'node:assert/strict';
 
 import { initDb } from '../db/index.js';
 import { createEventRepository } from '../fun/db/eventRepository.js';
-import {
-  createEventExtractorService,
-  isEventCandidate,
-} from '../fun/events/eventExtractorService.js';
 import { createEventAggregationService } from '../fun/events/eventAggregationService.js';
+import { parseEventBatch } from '../fun/events/eventBatchExtractor.js';
+import { isEventCandidate } from '../fun/events/eventExtractorService.js';
 import { zonedLocalDateTimeToMs } from '../fun/events/eventTime.js';
-
-// test-env-setup força FUN_DISABLE_LIVE_LLM=1; os testes abaixo injetam um
-// generateZen fake e dependem do caminho "real" do extractor, então desligamos
-// a guarda por enquanto. Cada teste é responsável por fornecer um generateZen
-// determinístico.
-process.env.FUN_DISABLE_LIVE_LLM = '0';
 
 await initDb();
 
 function buildFunConfig(overrides = {}) {
   return {
     groupEventsEnabled: true,
+    groupEventBatchSize: 40,
+    groupEventBatchContextMessages: 10,
+    groupEventBatchMaxRetries: 0,
     groupEventFragmentWindowMs: 30 * 60_000,
-    groupEventFragmentMaxMessages: 4,
     groupEventReminderThreeDaysEnabled: true,
     groupEventReminderThreeHoursEnabled: true,
     worldTimezone: 'America/Sao_Paulo',
@@ -32,416 +26,296 @@ function buildFunConfig(overrides = {}) {
   };
 }
 
-function buildZenFake(payload) {
-  return async () => JSON.stringify(payload);
-}
-
 function makeScope(prefix = 'det') {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}@g.us`;
 }
 
-function makeAuthor() {
-  return `5511${Math.floor(Math.random() * 9_000_000 + 1_000_000)}@s.whatsapp.net`;
+function makeAuthor(index = 0) {
+  return `5511${String(1_000_000 + index).padStart(8, '0')}@s.whatsapp.net`;
 }
 
-function referenceStartsAt() {
-  const start = new Date();
-  start.setUTCDate(start.getUTCDate() + 7);
-  start.setUTCHours(20, 0, 0, 0);
+function futureStartsAt() {
+  return zonedLocalDateTimeToMs({
+    date: '2099-01-01',
+    time: '20:00',
+    timeZone: 'America/Sao_Paulo',
+  });
+}
+
+function createOperation({ action = 'create', indices = [0], authorJid = makeAuthor(), title = 'Churrasco', targetEventId = '' } = {}) {
   return {
-    start,
-    isoDate: start.toISOString().slice(0, 10),
-    isoTime: '20:00',
-    expectedMs: zonedLocalDateTimeToMs({
-      date: start.toISOString().slice(0, 10),
-      time: '20:00',
-      timeZone: 'America/Sao_Paulo',
-    }),
-  };
-}
-
-test('isEventCandidate aceita mensagens com sinais claros e rejeita conversa comum', () => {
-  assert.equal(isEventCandidate('Bora pro churrasco amanhã 19h na casa do Leo?'), true);
-  assert.equal(isEventCandidate('Hoje 20h rolê no parque confirmado'), true);
-  assert.equal(isEventCandidate('kkk que isso mano, do nada'), false);
-  assert.equal(isEventCandidate('oi'), false);
-});
-
-test('anúncio único persiste evento, organizador, local, itens e lembretes', async () => {
-  const repository = createEventRepository();
-  const ref = referenceStartsAt();
-  const extractionPayload = {
-    action: 'create',
-    title: 'Churrasco de fim de semana',
-    event_type: 'churrasco',
-    date: ref.isoDate,
-    time: ref.isoTime,
-    timezone: 'America/Sao_Paulo',
-    location: 'Casa do Léo',
-    items: ['carvão', 'bebida'],
-    organizer_name: 'Léo',
-    confidence: 92,
-  };
-  const eventExtractorService = createEventExtractorService({
-    generateZen: buildZenFake(extractionPayload),
-  });
-  const aggregation = createEventAggregationService({
-    eventRepository: repository,
-    eventExtractorService,
-  });
-
-  const scopeKey = makeScope('det');
-  const author = makeAuthor();
-  const result = await aggregation.observeMessage({
-    scopeKey,
-    userJid: author,
-    text: 'Bora churrasco sábado na casa do Léo, leva carvão e bebida',
-    messageId: 'msg-1',
-    funConfig: buildFunConfig(),
-    isGroup: true,
-    msgTimeMs: Date.now(),
-  });
-
-  assert.equal(result.ok, true, JSON.stringify(result));
-  assert.equal(result.event?.title, 'Churrasco de fim de semana');
-  assert.equal(result.event?.location, 'Casa do Léo');
-  assert.deepEqual(result.event?.items, ['carvão', 'bebida']);
-  assert.equal(result.event?.organizerName, 'Léo');
-  assert.equal(result.event?.startsAt, ref.expectedMs);
-
-  const stored = repository.listByScope(scopeKey);
-  assert.equal(stored.length, 1);
-  assert.equal(stored[0].id, result.event.id);
-  assert.equal(stored[0].status, 'active');
-});
-
-test('observação com mesmo messageId é idempotente', async () => {
-  const repository = createEventRepository();
-  const ref = referenceStartsAt();
-  const zen = buildZenFake({
-    action: 'create',
-    title: 'Rolo no parque',
-    event_type: 'encontro',
-    date: ref.isoDate,
-    time: ref.isoTime,
-    timezone: 'America/Sao_Paulo',
-    location: 'Parque',
-    items: [],
-    organizer_name: 'Ana',
-    confidence: 80,
-  });
-  const aggregation = createEventAggregationService({
-    eventRepository: repository,
-    eventExtractorService: createEventExtractorService({ generateZen: zen }),
-  });
-
-  const scopeKey = makeScope('idem');
-  const cfg = buildFunConfig();
-  const now = Date.now();
-  const first = await aggregation.observeMessage({
-    scopeKey, userJid: makeAuthor(), text: 'Bora rolê sábado', messageId: 'dup', funConfig: cfg, isGroup: true, msgTimeMs: now,
-  });
-  assert.equal(first.ok, true);
-  const second = await aggregation.observeMessage({
-    scopeKey, userJid: makeAuthor(), text: 'Bora rolê sábado', messageId: 'dup', funConfig: cfg, isGroup: true, msgTimeMs: now,
-  });
-  assert.equal(second.duplicate, true);
-  assert.equal(repository.listByScope(scopeKey).length, 1);
-});
-
-test('múltiplos fragmentos do mesmo autor se fundem em um único evento', async () => {
-  const repository = createEventRepository();
-  const ref = referenceStartsAt();
-  const calls = [];
-  const zen = async () => {
-    calls.push('zen');
-    if (calls.length === 1) {
-      // primeira mensagem ainda sem hora — extractor devolve insufficient-date
-      return JSON.stringify({
-        action: 'create',
-        title: 'Churrasco da firma',
-        event_type: 'churrasco',
-        date: '',
-        time: '',
-        timezone: 'America/Sao_Paulo',
-        location: 'Chácara do Tio',
-        items: [],
-        organizer_name: '',
-        confidence: 60,
-      });
-    }
-    return JSON.stringify({
-      action: 'create',
-      title: 'Churrasco da firma',
-      event_type: 'churrasco',
-      date: ref.isoDate,
-      time: ref.isoTime,
-      timezone: 'America/Sao_Paulo',
-      location: 'Chácara do Tio',
-      items: ['carvão', 'carne'],
-      organizer_name: 'Marcos',
-      confidence: 88,
-    });
-  };
-  const aggregation = createEventAggregationService({
-    eventRepository: repository,
-    eventExtractorService: createEventExtractorService({ generateZen: zen }),
-  });
-
-  const scopeKey = makeScope('frag');
-  const author = makeAuthor();
-  const cfg = buildFunConfig();
-  const base = Date.now();
-
-  // primeira mensagem: não tem hora explícita, vira fragmento no buffer
-  const r1 = await aggregation.observeMessage({
-    scopeKey,
-    userJid: author,
-    text: 'Bora churrasco na chácara do Tio sábado',
-    messageId: 'frag-1',
-    funConfig: cfg,
-    isGroup: true,
-    msgTimeMs: base,
-  });
-  assert.equal(r1.ok, false);
-  assert.equal(r1.reason, 'insufficient-date');
-
-  // segunda mensagem: hora aparece, deve fundir
-  const r2 = await aggregation.observeMessage({
-    scopeKey,
-    userJid: author,
-    text: '20h confirmado',
-    messageId: 'frag-2',
-    funConfig: cfg,
-    isGroup: true,
-    msgTimeMs: base + 60_000,
-  });
-  assert.equal(r2.ok, true);
-  assert.equal(r2.event?.location, 'Chácara do Tio');
-
-  const events = repository.listByScope(scopeKey);
-  assert.equal(events.length, 1);
-  assert.ok(events[0].sourceMessageIds.includes('frag-1'));
-  assert.ok(events[0].sourceMessageIds.includes('frag-2'));
-  assert.ok(calls.length >= 1);
-});
-
-test('autores diferentes não fundem eventos', async () => {
-  const repository = createEventRepository();
-  const ref = referenceStartsAt();
-  const zen = buildZenFake({
-    action: 'create',
-    title: 'Encontro',
-    event_type: 'encontro',
-    date: ref.isoDate,
-    time: ref.isoTime,
-    timezone: 'America/Sao_Paulo',
-    location: 'Praça',
-    items: [],
-    organizer_name: '',
-    confidence: 70,
-  });
-  const aggregation = createEventAggregationService({
-    eventRepository: repository,
-    eventExtractorService: createEventExtractorService({ generateZen: zen }),
-  });
-
-  const scopeKey = makeScope('multi-author');
-  const cfg = buildFunConfig();
-  const r1 = await aggregation.observeMessage({
-    scopeKey, userJid: '55110001@s.whatsapp.net', text: 'Bora 20h na praça', messageId: 'a-1', funConfig: cfg, isGroup: true, msgTimeMs: Date.now(),
-  });
-  const r2 = await aggregation.observeMessage({
-    scopeKey, userJid: '55110002@s.whatsapp.net', text: 'Bora 20h na praça', messageId: 'b-1', funConfig: cfg, isGroup: true, msgTimeMs: Date.now(),
-  });
-  assert.equal(r1.ok, true);
-  assert.equal(r2.ok, true);
-  assert.notEqual(r1.event.id, r2.event.id);
-});
-
-test('update do mesmo autor move o evento e reagenda lembretes pendentes', async () => {
-  const repository = createEventRepository();
-  const ref = referenceStartsAt();
-  // update mantém mesmo horário para casar via janela ±24h, adicionando item
-  const payloads = [
-    {
-      action: 'create',
-      title: 'Churrasco',
-      event_type: 'churrasco',
-      date: ref.isoDate,
-      time: ref.isoTime,
+    action,
+    messageIndices: indices,
+    targetEventId,
+    authorJid,
+    event: {
+      title,
+      eventType: 'churrasco',
+      startsAt: futureStartsAt(),
       timezone: 'America/Sao_Paulo',
       location: 'Casa do Léo',
       items: ['carvão'],
-      organizer_name: 'Léo',
-      confidence: 80,
+      organizerName: 'Léo',
+      fingerprint: `churrasco|${title.toLowerCase()}|2099 01 01|20 00|casa do leo`,
+      extraction: { confidence: 90, date: '2099-01-01', time: '20:00', timeSource: 'explicit', rawAction: action },
     },
-    {
-      action: 'update',
-      title: 'Churrasco',
-      event_type: 'churrasco',
-      date: ref.isoDate,
-      time: ref.isoTime,
-      timezone: 'America/Sao_Paulo',
-      location: 'Casa do Léo',
-      items: ['carvão', 'gelo'],
-      organizer_name: 'Léo',
-      confidence: 80,
-    },
-  ];
-  let call = 0;
-  const zen = async () => JSON.stringify(payloads[call++ % payloads.length]);
+  };
+}
+
+async function addMessages(aggregation, { scopeKey, count, start = 0, funConfig = buildFunConfig(), authors = [makeAuthor()] }) {
+  for (let index = start; index < start + count; index += 1) {
+    await aggregation.observeMessage({
+      scopeKey,
+      userJid: authors[index % authors.length],
+      text: `Mensagem comum ${index}`,
+      messageId: `message-${index}`,
+      msgTimeMs: Date.now() + index,
+      funConfig,
+      isGroup: true,
+    });
+  }
+}
+
+async function forceBatch(aggregation, { scopeKey, funConfig, start = 0, authors }) {
+  await addMessages(aggregation, { scopeKey, count: 1, start, funConfig, authors });
+  aggregation._buffers.get(scopeKey).flushing = true;
+  await addMessages(aggregation, { scopeKey, count: 39, start: start + 1, funConfig, authors });
+  aggregation._buffers.get(scopeKey).flushing = false;
+  return aggregation.flushScope(scopeKey, funConfig, Date.now() + start + 40);
+}
+
+test('isEventCandidate continua sendo um sinal barato, não um gate do lote', () => {
+  assert.equal(isEventCandidate('Bora pro churrasco amanhã 19h na casa do Leo?'), true);
+  assert.equal(isEventCandidate('kkk que isso mano, do nada'), false);
+});
+
+test('39 mensagens não chamam LLM; a 40ª envia todas as 40 novas', async () => {
+  const repository = createEventRepository();
+  const scopeKey = makeScope('threshold');
+  const calls = [];
   const aggregation = createEventAggregationService({
     eventRepository: repository,
-    eventExtractorService: createEventExtractorService({ generateZen: zen }),
+    eventBatchExtractor: {
+      extractBatch: async (input) => {
+        calls.push(input);
+        return { ok: true, operations: [createOperation({ indices: [0, 39] })] };
+      },
+    },
   });
+  const config = buildFunConfig();
 
-  const scopeKey = makeScope('upd');
-  const author = makeAuthor();
-  const cfg = buildFunConfig();
-  const t = Date.now();
-  const create = await aggregation.observeMessage({
-    scopeKey, userJid: author, text: 'Churrasco sábado 20h', messageId: 'u-1', funConfig: cfg, isGroup: true, msgTimeMs: t,
-  });
-  assert.equal(create.ok, true);
+  await addMessages(aggregation, { scopeKey, count: 39, funConfig: config });
+  assert.equal(calls.length, 0);
+  assert.equal((await aggregation.flushScope(scopeKey, config)).reason, 'too-few');
 
-  const update = await aggregation.observeMessage({
-    scopeKey, userJid: author, text: 'agora é 21h30, leva gelo também no churras', messageId: 'u-2', funConfig: cfg, isGroup: true, msgTimeMs: t + 30_000,
-  });
-  assert.equal(update.ok, true);
-  assert.equal(update.event.startsAt, ref.expectedMs);
-  assert.deepEqual(update.event.items.sort(), ['carvão', 'gelo']);
+  aggregation._buffers.get(scopeKey).flushing = true;
+  await addMessages(aggregation, { scopeKey, count: 1, start: 39, funConfig: config });
+  aggregation._buffers.get(scopeKey).flushing = false;
+  const result = await aggregation.flushScope(scopeKey, config);
+
+  assert.equal(result.ok, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].batch.length, 40);
+  assert.equal(calls[0].contextCount, 0);
   assert.equal(repository.listByScope(scopeKey).length, 1);
 });
 
-test('cancelamento inequívoco desativa o evento', async () => {
+test('um lote pode criar eventos independentes de autores diferentes', async () => {
   const repository = createEventRepository();
-  const ref = referenceStartsAt();
-  const payloads = [
-    {
-      action: 'create',
-      title: 'Balada',
-      event_type: 'balada',
-      date: ref.isoDate,
-      time: ref.isoTime,
-      timezone: 'America/Sao_Paulo',
-      location: 'Bar',
-      items: [],
-      organizer_name: '',
-      confidence: 70,
+  const scopeKey = makeScope('multi');
+  const authors = [makeAuthor(1), makeAuthor(2)];
+  const aggregation = createEventAggregationService({
+    eventRepository: repository,
+    eventBatchExtractor: {
+      extractBatch: async () => ({
+        ok: true,
+        operations: [
+          createOperation({ indices: [0], authorJid: authors[0], title: 'Churrasco da Ana' }),
+          createOperation({ indices: [1], authorJid: authors[1], title: 'Jantar do Beto' }),
+        ],
+      }),
     },
-    {
-      action: 'cancel',
-      title: 'Balada',
-      event_type: 'balada',
-      date: ref.isoDate,
-      time: ref.isoTime,
-      timezone: 'America/Sao_Paulo',
-      location: 'Bar',
-      items: [],
-      organizer_name: '',
-      confidence: 99,
-    },
-  ];
+  });
+
+  const result = await forceBatch(aggregation, { scopeKey, funConfig: buildFunConfig(), authors });
+  const events = repository.listByScope(scopeKey);
+  assert.equal(result.applied.length, 2);
+  assert.equal(events.length, 2);
+  assert.deepEqual(events.map((event) => event.title).sort(), ['Churrasco da Ana', 'Jantar do Beto']);
+});
+
+test('lote seguinte recebe 10 mensagens de contexto e rejeita escrita só do contexto', async () => {
+  const repository = createEventRepository();
+  const scopeKey = makeScope('continuity');
+  const calls = [];
   let call = 0;
-  const zen = async () => JSON.stringify(payloads[call++ % payloads.length]);
   const aggregation = createEventAggregationService({
     eventRepository: repository,
-    eventExtractorService: createEventExtractorService({ generateZen: zen }),
+    eventBatchExtractor: {
+      extractBatch: async (input) => {
+        calls.push(input);
+        call += 1;
+        return call === 1
+          ? { ok: true, operations: [] }
+          : { ok: true, operations: [createOperation({ indices: [9], title: 'Não deve criar' })] };
+      },
+    },
   });
-  const scopeKey = makeScope('cancel');
-  const author = makeAuthor();
-  const cfg = buildFunConfig();
-  await aggregation.observeMessage({
-    scopeKey, userJid: author, text: 'Bora balada sábado 20h', messageId: 'c-1', funConfig: cfg, isGroup: true, msgTimeMs: Date.now(),
-  });
-  const cancel = await aggregation.observeMessage({
-    scopeKey, userJid: author, text: 'Galera cancelei o rolê de sábado', messageId: 'c-2', funConfig: cfg, isGroup: true, msgTimeMs: Date.now() + 5_000,
-  });
-  assert.equal(cancel.ok, true);
-  assert.equal(cancel.event.status, 'cancelled');
-  assert.notEqual(cancel.event.cancelledAt, 0);
-});
+  const config = buildFunConfig();
 
-test('JSON levemente malformado é recuperado via looseParseFacts', async () => {
-  const repository = createEventRepository();
-  const ref = referenceStartsAt();
-  // JSON truncado propositalmente para acionar o fallback looseParseFacts.
-  // O recoverLooseEvent usa looseParseFacts para extrair o summary e campos
-  // residuais; o título que prevalece vem do summary (event_type) porque o
-  // campo "title" foi cortado antes do fechamento da string.
-  const malformed = `{"action":"create","title":"Rolo","event_type":"encontro","date":"${ref.isoDate}","time":"${ref.isoTime}","timezone":"America/Sao_Paulo","location":"","items":[]`;
-  const zen = async () => malformed;
-  const aggregation = createEventAggregationService({
-    eventRepository: repository,
-    eventExtractorService: createEventExtractorService({ generateZen: zen }),
-  });
-  const r = await aggregation.observeMessage({
-    scopeKey: makeScope('loose'),
-    userJid: makeAuthor(),
-    text: 'Bora rolê',
-    messageId: 'loose-1',
-    funConfig: buildFunConfig(),
-    isGroup: true,
-    msgTimeMs: Date.now(),
-  });
-  assert.equal(r.ok, true);
-  assert.ok(r.event, 'evento deve existir');
-  // O recoverLooseEvent preenche `title` com o `summary` do looseParseFacts;
-  // só garantimos que o evento foi criado com data válida.
-  assert.equal(typeof r.event.startsAt, 'number');
-  assert.ok(r.event.startsAt > 0);
-});
+  await forceBatch(aggregation, { scopeKey, funConfig: config });
+  await forceBatch(aggregation, { scopeKey, funConfig: config, start: 40 });
 
-test('JSON inválido não persiste evento', async () => {
-  const repository = createEventRepository();
-  const zen = async () => 'isso nao é json e não tem chave';
-  const aggregation = createEventAggregationService({
-    eventRepository: repository,
-    eventExtractorService: createEventExtractorService({ generateZen: zen }),
-  });
-  const scopeKey = makeScope('inv');
-  const r = await aggregation.observeMessage({
-    scopeKey,
-    userJid: makeAuthor(),
-    text: 'kk aleatório',
-    messageId: 'inv-1',
-    funConfig: buildFunConfig(),
-    isGroup: true,
-    msgTimeMs: Date.now(),
-  });
-  assert.equal(r.ok, false);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].contextCount, 10);
+  assert.equal(calls[1].batch.length, 50);
+  assert.equal(calls[1].batch[0].messageId, 'message-30');
+  assert.equal(calls[1].batch[9].messageId, 'message-39');
+  assert.equal(calls[1].batch[10].messageId, 'message-40');
   assert.equal(repository.listByScope(scopeKey).length, 0);
 });
 
-test('comando prefixado é ignorado', async () => {
+test('mensagens que chegam durante a LLM formam e drenam o próximo lote completo', async () => {
   const repository = createEventRepository();
-  const ref = referenceStartsAt();
-  const zen = buildZenFake({
-    action: 'create',
-    title: 'Churras',
-    event_type: 'churrasco',
-    date: ref.isoDate,
-    time: ref.isoTime,
-    timezone: 'America/Sao_Paulo',
-    location: 'X',
-    items: [],
-    organizer_name: '',
-    confidence: 80,
+  const scopeKey = makeScope('in-flight');
+  const config = buildFunConfig();
+  let releaseFirst;
+  const firstPending = new Promise((resolve) => { releaseFirst = resolve; });
+  let calls = 0;
+  const aggregation = createEventAggregationService({
+    eventRepository: repository,
+    eventBatchExtractor: {
+      extractBatch: async () => {
+        calls += 1;
+        if (calls === 1) {
+          await firstPending;
+          return { ok: true, operations: [createOperation({ indices: [0], title: 'Primeiro lote' })] };
+        }
+        return { ok: true, operations: [createOperation({ indices: [10], title: 'Segundo lote' })] };
+      },
+    },
+  });
+
+  for (let index = 0; index < 40; index += 1) {
+    await aggregation.observeMessage({
+      scopeKey,
+      userJid: makeAuthor(),
+      text: `Primeiro lote ${index}`,
+      messageId: `in-flight-${index}`,
+      funConfig: config,
+      isGroup: true,
+    });
+  }
+  await Promise.resolve();
+  assert.equal(calls, 1);
+
+  for (let index = 40; index < 80; index += 1) {
+    await aggregation.observeMessage({
+      scopeKey,
+      userJid: makeAuthor(),
+      text: `Segundo lote ${index}`,
+      messageId: `in-flight-${index}`,
+      funConfig: config,
+      isGroup: true,
+    });
+  }
+  assert.equal(aggregation._buffers.get(scopeKey).messages.length, 40);
+
+  releaseFirst();
+  for (let attempt = 0; attempt < 10 && calls < 2; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  assert.equal(calls, 2);
+  assert.equal(repository.listByScope(scopeKey).length, 2);
+});
+
+test('falha da LLM reencadeia as 40 mensagens sem duplicar o lote', async () => {
+  const repository = createEventRepository();
+  const scopeKey = makeScope('retry');
+  let attempts = 0;
+  const aggregation = createEventAggregationService({
+    eventRepository: repository,
+    eventBatchExtractor: {
+      extractBatch: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error('offline');
+        return { ok: true, operations: [createOperation({ indices: [0] })] };
+      },
+    },
+  });
+  const config = buildFunConfig();
+
+  const first = await forceBatch(aggregation, { scopeKey, funConfig: config });
+  assert.equal(first.ok, false);
+  assert.equal(aggregation._buffers.get(scopeKey).messages.length, 40);
+  const second = await aggregation.flushScope(scopeKey, config);
+
+  assert.equal(second.ok, true);
+  assert.equal(attempts, 2);
+  assert.equal(repository.listByScope(scopeKey).length, 1);
+});
+
+test('cancelamento com target explícito cancela evento e seus lembretes', async () => {
+  const repository = createEventRepository();
+  const scopeKey = makeScope('cancel');
+  const authorJid = makeAuthor();
+  const created = repository.upsertEvent({
+    event: {
+      scopeKey,
+      authorJid,
+      sourceMessageId: 'original-event',
+      title: 'Churrasco',
+      eventType: 'churrasco',
+      startsAt: futureStartsAt(),
+      timezone: 'America/Sao_Paulo',
+      fingerprint: 'churrasco|original',
+    },
+    reminderSchedule: { threeDaysEnabled: true, threeHoursEnabled: true },
   });
   const aggregation = createEventAggregationService({
     eventRepository: repository,
-    eventExtractorService: createEventExtractorService({ generateZen: zen }),
+    eventBatchExtractor: {
+      extractBatch: async () => ({
+        ok: true,
+        operations: [createOperation({ action: 'cancel', indices: [0], authorJid, targetEventId: created.event.id })],
+      }),
+    },
   });
-  const r = await aggregation.observeMessage({
-    scopeKey: makeScope('cmd'),
-    userJid: makeAuthor(),
-    text: '/churras amanha',
-    messageId: 'cmd-1',
-    funConfig: buildFunConfig(),
-    isGroup: true,
-    msgTimeMs: Date.now(),
+
+  await forceBatch(aggregation, { scopeKey, funConfig: buildFunConfig(), authors: [authorJid] });
+  assert.equal(repository.getById(created.event.id).status, 'cancelled');
+  assert.equal(repository.listDueReminders({ scopeKey, now: futureStartsAt() + 1 }).length, 0);
+});
+
+test('IDs de mensagem são comparados exatamente, sem colisão por substring', () => {
+  const repository = createEventRepository();
+  const scopeKey = makeScope('source');
+  repository.upsertEvent({
+    event: {
+      scopeKey,
+      authorJid: makeAuthor(),
+      sourceMessageId: 'message-1',
+      title: 'Evento',
+      eventType: 'other',
+      startsAt: futureStartsAt(),
+      timezone: 'America/Sao_Paulo',
+    },
   });
-  assert.equal(r.reason, 'command');
-  assert.equal(repository.listByScope(makeScope('cmd-empty')).length, 0);
+  assert.equal(repository.getByAnySourceMessage({ scopeKey, messageId: 'message-1' })?.title, 'Evento');
+  assert.equal(repository.getByAnySourceMessage({ scopeKey, messageId: 'message-10' }), null);
+});
+
+test('Almoção sem horário recebe 12:00 estimado somente com time_source assumed', () => {
+  const batch = [{ messageId: 'almoco-1', userJid: makeAuthor(), text: 'Nosso Almoção será dia 26/09', at: Date.UTC(2026, 7, 31, 17) }];
+  const operations = parseEventBatch(JSON.stringify({
+    operations: [{
+      action: 'create', message_indices: [0], title: 'Almoção', event_type: 'almoço',
+      date: '2026-09-26', time: '12:00', time_source: 'assumed', timezone: 'America/Sao_Paulo', confidence: 90,
+    }],
+  }), { batch, contextCount: 0, referenceAt: Date.UTC(2026, 7, 31, 17), timeZone: 'America/Sao_Paulo' });
+
+  assert.equal(operations.length, 1);
+  assert.equal(operations[0].event.startsAt, zonedLocalDateTimeToMs({ date: '2026-09-26', time: '12:00', timeZone: 'America/Sao_Paulo' }));
+  assert.equal(operations[0].event.extraction.timeSource, 'assumed');
 });

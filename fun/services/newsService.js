@@ -1,20 +1,17 @@
-/**
- * The Group Times — log diário + manchetes 23:59.
- */
+/** Jornal das 23:59 — resumo conversacional de cada grupo. */
 
-import { collectDayFacts, factsToSnapshotPayload } from './news/newsFacts.js';
+import { collectDayConversation, conversationToSnapshotPayload } from './news/newsFacts.js';
 import { renderEdition } from './news/newsRender.js';
 import { composeLlmBits } from './news/newsLlm.js';
 
 function dayKeyInTz(now, timeZone = 'America/Sao_Paulo') {
   try {
-    const fmt = new Intl.DateTimeFormat('en-CA', {
+    return new Intl.DateTimeFormat('en-CA', {
       timeZone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
-    });
-    return fmt.format(new Date(now));
+    }).format(new Date(now));
   } catch {
     return new Date(now).toISOString().slice(0, 10);
   }
@@ -28,46 +25,31 @@ function clockInTz(now, timeZone = 'America/Sao_Paulo') {
       minute: '2-digit',
       hour12: false,
     }).formatToParts(new Date(now));
-    const hour = Number(parts.find((p) => p.type === 'hour')?.value) || 0;
-    const minute = Number(parts.find((p) => p.type === 'minute')?.value) || 0;
-    return { hour, minute };
+    return {
+      hour: Number(parts.find((part) => part.type === 'hour')?.value) || 0,
+      minute: Number(parts.find((part) => part.type === 'minute')?.value) || 0,
+    };
   } catch {
-    const d = new Date(now);
-    return { hour: d.getHours(), minute: d.getMinutes() };
+    const date = new Date(now);
+    return { hour: date.getHours(), minute: date.getMinutes() };
   }
 }
 
-/**
- * Janela do jornal: 23:59–00:04 (tolera tick de 45s).
- */
+/** Janela do jornal: 23:59–00:04, tolerante ao tick de 45s. */
 export function isGroupNewsWindow(now, funConfig = {}) {
-  const tz = funConfig.worldTimezone || 'America/Sao_Paulo';
-  const targetH = Number.isFinite(Number(funConfig.groupNewsHour))
-    ? Number(funConfig.groupNewsHour)
-    : 23;
-  const targetM = Number.isFinite(Number(funConfig.groupNewsMinute))
-    ? Number(funConfig.groupNewsMinute)
-    : 59;
-  const { hour, minute } = clockInTz(now, tz);
-  if (hour === targetH && minute >= targetM) return true;
-  if (targetH === 23 && targetM >= 55 && hour === 0 && minute <= 4) return true;
-  return false;
+  const timeZone = funConfig.worldTimezone || 'America/Sao_Paulo';
+  const targetHour = Number.isFinite(Number(funConfig.groupNewsHour)) ? Number(funConfig.groupNewsHour) : 23;
+  const targetMinute = Number.isFinite(Number(funConfig.groupNewsMinute)) ? Number(funConfig.groupNewsMinute) : 59;
+  const { hour, minute } = clockInTz(now, timeZone);
+  return (hour === targetHour && minute >= targetMinute) ||
+    (targetHour === 23 && targetMinute >= 55 && hour === 0 && minute <= 4);
 }
 
 export function createNewsService({
   newsRepository,
+  journalMessageRepository = null,
   snapshotRepository = null,
-  statsRepository = null,
-  achievementRepository = null,
-  relationshipRepository = null,
-  casinoRepository = null,
-  marketRepository = null,
-  stockRepository = null,
-  rouletteHistory = null,
-  marketService = null,
   flavorService = null,
-  dailyChallengeService = null,
-  groupMemoryService = null,
   getContactDisplayName = null,
   random = Math.random,
 } = {}) {
@@ -75,134 +57,88 @@ export function createNewsService({
     return funConfig.groupNewsEnabled !== false;
   }
 
+  // Mantém a API para produtores de eventos legados. Esses dados não entram mais
+  // no texto publicado, mas continuam úteis para telemetria durante a transição.
   function log(scopeKey, eventType, { userJid = null, payload = {}, now = Date.now() } = {}) {
     try {
-      return newsRepository.logEvent({
-        scopeKey,
-        eventType,
-        userJid,
-        payload,
-        now,
-      });
+      return newsRepository?.logEvent?.({ scopeKey, eventType, userJid, payload, now }) || null;
     } catch {
       return null;
     }
   }
 
   async function composeEdition(scopeKey, funConfig = {}, now = Date.now()) {
-    const tz = funConfig.worldTimezone || 'America/Sao_Paulo';
-
-    const deps = {
-      newsRepository,
-      statsRepository,
-      achievementRepository,
-      relationshipRepository,
-      casinoRepository,
-      marketRepository,
-      stockRepository,
-      rouletteHistory,
-      snapshotRepository,
-      marketService,
-      dailyChallengeService,
-    };
-
-    const facts = collectDayFacts({ scopeKey, now, deps, timeZone: tz });
+    const timeZone = funConfig.worldTimezone || 'America/Sao_Paulo';
+    const conversation = collectDayConversation({
+      scopeKey,
+      now,
+      timeZone,
+      deps: { journalMessageRepository, snapshotRepository },
+      getContactDisplayName,
+      readLimit: funConfig.groupNewsMessageReadLimit,
+      conversationMaxChars: funConfig.groupNewsConversationMaxChars,
+    });
     const llmBits = await composeLlmBits(
-      facts,
+      conversation,
       flavorService,
       scopeKey,
       random,
-      groupMemoryService,
+      null,
       funConfig
     );
-
-    const dayLabel =
-      dayKeyInTz(now, tz) +
-      ' · ' +
-      new Date(now).toLocaleDateString('pt-BR', { weekday: 'long', timeZone: tz });
-    const text = renderEdition(facts, llmBits, {
-      getContactDisplayName,
-      random,
-      dayLabel,
-    });
-
-    const provider = llmBits.capa ? 'llm-enhanced' : 'deterministic';
+    const dayLabel = `${dayKeyInTz(now, timeZone)} · ${new Date(now).toLocaleDateString('pt-BR', { weekday: 'long', timeZone })}`;
+    const text = renderEdition(conversation, llmBits, { dayLabel, random });
+    const provider = llmBits?.capa ? 'llm-enhanced' : 'deterministic';
 
     console.log(
-      '[fun/news] edition scope=' +
-        String(scopeKey).slice(0, 28) +
-        ' provider=' +
-        provider +
-        ' events=' +
-        facts.eventsCount +
-        ' mood=' +
-        facts.mood
+      `[fun/news] edition scope=${String(scopeKey).slice(0, 28)} provider=${provider} messages=${conversation.totalMessageCount} mood=${conversation.mood}`
     );
 
-    return { text, provider, eventCount: facts.eventsCount, facts };
+    return {
+      text,
+      provider,
+      eventCount: 0,
+      messageCount: conversation.totalMessageCount,
+      facts: conversation,
+    };
   }
 
-  /**
-   * Tenta publicar se estiver na janela e ainda não publicou hoje.
-   * Após publicar, persiste o snapshot diário para memória histórica.
-   * @returns {{ ok: boolean, text?: string, reason?: string }}
-   */
   async function tryPublish(scopeKey, funConfig = {}, now = Date.now()) {
     if (!enabled(funConfig)) return { ok: false, reason: 'disabled' };
     if (!isGroupNewsWindow(now, funConfig)) return { ok: false, reason: 'not-window' };
 
-    const tz = funConfig.worldTimezone || 'America/Sao_Paulo';
-    const today = dayKeyInTz(now, tz);
-    const { hour } = clockInTz(now, tz);
-    let newsDay = today;
-    if (hour === 0) {
-      newsDay = dayKeyInTz(now - 2 * 60 * 60_000, tz);
-    }
-
-    const meta = newsRepository.getNewsMeta(scopeKey);
-    if (meta.lastDailyNewsDay === newsDay) {
-      return { ok: false, reason: 'already-today' };
-    }
+    const timeZone = funConfig.worldTimezone || 'America/Sao_Paulo';
+    const today = dayKeyInTz(now, timeZone);
+    const { hour } = clockInTz(now, timeZone);
+    const newsDay = hour === 0 ? dayKeyInTz(now - 2 * 60 * 60_000, timeZone) : today;
+    const meta = newsRepository?.getNewsMeta?.(scopeKey);
+    if (meta?.lastDailyNewsDay === newsDay) return { ok: false, reason: 'already-today' };
 
     const edition = await composeEdition(scopeKey, funConfig, now);
-
-    if (edition.facts && snapshotRepository?.saveSnapshot) {
-      try {
-        const payload = factsToSnapshotPayload(edition.facts);
-        snapshotRepository.saveSnapshot({
-          scopeKey,
-          dayKey: newsDay,
-          payload,
-          now,
-        });
-      } catch (err) {
-        console.warn(
-          '[fun/news] snapshot save fail ' +
-            String(scopeKey).slice(0, 28) +
-            ': ' +
-            (err?.message || err)
-        );
-      }
+    try {
+      snapshotRepository?.saveSnapshot?.({
+        scopeKey,
+        dayKey: newsDay,
+        payload: conversationToSnapshotPayload(edition.facts),
+        now,
+      });
+      const retentionDays = Math.max(1, Number(funConfig.groupNewsMessageRetentionDays) || 3);
+      journalMessageRepository?.pruneOlderThan?.(scopeKey, now - retentionDays * 24 * 60 * 60_000);
+      newsRepository?.pruneOlderThan?.(scopeKey, now - 3 * 24 * 60 * 60_000);
+    } catch (error) {
+      console.warn(`[fun/news] cleanup fail ${String(scopeKey).slice(0, 28)}: ${error?.message || error}`);
     }
 
-    newsRepository.setNewsDay(scopeKey, newsDay, now);
-    newsRepository.pruneOlderThan(scopeKey, now - 3 * 24 * 60 * 60_000);
-
+    newsRepository?.setNewsDay?.(scopeKey, newsDay, now);
     return {
       ok: true,
       text: edition.text,
       provider: edition.provider,
       eventCount: edition.eventCount,
+      messageCount: edition.messageCount,
       newsDay,
     };
   }
 
-  return {
-    enabled,
-    log,
-    composeEdition,
-    tryPublish,
-    isGroupNewsWindow,
-    dayKeyInTz,
-  };
+  return { enabled, log, composeEdition, tryPublish, isGroupNewsWindow, dayKeyInTz };
 }

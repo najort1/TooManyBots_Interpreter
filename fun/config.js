@@ -193,6 +193,31 @@ export function normalizeFunConfig(input) {
       raw.groupEventReminderThreeHoursEnabled,
       DEFAULT_FUN_CONFIG.groupEventReminderThreeHoursEnabled
     ),
+    groupEventBatchSize: normalizeInt(
+      raw.groupEventBatchSize,
+      DEFAULT_FUN_CONFIG.groupEventBatchSize,
+      { min: 40, max: 40, rounding: 'floor', clamp: true }
+    ),
+    groupEventBatchContextMessages: normalizeInt(
+      raw.groupEventBatchContextMessages,
+      DEFAULT_FUN_CONFIG.groupEventBatchContextMessages,
+      { min: 0, max: 20, rounding: 'floor', clamp: true }
+    ),
+    groupEventBatchMaxRetries: normalizeInt(
+      raw.groupEventBatchMaxRetries,
+      DEFAULT_FUN_CONFIG.groupEventBatchMaxRetries,
+      { min: 0, max: 7, rounding: 'floor', clamp: true }
+    ),
+    groupEventBatchMessageMaxChars: normalizeInt(
+      raw.groupEventBatchMessageMaxChars,
+      DEFAULT_FUN_CONFIG.groupEventBatchMessageMaxChars,
+      { min: 120, max: 1_500, rounding: 'floor', clamp: true }
+    ),
+    groupEventBatchMaxOperations: normalizeInt(
+      raw.groupEventBatchMaxOperations,
+      DEFAULT_FUN_CONFIG.groupEventBatchMaxOperations,
+      { min: 1, max: 20, rounding: 'floor', clamp: true }
+    ),
     groupEventFragmentMaxMessages: normalizeInt(
       raw.groupEventFragmentMaxMessages,
       DEFAULT_FUN_CONFIG.groupEventFragmentMaxMessages,
@@ -953,6 +978,25 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    groupNewsMessageHistoryEnabled: normalizeBoolean(
+      raw.groupNewsMessageHistoryEnabled,
+      DEFAULT_FUN_CONFIG.groupNewsMessageHistoryEnabled
+    ),
+    groupNewsMessageRetentionDays: normalizeInt(
+      raw.groupNewsMessageRetentionDays,
+      DEFAULT_FUN_CONFIG.groupNewsMessageRetentionDays,
+      { min: 1, max: 30, rounding: 'floor', clamp: true }
+    ),
+    groupNewsMessageReadLimit: normalizeInt(
+      raw.groupNewsMessageReadLimit,
+      DEFAULT_FUN_CONFIG.groupNewsMessageReadLimit,
+      { min: 50, max: 5000, rounding: 'floor', clamp: true }
+    ),
+    groupNewsConversationMaxChars: normalizeInt(
+      raw.groupNewsConversationMaxChars,
+      DEFAULT_FUN_CONFIG.groupNewsConversationMaxChars,
+      { min: 4_000, max: 80_000, rounding: 'floor', clamp: true }
+    ),
     achievementsEnabled: normalizeBoolean(
       raw.achievementsEnabled,
       DEFAULT_FUN_CONFIG.achievementsEnabled

@@ -1,85 +1,19 @@
 /**
- * newsFacts.js — coletor central do jornal "The Group Times".
+ * Pauta conversacional do Jornal das 23:59.
  *
- * Agrega dados das últimas 24h (e, para memória histórica, compara com snapshots)
- * em um objeto estruturado determinístico (DayFacts). Esse objeto alimenta:
- *  - renderEdition() em newsRender.js (categorias, rankings, prêmios, stats)
- *  - composeLlmBits() em newsLlm.js (capa + abertura + foreshadow)
- *
- * Princípios:
- *  - Tudo filtrado por scopeKey (isolamento entre grupos — privacidade).
- *  - Deps opcionais via ?.: grupos sem economia/casino/etc continuam funcionando.
- *  - Sem I/O externo: tudo vem dos repositórios injetados.
- *  - Determinístico: mesmoDayFacts → mesmo jornal (LLM é só tempero).
+ * A edição lê mensagens elegíveis do próprio grupo, em ordem cronológica. A
+ * seleção garante cobertura do dia inteiro mesmo em grupos muito ativos: cada
+ * faixa temporal conserva abertura, desenvolvimento e encerramento em vez de
+ * despejar apenas as mensagens mais recentes no contexto da LLM.
  */
 
-const DAY_MS = 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60_000;
+const QUOTE_MAX = 3;
 
-/** Reasons do ledger que representam CASSINO (volume de apostas). */
-const CASINO_REASONS = [
-  'jackpot-hit',
-  'roulette-bet',
-  'slot-bet',
-  'crash-bet',
-  'bj-bet',
-  'bj-win',
-  'bj-push',
-  'dice-tie',
-  'bingo-entry',
-  'bingo-win',
-  'bingo-refund',
-  'bingo-leave-refund',
-  'bingo-solo',
-  'tournament-entry',
-  'tournament-win',
-];
-
-/** Reasons do ledger que representam CRIME/PvP (assaltos, heists, purga). */
-const CRIME_REASONS = [
-  'crime-win',
-  'crime-victim',
-  'crime-debt',
-  'assault-win',
-  'assault-fail',
-  'assault-victim',
-  'assault-win-property',
-  'heist-win',
-  'heist-fail',
-];
-
-/** Reasons que representam PROPRIEDADES (compra, aluguel/coleta, reparo). */
-const PROPERTY_REASONS = ['property-buy', 'property-collect', 'property-repair'];
-
-/**
- * Normaliza reason (remove sufixo dinâmico após ":") e agrupa por categoria macro.
- */
-function reasonCategory(reason) {
-  const r = String(reason || '');
-  const prefix = r.includes(':') ? r.slice(0, r.indexOf(':')) : r;
-  if (CASINO_REASONS.includes(prefix) || prefix.endsWith('-bet') || prefix.endsWith('-win')) {
-    if (prefix.endsWith('-bet') || CASINO_REASONS.includes(prefix)) return 'casino';
-  }
-  if (CRIME_REASONS.includes(prefix)) return 'crime';
-  if (PROPERTY_REASONS.includes(prefix)) return 'property';
-  if (prefix.startsWith('stock-')) return 'stock';
-  if (prefix.startsWith('shop-') || prefix === 'shop' || prefix === 'bazaar-buy' || prefix === 'bazaar-sell')
-    return 'shop';
-  if (prefix === 'job' || prefix.startsWith('job-') || prefix === 'practice-used') return 'job';
-  if (prefix === 'flip-bet' || prefix === 'flip-win' || prefix === 'lucky-win' || prefix === 'lucky-miss')
-    return 'games';
-  if (prefix === 'pay' || prefix === 'divorce-fee') return 'social';
-  if (prefix === 'mission-reward') return 'mission';
-  if (prefix.startsWith('faction-')) return 'faction';
-  return 'other';
+function safeArray(value) {
+  return Array.isArray(value) ? value : [];
 }
 
-function safeArr(v) {
-  return Array.isArray(v) ? v : [];
-}
-function safeNum(v, d = 0) {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : d;
-}
 function safeCall(fn, ...args) {
   try {
     return typeof fn === 'function' ? fn(...args) : null;
@@ -88,556 +22,289 @@ function safeCall(fn, ...args) {
   }
 }
 
-/**
- * Agrupa eventos de fun_daily_events por tipo.
- * @param {Array} events — lista de { eventType, payload, userJid, createdAt }
- */
-export function bucketEvents(events) {
-  const out = {};
-  for (const e of safeArr(events)) {
-    const t = String(e.eventType || '');
-    (out[t] ||= []).push(e);
-  }
-  return out;
+function cleanText(value, maxChars = 400) {
+  return String(value || '').replace(/\s+/g, ' ').trim().slice(0, maxChars);
 }
 
-/**
- * Coleta todos os fatos do dia para o escopo.
- *
- * @param {object} p
- * @param {string} p.scopeKey
- * @param {Date|number} [p.now]
- * @param {object} p.deps — repositórios e serviços injetados (todos opcionais):
- *   { newsRepository, statsRepository, achievementRepository, relationshipRepository,
- *     casinoRepository, marketRepository, stockRepository, rouletteHistory,
- *     snapshotRepository, getContactDisplayName }
- * @param {string} [p.timeZone]
- * @returns {object} DayFacts
- */
-export function collectDayFacts({
+function firstName(value) {
+  const raw = String(value || '').trim();
+  return raw.split(/\s+/)[0] || '?';
+}
+
+function nameFor(message, getContactDisplayName) {
+  if (message.source === 'bot') return 'Bot';
+  try {
+    const name = getContactDisplayName?.(message.authorJid);
+    if (name) return firstName(name);
+  } catch {
+    // fallback below
+  }
+  return firstName(String(message.authorJid || '').split('@')[0]);
+}
+
+export function dayBoundsInTimeZone(now = Date.now(), timeZone = 'America/Sao_Paulo') {
+  const date = new Date(Number(now) || Date.now());
+  try {
+    const parts = new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(date);
+    const year = Number(parts.find((part) => part.type === 'year')?.value);
+    const month = Number(parts.find((part) => part.type === 'month')?.value);
+    const day = Number(parts.find((part) => part.type === 'day')?.value);
+    const midnightUtc = Date.UTC(year, month - 1, day);
+    const midnightParts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hourCycle: 'h23',
+    }).formatToParts(new Date(midnightUtc));
+    const hour = Number(midnightParts.find((part) => part.type === 'hour')?.value) || 0;
+    const minute = Number(midnightParts.find((part) => part.type === 'minute')?.value) || 0;
+    const second = Number(midnightParts.find((part) => part.type === 'second')?.value) || 0;
+    const offsetMs = (hour * 60 * 60 + minute * 60 + second) * 1000;
+    const start = midnightUtc - offsetMs;
+    return { since: start, until: start + DAY_MS };
+  } catch {
+    const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+    return { since: start, until: start + DAY_MS };
+  }
+}
+
+function sampleChronologically(messages, maxMessages) {
+  if (messages.length <= maxMessages) return messages;
+  const selected = [];
+  const segmentCount = Math.min(12, maxMessages);
+  const perSegment = Math.max(1, Math.floor(maxMessages / segmentCount));
+
+  for (let segment = 0; segment < segmentCount; segment += 1) {
+    const start = Math.floor((segment * messages.length) / segmentCount);
+    const end = Math.floor(((segment + 1) * messages.length) / segmentCount);
+    const segmentMessages = messages.slice(start, end);
+    if (!segmentMessages.length) continue;
+    const step = Math.max(1, Math.floor(segmentMessages.length / perSegment));
+    for (let index = 0; index < segmentMessages.length && selected.length < maxMessages; index += step) {
+      selected.push(segmentMessages[index]);
+    }
+  }
+
+  return [...new Map(selected.map((message) => [message.messageId, message])).values()]
+    .sort((a, b) => a.occurredAt - b.occurredAt)
+    .slice(0, maxMessages);
+}
+
+function capConversation(messages, maxChars) {
+  const lines = [];
+  let used = 0;
+  for (const message of messages) {
+    const line = `[${message.hour}] ${message.name}: ${message.text}`;
+    if (used + line.length + 1 > maxChars && lines.length) break;
+    lines.push(line);
+    used += line.length + 1;
+  }
+  return lines.join('\n');
+}
+
+function selectQuotes(messages) {
+  const candidates = messages
+    .filter((message) => message.source === 'human')
+    .filter((message) => message.text.length >= 18 && message.text.length <= 220)
+    .filter((message) => !/^k{2,}|^(sim|não|nao|ok|blz|bom dia)$/i.test(message.text))
+    .sort((left, right) => {
+      const leftScore = Number(/[!?]|kkk|rsrs|😂|🤣/i.test(left.text)) + Math.min(left.text.length / 120, 1);
+      const rightScore = Number(/[!?]|kkk|rsrs|😂|🤣/i.test(right.text)) + Math.min(right.text.length / 120, 1);
+      return rightScore - leftScore;
+    });
+
+  const authors = new Set();
+  const quotes = [];
+  for (const candidate of candidates) {
+    if (authors.has(candidate.authorJid)) continue;
+    authors.add(candidate.authorJid);
+    quotes.push({ name: candidate.name, text: candidate.text, messageId: candidate.messageId });
+    if (quotes.length >= QUOTE_MAX) break;
+  }
+  return quotes;
+}
+
+function deriveMood(messages) {
+  if (messages.length === 0) return 'silencioso';
+  const text = messages.map((message) => message.text).join(' ').toLowerCase();
+  const laughCount = (text.match(/\b(k{2,}|rsrs|haha|kkkkk?)\b|😂|🤣/g) || []).length;
+  const tensionCount = (text.match(/\b(briga|treta|raiva|ódio|odio|mentira|absurdo|discussão|discussao)\b/g) || []).length;
+  if (tensionCount >= 6) return 'movimentado';
+  if (laughCount >= 8) return 'zoeiro';
+  if (messages.length >= 90) return 'movimentado';
+  return 'conversado';
+}
+
+function buildTimeline(messages) {
+  if (!messages.length) return [];
+  const blockCount = Math.min(4, Math.max(1, Math.ceil(messages.length / 25)));
+  const blocks = [];
+  for (let index = 0; index < blockCount; index += 1) {
+    const start = Math.floor((index * messages.length) / blockCount);
+    const end = Math.floor(((index + 1) * messages.length) / blockCount);
+    const block = messages.slice(start, end);
+    if (!block.length) continue;
+    const names = [...new Set(block.map((message) => message.name).filter((name) => name !== 'Bot'))].slice(0, 4);
+    blocks.push({
+      hour: `${block[0].hour}–${block.at(-1).hour}`,
+      messageCount: block.length,
+      participants: names,
+      sample: block.slice(0, 4).map((message) => ({ name: message.name, text: message.text })),
+    });
+  }
+  return blocks;
+}
+
+function compactHistoricalThemes(snapshotRepository, scopeKey, now) {
+  const previous = safeArray(
+    safeCall(snapshotRepository?.listSnapshotsSince?.bind(snapshotRepository), scopeKey, now - 7 * DAY_MS, 7)
+  );
+  return previous
+    .map((snapshot) => String(snapshot.payload?.mood || '').trim())
+    .filter(Boolean)
+    .slice(0, 3);
+}
+
+export function collectDayConversation({
   scopeKey,
   now = Date.now(),
   deps = {},
   timeZone = 'America/Sao_Paulo',
+  getContactDisplayName = null,
+  readLimit = 1200,
+  conversationMaxChars = 28_000,
 }) {
   const nowMs = Number(now) || Date.now();
-  const since = nowMs - DAY_MS;
+  const bounds = dayBoundsInTimeZone(nowMs, timeZone);
   const scope = String(scopeKey || '');
-  const {
-    newsRepository,
-    statsRepository,
-    achievementRepository,
-    relationshipRepository,
-    casinoRepository,
-    marketRepository,
-    stockRepository,
-    rouletteHistory,
-    snapshotRepository,
-    dailyChallengeService,
-  } = deps;
-
-  // ── Eventos do dia (fun_daily_events) ────────────────────────────
-  const events = safeArr(
-    safeCall(newsRepository?.listSince?.bind(newsRepository), scope, since)
-  );
-  const buckets = bucketEvents(events);
-
-  const marryEvents = safeArr(buckets.marry);
-  const divorceEvents = safeArr(buckets.divorce);
-  const assaultWinEvents = safeArr(buckets.assault_win);
-  const propertyRobEvents = safeArr(buckets.property_rob);
-  const propertyBuyEvents = safeArr(buckets.property_buy);
-  const propertyCollectEvents = safeArr(buckets.property_collect);
-  const crashLossEvents = safeArr(buckets.crash_loss);
-  const casinoWinEvents = safeArr(buckets.casino_win);
-  const purgaStartEvents = safeArr(buckets.purga_start);
-  const purgaEndEvents = safeArr(buckets.purga_end);
-  const notableQuotes = safeArr(buckets.notable_quote);
-  const despedirEvents = safeArr(buckets.despedir);
-
-  // ── Ledger: economia / cassino / crime por reason (últimas 24h) ──
-  const ledgerByReason = safeArr(
-    safeCall(statsRepository?.sumLedgerByReason?.bind(statsRepository), { scopeKey: scope, since, until: nowMs })
-  );
-  const reasonMap = new Map(ledgerByReason.map((r) => [r.reason, r]));
-
-  // ── Ledger por usuário: rankings de criminosos e azarados ────────
-  const crimeByUser = safeArr(
-    safeCall(statsRepository?.sumLedgerByUser?.bind(statsRepository), {
-      scopeKey: scope,
-      since,
-      until: nowMs,
-      reasons: ['crime-win', 'assault-win', 'assault-win-property', 'heist-win'],
-      direction: 'credit',
-    })
-  ).sort((a, b) => b.gained - a.gained);
-
-  const victimsByUser = safeArr(
-    safeCall(statsRepository?.sumLedgerByUser?.bind(statsRepository), {
-      scopeKey: scope,
-      since,
-      until: nowMs,
-      reasons: ['crime-victim', 'crime-debt', 'assault-victim'],
-      direction: 'debit',
-    })
-  ).sort((a, b) => b.lost - a.lost);
-
-  // maiores perdedores (qualquer reason) — ranking de azarados
-  const losersByUser = safeArr(
-    safeCall(statsRepository?.sumLedgerByUser?.bind(statsRepository), {
-      scopeKey: scope,
-      since,
-      until: nowMs,
-    })
-  )
-    .filter((u) => u.lost > 0)
-    .sort((a, b) => b.lost - a.lost);
-
-  // ── Agregados por categoria (do ledger) ──────────────────────────
-  const sumCategory = (cat) => {
-    let gained = 0;
-    let lost = 0;
-    for (const r of ledgerByReason) {
-      if (reasonCategory(r.reason) !== cat) continue;
-      gained += r.gained;
-      lost += r.lost;
-    }
-    return { gained, lost, net: gained - lost };
+  const query = {
+    since: bounds.since,
+    until: Math.min(bounds.until, nowMs + 1),
+    limit: readLimit,
   };
-  const casinoLedger = sumCategory('casino');
-  const crimeLedger = sumCategory('crime');
-  const propertyLedger = sumCategory('property');
-  const stockLedger = sumCategory('stock');
-  const jobLedger = sumCategory('job');
-
-  // "dinheiro destruído" = sinks (razões puramente destruidoras)
-  // "dinheiro criado" = mints (razões puramente criadoras)
-  // Aproximação: soma de lost das categorias que tiram de circulação (bet/shop/repair/fee)
-  // vs gained das que injetam (job/lucky/daily/jackpot do sistema).
-  const destroyedReasons = ['shop', 'property', 'social', 'casino'];
-  const createdReasons = ['job', 'games', 'mission', 'other'];
-  let moneyDestroyed = 0;
-  let moneyCreated = 0;
-  for (const r of ledgerByReason) {
-    const cat = reasonCategory(r.reason);
-    if (destroyedReasons.includes(cat)) moneyDestroyed += 0; // cassino e shop são trocas, não sink real
-  }
-  // Melhor proxy de sink/mint: net negativo = retirou de circulação; net positivo = injetou.
-  // Mas a maioria das reasons é transferência (net ≈ 0). Para o jornal usamos o volume de
-  // apostas perdidas (cassino lost) como proxy de "destruído no cassino".
-  moneyDestroyed = casinoLedger.lost; // moeda perdida no cassino (a casa vence)
-  moneyCreated = casinoLedger.gained + jobLedger.gained + stockLedger.gained * 0; // pagamentos de cassino + salários
-
-  // ── Economia: saúde (Gini, circulating) ──────────────────────────
-  const healthMetrics = safeCall(deps.marketService?.collectHealthMetrics?.bind(deps.marketService), scope) || {
-    circulatingCoins: 0,
-    gini: 0,
-    eventsLast24h: 0,
-    activePlayers: 0,
-  };
-
-  // ── Sociedade: casamentos ativos + conquistas ─────────────────────
-  const activeMarriages = safeArr(
-    safeCall(relationshipRepository?.listActiveMarriages?.bind(relationshipRepository), scope)
+  const sampledResult = safeCall(
+    deps.journalMessageRepository?.listSampledBetween?.bind(deps.journalMessageRepository),
+    scope,
+    query
   );
-  const longestMarriage = activeMarriages.length ? activeMarriages[0] : null;
-  const achievementsSince = safeArr(
-    safeCall(achievementRepository?.listUnlockedSince?.bind(achievementRepository), scope, since, 30)
+  const rawMessages = safeArray(
+    sampledResult?.messages ||
+      safeCall(deps.journalMessageRepository?.listBetween?.bind(deps.journalMessageRepository), scope, query)
   );
+  const totalMessageCount = Number(
+    sampledResult?.total ||
+      safeCall(deps.journalMessageRepository?.countBetween?.bind(deps.journalMessageRepository), scope, query)
+  ) || rawMessages.length;
+  const sampled = sampleChronologically(rawMessages, Math.max(20, Math.min(320, readLimit)));
+  const messages = sampled.map((message) => ({
+    ...message,
+    name: nameFor(message, getContactDisplayName),
+    hour: new Date(message.occurredAt).toLocaleTimeString('pt-BR', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }),
+    text: cleanText(message.text, 400),
+  })).filter((message) => message.text);
 
-  // ── Polícia: maiores assaltos (do log de eventos) ─────────────────
-  const assaultsTotal = assaultWinEvents.reduce(
-    (s, e) => s + safeNum(e.payload?.amount, 0),
-    0
-  );
-  const biggestAssaultEvent = assaultWinEvents.reduce((best, e) => {
-    const amt = safeNum(e.payload?.amount, 0);
-    if (!best || amt > safeNum(best.payload?.amount, 0)) return e;
-    return best;
-  }, null);
-  const propertyRobsTotal = propertyRobEvents.reduce(
-    (s, e) => s + safeNum(e.payload?.amount, 0),
-    0
-  );
+  const participants = [...new Set(messages.filter((message) => message.source === 'human').map((message) => message.authorJid))];
+  const mood = deriveMood(messages);
+  const quiet = totalMessageCount < 4;
+  const quotes = selectQuotes(messages);
 
-  // ── Cassino: maior crash loss, top apostador, streak roleta ───────
-  const biggestCrashLossEvent = crashLossEvents.reduce((best, e) => {
-    const amt = safeNum(e.payload?.amount, 0);
-    if (!best || amt > safeNum(best.payload?.amount, 0)) return e;
-    return best;
-  }, null);
-  const casinoLeaderboard = safeArr(
-    safeCall(casinoRepository?.getLeaderboard?.bind(casinoRepository), scope, 3)
-  );
-  const rouletteStreak = safeCall(rouletteHistory?.getColorStreak?.bind(rouletteHistory), scope) || null;
-
-  // ── Bolsa: maior alta/baixa das últimas 24h ──────────────────────
-  const stockQuotes = safeArr(safeCall(stockRepository?.listQuotes?.bind(stockRepository), scope));
-  let stockMoverUp = null;
-  let stockMoverDown = null;
-  for (const q of stockQuotes) {
-    const prev = safeNum(q.previousPrice, 0);
-    const cur = safeNum(q.price, 0);
-    if (prev <= 0) continue;
-    const deltaPct = ((cur - prev) / prev) * 100;
-    if (!stockMoverUp || deltaPct > stockMoverUp.deltaPct) {
-      stockMoverUp = { companyId: q.companyId, deltaPct };
-    }
-    if (!stockMoverDown || deltaPct < stockMoverDown.deltaPct) {
-      stockMoverDown = { companyId: q.companyId, deltaPct };
-    }
-  }
-
-  // ── Propriedades: maior proprietário (coleta do dia) ──────────────
-  const rentByUser = safeArr(
-    safeCall(statsRepository?.sumLedgerByUser?.bind(statsRepository), {
-      scopeKey: scope,
-      since,
-      until: nowMs,
-      reasons: ['property-collect'],
-      direction: 'credit',
-    })
-  ).sort((a, b) => b.gained - a.gained);
-
-  // ── Rankings consolidados ────────────────────────────────────────
-  const topCoins = safeArr(safeCall(statsRepository?.getCoinsLeaderboard?.bind(statsRepository), scope, 3))
-    .map((u) => ({ jid: u.userJid, coins: safeNum(u.coins, 0) }))
-    .filter((u) => u.jid);
-  const topCrims = crimeByUser
-    .slice(0, 3)
-    .map((u) => ({ jid: u.jid, total: u.gained }))
-    .filter((u) => u.jid);
-  const topUnlucky = losersByUser
-    .slice(0, 3)
-    .map((u) => ({ jid: u.jid, total: u.lost }))
-    .filter((u) => u.jid);
-
-  // ── Despedidas: ranking do dia (agrupado por userJid dos eventos) ──
-  const farewellsByUser = new Map();
-  for (const e of despedirEvents) {
-    const jid = String(e.userJid || '');
-    if (!jid) continue;
-    const cur = farewellsByUser.get(jid) || { jid, count: 0, lastAt: 0 };
-    cur.count += 1;
-    cur.lastAt = Math.max(cur.lastAt, Number(e.createdAt) || 0);
-    farewellsByUser.set(jid, cur);
-  }
-  const topFarewellUsers = [...farewellsByUser.values()]
-    .sort((a, b) => b.count - a.count || a.lastAt - b.lastAt)
-    .slice(0, 3);
-  const despedidasTotal = despedirEvents.length;
-
-  // ── Totals do grupo (para stats) ─────────────────────────────────
-  const betsCount =
-    ledgerByReason
-      .filter((r) => reasonCategory(r.reason) === 'casino')
-      .reduce((s, r) => s + r.count, 0) +
-    safeArr(buckets.crash_loss).length +
-    safeArr(buckets.casino_win).length;
-  const propertiesBought = propertyBuyEvents.length;
-  const coinsDestroyed = Math.max(0, moneyDestroyed);
-
-  // ── Purga do dia (se ocorreu) ────────────────────────────────────
-  const purgaHappened = purgaStartEvents.length > 0;
-
-  // ── Mood: deriva da composição do dia ────────────────────────────
-  const mood = deriveMood({
-    eventsCount: events.length,
-    marryEvents: marryEvents.length,
-    divorceEvents: divorceEvents.length,
-    crimesCount: assaultWinEvents.length,
-    betsCount,
-    moneyDestroyed: coinsDestroyed,
-  });
-
-  // ── Memória histórica (snapshots anteriores) ─────────────────────
-  const snaps30d = safeArr(
-    safeCall(snapshotRepository?.listSnapshotsSince?.bind(snapshotRepository), scope, nowMs - 30 * DAY_MS, 35)
-  );
-  const memory = buildHistoricalMemory({
-    snaps: snaps30d,
-    todayFacts: {
-      assaultsTotal,
-      crimesCount: assaultWinEvents.length,
-      marriages: marryEvents.length,
-      divorces: divorceEvents.length,
-      casinoVolume: casinoLedger.gained + casinoLedger.lost,
-      mood,
-    },
-  });
-
-  // ── Personalidade do grupo (mood dominante últimos 7 dias) ───────
-  const moodHistory7 = safeArr(
-    safeCall(snapshotRepository?.getMoodHistory?.bind(snapshotRepository), scope, 7)
-  );
-  const personality = derivePersonality(moodHistory7, mood);
-
-  const challenge =
-    typeof dailyChallengeService?.getTodayStats === 'function'
-      ? safeCall(dailyChallengeService.getTodayStats.bind(dailyChallengeService), scope)
-      : null;
-
-  const facts = {
+  return {
     scopeKey: scope,
-    since,
     now: nowMs,
     timeZone,
-    eventsCount: events.length,
-    buckets,
-    economy: {
-      casinoVolume: casinoLedger.gained + casinoLedger.lost,
-      casinoGained: casinoLedger.gained,
-      casinoLost: casinoLedger.lost,
-      moneyDestroyed,
-      moneyCreated,
-      assaultsTotal,
-      assaultsCount: assaultWinEvents.length,
-      rentCollected: rentByUser[0]?.gained || 0,
-      rentKing: rentByUser[0]?.jid || null,
-      crimeVolume: crimeLedger.gained + crimeLedger.lost,
-      propertyVolume: propertyLedger.gained + propertyLedger.lost,
-      stockVolume: stockLedger.gained + stockLedger.lost,
-      jobVolume: jobLedger.gained + jobLedger.lost,
-      circulating: safeNum(healthMetrics.circulatingCoins, 0),
-      gini: safeNum(healthMetrics.gini, 0),
-      activePlayers: safeNum(healthMetrics.activePlayers, 0),
-    },
-    society: {
-      marriages: marryEvents.length,
-      divorces: divorceEvents.length,
-      couplesActive: activeMarriages.length,
-      longestMarriage,
-      achievementsUnlocked: achievementsSince.length,
-      achievementsRecent: achievementsSince.slice(0, 5),
-      marryEvents,
-      divorceEvents,
-      despedidas: despedidasTotal,
-      despedirEvents,
-      topFarewellUsers,
-    },
-    police: {
-      assaultsTotal,
-      assaultsCount: assaultWinEvents.length,
-      biggestAssaultEvent,
-      propertyRobs: propertyRobEvents.length,
-      propertyRobsTotal,
-      purgaHappened,
-      purgaStart: purgaStartEvents[0] || null,
-      purgaEnd: purgaEndEvents[0] || null,
-      topCrims: crimeByUser.slice(0, 5),
-      topVictims: victimsByUser.slice(0, 3),
-    },
-    casino: {
-      volume: casinoLedger.gained + casinoLedger.lost,
-      gained: casinoLedger.gained,
-      lost: casinoLedger.lost,
-      biggestCrashLossEvent,
-      casinoWinEvents,
-      crashLossEvents,
-      leaderboard: casinoLeaderboard.map((g) => ({
-        jid: g.userJid,
-        profit: safeNum(g.profit, 0),
-        games: safeNum(g.games, 0),
-      })),
-      rouletteStreak,
-    },
-    stocks: {
-      moverUp: stockMoverUp,
-      moverDown: stockMoverDown,
-      quotesCount: stockQuotes.length,
-    },
-    rankings: {
-      topCoins,
-      topCrims,
-      topUnlucky,
-    },
-    totals: {
-      events: events.length,
-      crimes: assaultWinEvents.length,
-      bets: betsCount,
-      marriages: marryEvents.length,
-      divorces: divorceEvents.length,
-      propertiesBought,
-      coinsDestroyed,
-      achievements: achievementsSince.length,
-      purgas: purgaStartEvents.length,
-      despedidas: despedidasTotal,
-    },
+    since: bounds.since,
+    until: Math.min(bounds.until, nowMs + 1),
     mood,
-    memory,
-    personality,
-    challenge,
-    quotes: {
-      list: notableQuotes.slice(0, 3).map((e) => ({
-        userJid: e.userJid,
-        quote: e.payload?.quote || '',
-        kind: e.payload?.kind || 'quote',
-      })),
-      count: notableQuotes.length,
-    },
+    quiet,
+    totalMessageCount,
+    sampledMessageCount: messages.length,
+    participantCount: participants.length,
+    messages,
+    conversation: capConversation(messages, conversationMaxChars),
+    timeline: buildTimeline(messages),
+    quotes,
+    historicalMoods: compactHistoricalThemes(deps.snapshotRepository, scope, nowMs),
   };
-
-  return facts;
 }
 
-/**
- * Deriva o mood do dia a partir das proporções de eventos.
- * Ordem de prioridade: caotico > apostador > romantico > calmo > medio.
- */
-export function deriveMood({
-  eventsCount,
-  marryEvents,
-  divorceEvents,
-  crimesCount,
-  betsCount,
-  moneyDestroyed,
-}) {
-  if (eventsCount === 0 && crimesCount === 0 && betsCount === 0 && marryEvents === 0) {
-    return 'calmo';
-  }
-  if (crimesCount >= 50) return 'caotico';
-  if (betsCount >= 30) return 'apostador';
-  if (marryEvents >= 1 && crimesCount === 0 && betsCount < 10) return 'romantico';
-  if (eventsCount === 0) return 'calmo';
-  return 'medio';
-}
-
-/**
- * Constrói comparações históricas a partir dos snapshots dos últimos 30 dias.
- * @returns {Array<{ kind, text }>} — bullets prontos para o jornal
- */
-export function buildHistoricalMemory({ snaps, todayFacts }) {
-  const out = [];
-  if (!snaps || snaps.length === 0) return out;
-
-  // maior assalto dos últimos 30 dias?
-  let maxAssaultEver = 0;
-  let maxCrimesEver = 0;
-  let maxCasinoVolumeEver = 0;
-  for (const s of snaps) {
-    const p = s.payload || {};
-    maxAssaultEver = Math.max(maxAssaultEver, safeNum(p.economy?.assaultsTotal, 0));
-    maxCrimesEver = Math.max(maxCrimesEver, safeNum(p.totals?.crimes, 0));
-    maxCasinoVolumeEver = Math.max(maxCasinoVolumeEver, safeNum(p.economy?.casinoVolume, 0));
-  }
-
-  if (todayFacts.assaultsTotal > maxAssaultEver && todayFacts.assaultsTotal > 0) {
-    out.push({ kind: 'record-assault', text: `Maior assalto registrado em 30 dias: *${todayFacts.assaultsTotal}c*` });
-  }
-  if (todayFacts.crimesCount > maxCrimesEver && todayFacts.crimesCount >= 5) {
-    out.push({ kind: 'record-crime', text: `Recorde de crimes diários: *${todayFacts.crimesCount}*` });
-  }
-  if (todayFacts.casinoVolume > maxCasinoVolumeEver && todayFacts.casinoVolume > 1000) {
-    out.push({ kind: 'record-casino', text: `Novo recorde de volume no cassino (*${todayFacts.casinoVolume}c*)` });
-  }
-
-  // dias sem divórcio (streak de snaps com divorces === 0)
-  let daysNoDivorce = 0;
-  for (const s of snaps) {
-    if (safeNum(s.payload?.totals?.divorces, 0) === 0) daysNoDivorce += 1;
-    else break;
-  }
-  if (daysNoDivorce >= 5 && todayFacts.divorces === 0) {
-    out.push({ kind: 'no-divorce-streak', text: `*${daysNoDivorce + 1}* dias seguidos sem nenhum divórcio` });
-  }
-
-  // dias sem casamento
-  let daysNoMarry = 0;
-  for (const s of snaps) {
-    if (safeNum(s.payload?.totals?.marriages, 0) === 0) daysNoMarry += 1;
-    else break;
-  }
-  if (todayFacts.marriages > 0 && daysNoMarry >= 7) {
-    out.push({ kind: 'first-marry', text: `Primeiro casamento em *${daysNoMarry}* dias` });
-  }
-
-  // streak de moods caóticos (dias consecutivos terminando hoje, se hoje é caótico)
-  if (todayFacts.mood === 'caotico') {
-    let chaosStreak = 1;
-    for (const s of snaps) {
-      if (String(s.payload?.mood) === 'caotico') chaosStreak += 1;
-      else break;
-    }
-    if (chaosStreak >= 3) {
-      out.push({
-        kind: 'chaos-streak',
-        text: `${chaosStreak}º dia seguido de alta criminalidade`,
-      });
-    }
-  }
-
-  return out.slice(0, 4); // máx 4 bullets de memória
-}
-
-/**
- * Deriva a "personalidade" do grupo a partir do histórico de moods (7 dias).
- * Se >=5/7 dias foram do mesmo mood (não-médio), assume essa identidade.
- * @returns {{ mood: string|null, daysDominant: number, line: string|null }}
- */
-export function derivePersonality(moodHistory, todayMood) {
-  const history = safeArr(moodHistory).map((m) => String(m?.mood || 'medio'));
-  // inclui hoje
-  const all = [todayMood, ...history];
-  const counts = {};
-  for (const m of all) counts[m] = (counts[m] || 0) + 1;
-  let dominant = null;
-  let max = 0;
-  for (const [m, c] of Object.entries(counts)) {
-    if (m === 'medio') continue;
-    if (c > max) {
-      max = c;
-      dominant = m;
-    }
-  }
-  if (!dominant || max < 4) return { mood: null, daysDominant: 0, line: null };
-
-  const lines = {
-    apostador:
-      'Aparentemente este grupo acredita que investir significa clicar em "apostar".',
-    caotico: 'O índice de criminalidade daqui continua impressionando especialistas.',
-    romantico: 'O cartório local já considera abrir uma filial só pra este grupo.',
-    calmo: 'Este grupo tem uma relação suspeita com o silêncio. Algo está sendo tramado.',
-  };
+export function conversationToSnapshotPayload(conversation) {
   return {
-    mood: dominant,
-    daysDominant: max,
-    line: lines[dominant] || null,
+    mood: conversation.mood,
+    totalMessageCount: conversation.totalMessageCount,
+    participantCount: conversation.participantCount,
+    timeline: conversation.timeline.map((block) => ({
+      hour: block.hour,
+      messageCount: block.messageCount,
+      participantCount: block.participants.length,
+    })),
   };
 }
 
-/**
- * Resume o DayFacts para persistência no snapshot (sem eventos brutos, ~2KB).
- */
+// Compatibilidade para consumidores históricos de eventos. O jornal atual não
+// usa esses helpers, mas eles continuam servindo testes/relatórios legados.
+export function bucketEvents(events) {
+  const buckets = {};
+  for (const event of safeArray(events)) {
+    const type = String(event?.eventType || '');
+    if (type) (buckets[type] ||= []).push(event);
+  }
+  return buckets;
+}
+
+export function collectDayFacts({ scopeKey, now = Date.now(), deps = {}, timeZone = 'America/Sao_Paulo' } = {}) {
+  const since = (Number(now) || Date.now()) - DAY_MS;
+  const events = safeArray(safeCall(deps.newsRepository?.listSince?.bind(deps.newsRepository), scopeKey, since));
+  const buckets = bucketEvents(events);
+  const total = events.length;
+  const farewellByUser = new Map();
+  for (const event of safeArray(buckets.despedir)) {
+    const jid = String(event?.userJid || '');
+    if (!jid) continue;
+    const current = farewellByUser.get(jid) || { jid, count: 0, lastAt: 0 };
+    current.count += 1;
+    current.lastAt = Math.max(current.lastAt, Number(event.createdAt) || 0);
+    farewellByUser.set(jid, current);
+  }
+  const topFarewellUsers = [...farewellByUser.values()]
+    .sort((left, right) => right.count - left.count || left.lastAt - right.lastAt)
+    .slice(0, 3);
+  const despedidas = safeArray(buckets.despedir).length;
+  return {
+    scopeKey: String(scopeKey || ''),
+    now: Number(now) || Date.now(),
+    since,
+    timeZone,
+    eventsCount: total,
+    buckets,
+    mood: total ? 'medio' : 'calmo',
+    totals: { events: total, despedidas },
+    economy: { casinoVolume: 0, assaultsTotal: 0, rentCollected: 0, moneyDestroyed: 0, circulating: 0, gini: 0 },
+    society: { marriages: safeArray(buckets.marry).length, divorces: safeArray(buckets.divorce).length, couplesActive: 0, achievementsUnlocked: 0, despedidas, topFarewellUsers },
+    police: { assaultsTotal: 0, assaultsCount: safeArray(buckets.assault_win).length, propertyRobs: safeArray(buckets.property_rob).length },
+    casino: { volume: 0, lost: 0 },
+    rankings: { topCoins: [] },
+  };
+}
+
 export function factsToSnapshotPayload(facts) {
   return {
-    mood: facts.mood,
-    totals: facts.totals,
-    economy: {
-      casinoVolume: facts.economy.casinoVolume,
-      assaultsTotal: facts.economy.assaultsTotal,
-      rentCollected: facts.economy.rentCollected,
-      moneyDestroyed: facts.economy.moneyDestroyed,
-      circulating: facts.economy.circulating,
-      gini: facts.economy.gini,
-    },
-    society: {
-      marriages: facts.society.marriages,
-      divorces: facts.society.divorces,
-      couplesActive: facts.society.couplesActive,
-      achievements: facts.society.achievementsUnlocked,
-      despedidas: facts.society.despedidas,
-    },
-    police: {
-      assaultsTotal: facts.police.assaultsTotal,
-      assaultsCount: facts.police.assaultsCount,
-      propertyRobs: facts.police.propertyRobs,
-    },
-    casino: {
-      volume: facts.casino.volume,
-      lost: facts.casino.lost,
-    },
-    rankings: {
-      topCoins: facts.rankings.topCoins,
-    },
+    mood: facts?.mood || 'calmo',
+    totals: facts?.totals || {},
+    economy: facts?.economy || {},
+    society: facts?.society || {},
+    police: facts?.police || {},
+    casino: facts?.casino || {},
+    rankings: facts?.rankings || {},
   };
 }

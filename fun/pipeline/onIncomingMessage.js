@@ -125,6 +125,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     bridgeService,
     missionService,
     eventAggregationService,
+    groupEventRepository,
     eventService,
     casinoService,
     tarotService,
@@ -142,6 +143,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     robberyService,
     roastService,
     newsService,
+    journalMessageRepository,
     achievementService,
     cardService,
     qmpService,
@@ -187,6 +189,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     mediaMimeType = '',
     appConfig,
     mentionedJids = [],
+    rawMentionedJids = [],
     quotedParticipant = '',
     quotedMessageId = '',
     quotedText = '',
@@ -238,6 +241,27 @@ export async function handleFunIncomingMessage(deps, ctx) {
   const parsedCommand = parseFunCommand(text, prefix);
   const isCommand = parsedCommand != null;
   const isDm = Boolean(scope.isDm);
+
+  // O jornal mantém sua própria fonte por grupo: texto bruto de retenção curta,
+  // escrito de forma observacional para nunca atrasar o caminho crítico.
+  if (isGroup && scope.scopeKey && funConfig.groupNewsMessageHistoryEnabled !== false) {
+    try {
+      journalMessageRepository?.recordMessage?.({
+        scopeKey: scope.scopeKey,
+        messageId,
+        authorJid: userJid,
+        source: 'human',
+        messageType,
+        text,
+        quotedText,
+        mentionedJids,
+        now: msgTimeMs,
+        prefix,
+      });
+    } catch {
+      // captura do jornal nunca quebra a mensagem, comando ou persona
+    }
+  }
 
   // DM: só comandos (jogos com continuidade, saldo, etc.) — sem XP passivo
   if (isDm && funConfig.dmCommandsOnly !== false && !isCommand) {
@@ -405,12 +429,32 @@ export async function handleFunIncomingMessage(deps, ctx) {
     return Object.keys(opts).length ? opts : undefined;
   };
 
+  const recordJournalBotMessage = (sent, content) => {
+    if (!isGroup || funConfig.groupNewsMessageHistoryEnabled === false) return;
+    const messageId = String(sent?.key?.id || '').trim();
+    if (!messageId) return;
+    try {
+      journalMessageRepository?.recordMessage?.({
+        scopeKey: scope.scopeKey,
+        messageId,
+        source: 'bot',
+        messageType: 'text',
+        text: content,
+        now: Date.now(),
+        prefix,
+      });
+    } catch {
+      // registro conversacional não pode afetar a resposta já entregue
+    }
+  };
+
   const replyToChat = async (body) => {
     if (typeof sendText !== 'function') return;
     const content = withActorTag(String(body || '').trim());
     if (!content) return;
     const mentions = userFmt.takeMentions();
-    await sendText(sock, chatJid, content, buildSendOpts(mentions));
+    const sent = await sendText(sock, chatJid, content, buildSendOpts(mentions));
+    recordJournalBotMessage(sent, content);
   };
 
   /**
@@ -658,6 +702,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
       mentionedJids,
       msgTimeMs,
       funConfig,
+      getContactDisplayName,
       isGroup: true,
     }).catch((err) => {
       getLogger?.()?.debug?.('[fun/events] observação falhou: %s', String(err?.message || err));
@@ -749,6 +794,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           scopeKey: scope.scopeKey,
           text,
           mentionedJids,
+          rawMentionedJids,
           quotedParticipant,
           quotedMessageId,
           quotedText,
@@ -863,6 +909,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
           bridgeService,
           missionService,
           eventService,
+          groupEventRepository,
           casinoService,
           tarotService,
           marketService,

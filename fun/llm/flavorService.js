@@ -144,27 +144,23 @@ Você inventa o ângulo e as farpas — sem inventar crimes reais nem dados que 
 
   group_times: `Você é o editor-chefe do jornal "The Group Times" de um grupo de WhatsApp BR.
 
-SEU PAPEL: escrever 3 blocos:
+SEU PAPEL: narrar a CONVERSA REAL daquele grupo durante o dia. O leitor quer descobrir quais assuntos renderam, que reviravoltas houve e quais frases entraram para o arquivo.
 
-1. CAPA — uma manchete curta e chamativa (4-15 palavras)
-2. INTRO — uma mini-crônica de 4-8 frases contando a história do dia de forma engraçada/narrativa. Use os dados como matéria-prima para criar uma narrativa coesa. Ex: "O dia começou calmo, mas às 15h o cassino já tinha perdido 50mil e o primeiro casamento do mês foi selado. Enquanto Fulano comemorava o amor, Beltrano via 12mil irem pro espaço no crash..."
-3. FORESHADOW — 1-2 frases de teaser pro dia seguinte
+FORMATO OBRIGATÓRIO (rótulos exatos, cada bloco em linhas próprias):
+CAPA: manchete curta e chamativa (4–15 palavras)
+MANCHETES: 2–4 tópicos curtos sobre fatos claramente sustentados pela conversa
+DETALHES: 2–4 parágrafos curtos, em ordem aproximada do dia, com tom fofoqueiro cômico
+CITACOES: no máximo 3 linhas no formato Nome: “citação literal”. Use EXCLUSIVAMENTE citações fornecidas em sourceQuotes; se não houver, deixe vazio.
+FECHO: uma frase final divertida, sem prever nem inventar o amanhã.
 
-TOM POR MOOD:
-• caotico → irônico, senso de catástrofe ("A cidade sobreviveu por pouco")
-• apostador → maroto, a casa sempre vence
-• romantico → afetado, novelesco, exagerado de propósito
-• calmo → seco, autodepreciativo ("Nem o tédio aguentou hoje")
-• medio → observacional com humor leve
-
-DADOS QUE VOCÊ RECEBE:
-- mood, destaques (eventos do dia), totals (contagens), recordes (se houver), personalidade (se houver), events (detalhes brutos)
-
-REGRAS:
-• Use APENAS números e fatos dos dados recebidos — crie uma narrativa, não uma lista
-• pt-BR natural de WhatsApp, sem linguagem de assistente
-• Sem preâmbulo, sem meta, sem markdown de lista
-• O INTRO deve ser uma história, não uma enumeração. Varie a estrutura entre edições`,
+REGRAS DE SEGURANÇA E VERDADE:
+• Use SOMENTE a conversa, a linha do tempo e as citações fornecidas. Não invente fatos, motivações, relacionamentos, acusações nem resultados.
+• Humor fofoqueiro é bem-vindo; humilhação, ataque pessoal, preconceito, exposição de dado privado ou incentivo a briga são proibidos.
+• Conflito deve ser relatado como conversa do grupo (“rolou discussão sobre...”), nunca como fato comprovado ou acusação.
+• Só escreva nomes que apareçam nos dados e só atribua fala ao autor fornecido.
+• Não mencione coins, XP, rankings, comandos, economia do bot ou métricas técnicas.
+• pt-BR natural de WhatsApp, sem preâmbulo, sem meta, sem markdown extra fora dos rótulos.
+• Se o contexto for fraco, seja honesto e seco; nunca preencha lacunas com ficção.`,
 });
 
 const CHAOS_SYSTEM_DEFAULT = `Você gera texto cômico original de bot WhatsApp BR. 2–4 frases COMPLETAS em pt-BR.
@@ -573,11 +569,13 @@ const FALLBACKS = {
       `${v.user || v.userName || 'Fulano'} é tão previsível no cassino que até o pasteldavizinha já cobrou juros morais. ${v.facts ? 'Os fatos não mentem — o ego sim.' : 'Saldo magro, moral mais magra ainda.'}`,
       `Roast express: ${v.user || 'você'} sobrevive de daily e de desculpa. O grupo agradece o entretenimento barato.`,
     ]),
-  group_times: (v) =>
+  group_times: () =>
     [
-      `CAPA: O dia foi mediano. O ego, não.`,
-      `INTRO: ${v.count || 0} eventos no log. Alguém sofreu, alguém lucrou. O saldo final? A gente finge que entende.`,
-      `FORESHADOW: Nossa equipe segue monitorando. Pode ser que amanhã tenha algo digno de nota.`,
+      'CAPA: A conversa rendeu mais que o silêncio',
+      'MANCHETES: A redação registrou movimento suficiente para abrir a pauta.',
+      'DETALHES: Sem invenção: o grupo falou, reagiu e deixou a ata emocional para esta edição.',
+      'CITACOES:',
+      'FECHO: Amanhã a edição volta, caso o grupo colabore com mais contexto.',
     ].join('\n'),
   default: () =>
     pick([
@@ -774,7 +772,7 @@ export function sanitizeGroupTimes(raw, maxLen = 1800) {
   if (body.length > maxLen) body = body.slice(0, maxLen).trim();
   // precisa parecer jornal (pelo menos um rótulo ou 2+ linhas)
   if (
-    !/manchete|economia|fofoca/i.test(body) &&
+    !/capa|manchetes|detalhes|citacoes|citações|fecho/i.test(body) &&
     lines.length < 2
   ) {
     return '';
@@ -1172,15 +1170,18 @@ export function createFlavorService(deps = {}) {
         russian_dead: `Comente a “morte” virtual na roleta. Dados: ${facts || 'nenhum'}.`,
         russian_start: `Abra a roleta russa no grupo. Dados: ${facts || 'nenhum'}.`,
         roast_personal: `Roast de *${userName || 'Fulano'}*. Fatos:\n${String(vars?.facts || facts || 'poucos dados')}`,
-        group_times: `Jornal The Group Times — DADOS DO DIA:
-mood=${vars?.mood || 'medio'}
-totals=${vars?.totals || 'sem dados'}
-destaques=${vars?.destaques || 'nenhum'}
-${vars?.recordes ? `recordes=${vars?.recordes}` : ''}
-${vars?.personalidade ? `personalidade=${vars?.personalidade}` : ''}
-Eventos brutos:
-${String(vars?.events || 'nenhum')}
-Total de eventos: ${vars?.count ?? '?'}.`,
+        group_times: `Jornal The Group Times — PAUTA DO GRUPO:
+Tom observado: ${vars?.mood || 'conversado'}
+Mensagens no dia: ${vars?.messageCount ?? '?'}
+Participantes: ${vars?.participantCount ?? '?'}
+Linha do tempo:
+${String(vars?.timeline || 'sem linha do tempo')}
+
+CONVERSA-FONTE (use apenas isto; não complete lacunas):
+${String(vars?.conversation || 'nenhuma mensagem elegível')}
+
+CITAÇÕES AUTORIZADAS (copie literalmente somente se usar):
+${String(vars?.sourceQuotes || 'nenhuma')}.`,
       }[key] || `Escreva o texto do comando. Dados: ${facts || 'nenhum'}.`;
 
       // ban só do MESMO grupo — nunca vazamento cross-grupo
@@ -1211,7 +1212,7 @@ Total de eventos: ${vars?.count ?? '?'}.`,
           : null,
         banHint || null,
         key === 'group_times'
-          ? 'Use APENAS os eventos listados acima. NÃO mencione pessoas/fatos de outros grupos. Responda só o texto do jornal:'
+          ? 'Use APENAS a conversa-fonte e as citações autorizadas acima. Não cite outro grupo, não crie falas e responda só nos rótulos do jornal:'
           : 'Responda só com o texto pronto pro zap (sem instruções, sem meta):',
       ]
         .filter(Boolean)

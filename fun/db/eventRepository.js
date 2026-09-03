@@ -58,7 +58,7 @@ function mapEvent(row) {
     organizerName: toText(row.organizer_name),
     fingerprint: toText(row.fingerprint),
     sourceMessageId: toText(row.source_message_id),
-    sourceMessageIds: normalizeTextList(parseJson(row.source_message_ids_json, []), 30),
+    sourceMessageIds: normalizeTextList(parseJson(row.source_message_ids_json, []), 120),
     extraction: parseJson(row.extraction_json, {}),
     createdAt: toMs(row.created_at),
     updatedAt: toMs(row.updated_at),
@@ -125,14 +125,23 @@ export function createEventRepository({ getDatabase = getDb } = {}) {
     const scope = toText(scopeKey);
     const source = toText(messageId);
     if (!scope || !source) return null;
-    const row = getDatabase()
+    const rows = getDatabase()
       .prepare(
         `SELECT * FROM ${ANALYTICS_SCHEMA}.fun_group_events
-         WHERE scope_key = ?
-           AND (source_message_id = ? OR instr(source_message_ids_json, ?) > 0)
-         LIMIT 1`
+         WHERE scope_key = ? AND source_message_id = ?`
       )
-      .get(scope, source, source);
+      .all(scope, source);
+    if (rows.length) return mapEvent(rows[0]);
+
+    const candidates = getDatabase()
+      .prepare(
+        `SELECT * FROM ${ANALYTICS_SCHEMA}.fun_group_events
+         WHERE scope_key = ?`
+      )
+      .all(scope);
+    const row = candidates.find((candidate) =>
+      normalizeTextList(parseJson(candidate.source_message_ids_json, []), 120).includes(source)
+    );
     return mapEvent(row);
   }
 
@@ -194,7 +203,7 @@ export function createEventRepository({ getDatabase = getDb } = {}) {
 
     const eventId = toText(event.id, randomUUID());
     const status = isEventStatus(event.status) ? event.status : 'active';
-    const sourceIds = normalizeTextList([sourceMessageId, ...sourceMessageIds], 30);
+    const sourceIds = normalizeTextList([sourceMessageId, ...sourceMessageIds], 120);
     const items = normalizeTextList(event.items);
 
     const persist = db.transaction(() => {
@@ -255,7 +264,7 @@ export function createEventRepository({ getDatabase = getDb } = {}) {
       organizerName: patch.organizerName === undefined ? current.organizerName : toText(patch.organizerName).slice(0, 120),
       fingerprint: patch.fingerprint === undefined ? current.fingerprint : toText(patch.fingerprint).slice(0, 240),
       extraction: patch.extraction === undefined ? current.extraction : patch.extraction,
-      sourceMessageIds: normalizeTextList([...current.sourceMessageIds, ...sourceMessageIds], 30),
+      sourceMessageIds: normalizeTextList([...current.sourceMessageIds, ...sourceMessageIds], 120),
     };
 
     const persist = getDatabase().transaction(() => {
