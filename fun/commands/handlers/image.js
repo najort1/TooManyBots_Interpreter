@@ -5,13 +5,17 @@ function usage(prefix = '/') {
   ].join('\n');
 }
 
-function quotaCaption(kind, used, limit, remaining) {
+function quotaCaption(kind, used, limit, remaining, extraText = '') {
   const mode = kind === 'gerar' ? 'com memória do grupo' : 'sem memória do grupo';
-  return [
+  const lines = [
     `🖼️ *Imagem gerada* (${mode})`,
     `📊 Limite diário global: ${used}/${limit}`,
     `⏳ Restantes hoje: ${remaining}`,
-  ].join('\n');
+  ];
+  if (extraText && String(extraText).trim()) {
+    lines.push('', String(extraText).trim());
+  }
+  return lines.join('\n');
 }
 
 function quotaBlockedMessage(limit) {
@@ -28,6 +32,8 @@ function failMessage(result) {
   if (result.reason === 'disabled') return 'Geração de imagens desabilitada no momento.';
   if (result.reason === 'quota-exceeded') return quotaBlockedMessage(result.limit || 25);
   if (result.reason === 'timeout') return 'A geração demorou demais e expirou. Tente um prompt menor ou mais direto.';
+  if (result.reason === 'no-apikey') return 'Chave do Gemini não configurada no bot.';
+  if (result.reason === 'no-image') return 'O modelo não retornou imagem para este prompt. Tente formular de outra forma.';
   return 'Falha ao gerar imagem agora. Tente novamente em instantes.';
 }
 
@@ -68,7 +74,7 @@ async function handleImageLikeCommand(ctx, { withMemory, commandLabel }) {
     return { handled: true, result };
   }
 
-  const caption = quotaCaption(commandLabel, result.used, result.limit, result.remaining);
+  const caption = quotaCaption(commandLabel, result.used, result.limit, result.remaining, result.text);
 
   if (result.buffer && typeof replyImage === 'function') {
     await replyImage(result.buffer, caption);
@@ -91,7 +97,7 @@ async function handleImageLikeCommand(ctx, { withMemory, commandLabel }) {
 
 /**
  * /gerar <prompt>
- * Injeta lore do grupo no prompt antes de chamar a proxy.
+ * Injeta lore do grupo no prompt antes de chamar a geração de imagens.
  */
 export async function handleGerarCommand(ctx) {
   return handleImageLikeCommand(ctx, { withMemory: true, commandLabel: 'gerar' });

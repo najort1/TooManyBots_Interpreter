@@ -30,9 +30,10 @@ const EXTRACT_SYSTEM = `Você extrai FATOS engraçados ou úteis de um trecho de
 REGRAS OBRIGATÓRIAS:
 1. Responda SOMENTE com JSON válido (objeto ou array). Sem markdown, sem texto fora do JSON.
 2. Formato preferido: {"facts":[...]} ou array [...]. Cada fato:
-   {"kind":"running_gag|rivalry|catchphrase|epic_fail|ship_lore|nickname|event","summary":"1 frase ≤150 chars","subjects":[0],"keywords":["kw1"],"score":35-95}
-3. "subjects" DEVE ser array de IDs NUMÉRICOS do batch (ex: 0, 1, 2). NUNCA nomes, NUNCA strings de pessoa. subjects SEMPRE como array, mesmo que com 1 elemento: [4], NUNCA 4, nunca vazio se houver autor claro.
-4. O ID em subjects é o índice da mensagem [N] que contém o CONTEÚDO do fato (a fala engraçada/útil). Não confunda o autor do conteúdo com quem é o assunto da mensagem.
+   {"kind":"running_gag|rivalry|catchphrase|epic_fail|ship_lore|nickname|event","summary":"1 frase ≤150 chars","target":["P0"],"evidence_msg":0,"keywords":["kw1"],"score":35-95}
+3. "target": array com o ID de participante (ex: ["P1"], ["P0"]) ou nome/apelido da pessoa SOBRE QUEM é o fato.
+   ATENÇÃO: NUNCA coloque o autor da mensagem se o fato for sobre outra pessoa citada na conversa! Se João disse que Pedro caiu da escada, o target é Pedro ("P1"), NÃO João ("P0")! Se for uma história/mico do próprio autor, use o ID dele.
+4. "evidence_msg": índice numérico da mensagem [0, 1, 2...] que contém a fala ou evidência.
 5. Só salve engraçado, mico, rivalidade, bordão, apelido, lore social. Se nada valer: {"facts":[]}
 6. NÃO invente o que não está no trecho. NÃO salve: bom dia, ok, comando de bot, links, spam, dados sensíveis.
 7. summary em pt-BR, como alguém contaria no grupo depois (tom de zap), sem aspas externas.
@@ -139,24 +140,77 @@ function nameFirstToken(name) {
 /**
  * Tenta inferir subjectIndices a partir do summary quando a LLM mandou vazio.
  * Estratégia (em ordem):
- *   1) nome que aparece MAIS vezes no summary (>=2 ocorrências) → forte sinal
- *   2) nome que aparece no INÍCIO do summary (primeiros 30 chars) → "X fez/disse/..."
- *   3) nome que aparece em qualquer posição do summary
- * batchEntry: { name, text, userJid, at }.
- * Retorna { indices: number[], inferred: boolean, source: 'summary-name' } ou null.
+ *   1) participante catalogado que aparece no summary
+ *   2) nome que aparece MAIS vezes no summary (>=2 ocorrências) → forte sinal
+ *   3) nome que aparece no INÍCIO do summary (primeiros 30 chars) → "X fez/disse/..."
+ *   4) nome que aparece em qualquer posição do summary
+ * Retorna { indices: number[], targetEntries?: object[], inferred: boolean, source: string } ou null.
  */
-function inferSubjectIndicesFromSummary(summary, batch) {
-  if (!Array.isArray(batch) || !batch.length) return null;
+function inferSubjectIndicesFromSummary(summary, batch, participants = []) {
+  if ((!Array.isArray(batch) || !batch.length) && (!Array.isArray(participants) || !participants.length)) {
+    return null;
+  }
   const sumNorm = normalizeKey(summary || '');
   if (!sumNorm || sumNorm.length < 8) return null;
 
-  // conta ocorrências de cada nome (primeiro token) no summary
-  // e também checa se o nome está no início do summary
-  const candidates = []; // { idx, name, count, isAtStart, token }
-  for (let i = 0; i < batch.length; i++) {
+  // 1. Se há participantes catalogados, tenta primeiro casar participantes conhecidos
+  if (Array.isArray(participants) && participants.length) {
+    const pCandidates = [];
+    for (const p of participants) {
+      const tok = normalizeKey(p.firstName || '');
+      const nickTok = p.nickname ? normalizeKey(p.nickname) : '';
+      if (!tok || tok.length < 3) continue;
+
+      const reWord = new RegExp(`\\b${escapeRegex(tok)}\\b`, 'g');
+      const matches = sumNorm.match(reWord);
+      let count = matches ? matches.length : 0;
+      if (nickTok && nickTok.length >= 3) {
+        const reNick = new RegExp(`\\b${escapeRegex(nickTok)}\\b`, 'g');
+        const nickMatches = sumNorm.match(reNick);
+        if (nickMatches) count += nickMatches.length;
+      }
+      if (count === 0) continue;
+      const isAtStart = sumNorm.startsWith(tok + ' ') || sumNorm.startsWith(tok + ',');
+      pCandidates.push({
+        idx: p.index,
+        name: p.name,
+        token: tok,
+        count,
+        isAtStart,
+        pId: p.pId,
+        participant: p,
+      });
+    }
+
+    if (pCandidates.length) {
+      pCandidates.sort((a, b) => {
+        if (a.isAtStart !== b.isAtStart) return a.isAtStart ? -1 : 1;
+        if (a.count !== b.count) return b.count - a.count;
+        return a.idx - b.idx;
+      });
+      const best = pCandidates[0];
+      if (pCandidates.length >= 2) {
+        const second = pCandidates[1];
+        const bestStrong = best.isAtStart || best.count >= 2;
+        const secondStrong = second.isAtStart || second.count >= 2;
+        if (!bestStrong && (secondStrong || second.count === best.count)) {
+          return null; // ambíguo
+        }
+      }
+      return {
+        indices: [best.idx],
+        targetEntries: [{ type: 'participant_id', pId: best.pId, index: best.idx, participant: best.participant }],
+        inferred: true,
+        source: 'summary-participant-name',
+      };
+    }
+  }
+
+  // 2. Fallback: conta ocorrências de cada nome no batch de mensagens
+  const candidates = [];
+  for (let i = 0; i < (batch || []).length; i++) {
     const tok = nameFirstToken(batch[i]?.name);
-    if (!tok || tok.length < 3) continue; // nomes curtos ("eu", "de") dão muito falso-positivo
-    // conta ocorrências inteiras (palavra completa, case-insensitive)
+    if (!tok || tok.length < 3) continue;
     const reWord = new RegExp(`\\b${escapeRegex(tok)}\\b`, 'g');
     const matches = sumNorm.match(reWord);
     const count = matches ? matches.length : 0;
@@ -166,24 +220,64 @@ function inferSubjectIndicesFromSummary(summary, batch) {
   }
   if (!candidates.length) return null;
 
-  // ranking: nome no início ganha +100, depois por count, depois por idx
   candidates.sort((a, b) => {
     if (a.isAtStart !== b.isAtStart) return a.isAtStart ? -1 : 1;
     if (a.count !== b.count) return b.count - a.count;
     return a.idx - b.idx;
   });
   const best = candidates[0];
-  // se há empate entre o melhor e o segundo, e nenhum tem count>=2 ou isAtStart, descarta (ambíguo)
   if (candidates.length >= 2) {
     const second = candidates[1];
     const bestStrong = best.isAtStart || best.count >= 2;
     const secondStrong = second.isAtStart || second.count >= 2;
-    // se o segundo é quase tão bom quanto o primeiro e o primeiro não é claramente forte → ambíguo
     if (!bestStrong && (secondStrong || second.count === best.count)) {
       return null;
     }
   }
   return { indices: [best.idx], inferred: true, source: 'summary-name' };
+}
+
+/**
+ * Analisa identificador de target/subject (número, P0, ou nome de participante).
+ */
+export function parseTargetIdentifier(raw, participants = []) {
+  if (typeof raw === 'number' && Number.isInteger(raw) && raw >= 0) {
+    return { type: 'index', index: raw, raw };
+  }
+  const s = String(raw ?? '').trim();
+  if (!s) return null;
+
+  // Formato P0, P1, [P0]
+  const pMatch = s.match(/^\[?\s*P(\d+)\s*\]?$/i);
+  if (pMatch) {
+    const idx = Number(pMatch[1]);
+    const matchedP = Array.isArray(participants) ? participants.find((p) => p.pId === `P${idx}` || p.index === idx) : null;
+    return { type: 'participant_id', pId: `P${idx}`, index: idx, participant: matchedP || null, raw: s };
+  }
+
+  // Formato número solto [0], "0"
+  const m = s.match(/^\[?\s*(\d+)\s*\]?$/);
+  if (m) {
+    return { type: 'index', index: Number(m[1]), raw: s };
+  }
+
+  // Se houver participantes catalogados e vier string de nome/apelido
+  if (Array.isArray(participants) && participants.length) {
+    const norm = normalizeKey(s);
+    if (norm && norm.length >= 2) {
+      const matched = participants.find((p) => {
+        const fn = normalizeKey(p.firstName || '');
+        const full = normalizeKey(p.name || '');
+        const nick = normalizeKey(p.nickname || '');
+        return fn === norm || full === norm || (nick && nick === norm);
+      });
+      if (matched) {
+        return { type: 'participant_name', pId: matched.pId, index: matched.index, participant: matched, raw: s };
+      }
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -194,19 +288,21 @@ function escapeRegex(s) {
 }
 
 /**
- * Normaliza campo subjects da LLM: array, número solto, "[0]", ou subject singular.
- * GLM costuma mandar subjects: 0 (escalar) ou subject: 0 apesar do prompt pedir array.
+ * Normaliza campo subjects/target da LLM: array, número solto, "[0]", "P0" ou target singular.
  */
 export function normalizeSubjectsField(fact) {
   if (!fact || typeof fact !== 'object') return [];
   const raw =
-    fact.subjects !== undefined && fact.subjects !== null
-      ? fact.subjects
-      : fact.subject !== undefined && fact.subject !== null
-        ? fact.subject
-        : [];
+    fact.target !== undefined && fact.target !== null
+      ? fact.target
+      : fact.targets !== undefined && fact.targets !== null
+        ? fact.targets
+        : fact.subjects !== undefined && fact.subjects !== null
+          ? fact.subjects
+          : fact.subject !== undefined && fact.subject !== null
+            ? fact.subject
+            : [];
   if (Array.isArray(raw)) return raw;
-  // escalar: 0, 4, "0", "[1]"
   if (typeof raw === 'number' || typeof raw === 'string') return [raw];
   return [];
 }
@@ -233,23 +329,27 @@ function unescapeJsonString(s) {
 
 function parseSubjectsFromWindow(window) {
   const subjects = [];
-  // "subjects":[0,1] ou "subject":[0]
-  const subArr = window.match(/"subjects?"\s*:\s*(\[[^\]]*\])/i);
+  const subArr = window.match(/"(?:targets?|subjects?)"\s*:\s*(\[[^\]]*\])/i);
   if (subArr) {
     const inner = subArr[1].slice(1, -1).trim();
     if (inner) {
       for (const part of inner.split(',')) {
-        const n = Number(String(part).trim());
-        if (Number.isInteger(n) && n >= 0 && !subjects.includes(n)) subjects.push(n);
+        const cleanPart = part.trim().replace(/^["']+|["']+$/g, '');
+        if (cleanPart) {
+          const num = Number(cleanPart);
+          subjects.push(Number.isInteger(num) && num >= 0 ? num : cleanPart);
+        }
       }
     }
     return subjects;
   }
-  // "subjects": 0  / "subject": 4  (escalar; ignora "subject":, malformado)
-  const subNum = window.match(/"subjects?"\s*:\s*(\d+)/i);
-  if (subNum) {
-    const n = Number(subNum[1]);
-    if (Number.isInteger(n) && n >= 0) subjects.push(n);
+  const subSingle = window.match(/"(?:targets?|subjects?)"\s*:\s*("?[^",}\s]+"?)/i);
+  if (subSingle) {
+    const clean = subSingle[1].trim().replace(/^["']+|["']+$/g, '');
+    if (clean) {
+      const num = Number(clean);
+      subjects.push(Number.isInteger(num) && num >= 0 ? num : clean);
+    }
   }
   return subjects;
 }
@@ -296,7 +396,10 @@ export function normalizeFactScore(raw) {
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
-export function validateExtractedFact(fact, { batchSize = 0, summaryMax = Infinity, batch = null } = {}) {
+export function validateExtractedFact(
+  fact,
+  { batchSize = 0, summaryMax = Infinity, batch = null, participants = [] } = {}
+) {
   if (!fact || typeof fact !== 'object') return null;
   const kind = normalizeFactKind(fact.kind);
 
@@ -308,23 +411,37 @@ export function validateExtractedFact(fact, { batchSize = 0, summaryMax = Infini
     summary = summary.slice(0, summaryMax);
   }
 
+  const isTargetField = fact.target !== undefined || fact.targets !== undefined;
   const rawSubjects = normalizeSubjectsField(fact);
+  const targetEntries = [];
   const indices = [];
+
   for (const s of rawSubjects) {
-    const idx = parseSubjectIndex(s);
-    if (idx == null) continue; // nome solto → ignora (não aceita)
-    if (batchSize > 0 && idx >= batchSize) continue;
-    if (!indices.includes(idx)) indices.push(idx);
+    // Se veio do campo legado "subjects", nomes soltos não são aceitos (exige número ou P0).
+    // Nomes soltos só são resolvidos via catálogo se vierem pelo campo moderno "target".
+    const parsed = parseTargetIdentifier(s, isTargetField ? participants : []);
+    if (!parsed) continue;
+
+    targetEntries.push(parsed);
+    const idx = parsed.index;
+    if (batchSize > 0 && idx >= batchSize && parsed.type === 'index') {
+      if (!participants[idx]) continue;
+    }
+    if (idx != null && !indices.includes(idx)) indices.push(idx);
   }
+
   let subjectInferred = false;
   // zero alucinação de autoria: sem subject ID válido → tenta inferir do summary
   if (!indices.length) {
-    if (Array.isArray(batch) && batch.length) {
-      const inferred = inferSubjectIndicesFromSummary(summary, batch);
+    if ((Array.isArray(batch) && batch.length) || (Array.isArray(participants) && participants.length)) {
+      const inferred = inferSubjectIndicesFromSummary(summary, batch, participants);
       if (inferred && inferred.indices.length) {
         for (const i of inferred.indices) {
-          if (batchSize > 0 && i >= batchSize) continue;
+          if (batchSize > 0 && i >= batchSize && !participants[i]) continue;
           if (!indices.includes(i)) indices.push(i);
+        }
+        if (inferred.targetEntries?.length) {
+          targetEntries.push(...inferred.targetEntries);
         }
         subjectInferred = !!inferred.source;
       }
@@ -341,10 +458,22 @@ export function validateExtractedFact(fact, { batchSize = 0, summaryMax = Infini
 
   const score = normalizeFactScore(fact.score);
 
+  // Extrai evidência se fornecida
+  let evidenceMsg = null;
+  const rawEv = fact.evidence_msg ?? fact.evidenceMsg ?? fact.evidence_index ?? fact.evidence;
+  const parsedEv = parseSubjectIndex(rawEv);
+  if (parsedEv != null && (batchSize <= 0 || parsedEv < batchSize)) {
+    evidenceMsg = parsedEv;
+  } else if (indices.length === 1 && typeof indices[0] === 'number') {
+    evidenceMsg = indices[0];
+  }
+
   return {
     kind,
     summary,
     subjectIndices: indices.slice(0, 6),
+    targetEntries,
+    evidenceMsg,
     keywords,
     score,
     signature: keywordSignature(keywords, summary),
@@ -432,7 +561,7 @@ function looseParseFacts(text) {
  */
 export function parseFactsJson(
   raw,
-  { batchSize = 0, summaryMax = 160, batch = null, maxFacts = 8 } = {}
+  { batchSize = 0, summaryMax = 160, batch = null, maxFacts = 8, participants = [] } = {}
 ) {
   const text = String(raw || '').trim();
   if (!text) return [];
@@ -473,14 +602,14 @@ export function parseFactsJson(
   }
 
   let validated = list
-    .map((x) => validateExtractedFact(x, { batchSize, summaryMax, batch }))
+    .map((x) => validateExtractedFact(x, { batchSize, summaryMax, batch, participants }))
     .filter(Boolean);
 
   // salvage: JSON.parse passou em wrapper mas items falharam validação (aliases/subjects)
   // OU parse falhou e loose canônico não pegou — tenta regex amplo
   if (!validated.length) {
     const salvaged = looseParseFacts(text)
-      .map((x) => validateExtractedFact(x, { batchSize, summaryMax, batch }))
+      .map((x) => validateExtractedFact(x, { batchSize, summaryMax, batch, participants }))
       .filter(Boolean);
     if (salvaged.length) validated = salvaged;
   }
@@ -541,6 +670,8 @@ export function createGroupMemoryService({
         Math.min(40, Math.floor(numOr(funConfig.memoryKnownFactsInPrompt, 24)))
       ),
       msgMaxChars: Math.max(80, Math.min(800, Math.floor(numOr(funConfig.memoryMsgMaxChars, 400)))),
+      minFactsPerMember: Math.max(1, Math.min(10, Math.floor(numOr(funConfig.memoryMemberMinFactsQuota, 5)))),
+      minScoreQuota: Math.max(70, Math.min(95, Math.floor(numOr(funConfig.memoryMemberMinScoreQuota, 80)))),
       prefix: funConfig.prefix || '/',
     };
   }
@@ -606,6 +737,10 @@ export function createGroupMemoryService({
     text,
     messageType = 'text',
     messageId = '',
+    quotedText = '',
+    quotedParticipant = '',
+    quotedParticipantName = '',
+    mentionedJids = [],
     funConfig = {},
     now = Date.now(),
     isGroup = true,
@@ -640,6 +775,10 @@ export function createGroupMemoryService({
       text: body.slice(0, o.msgMaxChars),
       at: Number(now) || Date.now(),
       messageId: String(messageId || ''),
+      quotedText: String(quotedText || '').slice(0, 300),
+      quotedParticipant: String(quotedParticipant || ''),
+      quotedParticipantName: String(quotedParticipantName || ''),
+      mentionedJids: Array.isArray(mentionedJids) ? mentionedJids.map(String) : [],
     });
     if (buf.msgs.length > o.bufferSize) {
       buf.msgs = buf.msgs.slice(-o.bufferSize);
@@ -794,7 +933,10 @@ export function createGroupMemoryService({
           minScore: o.minScore,
           now,
         });
-        memoryRepository.pruneToCap(scopeKey, o.maxFacts);
+        memoryRepository.pruneToCap(scopeKey, o.maxFacts, {
+          minFactsPerMember: o.minFactsPerMember,
+          minScoreQuota: o.minScoreQuota,
+        });
 
         if (inserted + reinforced > 0 || random() < 0.35) {
           await refreshPersona(scopeKey, funConfig, o, now);
@@ -814,16 +956,96 @@ export function createGroupMemoryService({
   }
 
   /**
-   * Mapeia subjectIndices → JIDs reais do batch. Descarta se nenhum JID válido.
+   * Mapeia subjectTokens/indices → JIDs reais do batch ou participantes catalogados.
+   * Inclui validação cruzada anti-atribuição errada (quando o autor da mensagem falou de terceiro).
    */
-  function mapSubjectsToJids(batch, subjectIndices) {
+  function mapSubjectsToJids(batch, factOrIndices, participants = []) {
+    const isFactObj = factOrIndices && typeof factOrIndices === 'object' && !Array.isArray(factOrIndices);
+    const subjectIndices = isFactObj ? factOrIndices.subjectIndices : factOrIndices;
+    const targetEntries = isFactObj ? factOrIndices.targetEntries : null;
+    const summary = isFactObj ? factOrIndices.summary : '';
+
     const jids = [];
-    for (const idx of subjectIndices || []) {
-      const m = batch[idx];
-      if (!m?.userJid) continue;
-      const jid = String(m.userJid);
-      if (!jids.includes(jid)) jids.push(jid);
+    const pushJid = (jid) => {
+      const s = String(jid || '').trim();
+      if (s && s.includes('@') && !jids.includes(s)) jids.push(s);
+    };
+
+    // 1. Prioriza targetEntries se existirem
+    if (Array.isArray(targetEntries) && targetEntries.length) {
+      for (const entry of targetEntries) {
+        if (entry.pId && Array.isArray(participants)) {
+          const match = participants.find((p) => p.pId === entry.pId);
+          if (match?.userJid) {
+            pushJid(match.userJid);
+            continue;
+          }
+        }
+        if (entry.participant?.userJid) {
+          pushJid(entry.participant.userJid);
+          continue;
+        }
+        if (entry.type === 'index') {
+          if (participants[entry.index]?.userJid) {
+            pushJid(participants[entry.index].userJid);
+            continue;
+          }
+          const m = batch[entry.index];
+          if (m?.userJid) pushJid(m.userJid);
+        }
+      }
     }
+
+    // 2. Fallback por subjectIndices
+    if (!jids.length) {
+      for (const idx of subjectIndices || []) {
+        if (participants[idx]?.userJid) {
+          pushJid(participants[idx].userJid);
+          continue;
+        }
+        const m = batch[idx];
+        if (m?.userJid) pushJid(m.userJid);
+      }
+    }
+
+    // 3. Validação Cruzada Autor vs Terceiro Citado no Summary:
+    // Se o fato atribuído tem 1 sujeito, mas o summary menciona claramente OUTRO participante
+    // e NÃO menciona o participante atualmente atribuído (ex: "João disse que Pedro caiu da escada"):
+    if (jids.length === 1 && summary && Array.isArray(participants) && participants.length) {
+      const currentJid = jids[0];
+      const sumNorm = normalizeKey(summary);
+      const currentP = participants.find((p) => p.userJid === currentJid);
+      const currentNameTok = currentP ? normalizeKey(currentP.firstName) : '';
+
+      const authorMentioned =
+        currentNameTok && currentNameTok.length >= 3 && sumNorm.includes(currentNameTok);
+
+      if (!authorMentioned) {
+        const otherMatches = [];
+        for (const p of participants) {
+          if (p.userJid === currentJid) continue;
+          const fnTok = normalizeKey(p.firstName);
+          const nickTok = p.nickname ? normalizeKey(p.nickname) : '';
+          if (fnTok && fnTok.length >= 3) {
+            const reWord = new RegExp(`\\b${escapeRegex(fnTok)}\\b`, 'i');
+            if (reWord.test(sumNorm)) {
+              otherMatches.push(p);
+              continue;
+            }
+          }
+          if (nickTok && nickTok.length >= 3) {
+            const reNick = new RegExp(`\\b${escapeRegex(nickTok)}\\b`, 'i');
+            if (reNick.test(sumNorm)) {
+              otherMatches.push(p);
+            }
+          }
+        }
+        if (otherMatches.length === 1 && otherMatches[0].userJid) {
+          return [otherMatches[0].userJid];
+        }
+      }
+    }
+
     return jids.slice(0, 6);
   }
 
@@ -929,13 +1151,68 @@ export function createGroupMemoryService({
     return blocks;
   }
 
+  function buildParticipantsCatalog(batch = [], scopeKey = '') {
+    const map = new Map();
+    let idx = 0;
+
+    const addParticipant = (jid, nameHint = '') => {
+      if (!jid) return;
+      const cleanJid = String(jid).trim();
+      if (!cleanJid || !cleanJid.includes('@')) return;
+
+      if (map.has(cleanJid)) {
+        const existing = map.get(cleanJid);
+        if (nameHint && (!existing.name || existing.name === '?' || existing.name.includes('@'))) {
+          existing.name = nameHint;
+          existing.firstName = firstName(nameHint);
+        }
+        return;
+      }
+
+      let profNick = '';
+      if (profileService?.getProfile && scopeKey) {
+        try {
+          const prof = profileService.getProfile(cleanJid, scopeKey);
+          if (prof?.nickname) profNick = String(prof.nickname).trim();
+        } catch {
+          // ignore
+        }
+      }
+
+      const disp = nameHint || displayOf(cleanJid);
+      const name = disp && !disp.includes('@') ? disp : (profNick || firstName(cleanJid) || `Participante ${idx}`);
+      const fn = firstName(name);
+
+      const p = {
+        pId: `P${idx}`,
+        index: idx,
+        userJid: cleanJid,
+        name,
+        firstName: fn,
+        nickname: profNick || '',
+      };
+      map.set(cleanJid, p);
+      idx++;
+    };
+
+    for (const m of batch || []) {
+      if (m?.userJid) addParticipant(m.userJid, m.name);
+      if (m?.quotedParticipant) addParticipant(m.quotedParticipant, m.quotedParticipantName);
+      if (Array.isArray(m?.mentionedJids)) {
+        for (const mj of m.mentionedJids) addParticipant(mj);
+      }
+    }
+
+    return Array.from(map.values());
+  }
+
   /**
-   * Render do batch com timestamp relativo e separadores de GAP explícitos.
-   * Cada linha: "[HH:MM] [N] Nome: texto" (sem HH:MM se msg não tem at).
+   * Render do batch com timestamp relativo, identificadores de participante, replies e separadores de GAP.
+   * Cada linha: "[HH:MM] [N] [P0] Nome (em resposta a...): texto"
    * Entre blocos com gap >= 15min: insere linha "--- [GAP: 1h] ---".
-   * batch é reindexado 0..n-1 pra map de subjects.
    */
-  function formatBatchLinesWithContext(batch) {
+  function formatBatchLinesWithContext(batch, participantsCatalog = []) {
+    const jidToPid = new Map((participantsCatalog || []).map((p) => [p.userJid, p.pId]));
     const lines = [];
     let prevAt = null;
     for (let i = 0; i < batch.length; i += 1) {
@@ -944,10 +1221,33 @@ export function createGroupMemoryService({
       if (at && prevAt && at - prevAt >= 15 * 60_000) {
         lines.push(`--- [GAP: ${formatGap(at - prevAt)}] ---`);
       }
+
+      const pid = jidToPid.get(m.userJid) || '';
+      const pTag = pid ? `[${pid}] ` : '';
       const name = String(m.name || firstName(m.userJid) || '?').slice(0, 40);
-      const text = String(m.text || '').slice(0, 800);
+
+      let replyContext = '';
+      if (m.quotedText) {
+        const qPid = jidToPid.get(m.quotedParticipant) || '';
+        const qPidTag = qPid ? `[${qPid}] ` : '';
+        const qWho = m.quotedParticipantName || firstName(m.quotedParticipant) || 'alguém';
+        const qSnippet = String(m.quotedText).replace(/\s+/g, ' ').slice(0, 75);
+        replyContext = ` (em resposta a ${qPidTag}${qWho}: "${qSnippet}")`;
+      }
+
+      let text = String(m.text || '').slice(0, 800);
+      if (Array.isArray(m.mentionedJids) && m.mentionedJids.length && participantsCatalog?.length) {
+        for (const mj of m.mentionedJids) {
+          const matchPart = participantsCatalog.find((p) => p.userJid === mj);
+          const num = String(mj).split('@')[0];
+          if (matchPart && num) {
+            text = text.replace(new RegExp(`@${num}\\b`, 'g'), `@${matchPart.name}`);
+          }
+        }
+      }
+
       const ts = formatHm(at);
-      const head = ts ? `[${ts}] [${i}] ${name}` : `[${i}] ${name}`;
+      const head = ts ? `[${ts}] [${i}] ${pTag}${name}${replyContext}` : `[${i}] ${pTag}${name}${replyContext}`;
       lines.push(`${head}: ${text}`);
       if (at) prevAt = at;
     }
@@ -981,6 +1281,10 @@ export function createGroupMemoryService({
       text: String(m.text || '').slice(0, msgMax),
       at: m.at,
       messageId: m.messageId || '',
+      quotedText: m.quotedText || '',
+      quotedParticipant: m.quotedParticipant || '',
+      quotedParticipantName: m.quotedParticipantName || '',
+      mentionedJids: Array.isArray(m.mentionedJids) ? m.mentionedJids : [],
     }));
     if (!prepared.length) return [];
 
@@ -1009,8 +1313,9 @@ export function createGroupMemoryService({
   }
 
   async function extractFacts(scopeKey, batch, existing, funConfig, o, maxExtract = 2) {
-    // usa versão com timestamps + marcadores de GAP para a LLM detectar thread-breaks
-    const lines = formatBatchLinesWithContext(batch);
+    const participants = buildParticipantsCatalog(batch, scopeKey);
+    // usa versão com timestamps, identificadores de participante, replies e marcadores de GAP
+    const lines = formatBatchLinesWithContext(batch, participants);
     const knownLimit = o.knownFactsInPrompt || 24;
     const maxFactsPrompt = `0 a ${maxExtract}`;
     const known = existing
@@ -1036,7 +1341,19 @@ export function createGroupMemoryService({
     const identityBlock = profileService?.buildIdentityBlock
       ? profileService.buildIdentityBlock(scopeKey, batchUserJids, funConfig)
       : '';
+
+    const participantsList = participants
+      .map((p) => {
+        const nick = p.nickname ? ` (nick: "${p.nickname}")` : '';
+        return `- [${p.pId}] ${p.name}${nick}`;
+      })
+      .join('\n');
+    const participantsBlock = participants.length
+      ? `PARTICIPANTES DO TRECHO (use estes IDs no campo "target"):\n${participantsList}`
+      : '';
+
     const contextBlocks = [
+      participantsBlock,
       personaText ? `Clima atual consolidado (use só como contexto; não reextraia nem contradiga sem evidência):\n${personaText.slice(0, 300)}` : '',
       identityBlock,
     ].filter(Boolean);
@@ -1051,12 +1368,12 @@ export function createGroupMemoryService({
       '',
       'Regras:',
       `1. Extraia apenas fatos engraçados ou úteis (${maxFactsPrompt}).`,
-      '2. Em subjects use OBRIGATORIAMENTE os IDs numéricos das mensagens (ex: 0, 2). Nunca nomes. SEMPRE como array: [4] — nunca 4, nunca [] quando há autor claro.',
-      '3. subjects = índice da mensagem que contém o CONTEÚDO do fato (a fala engraçada/útil), não o índice de quem é o assunto da mensagem.',
-      '4. NÃO invente. Se não souber o sujeito com ID claro, não extraia o fato.',
+      '2. Em "target", indique array com o ID do participante envolvido (ex: ["P0"], ["P1"]) ou seu nome. NUNCA atribua o fato ao autor da mensagem se o fato for sobre outra pessoa citada na conversa! (Exemplo: se [P0] João contou que [P1] Pedro bateu o carro, target é ["P1"], NÃO ["P0"]).',
+      '3. Em "evidence_msg", indique o índice numérico da mensagem [0, 1, 2...] que contém a fala ou evidência.',
+      '4. NÃO invente. Se não souber o sujeito com clareza, não extraia o fato.',
       '5. Palavrão, duplo sentido, flerte ou humor adulto entre participantes não invalidam um fato. Só descarte quando houver sinal de menor de idade, coerção, exploração, assédio direcionado, imagem íntima ou pedido para parar. Nesse caso, não salve detalhes.',
       '6. Para humor adulto permitido, registre a dinâmica/bordão interno sem descrição gráfica nem alegação de ato íntimo como fato.',
-      '7. Use o contexto das mensagens vizinhas pra entender o fato, MAS não conecte mensagens separadas por [GAP: ...].',
+      '7. Use o contexto das mensagens vizinhas e respostas (quotes) pra entender o fato, MAS não conecte mensagens separadas por [GAP: ...].',
       '8. Retorne JSON: {"facts":[...]}',
       '',
       known
@@ -1064,7 +1381,7 @@ export function createGroupMemoryService({
         : 'Sem lore prévia.',
       '',
       'Exemplo de shape:',
-      '{"facts":[{"kind":"epic_fail","summary":"João bateu o carro no poste","subjects":[0],"keywords":["carro","poste"],"score":72}]}',
+      '{"facts":[{"kind":"epic_fail","summary":"Pedro bateu o carro no poste","target":["P1"],"evidence_msg":0,"keywords":["carro","poste"],"score":75}]}',
     ].join('\n');
 
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') {
@@ -1077,10 +1394,11 @@ export function createGroupMemoryService({
         summaryMax: o.summaryMax,
         batch, // passado pra inferência de subject quando LLM mandou vazio
         maxFacts: maxExtract,
+        participants,
       });
       const out = [];
       for (const f of validated) {
-        const jids = mapSubjectsToJids(batch, f.subjectIndices);
+        const jids = mapSubjectsToJids(batch, f, participants);
         if (!jids.length) continue; // sem JID = descarta (anti-alucinação de autoria)
         out.push({
           kind: f.kind,
@@ -1090,6 +1408,7 @@ export function createGroupMemoryService({
           score: f.score,
           signature: f.signature,
           subjectInferred: f.subjectInferred === true,
+          evidenceMsg: f.evidenceMsg,
         });
       }
       return out;
@@ -1449,6 +1768,8 @@ export function createGroupMemoryService({
     findSimilar,
     mapSubjectsToJids,
     packBatchForExtract,
+    formatBatchLinesWithContext,
+    buildParticipantsCatalog,
     _pushRaw,
     _buffers: buffers,
     _personaCache: personaCache,

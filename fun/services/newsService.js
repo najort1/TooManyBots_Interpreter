@@ -108,23 +108,23 @@ export function createNewsService({
     if (!isGroupNewsWindow(now, funConfig)) return { ok: false, reason: 'not-window' };
 
     const timeZone = funConfig.worldTimezone || 'America/Sao_Paulo';
-    const today = dayKeyInTz(now, timeZone);
     const { hour } = clockInTz(now, timeZone);
-    const newsDay = hour === 0 ? dayKeyInTz(now - 2 * 60 * 60_000, timeZone) : today;
+    const targetNow = hour === 0 ? now - 2 * 60 * 60_000 : now;
+    const newsDay = dayKeyInTz(targetNow, timeZone);
     const meta = newsRepository?.getNewsMeta?.(scopeKey);
     if (meta?.lastDailyNewsDay === newsDay) return { ok: false, reason: 'already-today' };
 
-    const edition = await composeEdition(scopeKey, funConfig, now);
+    const edition = await composeEdition(scopeKey, funConfig, targetNow);
     try {
       snapshotRepository?.saveSnapshot?.({
         scopeKey,
         dayKey: newsDay,
         payload: conversationToSnapshotPayload(edition.facts),
-        now,
+        now: targetNow,
       });
       const retentionDays = Math.max(1, Number(funConfig.groupNewsMessageRetentionDays) || 3);
-      journalMessageRepository?.pruneOlderThan?.(scopeKey, now - retentionDays * 24 * 60 * 60_000);
-      newsRepository?.pruneOlderThan?.(scopeKey, now - 3 * 24 * 60 * 60_000);
+      journalMessageRepository?.pruneOlderThan?.(scopeKey, targetNow - retentionDays * 24 * 60 * 60_000);
+      newsRepository?.pruneOlderThan?.(scopeKey, targetNow - 3 * 24 * 60 * 60_000);
     } catch (error) {
       console.warn(`[fun/news] cleanup fail ${String(scopeKey).slice(0, 28)}: ${error?.message || error}`);
     }

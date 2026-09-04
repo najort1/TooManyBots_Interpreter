@@ -18,6 +18,7 @@
     "dashboard:lint": "npm --prefix tmb_dashboard run lint"
   },
   "dependencies": {
+    "@google/genai": "^2.21.0",
     "baileys": "7.0.0-rc14",
     "better-sqlite3": "^12.8.0",
     "inquirer": "^9.2.20",

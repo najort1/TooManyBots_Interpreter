@@ -490,10 +490,14 @@ export function normalizeFunConfig(input) {
       toText(raw.tenorClientKey, DEFAULT_FUN_CONFIG.tenorClientKey) ||
       DEFAULT_FUN_CONFIG.tenorClientKey,
     imageGenEnabled: normalizeBoolean(raw.imageGenEnabled, DEFAULT_FUN_CONFIG.imageGenEnabled),
+    imageGenProvider:
+      toText(raw.imageGenProvider, DEFAULT_FUN_CONFIG.imageGenProvider).toLowerCase() ||
+      DEFAULT_FUN_CONFIG.imageGenProvider,
     imageGenBaseUrl:
       toText(raw.imageGenBaseUrl, DEFAULT_FUN_CONFIG.imageGenBaseUrl) ||
       DEFAULT_FUN_CONFIG.imageGenBaseUrl,
-    imageGenApiKey: toText(raw.imageGenApiKey, DEFAULT_FUN_CONFIG.imageGenApiKey) || '',
+    imageGenApiKey:
+      toText(raw.imageGenApiKey, process.env.GEMINI_API_KEY || DEFAULT_FUN_CONFIG.imageGenApiKey) || '',
     imageGenModel: toText(raw.imageGenModel, DEFAULT_FUN_CONFIG.imageGenModel) || '',
     imageGenDailyLimit: normalizeInt(raw.imageGenDailyLimit, DEFAULT_FUN_CONFIG.imageGenDailyLimit, {
       min: 1,
@@ -508,13 +512,16 @@ export function normalizeFunConfig(input) {
       clamp: true,
     }),
     imageGenSize: toText(raw.imageGenSize, DEFAULT_FUN_CONFIG.imageGenSize) || '',
+    imageGenThinkingLevel:
+      toText(raw.imageGenThinkingLevel, DEFAULT_FUN_CONFIG.imageGenThinkingLevel) ||
+      DEFAULT_FUN_CONFIG.imageGenThinkingLevel,
     imageGenQuality: toText(raw.imageGenQuality, DEFAULT_FUN_CONFIG.imageGenQuality) || '',
     imageGenResponseFormat:
       toText(raw.imageGenResponseFormat, DEFAULT_FUN_CONFIG.imageGenResponseFormat)
         .toLowerCase()
-        .trim() === 'b64_json'
-        ? 'b64_json'
-        : 'url',
+        .trim() === 'url'
+        ? 'url'
+        : 'b64_json',
     imageGenLoreMaxChars: normalizeInt(
       raw.imageGenLoreMaxChars,
       DEFAULT_FUN_CONFIG.imageGenLoreMaxChars,
@@ -1008,6 +1015,16 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    memoryMemberMinFactsQuota: normalizeInt(
+      raw.memoryMemberMinFactsQuota,
+      DEFAULT_FUN_CONFIG.memoryMemberMinFactsQuota,
+      { min: 1, max: 10, rounding: 'floor', clamp: true }
+    ),
+    memoryMemberMinScoreQuota: normalizeInt(
+      raw.memoryMemberMinScoreQuota,
+      DEFAULT_FUN_CONFIG.memoryMemberMinScoreQuota,
+      { min: 70, max: 95, rounding: 'floor', clamp: true }
+    ),
     memorySummaryMaxChars: normalizeInt(
       raw.memorySummaryMaxChars,
       DEFAULT_FUN_CONFIG.memorySummaryMaxChars,
@@ -1506,6 +1523,18 @@ export function saveFunUserConfig(input) {
     reactionUserAgent: normalized.reactionUserAgent,
     tenorApiKey: normalized.tenorApiKey,
     tenorClientKey: normalized.tenorClientKey,
+    imageGenEnabled: normalized.imageGenEnabled,
+    imageGenProvider: normalized.imageGenProvider,
+    imageGenBaseUrl: normalized.imageGenBaseUrl,
+    imageGenApiKey: normalized.imageGenApiKey,
+    imageGenModel: normalized.imageGenModel,
+    imageGenDailyLimit: normalized.imageGenDailyLimit,
+    imageGenTimeoutMs: normalized.imageGenTimeoutMs,
+    imageGenSize: normalized.imageGenSize,
+    imageGenThinkingLevel: normalized.imageGenThinkingLevel,
+    imageGenQuality: normalized.imageGenQuality,
+    imageGenResponseFormat: normalized.imageGenResponseFormat,
+    imageGenLoreMaxChars: normalized.imageGenLoreMaxChars,
     selfHealEnabled: normalized.selfHealEnabled,
     selfHealDryRun: normalized.selfHealDryRun,
     selfHealIntervalMs: normalized.selfHealIntervalMs,

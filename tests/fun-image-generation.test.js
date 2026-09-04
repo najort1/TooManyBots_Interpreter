@@ -36,12 +36,47 @@ function errorResponse(status, body = 'boom') {
   };
 }
 
-function makeService({ fetchImpl, getConfig, groupMemoryService, repository } = {}) {
+function makeMockGeminiClient({
+  imageData = Buffer.from('gemini-image-bytes').toString('base64'),
+  text = 'Olha o desenho gerado',
+  shouldThrow = null,
+} = {}) {
+  return {
+    interactions: {
+      create: async (params) => {
+        if (shouldThrow) throw shouldThrow;
+        return {
+          params,
+          steps: [
+            {
+              type: 'model_output',
+              content: [
+                { type: 'text', text },
+                { type: 'image', data: imageData },
+              ],
+            },
+          ],
+        };
+      },
+    },
+  };
+}
+
+function makeService({ fetchImpl, aiClient, getConfig, groupMemoryService, repository } = {}) {
   const repo = repository || createFunImageGenerationRepository({ getDatabase: getDb });
   return createImageGenerationService({
     repository: repo,
     fetchImpl,
-    getConfig: getConfig || (() => resolveFunConfig({ imageGenDailyLimit: 25 })),
+    aiClient,
+    getConfig:
+      getConfig ||
+      (() =>
+        resolveFunConfig({
+          imageGenDailyLimit: 25,
+          imageGenProvider: 'gemini',
+          imageGenApiKey: 'test-key',
+          imageGenModel: 'models/gemini-3.1-flash-lite-image',
+        })),
     groupMemoryService,
   });
 }
@@ -81,11 +116,40 @@ test('parseFunCommand: gerar e imaginar mapeiam corretamente', () => {
   assert.equal(parseFunCommand('/imagine castelo', '/').command, 'imaginar');
 });
 
-test('imageGenerationService: suporta resposta b64_json', async () => {
+test('imageGenerationService: suporta geracao nativa do Gemini com @google/genai', async () => {
+  const mockAi = makeMockGeminiClient({
+    imageData: Buffer.from('gemini-png-bytes').toString('base64'),
+    text: 'Um gato cibernetico',
+  });
+
+  const service = makeService({
+    aiClient: mockAi,
+  });
+
+  const out = await service.generateImage({
+    scopeKey: uniqueGroup(),
+    userJid: uniqueJid('12'),
+    prompt: 'gato cibernetico',
+    now: Date.UTC(2026, 6, 30, 16, 0, 0),
+  });
+
+  assert.equal(out.ok, true);
+  assert.equal(Buffer.isBuffer(out.buffer), true);
+  assert.equal(out.buffer.toString(), 'gemini-png-bytes');
+  assert.equal(out.text, 'Um gato cibernetico');
+  assert.equal(out.format, 'b64_json');
+});
+
+test('imageGenerationService: suporta fallback resposta OpenAI b64_json via fetchImpl', async () => {
   const pngB64 = Buffer.from('png-bytes-here').toString('base64');
   const service = makeService({
+    getConfig: () =>
+      resolveFunConfig({
+        imageGenProvider: 'openai',
+        imageGenBaseUrl: 'http://127.0.0.1:3300',
+        imageGenResponseFormat: 'b64_json',
+      }),
     fetchImpl: async () => jsonResponse({ data: [{ b64_json: pngB64 }] }),
-    getConfig: () => resolveFunConfig({ imageGenResponseFormat: 'b64_json' }),
   });
 
   const out = await service.generateImage({
@@ -103,16 +167,32 @@ test('imageGenerationService: suporta resposta b64_json', async () => {
 });
 
 test('imageGenerationService: /gerar injeta lore do grupo no prompt final', async () => {
-  let seenPrompt = '';
+  let seenInput = '';
+  const mockAi = {
+    interactions: {
+      create: async (params) => {
+        seenInput = params.input;
+        return {
+          steps: [
+            {
+              type: 'model_output',
+              content: [
+                { type: 'image', data: Buffer.from('img').toString('base64') },
+              ],
+            },
+          ],
+        };
+      },
+    },
+  };
+
   const groupMemoryService = {
     buildLoreContext: () => '<group_lore>fato antigo do grupo</group_lore>',
   };
+
   const service = makeService({
+    aiClient: mockAi,
     groupMemoryService,
-    fetchImpl: async (_url, init = {}) => {
-      seenPrompt = JSON.parse(String(init.body || '{}')).prompt;
-      return jsonResponse({ data: [{ url: 'http://cdn.local/memory.png' }] });
-    },
   });
 
   const out = await service.generateImage({
@@ -125,19 +205,34 @@ test('imageGenerationService: /gerar injeta lore do grupo no prompt final', asyn
   });
 
   assert.equal(out.ok, true);
-  assert.match(seenPrompt, /um robo sambando/);
-  assert.match(seenPrompt, /<group_lore>fato antigo do grupo<\/group_lore>/);
+  assert.match(seenInput, /um robo sambando/);
+  assert.match(seenInput, /<group_lore>fato antigo do grupo<\/group_lore>/);
 });
 
 test('imageGenerationService: /imaginar nao injeta lore', async () => {
-  let seenPrompt = '';
+  let seenInput = '';
+  const mockAi = {
+    interactions: {
+      create: async (params) => {
+        seenInput = params.input;
+        return {
+          steps: [
+            {
+              type: 'model_output',
+              content: [
+                { type: 'image', data: Buffer.from('img').toString('base64') },
+              ],
+            },
+          ],
+        };
+      },
+    },
+  };
+
   const service = makeService({
+    aiClient: mockAi,
     groupMemoryService: {
       buildLoreContext: () => '<group_lore>nao deveria entrar</group_lore>',
-    },
-    fetchImpl: async (_url, init = {}) => {
-      seenPrompt = JSON.parse(String(init.body || '{}')).prompt;
-      return jsonResponse({ data: [{ url: 'http://cdn.local/no-lore.png' }] });
     },
   });
 
@@ -151,11 +246,13 @@ test('imageGenerationService: /imaginar nao injeta lore', async () => {
   });
 
   assert.equal(out.ok, true);
-  assert.equal(seenPrompt, 'cidade futurista');
+  assert.equal(seenInput, 'cidade futurista');
 });
 
 test('imageGenerationService: bloqueia prompt vazio', async () => {
-  const service = makeService({ fetchImpl: async () => jsonResponse({ data: [{ url: 'http://x/y.png' }] }) });
+  const service = makeService({
+    aiClient: makeMockGeminiClient(),
+  });
   const out = await service.generateImage({
     scopeKey: uniqueGroup(),
     userJid: uniqueJid('15'),
@@ -165,9 +262,11 @@ test('imageGenerationService: bloqueia prompt vazio', async () => {
   assert.equal(out.reason, 'empty-prompt');
 });
 
-test('imageGenerationService: falha em HTTP 500 com reason http-500', async () => {
+test('imageGenerationService: mapeia rate-limit 429 para quota-exceeded', async () => {
+  const err = new Error('Resource exhausted / rate-limit exceeded');
+  err.status = 429;
   const service = makeService({
-    fetchImpl: async () => errorResponse(500, 'server exploded'),
+    aiClient: makeMockGeminiClient({ shouldThrow: err }),
   });
 
   const out = await service.generateImage({
@@ -178,13 +277,24 @@ test('imageGenerationService: falha em HTTP 500 com reason http-500', async () =
   });
 
   assert.equal(out.ok, false);
-  assert.equal(out.reason, 'http-500');
-  assert.match(out.error, /server exploded/);
+  assert.equal(out.reason, 'quota-exceeded');
 });
 
-test('imageGenerationService: falha quando resposta nao traz data de imagem', async () => {
+test('imageGenerationService: falha quando resposta do Gemini nao traz imagem', async () => {
+  const mockAi = {
+    interactions: {
+      create: async () => ({
+        steps: [
+          {
+            type: 'model_output',
+            content: [{ type: 'text', text: 'Nao consegui desenhar' }],
+          },
+        ],
+      }),
+    },
+  };
   const service = makeService({
-    fetchImpl: async () => jsonResponse({ data: [] }),
+    aiClient: mockAi,
   });
   const out = await service.generateImage({
     scopeKey: uniqueGroup(),
@@ -196,27 +306,13 @@ test('imageGenerationService: falha quando resposta nao traz data de imagem', as
   assert.equal(out.reason, 'no-image');
 });
 
-test('imageGenerationService: rejeita URL insegura retornada pela API', async () => {
-  const service = makeService({
-    fetchImpl: async () => jsonResponse({ data: [{ url: 'javascript:alert(1)' }] }),
-  });
-  const out = await service.generateImage({
-    scopeKey: uniqueGroup(),
-    userJid: uniqueJid('18'),
-    prompt: 'cachorro de terno',
-    now: Date.UTC(2026, 6, 30, 21, 0, 0),
-  });
-  assert.equal(out.ok, false);
-  assert.equal(out.reason, 'unsafe-url');
-});
-
 test('imageGenerationService: quota global soma grupos diferentes no mesmo dia', async () => {
   const limit = 2;
   const now = Date.UTC(2026, 6, 30, 12, 0, 0);
   const service = makeService({
     repository: makeMemoryRepo(),
+    aiClient: makeMockGeminiClient(),
     getConfig: () => resolveFunConfig({ imageGenDailyLimit: limit }),
-    fetchImpl: async () => jsonResponse({ data: [{ url: 'http://cdn.local/shared.png' }] }),
   });
 
   const groupA = uniqueGroup();
@@ -236,8 +332,8 @@ test('imageGenerationService: quota reseta ao virar o dia em America/Sao_Paulo',
   const limit = 1;
   const service = makeService({
     repository: makeMemoryRepo(),
+    aiClient: makeMockGeminiClient(),
     getConfig: () => resolveFunConfig({ imageGenDailyLimit: limit }),
-    fetchImpl: async () => jsonResponse({ data: [{ url: 'http://cdn.local/reset.png' }] }),
   });
 
   // 2026-07-30 23:59:30 em Sao Paulo ~= 2026-07-31T02:59:30Z
@@ -266,8 +362,8 @@ test('imageGenerationService: quota reseta ao virar o dia em America/Sao_Paulo',
 test('imageGenerationService: getDailyStatus reflete usado e restante', async () => {
   const now = Date.UTC(2026, 7, 1, 15, 0, 0);
   const service = makeService({
+    aiClient: makeMockGeminiClient(),
     getConfig: () => resolveFunConfig({ imageGenDailyLimit: 3 }),
-    fetchImpl: async () => jsonResponse({ data: [{ url: 'http://cdn.local/status.png' }] }),
   });
   await service.generateImage({ scopeKey: uniqueGroup(), userJid: uniqueJid('24'), prompt: '1', now });
   await service.generateImage({ scopeKey: uniqueGroup(), userJid: uniqueJid('25'), prompt: '2', now: now + 1000 });

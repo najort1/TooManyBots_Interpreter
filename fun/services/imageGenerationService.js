@@ -3,14 +3,16 @@
  *
  * Responsabilidades (SRP):
  *  - Montar prompt final (com ou sem injecao de lore do groupMemoryService).
- *  - Chamar POST {baseUrl}/v1/images/generations (OpenAI-compat).
+ *  - Gerar imagem via Google GenAI (@google/genai interactions API) ou OpenAI-compat.
  *  - Validar quota global diaria (25/dia, reset 00h America/Sao_Paulo).
  *  - Registrar cada geracao no repositorio SQLite (fun_image_generations).
- *  - Normalizar resposta (URL ou b64_json) para buffer + url.
+ *  - Normalizar resposta (Buffer ou URL) para buffer + url.
  *
  * Nao acoplado a LLM de chat (openaiChatComplete) — endpoint dedicado de imagens.
  * Nao conhece WhatsApp / Baileys — handler decide como entregar ao grupo.
  */
+
+import { GoogleGenAI } from '@google/genai';
 
 const SAO_PAULO_TZ = 'America/Sao_Paulo';
 
@@ -66,6 +68,7 @@ function clampPrompt(text, maxLen = 4000) {
  * @param {() => object} [deps.getConfig]              resolveFunConfig
  * @param {() => object} [deps.getLogger]
  * @param {typeof fetch} [deps.fetchImpl]              injetavel p/ testes
+ * @param {object} [deps.aiClient]                     injetavel p/ testes do Gemini
  */
 export function createImageGenerationService(deps = {}) {
   const repository = deps.repository;
@@ -75,6 +78,7 @@ export function createImageGenerationService(deps = {}) {
   const getConfig = deps.getConfig || (() => ({}));
   const logger = deps.getLogger?.() || null;
   const fetchImpl = deps.fetchImpl || globalThis.fetch;
+  const injectedAiClient = deps.aiClient || null;
 
   const log = (level, payload, msg) => {
     try {
@@ -104,7 +108,7 @@ export function createImageGenerationService(deps = {}) {
    * via better-sqlite3 (sincrono — bloqueia event loop durante a tx).
    * Devolve { allowed, remaining } antes do INSERT.
    */
-  function tryConsumeQuota({ dateStr, limit, now = Date.now() }) {
+  function tryConsumeQuota({ dateStr, limit }) {
     const used = repository.countByDate(dateStr);
     if (used >= limit) {
       return { allowed: false, reason: 'quota-exceeded', used, limit, remaining: 0 };
@@ -160,13 +164,119 @@ export function createImageGenerationService(deps = {}) {
     return true;
   }
 
-  /* ---------- chamada HTTP ---------- */
+  /* ---------- chamada Gemini API (@google/genai) ---------- */
+
+  async function callGeminiApi(prompt, opts = {}) {
+    const c = cfg();
+    const apiKey = String(c.imageGenApiKey || process.env.GEMINI_API_KEY || '').trim();
+    if (!apiKey && !opts.aiClient && !injectedAiClient) {
+      return { ok: false, reason: 'no-apikey', error: 'Gemini API Key não configurada.' };
+    }
+
+    const ai =
+      opts.aiClient ||
+      injectedAiClient ||
+      new GoogleGenAI({
+        apiKey,
+      });
+
+    const rawModel = String(c.imageGenModel || 'models/gemini-3.1-flash-lite-image').trim();
+    const model = rawModel.startsWith('models/') ? rawModel : `models/${rawModel}`;
+
+    const generationConfig = {
+      temperature: 1,
+      max_output_tokens: 65536,
+      top_p: 0.95,
+      thinking_level: c.imageGenThinkingLevel || 'minimal',
+      image_config: {
+        image_size: c.imageGenSize || '1K',
+      },
+    };
+
+    const timeoutMs = Math.max(1000, Math.floor(Number(c.imageGenTimeoutMs) || 60_000));
+
+    try {
+      const callPromise = ai.interactions.create({
+        model,
+        input: prompt,
+        generation_config: generationConfig,
+        response_modalities: ['image', 'text'],
+      });
+
+      let timeoutHandle;
+      const timeoutPromise = new Promise((_, reject) => {
+        timeoutHandle = setTimeout(() => {
+          const err = new Error(`image-timeout-${timeoutMs}ms`);
+          err.name = 'AbortError';
+          reject(err);
+        }, timeoutMs);
+      });
+
+      const interaction = await Promise.race([callPromise, timeoutPromise]).finally(() => {
+        clearTimeout(timeoutHandle);
+      });
+
+      let imageBuffer = null;
+      let textOutput = '';
+
+      if (interaction?.steps && Array.isArray(interaction.steps)) {
+        for (const step of interaction.steps) {
+          if (step?.type === 'model_output' && Array.isArray(step.content)) {
+            for (const part of step.content) {
+              if (part?.type === 'text' && part.text) {
+                textOutput += part.text;
+              } else if (part?.type === 'image' && part.data) {
+                try {
+                  imageBuffer = Buffer.from(part.data, 'base64');
+                } catch {
+                  /* ignore */
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (!imageBuffer || imageBuffer.length === 0) {
+        return { ok: false, reason: 'no-image', error: 'Nenhuma imagem retornada pelo modelo.' };
+      }
+
+      return {
+        ok: true,
+        url: '',
+        buffer: imageBuffer,
+        text: textOutput.trim(),
+        format: 'b64_json',
+      };
+    } catch (err) {
+      if (err?.name === 'AbortError') {
+        return { ok: false, reason: 'timeout', error: `image-timeout-${timeoutMs}ms` };
+      }
+
+      const errMsg = String(err?.message || '');
+      const errStatus = err?.status || err?.statusCode;
+
+      if (
+        errStatus === 429 ||
+        errMsg.includes('429') ||
+        errMsg.includes('quota') ||
+        errMsg.includes('RESOURCE_EXHAUSTED') ||
+        errMsg.includes('rate-limits')
+      ) {
+        return { ok: false, reason: 'quota-exceeded', error: errMsg };
+      }
+
+      return { ok: false, reason: 'api-error', error: errMsg };
+    }
+  }
+
+  /* ---------- chamada HTTP OpenAI-compat (fallback) ---------- */
 
   /**
    * Executa POST /v1/images/generations.
    * @returns {Promise<{ok:true, url:string, buffer:null} | {ok:true, url:'', buffer:Buffer} | {ok:false, reason, error?}>}
    */
-  async function callImageApi(prompt, opts) {
+  async function callOpenAiImageApi(prompt, opts) {
     const c = cfg();
     const baseUrl = String(c.imageGenBaseUrl || 'http://127.0.0.1:3300').trim();
     if (!baseUrl) return { ok: false, reason: 'no-baseurl' };
@@ -181,7 +291,7 @@ export function createImageGenerationService(deps = {}) {
     if (String(c.imageGenModel || '').trim()) body.model = String(c.imageGenModel).trim();
     if (String(c.imageGenSize || '').trim()) body.size = String(c.imageGenSize).trim();
     if (String(c.imageGenQuality || '').trim()) body.quality = String(c.imageGenQuality).trim();
-    const fmt = String(c.imageGenResponseFormat || 'url').trim().toLowerCase();
+    const fmt = String(c.imageGenResponseFormat || 'b64_json').trim().toLowerCase();
     if (fmt === 'b64_json' || fmt === 'url') body.response_format = fmt;
 
     const headers = { 'Content-Type': 'application/json' };
@@ -233,7 +343,7 @@ export function createImageGenerationService(deps = {}) {
    * Normaliza resposta OpenAI-compat da Images API.
    * Formato: { data: [{ url?, b64_json?, revised_prompt? }] }
    */
-  function extractImage(data, requestedFormat) {
+  function extractImage(data) {
     if (!data || typeof data !== 'object') {
       return { ok: false, reason: 'empty-response' };
     }
@@ -262,6 +372,29 @@ export function createImageGenerationService(deps = {}) {
     return { ok: true, url, buffer: null, format: 'url' };
   }
 
+  async function callImageApi(prompt, opts = {}) {
+    const c = cfg();
+    const provider = String(c.imageGenProvider || '').toLowerCase().trim();
+
+    // Se aiClient for explicitamente passado ou provider for gemini (ou default com chave gemini), usa Gemini
+    if (opts.aiClient || injectedAiClient || provider === 'gemini') {
+      return callGeminiApi(prompt, opts);
+    }
+
+    // Se provider for openai ou houver override de fetchImpl em ambiente sem aiClient
+    if (provider === 'openai' || opts.fetchImpl) {
+      return callOpenAiImageApi(prompt, opts);
+    }
+
+    // Fallback: se apiKey comecar com AIza usa Gemini, senao OpenAI
+    const apiKey = String(c.imageGenApiKey || '').trim();
+    if (apiKey.startsWith('AIza')) {
+      return callGeminiApi(prompt, opts);
+    }
+
+    return callOpenAiImageApi(prompt, opts);
+  }
+
   /* ---------- API publica ---------- */
 
   /**
@@ -275,7 +408,8 @@ export function createImageGenerationService(deps = {}) {
    * @param {boolean} [args.withMemory]     true injeta lore (comando /gerar)
    * @param {number} [args.now]
    * @param {typeof fetch} [args.fetchImpl] override para testes
-   * @returns {Promise<{ok:true, url:string, buffer:Buffer|null, remaining:number, used:number, limit:number, dateStr:string} | {ok:false, reason:string, error?:string, remaining?:number, limit?:number, dateStr?:string}>}
+   * @param {object} [args.aiClient]        override para testes do Gemini
+   * @returns {Promise<{ok:true, url:string, buffer:Buffer|null, text?:string, remaining:number, used:number, limit:number, dateStr:string} | {ok:false, reason:string, error?:string, remaining?:number, limit?:number, dateStr?:string}>}
    */
   async function generateImage({
     scopeKey,
@@ -285,6 +419,7 @@ export function createImageGenerationService(deps = {}) {
     withMemory = false,
     now = Date.now(),
     fetchImpl: overrideFetch,
+    aiClient: overrideAiClient,
   } = {}) {
     const c = cfg();
     if (c.imageGenEnabled === false) {
@@ -318,9 +453,13 @@ export function createImageGenerationService(deps = {}) {
       return { ok: false, reason: 'empty-prompt-after-lore' };
     }
 
-    const apiResult = await callImageApi(finalPrompt, { fetchImpl: overrideFetch });
+    const apiResult = await callImageApi(finalPrompt, {
+      fetchImpl: overrideFetch,
+      aiClient: overrideAiClient,
+    });
+
     if (!apiResult?.ok) {
-      log('warn', { err: apiResult?.reason, scope: scopeKey }, 'imageGen api failed');
+      log('warn', { err: apiResult?.reason, error: apiResult?.error, scope: scopeKey }, 'imageGen api failed');
       return {
         ok: false,
         reason: apiResult?.reason || 'api-error',
@@ -355,6 +494,7 @@ export function createImageGenerationService(deps = {}) {
       ok: true,
       url: apiResult.url,
       buffer: apiResult.buffer,
+      text: apiResult.text || '',
       format: apiResult.format,
       remaining,
       used,

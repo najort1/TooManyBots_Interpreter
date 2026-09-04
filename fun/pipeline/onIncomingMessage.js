@@ -656,6 +656,12 @@ export async function handleFunIncomingMessage(deps, ctx) {
         text,
         messageType,
         messageId,
+        quotedText,
+        quotedParticipant,
+        quotedParticipantName: quotedParticipant && typeof getContactDisplayName === 'function'
+          ? getContactDisplayName(quotedParticipant)
+          : '',
+        mentionedJids: Array.isArray(mentionedJids) ? mentionedJids : [],
         funConfig,
         now: Date.now(),
         isGroup: true,

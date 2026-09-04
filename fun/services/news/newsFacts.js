@@ -45,29 +45,39 @@ function nameFor(message, getContactDisplayName) {
 export function dayBoundsInTimeZone(now = Date.now(), timeZone = 'America/Sao_Paulo') {
   const date = new Date(Number(now) || Date.now());
   try {
-    const parts = new Intl.DateTimeFormat('en-CA', {
+    const dayStr = new Intl.DateTimeFormat('en-CA', {
       timeZone,
       year: 'numeric',
       month: '2-digit',
       day: '2-digit',
-    }).formatToParts(date);
-    const year = Number(parts.find((part) => part.type === 'year')?.value);
-    const month = Number(parts.find((part) => part.type === 'month')?.value);
-    const day = Number(parts.find((part) => part.type === 'day')?.value);
-    const midnightUtc = Date.UTC(year, month - 1, day);
-    const midnightParts = new Intl.DateTimeFormat('en-US', {
+    }).format(date);
+    const [year, month, day] = dayStr.split('-').map(Number);
+    const baseUtc = Date.UTC(year, month - 1, day);
+
+    const parts = new Intl.DateTimeFormat('en-US', {
       timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
       hourCycle: 'h23',
-    }).formatToParts(new Date(midnightUtc));
-    const hour = Number(midnightParts.find((part) => part.type === 'hour')?.value) || 0;
-    const minute = Number(midnightParts.find((part) => part.type === 'minute')?.value) || 0;
-    const second = Number(midnightParts.find((part) => part.type === 'second')?.value) || 0;
-    const offsetMs = (hour * 60 * 60 + minute * 60 + second) * 1000;
-    const start = midnightUtc - offsetMs;
-    return { since: start, until: start + DAY_MS };
+    }).formatToParts(new Date(baseUtc));
+
+    const pYear = Number(parts.find((p) => p.type === 'year')?.value);
+    const pMonth = Number(parts.find((p) => p.type === 'month')?.value);
+    const pDay = Number(parts.find((p) => p.type === 'day')?.value);
+    const pHour = Number(parts.find((p) => p.type === 'hour')?.value) || 0;
+    const pMin = Number(parts.find((p) => p.type === 'minute')?.value) || 0;
+    const pSec = Number(parts.find((p) => p.type === 'second')?.value) || 0;
+
+    const localAsUtc = Date.UTC(pYear, pMonth - 1, pDay, pHour, pMin, pSec);
+    const offsetMs = localAsUtc - baseUtc;
+
+    const since = baseUtc - offsetMs;
+    const until = since + DAY_MS;
+    return { since, until };
   } catch {
     const start = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
     return { since: start, until: start + DAY_MS };

@@ -5,6 +5,7 @@
 import { randomUUID } from 'crypto';
 import { getDb } from '../../db/context.js';
 import { ensureFunSchema as applyFunSchema } from '../schema.js';
+import { tokenSet, jaccard } from '../utils/textSimilarity.js';
 
 const ANALYTICS_SCHEMA = 'analytics';
 
@@ -209,30 +210,160 @@ export function createFunMemoryRepository({ getDatabase = getDb } = {}) {
     return n;
   }
 
-  /** Remove os de menor score até ficar em maxFacts. */
-  function pruneToCap(scopeKey, maxFacts = 50) {
+  /**
+   * Remove fatos em excesso garantindo cota protegida de até `minFactsPerMember` (default 5)
+   * fatos independentes com score >= `minScoreQuota` (default 80) por membro do grupo.
+   */
+  function pruneToCapWithMemberQuota(
+    scopeKey,
+    maxFacts = 120,
+    {
+      minFactsPerMember = 5,
+      minScoreQuota = 80,
+      independenceThreshold = 0.55,
+    } = {}
+  ) {
     ensureSchema();
-    const cap = Math.max(5, Math.floor(Number(maxFacts) || 50));
+    const cap = Math.max(5, Math.floor(Number(maxFacts) || 120));
     const count = countFacts(scopeKey);
     if (count <= cap) return 0;
     const overflow = count - cap;
+
     const rows = getDatabase()
-      .prepare(
-        `SELECT id FROM ${ANALYTICS_SCHEMA}.fun_group_memories
-         WHERE scope_key = ?
-         ORDER BY score ASC, last_seen_at ASC
-         LIMIT ?`
-      )
-      .all(String(scopeKey || ''), overflow);
-    let n = 0;
+      .prepare(`SELECT * FROM ${ANALYTICS_SCHEMA}.fun_group_memories WHERE scope_key = ?`)
+      .all(String(scopeKey || ''));
+    const allFacts = rows.map(mapFact).filter(Boolean);
+    if (allFacts.length <= cap) return 0;
+
+    const quota = Math.max(1, Math.floor(Number(minFactsPerMember) || 5));
+    const scoreThreshold = Math.max(0, Math.min(100, Math.round(Number(minScoreQuota) || 80)));
+    const indepThresh = Number.isFinite(independenceThreshold) ? independenceThreshold : 0.55;
+
+    // 1. Agrupar fatos por membro
+    const memberFacts = new Map();
+    for (const f of allFacts) {
+      for (const subj of f.subjects || []) {
+        const jid = String(subj || '').trim();
+        if (!jid) continue;
+        if (!memberFacts.has(jid)) memberFacts.set(jid, []);
+        memberFacts.get(jid).push(f);
+      }
+    }
+
+    // 2. Identificar fatos protegidos pela cota (até `quota` fatos independentes com score >= scoreThreshold por membro)
+    const protectedFactIds = new Set();
+    const factTokenCache = new Map();
+
+    const getTokens = (fact) => {
+      if (!factTokenCache.has(fact.id)) {
+        const text = `${fact.summary} ${(fact.keywords || []).join(' ')}`;
+        factTokenCache.set(fact.id, tokenSet(text));
+      }
+      return factTokenCache.get(fact.id);
+    };
+
+    for (const [, facts] of memberFacts.entries()) {
+      // Ordena por maior score, mais hits e mais recente
+      const sorted = [...facts].sort((a, b) => {
+        if (b.score !== a.score) return b.score - a.score;
+        if (b.hits !== a.hits) return b.hits - a.hits;
+        return b.lastSeenAt - a.lastSeenAt;
+      });
+
+      const memberProtectedTokens = [];
+      for (const f of sorted) {
+        if (f.score < scoreThreshold) continue;
+        if (memberProtectedTokens.length >= quota) break;
+
+        const fTokens = getTokens(f);
+        // Verifica independência contra os já protegidos para este membro
+        const isDependent = memberProtectedTokens.some(
+          (prevTokens) => jaccard(fTokens, prevTokens) >= indepThresh
+        );
+        if (!isDependent) {
+          memberProtectedTokens.push(fTokens);
+          protectedFactIds.add(f.id);
+        }
+      }
+    }
+
+    // 3. Separar candidatos a evicção (não protegidos)
+    const candidates = allFacts.filter((f) => !protectedFactIds.has(f.id));
+
+    // Mapa de contagem de fatos por membro para penalizar excedentes
+    const memberTotalCounts = new Map();
+    for (const [jid, list] of memberFacts.entries()) {
+      memberTotalCounts.set(jid, list.length);
+    }
+    const maxMemberCountForFact = (fact) => {
+      let maxCount = 0;
+      for (const subj of fact.subjects || []) {
+        const c = memberTotalCounts.get(String(subj || '').trim()) || 0;
+        if (c > maxCount) maxCount = c;
+      }
+      return maxCount;
+    };
+
+    // Ordenação de prioridade de remoção (piores primeiro):
+    // 1º: score < scoreThreshold (os mais fracos primeiro: score ASC, lastSeenAt ASC)
+    // 2º: fatos de membros com mais fatos acumulados (quem tem mais fatos cede vaga primeiro)
+    // 3º: menor score, mais antigo
+    candidates.sort((a, b) => {
+      const aSub80 = a.score < scoreThreshold;
+      const bSub80 = b.score < scoreThreshold;
+      if (aSub80 !== bSub80) return aSub80 ? -1 : 1;
+
+      if (!aSub80) {
+        // Ambos >= scoreThreshold: quem é de membro mais excedente sai antes
+        const countA = maxMemberCountForFact(a);
+        const countB = maxMemberCountForFact(b);
+        if (countB !== countA) return countB - countA;
+      }
+
+      if (a.score !== b.score) return a.score - b.score;
+      return a.lastSeenAt - b.lastSeenAt;
+    });
+
+    // 4. Selecionar IDs a deletar
+    const toDeleteIds = [];
+    for (let i = 0; i < overflow && i < candidates.length; i++) {
+      toDeleteIds.push(candidates[i].id);
+    }
+
+    // Caso de borda extremo: candidatos < overflow (muitos membros qualificados protegidos)
+    if (toDeleteIds.length < overflow) {
+      const remainingNeeded = overflow - toDeleteIds.length;
+      const protectedList = allFacts
+        .filter((f) => protectedFactIds.has(f.id) && !toDeleteIds.includes(f.id))
+        .sort((a, b) => {
+          if (a.score !== b.score) return a.score - b.score;
+          return a.lastSeenAt - b.lastSeenAt;
+        });
+      for (let i = 0; i < remainingNeeded && i < protectedList.length; i++) {
+        toDeleteIds.push(protectedList[i].id);
+      }
+    }
+
+    if (!toDeleteIds.length) return 0;
+
     const del = getDatabase().prepare(
       `DELETE FROM ${ANALYTICS_SCHEMA}.fun_group_memories WHERE id = ?`
     );
-    for (const row of rows) {
-      del.run(row.id);
-      n += 1;
-    }
-    return n;
+    const deleteMany = getDatabase().transaction((ids) => {
+      let count = 0;
+      for (const id of ids) {
+        del.run(id);
+        count++;
+      }
+      return count;
+    });
+
+    return deleteMany(toDeleteIds);
+  }
+
+  /** Remove os de menor score até ficar em maxFacts respeitando cota por membro. */
+  function pruneToCap(scopeKey, maxFacts = 50, quotaOpts = {}) {
+    return pruneToCapWithMemberQuota(scopeKey, maxFacts, quotaOpts);
   }
 
   /** Score decai e remove velhos com score baixo. */
@@ -308,6 +439,7 @@ export function createFunMemoryRepository({ getDatabase = getDb } = {}) {
     deleteByScope,
     deleteBySubject,
     pruneToCap,
+    pruneToCapWithMemberQuota,
     decayAndPurge,
     getPersona,
     setPersona,

@@ -1441,3 +1441,227 @@ test('anti-alucinação: facts vazios / lixo da LLM não poluem banco', async ()
     else process.env.FUN_DISABLE_LIVE_LLM = '1';
   }
 });
+
+/* ——— Cota por Membro (Cap 120) e Extração com Contexto e Desacoplamento Autor/Sujeito ——— */
+
+test('pruneToCapWithMemberQuota: garante até 5 fatos independentes com score >= 80 por membro', () => {
+  const repo = createFunMemoryRepository({ getDatabase: getDb });
+  const scope = uniqueGroup();
+
+  const alpha = uniqueJid('5501'); // Hiper-ativo
+  const beta = uniqueJid('5502');  // 5 fatos bons (score >= 80)
+  const gama = uniqueJid('5503');  // 3 fatos bons (score >= 80)
+  const delta = uniqueJid('5504'); // fatos fracos (score < 80)
+
+  // Beta: 5 fatos independentes com score >= 80
+  const betaFactSummaries = [
+    'Beta derrubou a sopa de legumes no chao da cozinha',
+    'Beta comprou uma bicicleta amarela sem freio nenhum',
+    'Beta perdeu o voo para Fortaleza no feriado passado',
+    'Beta adotou um papagaio que aprendeu a xingar os vizinhos',
+    'Beta ganhou um trofeu de xadrez na escola no ano passado',
+  ];
+  const betaIds = [];
+  for (let i = 0; i < betaFactSummaries.length; i++) {
+    const f = repo.insertFact({
+      scopeKey: scope,
+      kind: 'event',
+      summary: betaFactSummaries[i],
+      subjects: [beta],
+      score: 82 + i * 2, // 82, 84, 86, 88, 90
+    });
+    betaIds.push(f.id);
+  }
+
+  // Gama: 3 fatos independentes com score >= 80
+  const gamaFactSummaries = [
+    'Gama esqueceu o capacete na padaria do bairro',
+    'Gama ganhou cinquenta reais na raspadinha da loterica',
+    'Gama dormiu no onibus e acordou no ponto final da linha',
+  ];
+  const gamaIds = [];
+  for (let i = 0; i < gamaFactSummaries.length; i++) {
+    const f = repo.insertFact({
+      scopeKey: scope,
+      kind: 'event',
+      summary: gamaFactSummaries[i],
+      subjects: [gama],
+      score: 85 + i,
+    });
+    gamaIds.push(f.id);
+  }
+
+  // Delta: 10 fatos fracos (score 60)
+  for (let i = 0; i < 10; i++) {
+    repo.insertFact({
+      scopeKey: scope,
+      kind: 'event',
+      summary: `Delta falou algo generico sem graca numero ${i} no grupo`,
+      subjects: [delta],
+      score: 60,
+    });
+  }
+
+  // Alpha: 110 fatos (scores variados de 70 a 95)
+  for (let i = 0; i < 110; i++) {
+    repo.insertFact({
+      scopeKey: scope,
+      kind: 'running_gag',
+      summary: `Alpha mandou mais uma piada do dia numero ${i} com detalhes`,
+      subjects: [alpha],
+      score: 70 + (i % 25), // 70 a 94
+    });
+  }
+
+  // Total de fatos inseridos: 5 + 3 + 10 + 110 = 128 fatos (> 120 cap)
+  const totalBefore = repo.countFacts(scope);
+  assert.equal(totalBefore, 128);
+
+  // Executa pruning para o cap de 120
+  const pruned = repo.pruneToCapWithMemberQuota(scope, 120, {
+    minFactsPerMember: 5,
+    minScoreQuota: 80,
+  });
+
+  assert.equal(pruned, 8, 'exatamente 8 fatos removidos para bater o cap de 120');
+  assert.equal(repo.countFacts(scope), 120, 'cap de 120 respeitado');
+
+  // Todos os 5 fatos do Beta continuam intactos (protegidos pela cota)
+  for (const bId of betaIds) {
+    const f = repo.getFact(bId);
+    assert.ok(f, `fato ${bId} do membro Beta deve ser protegido pela cota`);
+  }
+
+  // Todos os 3 fatos do Gama continuam intactos (protegidos pela cota)
+  for (const gId of gamaIds) {
+    const f = repo.getFact(gId);
+    assert.ok(f, `fato ${gId} do membro Gama deve ser protegido pela cota`);
+  }
+});
+
+test('pruneToCapWithMemberQuota: cota exige independencia semantica (fatos redundantes nao ocupam multiplos slots)', () => {
+  const repo = createFunMemoryRepository({ getDatabase: getDb });
+  const scope = uniqueGroup();
+
+  const user = uniqueJid('5508');
+  // 2 fatos quase idênticos
+  const f1 = repo.insertFact({
+    scopeKey: scope,
+    kind: 'epic_fail',
+    summary: 'Pedro perdeu a chave do carro no estacionamento do shopping ontem',
+    subjects: [user],
+    score: 95,
+  });
+  const f2 = repo.insertFact({
+    scopeKey: scope,
+    kind: 'epic_fail',
+    summary: 'Pedro perdeu a chave do carro no estacionamento do shopping ontem a noite',
+    subjects: [user],
+    score: 90,
+  });
+
+  // Insere outros fatos para forçar poda com cap baixo
+  for (let i = 0; i < 6; i++) {
+    repo.insertFact({
+      scopeKey: scope,
+      kind: 'event',
+      summary: `Outro fato diferente numero ${i} com bom conteudo relevante`,
+      subjects: [uniqueJid(`559${i}`)],
+      score: 85,
+    });
+  }
+
+  // Total 8 fatos. Poda para 6 com cota 5:
+  // Como f1 e f2 são quase idênticos, apenas f1 é protegido pela cota de independência; f2 pode ser podado.
+  repo.pruneToCapWithMemberQuota(scope, 6, {
+    minFactsPerMember: 5,
+    minScoreQuota: 80,
+    independenceThreshold: 0.55,
+  });
+
+  assert.equal(repo.countFacts(scope), 6);
+  assert.ok(repo.getFact(f1.id), 'f1 de maior score protegido');
+});
+
+test('groupMemoryService: extrai fato com target de terceiro e validação cruzada autor vs sujeito', () => {
+  const carlos = uniqueJid('5511');
+  const pedro = uniqueJid('5512');
+  const participants = [
+    { pId: 'P0', index: 0, userJid: carlos, name: 'Carlos', firstName: 'Carlos' },
+    { pId: 'P1', index: 1, userJid: pedro, name: 'Pedro', firstName: 'Pedro' },
+  ];
+
+  const batch = [
+    { userJid: carlos, name: 'Carlos', text: 'O Pedro bateu a moto no poste ontem kkkk', at: 1 },
+    { userJid: pedro, name: 'Pedro', text: 'Nem me lembra disso mano kkk', at: 2 },
+  ];
+
+  // Caso 1: Modelo usa formato target ["P1"]
+  const jsonWithTarget = JSON.stringify({
+    facts: [
+      {
+        kind: 'epic_fail',
+        summary: 'Pedro bateu a moto no poste ontem a tarde',
+        target: ['P1'],
+        evidence_msg: 0,
+        score: 85,
+      },
+    ],
+  });
+
+  const parsed1 = parseFactsJson(jsonWithTarget, { batchSize: 2, batch, participants });
+  assert.equal(parsed1.length, 1);
+  assert.equal(parsed1[0].evidenceMsg, 0);
+
+  const mem = createGroupMemoryService({ memoryRepository: createFunMemoryRepository({ getDatabase: getDb }) });
+  const jids1 = mem.mapSubjectsToJids(batch, parsed1[0], participants);
+  assert.deepEqual(jids1, [pedro], 'target P1 mapeado para o Pedro (não Carlos)');
+
+  // Caso 2: Modelo confuso colocou subjects: [0] (índice da mensagem de Carlos)
+  // mas o summary cita explicitamente Pedro e não cita Carlos:
+  // A validação cruzada anti-atribuição reatribui para Pedro!
+  const jsonWithAuthorMistake = JSON.stringify({
+    facts: [
+      {
+        kind: 'epic_fail',
+        summary: 'Pedro bateu a moto no poste e ralou o braco',
+        subjects: [0], // Carlos enviou a mensagem 0
+        score: 80,
+      },
+    ],
+  });
+
+  const parsed2 = parseFactsJson(jsonWithAuthorMistake, { batchSize: 2, batch, participants });
+  assert.equal(parsed2.length, 1);
+  const jids2 = mem.mapSubjectsToJids(batch, parsed2[0], participants);
+  assert.deepEqual(jids2, [pedro], 'validação cruzada reatribui para Pedro ao detectar citação clara de Pedro');
+});
+
+test('groupMemoryService: formatBatchLinesWithContext inclui contexto de quotes e menções', () => {
+  const ana = uniqueJid('5521');
+  const beto = uniqueJid('5522');
+  const participants = [
+    { pId: 'P0', index: 0, userJid: ana, name: 'Ana', firstName: 'Ana' },
+    { pId: 'P1', index: 1, userJid: beto, name: 'Beto', firstName: 'Beto' },
+  ];
+
+  const batch = [
+    {
+      userJid: ana,
+      name: 'Ana',
+      text: 'mas você nem pagou a conta ainda kkk',
+      at: Date.UTC(2026, 8, 3, 14, 30, 0),
+      quotedText: 'vou comprar outro videogame',
+      quotedParticipant: beto,
+      quotedParticipantName: 'Beto',
+      mentionedJids: [beto],
+    },
+  ];
+
+  const mem = createGroupMemoryService({ memoryRepository: createFunMemoryRepository({ getDatabase: getDb }) });
+  const formatted = mem.formatBatchLinesWithContext(batch, participants);
+
+  assert.match(formatted, /\[P0\] Ana/);
+  assert.match(formatted, /em resposta a \[P1\] Beto: "vou comprar outro videogame"/);
+  assert.match(formatted, /mas você nem pagou a conta ainda/);
+});

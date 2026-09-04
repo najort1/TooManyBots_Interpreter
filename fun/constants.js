@@ -939,6 +939,10 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // Memória persistente por grupo (lore seletiva)
   memoryEnabled: true,
   memoryMaxFacts: 120,
+  /** Cota mínima de fatos independentes preservados por membro no cap 120. */
+  memoryMemberMinFactsQuota: 5,
+  /** Score mínimo para o fato ser protegido pela cota de membro. */
+  memoryMemberMinScoreQuota: 80,
   memorySummaryMaxChars: 160,
   memoryPersonaMaxChars: 500,
   /** Quantos bullets o "clima" (persona) do grupo deve ter. */
@@ -1063,24 +1067,28 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   dailyChallengeNewsEnabled: true,
   dailyChallengePokemonMaxGen: 386,
   dailyChallengeContentMemory: { pokemon: 30, game: 30, riddle: 50 },
-  // Geração de imagens (/gerar e /imaginar) — proxy /v1/images/generations
+  // Geração de imagens (/gerar e /imaginar) — Gemini ou proxy OpenAI
   imageGenEnabled: true,
-  /** Base URL da proxy de geração de imagens (OpenAI-compat). */
+  /** Provedor: 'gemini' (padrão) ou 'openai' (proxy /v1/images/generations). */
+  imageGenProvider: 'gemini',
+  /** Base URL da proxy de geração de imagens (se provider='openai'). */
   imageGenBaseUrl: 'http://127.0.0.1:3300',
-  /** API key opcional (Bearer). Vazio = sem auth. */
-  imageGenApiKey: '',
-  /** Modelo (enviado no body se não vazio). */
-  imageGenModel: '',
+  /** API key para Gemini ou Bearer da proxy. */
+  imageGenApiKey: 'AIzaSyCa8abDWui05xuIRq31vZjNSPW-rEMO6lk',
+  /** Modelo do Gemini ou da proxy. */
+  imageGenModel: 'models/gemini-3.1-flash-lite-image',
   /** Limite global diário (todos os grupos). Reset 00h America/Sao_Paulo. */
   imageGenDailyLimit: 25,
   /** Timeout por requisição de geração (ms). */
   imageGenTimeoutMs: 60_000,
-  /** Tamanho solicitado (ex.: 1024x1024). Vazio = default do proxy. */
-  imageGenSize: '',
+  /** Tamanho solicitado (ex.: 1K, 2K ou 1024x1024). */
+  imageGenSize: '1K',
+  /** Nível de thinking (ex.: minimal). */
+  imageGenThinkingLevel: 'minimal',
   /** Qualidade (ex.: standard / hd). Vazio = default do proxy. */
   imageGenQuality: '',
-  /** Formato de resposta: 'url' (default) ou 'b64_json'. */
-  imageGenResponseFormat: 'url',
+  /** Formato de resposta: 'b64_json' (default) ou 'url'. */
+  imageGenResponseFormat: 'b64_json',
   /** Teto de chars da lore injetada no /gerar (prefixo de memória). */
   imageGenLoreMaxChars: 1200,
   // Adaptadores modulares de extração (Fase 1-5)

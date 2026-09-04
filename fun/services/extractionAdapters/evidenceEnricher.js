@@ -23,11 +23,20 @@ export function enrichFactsWithEvidence(facts = [], rawBatch = [], scopeKey = ''
     let matchedMessage = null;
     let matchConfidence = 0.5;
 
+    // 0. Se houver evidenceMsg explícito (índice da mensagem de evidência)
+    const evMsgIdx = fact.evidenceMsg ?? fact.evidence_msg;
+    if (typeof evMsgIdx === 'number' && evMsgIdx >= 0 && evMsgIdx < rawBatch.length && rawBatch[evMsgIdx]) {
+      matchedMessage = rawBatch[evMsgIdx];
+      matchConfidence = 0.98;
+    }
+
     // 1. Se subjects contiver índice numérico
-    const primaryIndex = subjects.find((s) => typeof s === 'number' && s >= 0 && s < rawBatch.length);
-    if (primaryIndex != null && rawBatch[primaryIndex]) {
-      matchedMessage = rawBatch[primaryIndex];
-      matchConfidence = 0.95;
+    if (!matchedMessage) {
+      const primaryIndex = subjects.find((s) => typeof s === 'number' && s >= 0 && s < rawBatch.length);
+      if (primaryIndex != null && rawBatch[primaryIndex]) {
+        matchedMessage = rawBatch[primaryIndex];
+        matchConfidence = 0.95;
+      }
     }
 
     // 2. Se subjects já contiver JIDs mapeados
