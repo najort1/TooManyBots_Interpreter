@@ -181,28 +181,38 @@ export async function handleDesafioCommand(ctx) {
     case 'forcar':
     case 'forcarlancar': {
       const typeArg = (args[1] || '').toLowerCase().trim();
-      const TYPE_MAP = { game: 'guess_game', enigma: 'riddle' };
+      const TYPE_MAP = {
+        game: 'guess_game',
+        enigma: 'riddle',
+        filme: 'guess_movie_emoji',
+        cine: 'guess_movie_emoji',
+        movie: 'guess_movie_emoji',
+        quem: 'who_am_i',
+        person: 'who_am_i',
+        math: 'math_puzzle',
+        matematica: 'math_puzzle',
+        anagrama: 'word_scramble',
+        palavra: 'word_scramble',
+      };
+      const validTypes = [
+        'guess_game',
+        'riddle',
+        'pokemon',
+        'guess_movie_emoji',
+        'who_am_i',
+        'math_puzzle',
+        'word_scramble',
+      ];
       const challengeType = TYPE_MAP[typeArg] || typeArg || null;
 
       // Expira qualquer desafio existente silenciosamente
-      if (typeof dailyChallengeService.forceExpireChallenge === 'function') {
-        await dailyChallengeService.forceExpireChallenge({
-          scopeKey,
-          now: Date.now(),
-          reason: 'force-launch',
-        });
-      } else {
-        const existing = dailyChallengeService.getStatus(scopeKey);
-        if (existing.active && existing.challenge) {
-          await dailyChallengeService.processExpired({
-            scopeKey,
-            now: Date.now(),
-            sendText: async () => {},
-          });
-        }
-      }
+      await dailyChallengeService.forceExpireChallenge?.({
+        scopeKey,
+        now: Date.now(),
+        reason: 'force-launch',
+      });
 
-      const finalType = challengeType && ['guess_game', 'riddle', 'pokemon'].includes(challengeType)
+      const finalType = challengeType && validTypes.includes(challengeType)
         ? challengeType
         : dailyChallengeService.pickChallengeType(null);
 
@@ -224,26 +234,15 @@ export async function handleDesafioCommand(ctx) {
     }
 
     case 'expirar': {
-      let result;
-      if (typeof dailyChallengeService.forceExpireChallenge === 'function') {
-        result = await dailyChallengeService.forceExpireChallenge({
-          scopeKey,
-          now: Date.now(),
-          reason: 'forced',
-          announce: true,
-          sendText,
-          sendImage,
-          sharp,
-        });
-      } else {
-        result = await dailyChallengeService.processExpired({
-          scopeKey,
-          now: Date.now(),
-          sendText,
-          sendImage,
-          sharp,
-        });
-      }
+      const result = await dailyChallengeService.forceExpireChallenge?.({
+        scopeKey,
+        now: Date.now(),
+        reason: 'forced',
+        announce: true,
+        sendText,
+        sendImage,
+        sharp,
+      });
       if (result?.ok) {
         await reply('✅ Desafio expirado e resposta anunciada.');
       } else {
@@ -255,24 +254,11 @@ export async function handleDesafioCommand(ctx) {
     case 'reiniciar':
     case 'resetar': {
       // Expira existente silenciosamente
-      if (typeof dailyChallengeService.forceExpireChallenge === 'function') {
-        await dailyChallengeService.forceExpireChallenge({
-          scopeKey,
-          now: Date.now(),
-          reason: 'restart',
-        });
-      } else {
-        const existing = dailyChallengeService.getStatus(scopeKey);
-        if (existing.active && existing.challenge) {
-          await dailyChallengeService.processExpired({
-            scopeKey,
-            now: Date.now(),
-            sendText: async () => {},
-            sendImage,
-            sharp,
-          });
-        }
-      }
+      await dailyChallengeService.forceExpireChallenge?.({
+        scopeKey,
+        now: Date.now(),
+        reason: 'restart',
+      });
 
       const type = dailyChallengeService.pickChallengeType(null);
       const result = await dailyChallengeService.launchChallenge({
@@ -300,7 +286,7 @@ export async function handleDesafioCommand(ctx) {
         '',
         '`/desafio status` — Status do desafio atual',
         '`/desafio forcar [tipo]` — Força lançamento',
-        '  Tipos: `game`, `riddle`, `pokemon` (opcional)',
+        '  Tipos: `game`, `riddle`, `pokemon`, `filme`, `quem`, `math`, `anagrama`',
         '`/desafio expirar` — Força expiração',
         '`/desafio reiniciar` — Expira + lança novo',
         '',

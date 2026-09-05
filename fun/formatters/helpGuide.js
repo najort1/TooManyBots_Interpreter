@@ -99,6 +99,7 @@ export const HELP_TOPICS = Object.freeze([
   },
   { id: 'midia', title: 'Mídia', aliases: ['midia', 'media', 'fig', 'figurinha', 'sticker', 'gerar', 'imaginar', 'imagem'] },
   { id: 'privado', title: 'Privado', aliases: ['privado', 'dm', 'pv', 'grupo'] },
+  { id: 'admin', title: 'Administração', aliases: ['admin', 'administracao', 'adm', 'mod', 'gestao'] },
 ]);
 
 const TOPIC_BY_ALIAS = (() => {
@@ -125,7 +126,7 @@ function formatIndex(p) {
     `• \`${p}ajuda emprego\` · \`${p}ajuda jogos\``,
     `• \`${p}ajuda cassino\` · \`${p}ajuda zoeira\``,
     `• \`${p}ajuda panelinha\` · \`${p}ajuda midia\``,
-    `• \`${p}ajuda privado\``,
+    `• \`${p}ajuda privado\` · \`${p}ajuda admin\``,
     '',
     '*Atalhos do dia*',
     `\`${p}daily\` · \`${p}saldo\` · \`${p}rank\` · \`${p}mercado\``,
@@ -377,6 +378,27 @@ function topicPrivado(p) {
   ].join('\n');
 }
 
+function topicAdmin(p) {
+  return [
+    '🛡️ *Administração de Grupo*',
+    '_Comandos exclusivos para administradores do grupo._',
+    '',
+    '*Gestão de Membros*',
+    `\`${p}ban @user\` (ou \`${p}kick\`) — remove membro`,
+    `\`${p}promover @user\` (ou \`${p}promote\`) — dá admin`,
+    `\`${p}rebaixar @user\` (ou \`${p}demote\`) — remove admin`,
+    `\`${p}add 551199999999\` — adiciona número ao grupo`,
+    '',
+    '*Controle de Mensagens e Configurações*',
+    `\`${p}fechar\` (ou \`${p}close\`) — só admins enviam mensagens`,
+    `\`${p}abrir\` (ou \`${p}open\`) — todos podem enviar mensagens`,
+    `\`${p}trancar\` (ou \`${p}lock\`) — só admins alteram dados do grupo`,
+    `\`${p}destrancar\` (ou \`${p}unlock\`) — todos alteram dados do grupo`,
+    '',
+    `_Voltar: \`${p}ajuda\`_`,
+  ].join('\n');
+}
+
 const RENDERERS = Object.freeze({
   basico: topicBasico,
   economia: topicEconomia,
@@ -389,6 +411,7 @@ const RENDERERS = Object.freeze({
   faccoes: topicFaccoes,
   midia: topicMidia,
   privado: topicPrivado,
+  admin: topicAdmin,
 });
 
 function renderTopic(id, p, nsfwPermitted) {

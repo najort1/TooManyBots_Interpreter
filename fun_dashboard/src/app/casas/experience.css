@@ -1,0 +1,52 @@
+/* Shared HUD safe areas: scene above, conversation left, actions right. */
+.casas-world-page-fullscreen .casas-chat-layer { z-index: 28; }
+.casas-world-page-fullscreen .casas-chat-composer { left: max(.75rem, env(safe-area-inset-left)); bottom: max(.75rem, env(safe-area-inset-bottom)); width: min(26rem, 38vw); transform: none; }
+.casas-world-page-fullscreen .casas-chat-composer input { height: 48px; font-size: 13px; }
+.casas-world-page-fullscreen .casas-chat-composer button { min-width: 48px; background: #7453bf; box-shadow: none; }
+.casas-world-page-fullscreen .casas-chat-composer button:disabled { opacity: .45; cursor: default; }
+.casas-world-page-fullscreen .casas-stage-status { top: 5rem; bottom: auto; left: .75rem; right: auto; width: auto; display: flex; padding: .6rem .75rem; background: #191923e8; border-radius: 10px; gap: 1rem; }
+.casas-world-page-fullscreen .casas-stage-status small { display: none; }
+.casas-world-page-fullscreen .casas-stage-hint { display: none; }
+.casas-house-tools { position: fixed; right: max(.75rem, env(safe-area-inset-right)); bottom: max(.75rem, env(safe-area-inset-bottom)); z-index: 34; display: grid; gap: 8px; max-width: 58vw; }
+.casas-house-dock, .casas-selection-toolbar { display: flex; align-items: center; padding: 5px; border: 1px solid #ffffff26; border-radius: 12px; background: #191923ed; box-shadow: 0 6px 20px #0003; backdrop-filter: blur(14px); color: #f5f3ff; }
+.casas-house-dock button { color: #ded8ea; height: 48px; min-width: 78px; padding: 0 14px; font-size: 12px; gap: 7px; }
+.casas-house-dock button:first-child { color: #efcf8b; }
+.casas-house-dock button:hover, .casas-selection-toolbar button:hover { background: #ffffff12; color: white; }
+.casas-selection-toolbar { justify-self: end; gap: 6px; }
+.casas-selection-toolbar > span { padding: 0 10px; font-size: 12px; max-width: 190px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.casas-selection-toolbar button { color: #e4deef; font-size: 12px; height: 40px; }
+.casas-house-exit { position: absolute; z-index: 25; left: max(.75rem, env(safe-area-inset-left)); bottom: 4.8rem; display: flex; align-items: center; gap: 6px; min-height: 40px; padding: 0 12px; color: #ece7f6; border: 1px solid #ffffff26; border-radius: 8px; background: #191923ed; font-size: 12px; cursor: pointer; }
+.casas-house-hint { position: absolute; left: max(.75rem, env(safe-area-inset-left)); bottom: 7.9rem; max-width: min(430px, 48vw); padding: 8px 12px; border-radius: 8px; color: #ded7eb; background: #191923df; font-size: 12px; pointer-events: none; }
+.casas-voice-controls { position: absolute; z-index: 30; right: .75rem; top: 5rem; display: flex; align-items: center; gap: 10px; max-width: min(25rem, 42vw); padding: 5px 6px 5px 12px; border: 1px solid #ffffff26; border-radius: 10px; color: #d3cadf; background: #191923ed; font-size: 12px; }
+.casas-voice-controls > button { display: flex; align-items: center; gap: 6px; min-height: 38px; }
+.casas-connection { display: inline-flex; align-items: center; gap: 5px; }
+.casas-connection::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: #e4b962; }
+.casas-connection[data-state=online]::before { background: #79d5a5; }
+.casas-connection[data-state=offline]::before { background: #ed8c98; }
+.casas-voice-error { position: absolute; top: calc(100% + 6px); right: 0; width: 260px; border-radius: 8px; background: #45222fed; color: #ffd7df; padding: 10px; }
+.casas-world-page-fullscreen .casas-game-shell > .casas-toast { z-index: 60; top: 9rem; max-width: min(28rem, calc(100vw - 2rem)); }
+.casas-world-page-fullscreen .casas-nav-button > svg { width: 19px; height: 19px; }
+.casas-world-page-fullscreen button:focus-visible, .casas-world-page-fullscreen a:focus-visible { outline: 2px solid #c4a5ff; outline-offset: 3px; }
+.casas-world-page-fullscreen .casas-visit-panel { bottom: 5rem; max-height: calc(100dvh - 10rem); overflow-y: auto; }
+@media (max-width: 1100px) {
+  .casas-house-dock button { min-width: 66px; padding: 0 10px; flex-direction: column; gap: 3px; font-size: 10px; }
+  .casas-voice-controls { top: 8.6rem; }
+  .casas-world-page-fullscreen .casas-topbar { gap: 8px; }
+  .casas-world-page-fullscreen .casas-topbar-actions { gap: 5px; }
+}
+@media (orientation: landscape) and (max-height: 500px) {
+  .casas-world-page-fullscreen .casas-heading { display: none; }
+  .casas-world-page-fullscreen .casas-stage-status { top: 4rem; font-size: 10px; padding: 7px 10px; gap: 10px; }
+  .casas-world-page-fullscreen .casas-stage-status b { font-size: 10px; }
+  .casas-house-dock button { min-width: 60px; height: 42px; padding: 0 8px; }
+  .casas-world-page-fullscreen .casas-chat-composer { width: min(280px, 35vw); }
+  .casas-world-page-fullscreen .casas-chat-composer input { height: 46px; font-size: 12px; }
+  .casas-chat-composer button span { display: none; }
+  .casas-house-hint { display: none; }
+  .casas-house-exit { bottom: 4.6rem; }
+  .casas-voice-controls { top: 8rem; font-size: 10px; }
+  .casas-world-page-fullscreen .casas-visit-panel { display: block; width: 310px; left: auto; right: .75rem; bottom: 4.8rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .casas-house-tools button { transition: none; }
+}

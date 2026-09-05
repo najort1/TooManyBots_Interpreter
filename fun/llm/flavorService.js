@@ -1604,16 +1604,19 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
     const safeFallback = fallback(key, vars);
 
     if (!isEnabled(cfg)) {
+      setLastProvider('template', scopeKey);
       return safeFallback;
     }
 
-    const budgetMs = Math.max(
-      8_000,
-      Math.min(
-        90_000,
-        Math.floor(Number(cfg.assaultStoryTimeoutMs) || Number(cfg.flavorTimeoutMs) || 45_000)
-      )
-    );
+    const budgetMs = Number(cfg._forceBudgetMs) > 0
+      ? Number(cfg._forceBudgetMs)
+      : Math.max(
+          8_000,
+          Math.min(
+            90_000,
+            Math.floor(Number(cfg.assaultStoryTimeoutMs) || Number(cfg.flavorTimeoutMs) || 45_000)
+          )
+        );
 
     const cascade = async () => {
       // Zen — 3 retentativas (1 chamada + 3 retries = 4 totais) antes do template mockado.
@@ -1625,7 +1628,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
       });
       if (zenResult.ok) {
         setLastProvider('zen', scopeKey);
-        pushRecent(zenResult.text.slice(0, 120), cfg);
+        pushRecent(zenResult.text.slice(0, 120), cfg, scopeKey);
         recordLlmHit('assault', 'zen', { scenario: key });
         return zenResult.text;
       }

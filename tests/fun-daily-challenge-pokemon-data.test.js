@@ -30,7 +30,7 @@ function createService({ config = {}, generateZen, groupMemoryService = null, ra
   return { service, repository };
 }
 
-test('dailyGuess usa task dedicada, anti-variedade e lore do grupo', async () => {
+test('dailyGuess usa task dedicada e anti-variedade sem vazar ou depender de lore', async () => {
   const calls = [];
   const { service, repository } = createService({
     config: {
@@ -68,7 +68,7 @@ test('dailyGuess usa task dedicada, anti-variedade e lore do grupo', async () =>
   assert.equal(calls[0].jsonMode, true);
   assert.equal(calls[0].jsonOnly, true);
   assert.match(calls[0].system, /corrida/i);
-  assert.match(calls[0].prompt, /grupo curte jogo retrô/i);
+  assert.equal(/grupo curte jogo retrô/i.test(calls[0].prompt), false);
 });
 
 test('Pokemon busca metadados reais, os persiste e usa dailyHint', async () => {

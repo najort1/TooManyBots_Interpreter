@@ -190,3 +190,32 @@ test('PvP assault: attacker sempre usa nome do contact (não JID cru)', async ()
   // attacker também passa pelo mesmo caminho do pipeline.
   assert.equal(capturedVars.attacker, 'Lucas Santos');
 });
+
+test('assaultStory lida com timeout e scopeKey sem ReferenceError', async () => {
+  const { createFlavorService } = await import('../fun/llm/flavorService.js');
+  const scope = '120363390006674987@g.us';
+
+  let timerFired = false;
+  const flavor = createFlavorService({
+    getConfig: () => ({
+      flavorEnabled: true,
+      zenEnabled: true,
+      _forceBudgetMs: 20,
+    }),
+    zenGenerate: () =>
+      new Promise((resolve) => {
+        const t = setTimeout(() => resolve('{"line":"Cena 1\\nCena 2"}'), 500);
+        t.unref?.();
+      }),
+  });
+
+  const story = await flavor.assaultStory('assault_bank_win', {
+    attacker: 'Lucas',
+    target: 'Banco Central',
+    scopeKey: scope,
+  });
+
+  assert.ok(story, 'deve retornar fallback seguro');
+  assert.equal(flavor.lastProvider(scope), 'template-timeout');
+});
+

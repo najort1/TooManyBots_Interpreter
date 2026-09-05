@@ -115,6 +115,15 @@ export const FUN_COMMANDS = Object.freeze({
   // Rolês reais detectados nas conversas do grupo
   ROLES: 'roles',
   REMOVE_ROLE: 'remove_role',
+  // Administração de Grupo (Baileys)
+  GROUP_BAN: 'group_ban',
+  GROUP_PROMOTE: 'group_promote',
+  GROUP_DEMOTE: 'group_demote',
+  GROUP_ADD: 'group_add',
+  GROUP_CLOSE: 'group_close',
+  GROUP_OPEN: 'group_open',
+  GROUP_LOCK: 'group_lock',
+  GROUP_UNLOCK: 'group_unlock',
 });
 
 /**
@@ -511,6 +520,28 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   removerroles: FUN_COMMANDS.REMOVE_ROLE,
   adeus: FUN_COMMANDS.DESPEDIR,
   dispensar: FUN_COMMANDS.DESPEDIR,
+  // Administração de Grupo
+  ban: FUN_COMMANDS.GROUP_BAN,
+  banir: FUN_COMMANDS.GROUP_BAN,
+  kick: FUN_COMMANDS.GROUP_BAN,
+  expulsar: FUN_COMMANDS.GROUP_BAN,
+  remover: FUN_COMMANDS.GROUP_BAN,
+  promover: FUN_COMMANDS.GROUP_PROMOTE,
+  promote: FUN_COMMANDS.GROUP_PROMOTE,
+  admin: FUN_COMMANDS.GROUP_PROMOTE,
+  rebaixar: FUN_COMMANDS.GROUP_DEMOTE,
+  demote: FUN_COMMANDS.GROUP_DEMOTE,
+  add: FUN_COMMANDS.GROUP_ADD,
+  adicionar: FUN_COMMANDS.GROUP_ADD,
+  colocar: FUN_COMMANDS.GROUP_ADD,
+  fechar: FUN_COMMANDS.GROUP_CLOSE,
+  close: FUN_COMMANDS.GROUP_CLOSE,
+  abrir: FUN_COMMANDS.GROUP_OPEN,
+  open: FUN_COMMANDS.GROUP_OPEN,
+  trancar: FUN_COMMANDS.GROUP_LOCK,
+  lock: FUN_COMMANDS.GROUP_LOCK,
+  destrancar: FUN_COMMANDS.GROUP_UNLOCK,
+  unlock: FUN_COMMANDS.GROUP_UNLOCK,
 });
 
 export const ACTION_TYPE = Object.freeze({

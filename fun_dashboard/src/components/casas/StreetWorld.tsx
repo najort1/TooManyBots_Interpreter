@@ -41,12 +41,15 @@ import {
 } from "./streetResources";
 import { createThreePerformanceMonitor } from "@/lib/threePerformanceMonitor";
 import { createAvatarRenderBatch } from "./avatar/instancing";
+import StreetControls, { type StreetCameraView } from "./StreetControls";
+import { GAME_MOVEMENT_KEYS, isGameInputBlocked } from "@/lib/gameInput";
 
 type Props = {
   players: HousePlayer[];
   houses: NeighborhoodHouse[];
   localAvatar?: HousePlayer["avatar"];
   speaking?: boolean;
+  interactionLocked?: boolean;
   onMove: (x: number, y: number, moving: boolean) => void;
   onOpenHouse: (house: NeighborhoodHouse) => void;
   onOpenSoundSystem?: () => void;
@@ -88,13 +91,14 @@ type AvatarBillboard = {
   activeSeat?: Seat;
   pendingSeat?: Seat;
 };
-type CameraView = "follow" | "plaza" | "village" | "wide";
+type CameraView = StreetCameraView;
 type Runtime = {
   syncPlayers: () => void;
   toggleSeat: () => void;
   toggleDance: () => void;
   setCameraView: (view: CameraView) => void;
   changeZoom: (amount: number) => void;
+  resetCamera: () => void;
 };
 
 const WORLD_X = 49;
@@ -1020,18 +1024,20 @@ function disposeObject(root: THREE.Object3D) {
   disposeStreetObject(root);
 }
 
-export default function StreetWorld({ players, houses, localAvatar, speaking = false, onMove, onOpenHouse, onOpenSoundSystem = () => undefined, onSoundSystemScreenRect = () => undefined }: Props) {
+export default function StreetWorld({ players, houses, localAvatar, speaking = false, interactionLocked = false, onMove, onOpenHouse, onOpenSoundSystem = () => undefined, onSoundSystemScreenRect = () => undefined }: Props) {
   const { acquireRenderer, preset, releaseRenderer } = useCasasGraphics();
   const host = useRef<HTMLDivElement>(null);
   const runtime = useRef<Runtime | null>(null);
-  const currentProps = useRef({ players, houses, localAvatar, speaking, onMove, onOpenHouse, onOpenSoundSystem, onSoundSystemScreenRect });
+  const [panelOpen, setPanelOpen] = useState(false);
+  const currentProps = useRef({ players, houses, localAvatar, speaking, onMove, onOpenHouse, onOpenSoundSystem, onSoundSystemScreenRect, interactionLocked: interactionLocked || panelOpen });
   const [hint, setHint] = useState("Clique no chão para andar. Clique num banco ou cadeira para sentar.");
   const [canToggleSeat, setCanToggleSeat] = useState(false);
   const [isDancing, setIsDancing] = useState(false);
+  const [isSeated, setIsSeated] = useState(false);
   const [cameraView, setCameraView] = useState<CameraView>("follow");
   const [cameraZoom, setCameraZoom] = useState(1);
   const [failed, setFailed] = useState(false);
-  currentProps.current = { players, houses, localAvatar, speaking, onMove, onOpenHouse, onOpenSoundSystem, onSoundSystemScreenRect };
+  currentProps.current = { players, houses, localAvatar, speaking, onMove, onOpenHouse, onOpenSoundSystem, onSoundSystemScreenRect, interactionLocked: interactionLocked || panelOpen };
 
   useEffect(() => {
     const mount = host.current;
@@ -1105,6 +1111,13 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
     let savedDrawCalls = initialStaticBatch.savedDrawCalls + initialStaticMerge.savedDrawCalls;
     const staticBatches = initialStaticBatch.batches;
     const local = createAvatar(scene, currentProps.current.localAvatar, "VOCÊ", new THREE.Vector3(0, AVATAR_GROUND_Y, 3));
+    const destinationMarker = new THREE.Mesh(
+      new THREE.RingGeometry(.32, .44, 32),
+      new THREE.MeshBasicMaterial({ color: 0xd5b9ff, transparent: true, opacity: .85, depthWrite: false, side: THREE.DoubleSide }),
+    );
+    destinationMarker.rotation.x = -Math.PI / 2;
+    destinationMarker.visible = false;
+    scene.add(destinationMarker);
     const remotes = new Map<string, AvatarBillboard>();
     const avatarBatch = createAvatarRenderBatch(scene);
     let avatarSavedDrawCalls = 0;
@@ -1242,6 +1255,7 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
       }
       if (local.activeSeat || local.wantsSeated) stand();
       local.pendingSeat = undefined;
+      setIsSeated(false);
       local.target.copy(local.group.position);
       local.dancing = playBlenderAvatarAnimation(local.rig, "Passinho_Jamal_Autoral");
       setIsDancing(local.dancing);
@@ -1258,7 +1272,16 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
       activeCameraZoom = THREE.MathUtils.clamp(activeCameraZoom + amount, .68, 1.5);
       setCameraZoom(activeCameraZoom);
     };
-    runtime.current = { syncPlayers, toggleSeat, toggleDance, setCameraView: setSceneCameraView, changeZoom: changeCameraZoom };
+    const resetCamera = () => {
+      activeCameraZoom = 1;
+      setCameraZoom(1);
+      setSceneCameraView("follow");
+    };
+    runtime.current = { syncPlayers, toggleSeat, toggleDance, setCameraView: setSceneCameraView, changeZoom: changeCameraZoom, resetCamera };
+    setCameraView("follow");
+    setCameraZoom(1);
+    setIsDancing(false);
+    setIsSeated(false);
     syncPlayers();
 
     const resize = () => {
@@ -1281,6 +1304,7 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
     };
     const onPointerDown = (event: PointerEvent) => { pointerDown = { x: event.clientX, y: event.clientY }; };
     const onPointerUp = (event: PointerEvent) => {
+      if (currentProps.current.interactionLocked || event.button !== 0) return;
       if (Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 8) return;
       setPointer(event);
       raycaster.setFromCamera(pointer, camera);
@@ -1310,24 +1334,33 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
         AVATAR_GROUND_Y,
         THREE.MathUtils.clamp(groundHit.point.z, -WORLD_Z + 1, WORLD_Z - 1),
       );
-      setHint("Caminhando pelo bairro 3D…");
+      destinationMarker.position.set(local.target.x, .12, local.target.z);
+      destinationMarker.visible = true;
+      setHint("Indo até o ponto marcado.");
     };
     const onKeyDown = (event: KeyboardEvent) => {
-      if (["INPUT", "TEXTAREA"].includes((event.target as HTMLElement)?.tagName)) return;
-      keys.add(event.code);
-      if (event.code === "KeyE") toggleSeat();
-      if (event.code === "KeyQ") toggleDance();
+      if (isGameInputBlocked(event.target, currentProps.current.interactionLocked) || event.ctrlKey || event.metaKey || event.altKey) return;
+      if (GAME_MOVEMENT_KEYS.has(event.code)) { event.preventDefault(); keys.add(event.code); }
+      if (event.repeat) return;
+      if (event.code === "KeyE") { event.preventDefault(); toggleSeat(); }
+      if (event.code === "KeyQ") { event.preventDefault(); toggleDance(); }
     };
     const onKeyUp = (event: KeyboardEvent) => keys.delete(event.code);
+    const clearKeys = () => keys.clear();
+    const onFocusIn = (event: FocusEvent) => { if (isGameInputBlocked(event.target)) clearKeys(); };
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
     renderer.domElement.addEventListener("pointerup", onPointerUp);
     const onWheel = (event: WheelEvent) => {
+      if (currentProps.current.interactionLocked) return;
       event.preventDefault();
       changeCameraZoom(event.deltaY < 0 ? .1 : -.1);
     };
     renderer.domElement.addEventListener("wheel", onWheel, { passive: false });
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
+    window.addEventListener("blur", clearKeys);
+    window.addEventListener("focusin", onFocusIn);
+    document.addEventListener("visibilitychange", clearKeys);
 
     const updateAvatarPose = (rig: AvatarBillboard, delta: number, elapsed: number) => {
       const speakingNow = rig === local && currentProps.current.speaking;
@@ -1349,12 +1382,18 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
       timer.update();
       const delta = Math.min(timer.getDelta(), 0.05);
       const elapsed = timer.getElapsed();
+      if (currentProps.current.interactionLocked) {
+        keys.clear();
+        local.target.copy(local.group.position);
+        local.pendingSeat = undefined;
+      }
       keyboard.set(
         Number(keys.has("KeyD") || keys.has("ArrowRight")) - Number(keys.has("KeyA") || keys.has("ArrowLeft")),
         0,
         Number(keys.has("KeyS") || keys.has("ArrowDown")) - Number(keys.has("KeyW") || keys.has("ArrowUp")),
       );
       if (keyboard.lengthSq() > 0 && !local.wantsSeated) {
+        destinationMarker.visible = false;
         stopDance();
         if (local.activeSeat) stand();
         keyboard.normalize().multiplyScalar(PLAYER_SPEED * delta);
@@ -1365,6 +1404,7 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
       }
       const distance = local.group.position.distanceTo(local.target);
       local.isMoving = distance > 0.08 && !local.wantsSeated && !local.dancing;
+      if (!local.isMoving) destinationMarker.visible = false;
       if (local.isMoving) {
         movementBefore.copy(local.group.position);
         movementDesired.copy(local.group.position).lerp(local.target, Math.min(1, PLAYER_SPEED * delta / Math.max(distance, 0.001)));
@@ -1382,6 +1422,7 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
         local.activeSeat = local.pendingSeat;
         local.pendingSeat = undefined;
         local.wantsSeated = true;
+        setIsSeated(true);
         local.isMoving = false;
         setHint(`Sentado em ${local.activeSeat.label}. Pressione E ou use Levantar.`);
         setCanToggleSeat(true);
@@ -1518,6 +1559,9 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
       renderer.domElement.removeEventListener("wheel", onWheel);
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("keyup", onKeyUp);
+      window.removeEventListener("blur", clearKeys);
+      window.removeEventListener("focusin", onFocusIn);
+      document.removeEventListener("visibilitychange", clearKeys);
       avatarBatch.dispose();
       disposeObject(scene);
       composer?.dispose();
@@ -1533,25 +1577,11 @@ export default function StreetWorld({ players, houses, localAvatar, speaking = f
     <div className="relative h-full min-h-0 w-full overflow-hidden bg-[#111529]" data-testid="street-world-3d">
       <div ref={host} className="absolute inset-0" />
       {failed ? <div className="absolute inset-0 grid place-items-center p-8 text-center text-sm text-white">Seu navegador não conseguiu iniciar o WebGL necessário para o bairro 3D.</div> : null}
-      <div className="pointer-events-none absolute left-[max(.75rem,env(safe-area-inset-left))] top-[4.5rem] z-20 flex max-w-[calc(100%-1.5rem)] flex-wrap items-center gap-1.5 rounded-2xl border border-white/15 bg-[#181523]/82 p-1.5 shadow-xl backdrop-blur-md">
-        {([ ["follow", "Seguir"], ["plaza", "Praça"], ["village", "Vila"], ["wide", "Mapa"] ] as const).map(([view, label]) => (
-          <button key={view} type="button" aria-pressed={cameraView === view} className={`pointer-events-auto rounded-xl px-3 py-2 text-xs font-black transition ${cameraView === view ? "bg-violet-500 text-white shadow-[0_6px_18px_rgba(139,92,246,.35)]" : "text-white/70 hover:bg-white/10 hover:text-white"}`} onClick={() => runtime.current?.setCameraView(view)}>{label}</button>
-        ))}
-        <span className="mx-1 h-5 w-px bg-white/15" />
-        <button type="button" aria-label="Afastar câmera" className="pointer-events-auto grid h-8 w-8 place-items-center rounded-lg text-lg font-black text-white/80 transition hover:bg-white/10 hover:text-white" onClick={() => runtime.current?.changeZoom(-.1)}>−</button>
-        <span className="min-w-10 text-center text-[11px] font-black tabular-nums text-amber-200">{Math.round(cameraZoom * 100)}%</span>
-        <button type="button" aria-label="Aproximar câmera" className="pointer-events-auto grid h-8 w-8 place-items-center rounded-lg text-lg font-black text-white/80 transition hover:bg-white/10 hover:text-white" onClick={() => runtime.current?.changeZoom(.1)}>+</button>
-      </div>
-      <div className="pointer-events-none absolute inset-x-[max(.75rem,env(safe-area-inset-left))] bottom-[max(.75rem,env(safe-area-inset-bottom))] flex items-end justify-between gap-3">
-        <div className="max-w-[min(620px,72vw)] rounded-2xl border border-white/15 bg-[#181523]/84 px-4 py-3 text-sm text-white shadow-xl backdrop-blur-md">
-          <span className="mr-2 text-amber-300">◆</span>{hint}
-          <span className="ml-2 hidden text-white/55 sm:inline">WASD/setas para andar · E para sentar · roda para zoom</span>
-        </div>
-        <div className="pointer-events-auto flex shrink-0 flex-wrap justify-end gap-2">
-          <button type="button" aria-pressed={isDancing} className={`rounded-xl border px-4 py-3 text-sm font-black shadow-[0_8px_30px_rgba(139,92,246,.28)] transition-transform hover:-translate-y-0.5 active:translate-y-0 ${isDancing ? "border-violet-100/50 bg-violet-500 text-white" : "border-violet-200/35 bg-violet-300 text-[#24192e]"}`} onClick={() => runtime.current?.toggleDance()}>{isDancing ? "Parar dança" : "Dançar"}</button>
-          {canToggleSeat ? <button type="button" className="rounded-xl border border-amber-200/35 bg-amber-300 px-4 py-3 text-sm font-black text-[#24192e] shadow-[0_8px_30px_rgba(246,211,101,.28)] transition-transform hover:-translate-y-0.5 active:translate-y-0" onClick={() => runtime.current?.toggleSeat()}>Sentar / levantar</button> : null}
-        </div>
-      </div>
+      <StreetControls houses={houses} cameraView={cameraView} zoom={cameraZoom} hint={hint}
+        dancing={isDancing} canSit={canToggleSeat} seated={isSeated} disabled={failed || interactionLocked}
+        onCamera={(view) => runtime.current?.setCameraView(view)} onZoom={(amount) => runtime.current?.changeZoom(amount)}
+        onReset={() => runtime.current?.resetCamera()} onDance={() => runtime.current?.toggleDance()}
+        onSit={() => runtime.current?.toggleSeat()} onVisit={onOpenHouse} onPanelChange={setPanelOpen} />
     </div>
   );
 }

@@ -100,6 +100,16 @@ import { handleGerarCommand, handleImaginarCommand } from './handlers/image.js';
 import { handleDespedirCommand } from './handlers/despedir.js';
 import { handleDespedidaRankCommand } from './handlers/despedidaRank.js';
 import { handleRolesCommand, handleRemoveRoleCommand } from './handlers/roles.js';
+import {
+  handleGroupBanCommand,
+  handleGroupPromoteCommand,
+  handleGroupDemoteCommand,
+  handleGroupAddCommand,
+  handleGroupCloseCommand,
+  handleGroupOpenCommand,
+  handleGroupLockCommand,
+  handleGroupUnlockCommand,
+} from './handlers/groupAdmin.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -491,6 +501,22 @@ export async function routeFunCommand(ctx) {
       return handleRolesCommand(base);
     case FUN_COMMANDS.REMOVE_ROLE:
       return handleRemoveRoleCommand(base);
+    case FUN_COMMANDS.GROUP_BAN:
+      return handleGroupBanCommand(base);
+    case FUN_COMMANDS.GROUP_PROMOTE:
+      return handleGroupPromoteCommand(base);
+    case FUN_COMMANDS.GROUP_DEMOTE:
+      return handleGroupDemoteCommand(base);
+    case FUN_COMMANDS.GROUP_ADD:
+      return handleGroupAddCommand(base);
+    case FUN_COMMANDS.GROUP_CLOSE:
+      return handleGroupCloseCommand(base);
+    case FUN_COMMANDS.GROUP_OPEN:
+      return handleGroupOpenCommand(base);
+    case FUN_COMMANDS.GROUP_LOCK:
+      return handleGroupLockCommand(base);
+    case FUN_COMMANDS.GROUP_UNLOCK:
+      return handleGroupUnlockCommand(base);
     default:
       return { handled: false };
   }

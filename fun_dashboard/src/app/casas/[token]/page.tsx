@@ -2,14 +2,15 @@
 
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { ChevronRight, Maximize2, Plus, RotateCw } from "lucide-react";
-import { use, useCallback, useEffect, useMemo, useState } from "react";
+import { House, MapPinned, Maximize2, Mic, MicOff, Plus, RotateCw, UserRound } from "lucide-react";
+import { use, useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { funApi } from "@/lib/api";
 import type { HouseItem, HouseShopItem, HouseView, NeighborhoodHouse, PublicAvatar } from "@/lib/types";
 import MobiInventoryModal from "@/components/casas/MobiInventoryModal";
 import HabboCatalogModal from "@/components/casas/HabboCatalogModal";
 import SpeechBubbleLayer, { type ChatMessage } from "@/components/casas/SpeechBubbleLayer";
 import NeighborhoodSoundSystem from "@/components/casas/NeighborhoodSoundSystem";
+import HouseActionDock from "@/components/casas/HouseActionDock";
 import GraphicsQualityControl from "@/components/casas/GraphicsQualityControl";
 import type { SoundSystemScreenRect } from "@/components/casas/StreetWorld";
 import { soundEngine } from "@/lib/soundEngine";
@@ -79,8 +80,8 @@ function timeAgo(timestamp: number) {
   return new Date(timestamp).toLocaleDateString("pt-BR");
 }
 
-function IconButton({ active, icon, label, onClick }: { active?: boolean; icon: string; label: string; onClick: () => void }) {
-  return <button type="button" onClick={onClick} className={`casas-nav-button ${active ? "casas-nav-button-active" : ""}`}><span aria-hidden="true">{icon}</span><span>{label}</span></button>;
+function IconButton({ active, icon, label, onClick }: { active?: boolean; icon: ReactNode; label: string; onClick: () => void }) {
+  return <button type="button" onClick={onClick} aria-pressed={active} className={`casas-nav-button ${active ? "casas-nav-button-active" : ""}`}><span aria-hidden="true">{icon}</span><span>{label}</span></button>;
 }
 
 export default function CasaPage({ params }: Props) {
@@ -98,6 +99,19 @@ export default function CasaPage({ params }: Props) {
   const [soundSystemScreenRect, setSoundSystemScreenRect] = useState<SoundSystemScreenRect | null>(null);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
+  useEffect(() => {
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setShopOpen(false);
+      setInventoryOpen(false);
+      setMuralOpen(false);
+      setSoundSystemOpen(false);
+      setSelectedItemId(undefined);
+    };
+    window.addEventListener("keydown", onEscape);
+    return () => window.removeEventListener("keydown", onEscape);
+  }, []);
+
   const catalogMap = useMemo(() => {
     const map = new Map<string, HouseShopItem>();
     shop.forEach((item) => map.set(item.id, item));
@@ -108,6 +122,12 @@ export default function CasaPage({ params }: Props) {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 4500);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
+
   const realtimeAvatar = useMemo<PublicAvatar>(() => ownHouse?.avatar || {
     schemaVersion: 2,
     revision: 1,
@@ -316,21 +336,25 @@ export default function CasaPage({ params }: Props) {
           <button type="button" className="casas-coin-pill" onClick={() => void openShop()} aria-label={`${coins} moedas. Abrir catálogo`}>
             <span aria-hidden="true">🪙</span><strong>{coins}</strong><span className="casas-coin-plus" aria-hidden="true"><Plus size={15} strokeWidth={3} /></span>
           </button>
-          <nav className="casas-desktop-nav" aria-label="Navegação de Casas do Beco"><IconButton active={isHome} icon="🏠" label="Casa" onClick={() => { setNeighborView(null); setScreen("home"); }} /><IconButton active={screen === "neighborhood"} icon="🌆" label="Bairro" onClick={() => { setNeighborView(null); setScreen("neighborhood"); }} /><Link href={`/casas/${token}/avatar`} className="casas-nav-button"><span>🙂</span><span>Avatar</span></Link></nav>
+          <nav className="casas-desktop-nav" aria-label="Navegação de Casas do Beco"><IconButton active={isHome} icon={<House size={19} />} label="Casa" onClick={() => { setNeighborView(null); setScreen("home"); }} /><IconButton active={screen === "neighborhood"} icon={<MapPinned size={19} />} label="Bairro" onClick={() => { setNeighborView(null); setScreen("neighborhood"); }} /><Link href={`/casas/${token}/avatar`} className="casas-nav-button"><UserRound size={19} aria-hidden="true" /><span>Avatar</span></Link></nav>
         </div>
       </header>
 
-      {error && <p className="casas-toast casas-toast-error">{error.includes("cooldown") ? "⏳ Aguarde alguns segundos para realizar esta ação novamente." : `⚠ ${error}`}</p>}
-      {notice && <p className="casas-toast">✦ {notice}</p>}
+      {error && <p role="alert" className="casas-toast casas-toast-error">{error.includes("cooldown") ? "⏳ Aguarde alguns segundos para realizar esta ação novamente." : `⚠ ${error}`}</p>}
+      {notice && <p role="status" className="casas-toast">✦ {notice}</p>}
 
-      <div className="absolute right-3 top-24 z-30 flex items-center gap-2 rounded-xl bg-[#241735]/90 px-3 py-2 text-xs text-white shadow-lg">
-        <span aria-live="polite">{voice.enabled ? voice.isSpeaking ? "🎙️ Falando · 🔊 3D" : "🎙️ Voz 3D ativa" : "🔇 Voz desligada"}</span>
-        <button type="button" className="casas-small-button" onClick={() => void (voice.enabled ? voice.stop() : voice.start())}>{voice.enabled ? "Desligar" : "Ativar voz"}</button>
-        {voice.error ? <span className="text-red-200">{voice.error}</span> : null}
+      <div className="casas-voice-controls">
+        <span className="casas-connection" data-state={realtime.connection} role="status">{realtime.connection === "online" ? `${realtime.players.length + 1} aqui` : realtime.connection === "connecting" ? "Conectando…" : "Sem conexão"}</span>
+        <button type="button" className="casas-small-button" aria-pressed={voice.enabled} onClick={() => void (voice.enabled ? voice.stop() : voice.start())}>
+          {voice.enabled ? <Mic size={15} /> : <MicOff size={15} />}{voice.enabled ? voice.isSpeaking ? "Falando" : "Voz ativa" : "Ativar voz"}
+        </button>
+        {voice.error ? <span className="casas-voice-error" role="alert">{voice.error}</span> : null}
       </div>
 
       <SpeechBubbleLayer
         messages={chatMessages}
+        disabled={realtime.connection !== "online"}
+        placeholder={screen === "neighborhood" ? "Conversar no bairro…" : "Conversar nesta casa…"}
         onSendMessage={async (text) => {
           const localMsg: ChatMessage = {
             id: 'local_' + Date.now(),
@@ -349,7 +373,7 @@ export default function CasaPage({ params }: Props) {
           }
         }}
       />
-      {screen === "neighborhood" ? <StreetWorld players={realtime.players} houses={neighborhood} localAvatar={ownHouse?.avatar} speaking={voice.isSpeaking} onMove={publishAvatarMovement} onOpenHouse={(neighbor) => void openNeighbor(neighbor)} onOpenSoundSystem={() => setSoundSystemOpen(true)} onSoundSystemScreenRect={setSoundSystemScreenRect} /> : <HouseGame remotePlayers={realtime.players} localAvatar={ownHouse.avatar} speaking={voice.isSpeaking} onAvatarMove={publishAvatarMovement} mode="house" house={displayedHouse} catalog={shop} neighborhood={neighborhood} owns={isHome} selectedItemId={isHome ? selectedItemId : undefined} interactionLocked={busy || !shop.length || shopOpen || inventoryOpen || muralOpen} onExit={leaveScene} onOpenNeighbor={(neighbor) => void openNeighbor(neighbor)} onSelectItem={(item) => { setSelectedItemId(item.id); soundEngine.playRotateMobiSound(); }} onClearSelection={() => setSelectedItemId(undefined)} onMoveItem={(item, x, y) => { soundEngine.playPlaceMobiSound(); return runAction(() => funApi.houses.move(token, { itemId: item.id, x, y, rotation: item.rotation, rotated: item.rotated }), "Móvel reposicionado."); }} />}
+      {screen === "neighborhood" ? <StreetWorld interactionLocked={busy || shopOpen || inventoryOpen || muralOpen || soundSystemOpen} players={realtime.players} houses={neighborhood} localAvatar={ownHouse?.avatar} speaking={voice.isSpeaking} onMove={publishAvatarMovement} onOpenHouse={(neighbor) => void openNeighbor(neighbor)} onOpenSoundSystem={() => setSoundSystemOpen(true)} onSoundSystemScreenRect={setSoundSystemScreenRect} /> : <HouseGame remotePlayers={realtime.players} localAvatar={ownHouse.avatar} speaking={voice.isSpeaking} onAvatarMove={publishAvatarMovement} mode="house" house={displayedHouse} catalog={shop} neighborhood={neighborhood} owns={isHome} selectedItemId={isHome ? selectedItemId : undefined} interactionLocked={busy || !shop.length || shopOpen || inventoryOpen || muralOpen} onExit={leaveScene} onOpenNeighbor={(neighbor) => void openNeighbor(neighbor)} onSelectItem={(item) => { setSelectedItemId(item.id); soundEngine.playRotateMobiSound(); }} onClearSelection={() => setSelectedItemId(undefined)} onMoveItem={(item, x, y) => { soundEngine.playPlaceMobiSound(); return runAction(() => funApi.houses.move(token, { itemId: item.id, x, y, rotation: item.rotation, rotated: item.rotated }), "Móvel reposicionado."); }} />}
 
       {isHome && <div className="casas-stage-status">
         <span className="casas-hud-stat">
@@ -366,46 +390,15 @@ export default function CasaPage({ params }: Props) {
       {isHome && <div className="casas-stage-hint">{selectedItem ? `Selecionado: ${itemNames[selectedItem.itemId] || "Móvel"}` : "Clique em um móvel para decorar"}</div>}
     </section>
 
-    {isHome && <div className="casas-actions-wrapper">
-      <section className="casas-daily-banner" aria-label="Recompensa diária">
-        <div className="casas-daily-info">
-          <span className="casas-daily-icon">🎁</span>
-          <div>
-            <b>Recompensa Diária</b>
-            <p>Colete moedas grátis todos os dias para sua casa.</p>
-          </div>
-        </div>
-        <button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.collect(token), "Recompensa diária coletada!")} className="casas-daily-button">
-          <span>Coletar</span><span aria-hidden="true">🪙</span>
-        </button>
-      </section>
+    {isHome && <HouseActionDock busy={busy}
+      selectedName={selectedItem ? itemNames[selectedItem.itemId] || "Móvel" : undefined}
+      onCollect={() => void runAction(() => funApi.houses.collect(token), "Recompensa diária coletada!")}
+      onInventory={() => setInventoryOpen(true)} onCatalog={() => void openShop()}
+      onSecurity={() => void runAction(() => funApi.houses.upgradeSecurity(token), "Segurança melhorada.")}
+      onMural={() => setMuralOpen(true)} onRotate={() => void rotateSelectedItem()}
+      onSell={() => selectedItem && void runAction(() => funApi.houses.sell(token, selectedItem.id), "Móvel vendido.")}
+      onClear={() => setSelectedItemId(undefined)} />}
 
-      <section className="casas-game-dock-grid">
-        <button type="button" disabled={busy} onClick={() => setInventoryOpen(true)} className="casas-dock-card">
-          <span className="casas-dock-icon">💼</span><span className="casas-dock-copy"><b>Mala de Mobis</b><small>Seus móveis guardados.</small></span><ChevronRight className="casas-dock-arrow" size={17} />
-        </button>
-        <button type="button" disabled={busy} onClick={() => void openShop()} className="casas-dock-card">
-          <span className="casas-dock-icon">📕</span><span className="casas-dock-copy"><b>Catálogo</b><small>Novos móveis e estilos.</small></span><ChevronRight className="casas-dock-arrow" size={17} />
-        </button>
-        <button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.upgradeSecurity(token), "Segurança melhorada.")} className="casas-dock-card">
-          <span className="casas-dock-icon">🛡️</span><span className="casas-dock-copy"><b>Segurança</b><small>Proteção nível {ownHouse.house.securityLevel}.</small></span><ChevronRight className="casas-dock-arrow" size={17} />
-        </button>
-        <button type="button" onClick={() => setMuralOpen(true)} className="casas-dock-card">
-          <span className="casas-dock-icon">📌</span><span className="casas-dock-copy"><b>Mural</b><small>Recados de quem visitou.</small></span><ChevronRight className="casas-dock-arrow" size={17} />
-        </button>
-      </section>
-
-      {selectedItem && (
-        <div className="casas-selected-item-actions">
-          <button type="button" disabled={busy} onClick={() => void rotateSelectedItem()} className="casas-small-button">
-            ↻ Girar Móvel
-          </button>
-          <button type="button" disabled={busy} onClick={() => void runAction(() => funApi.houses.sell(token, selectedItem.id), "Móvel vendido.")} className="casas-small-button casas-rob-button">
-            ◫ Vender Móvel
-          </button>
-        </div>
-      )}
-    </div>}
 
     {screen === "neighborhood" && <section className="casas-context-panel casas-neighborhood-panel"><span className="casas-context-icon">🌆</span><div><p className="casas-kicker">MAPA SOCIAL</p><h2>Escolha uma porta e visite o bairro.</h2><p>Os moradores aparecem com a aparência que salvaram no avatar.</p></div></section>}
 
@@ -413,7 +406,7 @@ export default function CasaPage({ params }: Props) {
 
     <footer className="casas-footer"><span>Casas do Beco</span><i aria-hidden="true" /><span>Seu cantinho no grupo.</span></footer>
 
-    <nav className="casas-mobile-nav" aria-label="Navegação de Casas do Beco"><IconButton active={isHome} icon="🏠" label="Casa" onClick={() => { setNeighborView(null); setScreen("home"); }} /><IconButton active={screen === "neighborhood"} icon="🌆" label="Bairro" onClick={() => { setNeighborView(null); setScreen("neighborhood"); }} /><Link href={`/casas/${token}/avatar`} className="casas-nav-button"><span>🙂</span><span>Avatar</span></Link></nav>
+    <nav className="casas-mobile-nav" aria-label="Navegação de Casas do Beco"><IconButton active={isHome} icon={<House size={19} />} label="Casa" onClick={() => { setNeighborView(null); setScreen("home"); }} /><IconButton active={screen === "neighborhood"} icon={<MapPinned size={19} />} label="Bairro" onClick={() => { setNeighborView(null); setScreen("neighborhood"); }} /><Link href={`/casas/${token}/avatar`} className="casas-nav-button"><UserRound size={19} aria-hidden="true" /><span>Avatar</span></Link></nav>
 
     <section className="casas-orientation-gate" role="dialog" aria-modal="true" aria-label="Gire o celular para jogar">
       <span className="casas-orientation-icon" aria-hidden="true"><RotateCw size={34} /></span>

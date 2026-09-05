@@ -1342,7 +1342,16 @@ export function createFunModule(deps = {}) {
 
   async function launchDailyChallengeForWhitelist(opts = {}) {
     const type = String(opts.type || '').trim();
-    if (!['guess_game', 'riddle', 'pokemon'].includes(type)) {
+    const validTypes = [
+      'guess_game',
+      'riddle',
+      'pokemon',
+      'guess_movie_emoji',
+      'who_am_i',
+      'math_puzzle',
+      'word_scramble',
+    ];
+    if (!validTypes.includes(type)) {
       return { ok: false, reason: 'invalid-type' };
     }
 
@@ -1379,19 +1388,11 @@ export function createFunModule(deps = {}) {
     for (const jid of targets) {
       try {
         const active = dailyChallengeRepository.getActiveChallenge(jid);
-        if (typeof dailyChallengeService.forceExpireChallenge === 'function') {
-          await dailyChallengeService.forceExpireChallenge({
-            scopeKey: jid,
-            now,
-            reason: 'admin-launch',
-          });
-        } else {
-          await dailyChallengeService.processExpired({
-            scopeKey: jid,
-            now,
-            sendText: async () => {},
-          });
-        }
+        await dailyChallengeService.forceExpireChallenge?.({
+          scopeKey: jid,
+          now,
+          reason: 'admin-launch',
+        });
         const challenge = await dailyChallengeService.launchChallenge({
           scopeKey: jid,
           type,

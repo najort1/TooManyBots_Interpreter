@@ -19,12 +19,31 @@
 
 import { RIDDLES } from './data/riddles.js';
 import { FALLBACK_GAMES } from './data/guessGameFallback.js';
+import { FALLBACK_MOVIES } from './data/moviesFallback.js';
+import { FALLBACK_WHO_AM_I } from './data/whoAmIFallback.js';
+import { generateMathPuzzle } from './data/mathPuzzleGenerator.js';
+import { WORDS_POOL, scrambleWord } from './data/wordsFallback.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 
-const CHALLENGE_TYPES = ['guess_game', 'riddle', 'pokemon'];
-const LOCAL_CHALLENGE_TYPES = ['guess_game', 'riddle'];
+const CHALLENGE_TYPES = [
+  'guess_game',
+  'riddle',
+  'guess_movie_emoji',
+  'who_am_i',
+  'math_puzzle',
+  'word_scramble',
+  'pokemon',
+];
+const LOCAL_CHALLENGE_TYPES = [
+  'guess_game',
+  'riddle',
+  'guess_movie_emoji',
+  'who_am_i',
+  'math_puzzle',
+  'word_scramble',
+];
 const MAX_HINTS = 3;
 const HINT_COOLDOWN_DEFAULT_MS = 10 * 60 * 1000;
 const POKEMON_FETCH_TIMEOUT_MS = 5000;
@@ -221,20 +240,6 @@ export function createDailyChallengeService(deps = {}) {
 
   function cfg() {
     return getConfig() || {};
-  }
-
-  function buildGroupLore(scopeKey, { limit = Infinity } = {}) {
-    if (!scopeKey || !groupMemoryService?.buildLoreContext) return '';
-    try {
-      return String(
-        groupMemoryService.buildLoreContext(scopeKey, {
-          limit,
-          funConfig: cfg(),
-        }) || ''
-      ).trim();
-    } catch {
-      return '';
-    }
   }
 
   /* ---------- LLM helpers ---------- */
@@ -495,6 +500,14 @@ export function createDailyChallengeService(deps = {}) {
       payload = await launchRiddle(scopeKey, now);
     } else if (type === 'pokemon') {
       payload = await launchPokemon(scopeKey, now, sendImage, sharp);
+    } else if (type === 'guess_movie_emoji') {
+      payload = await launchGuessMovie(scopeKey, now);
+    } else if (type === 'who_am_i') {
+      payload = await launchWhoAmI(scopeKey, now);
+    } else if (type === 'math_puzzle') {
+      payload = await launchMathPuzzle(scopeKey, now);
+    } else if (type === 'word_scramble') {
+      payload = await launchWordScramble(scopeKey, now);
     } else {
       return { ok: false, reason: 'unknown-type' };
     }
@@ -564,10 +577,6 @@ export function createDailyChallengeService(deps = {}) {
     const diversityTxt = diversity.length
       ? `\nGêneros/plataformas reconhecidos entre os recentes: ${diversity.join(', ')}. Escolha outro universo quando possível.\n`
       : '';
-    /* O corte por chars era menor que só o cabeçalho fixo das regras e mutilava
-       o Clima/fatos (ex.: "Clima: • Ga"). Sem slice: o limite de fatos via limit já
-       segura o tamanho; nunca cortar no meio de palavra. */
-    const lore = buildGroupLore(scopeKey, { limit: Infinity });
     const system =
       'Voce e um curador de jogos para um desafio diário de WhatsApp em português brasileiro. ' +
       'Gere UM jogo (eletrônico, de tabuleiro, indie, retrô, AAA, cult, brasileiro ou nicho). ' +
@@ -585,10 +594,7 @@ export function createDailyChallengeService(deps = {}) {
       '  - NUNCA inclua o nome do jogo nas dicas.' +
       'Responda APENAS no formato JSON:' +
       ' {"game":"Nome","aliases":["a1","a2"],"hints":["h1","h2","h3"]}' + recentTxt + diversityTxt;
-    const user = [
-      'Gere um jogo variado e criativo agora. Evite o óbvio.',
-      lore ? `Clima do grupo para calibrar só o tom das dicas (não revele nem invente fatos):\n${lore}` : '',
-    ].filter(Boolean).join('\n\n');
+    const user = 'Gere um jogo variado e criativo agora. Evite o óbvio.';
     return tryLlmJson('dailyguess', system, user);
   }
 
@@ -605,11 +611,7 @@ export function createDailyChallengeService(deps = {}) {
       'Evite repetir enigmas muito classicos de forma identica; varie o estilo e o objeto. ' +
       'Responda APENAS no formato JSON: ' +
       '{"riddle":"O que e, o que e?...","answers":["resposta1","resposta2"]}' + recentTxt;
-    const lore = buildGroupLore(scopeKey, { limit: Infinity });
-    const user = [
-      'Gere um enigma popular, claro e respondível agora.',
-      lore ? `Clima do grupo para calibrar só o tom (não inclua nomes nem fatos do lore no enigma):\n${lore}` : '',
-    ].filter(Boolean).join('\n\n');
+    const user = 'Gere um enigma popular, claro e respondível agora.';
     return tryLlmJson('dailyguess', system, user);
   }
 
@@ -739,6 +741,231 @@ export function createDailyChallengeService(deps = {}) {
       title: 'DESAFIO DO DIA — ENIGMA',
       header: '🧩',
       instructions: 'Resolva o enigma!',
+    };
+  }
+
+  /* ---------- Cine Emoji (guess_movie_emoji) ---------- */
+
+  async function tryLlmGuessMovie(scopeKey, recentMovies = []) {
+    const recentList = Array.isArray(recentMovies) ? recentMovies.slice(0, 40) : [];
+    const recentTxt = recentList.length
+      ? `\n\nNUNCA repita um filme desta lista de recentes (normalize sem acentos/maiúsculas):\n${recentList.map((m) => `  - ${m}`).join('\n')}\n`
+      : '';
+    const system =
+      'Voce e um curador de cinema para um desafio diário de WhatsApp em português brasileiro. ' +
+      'Gere UM filme ou série muito famoso e reconhecível para adivinhar por emojis. ' +
+      'REGRAS:\n' +
+      '  - O campo "movie" deve conter o título mais popular no Brasil.\n' +
+      '  - O campo "aliases" deve conter 2-4 títulos alternativos (incluindo título original em inglês se houver).\n' +
+      '  - O campo "emojis" deve conter de 4 a 6 emojis que resumam cenas, personagens ou a trama.\n' +
+      '  - O campo "synopsis" deve conter uma frase curta e enigmática sem dizer nomes dos personagens.\n' +
+      '  - O campo "hints" deve ter exatamente 3 dicas: hint1 (década e gênero), hint2 (citação famosa ou ator/diretor), hint3 (forca com tamanho ou curiosidade reveladora).\n' +
+      '  - NUNCA inclua o título nas dicas ou na sinopse.\n' +
+      'Responda APENAS no formato JSON: ' +
+      '{"movie":"Nome","aliases":["a1","a2"],"emojis":"🚢 🧊 💔","synopsis":"Frase...","hints":["h1","h2","h3"]}' + recentTxt;
+    const user = 'Gere um filme clássico ou grande sucesso agora. Seja criativo nos emojis.';
+    return tryLlmJson('dailyguess', system, user);
+  }
+
+  async function launchGuessMovie(scopeKey, now) {
+    const memoryLimit = cfg().dailyChallengeContentMemory?.movie || 40;
+    const recent = repository.getRecentContent(scopeKey, 'movie', memoryLimit);
+    const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
+
+    const llmMovie = await tryLlmGuessMovie(scopeKey, recent);
+    let movie = null;
+    if (llmMovie?.movie) {
+      const filtered = filterGameName(llmMovie.movie);
+      const filteredNorm = normalizeAnswer(filtered);
+      if (!recentSet.has(filteredNorm)) {
+        movie = {
+          movie: filtered,
+          aliases: (llmMovie.aliases || []).map(filterGameName).filter(Boolean),
+          emojis: String(llmMovie.emojis || '🎬 🍿 🎥').trim(),
+          synopsis: String(llmMovie.synopsis || '').trim(),
+          hints: Array.isArray(llmMovie.hints) ? llmMovie.hints.slice(0, MAX_HINTS) : [],
+        };
+      }
+    }
+
+    if (!movie || !movie.movie) {
+      const pick = pickNonRepeating(
+        scopeKey,
+        'movie',
+        FALLBACK_MOVIES.map((m) => ({ ...m, key: m.movie })),
+        memoryLimit
+      );
+      if (!pick) return null;
+      movie = {
+        movie: pick.movie,
+        aliases: pick.aliases || [pick.movie],
+        emojis: pick.emojis || '🎬 🍿 🎥',
+        synopsis: pick.synopsis || '',
+        hints: pick.hints || [],
+      };
+    }
+
+    const aliases = Array.from(
+      new Set([movie.movie, ...(movie.aliases || [])].map(normalizeAnswer).filter(Boolean))
+    );
+    const answer = normalizeAnswer(movie.movie);
+    const data = {
+      movie: movie.movie,
+      aliases,
+      emojis: movie.emojis,
+      synopsis: movie.synopsis,
+      hints: (movie.hints || []).slice(0, MAX_HINTS),
+    };
+
+    return {
+      answer,
+      data,
+      recordContent: () => repository.recordContent(scopeKey, 'movie', answer),
+      kind: 'guess_movie_emoji',
+      title: 'DESAFIO DO DIA — CINE EMOJI',
+      header: '🎬',
+      instructions: 'Adivinhe o filme pelos emojis!',
+    };
+  }
+
+  /* ---------- Quem Sou Eu? (who_am_i) ---------- */
+
+  async function tryLlmWhoAmI(scopeKey, recentPeople = []) {
+    const recentList = Array.isArray(recentPeople) ? recentPeople.slice(0, 40) : [];
+    const recentTxt = recentList.length
+      ? `\n\nNUNCA repita uma personalidade desta lista de recentes (normalize sem acentos/maiúsculas):\n${recentList.map((p) => `  - ${p}`).join('\n')}\n`
+      : '';
+    const system =
+      'Voce e o mestre de um jogo "Quem Sou Eu?" no WhatsApp em português brasileiro. ' +
+      'Gere UMA figura histórica, atleta lendário, cientista renomado, artista ou ícone da cultura popular mundial ou brasileira. ' +
+      'REGRAS:\n' +
+      '  - O campo "name" deve conter o nome principal mais conhecido.\n' +
+      '  - O campo "aliases" deve conter 2-3 formas comuns pelas quais as pessoas chamam.\n' +
+      '  - O campo "intro" deve ser um enigma em 1ª PESSOA ("Eu...") poético e marcante sem falar o nome.\n' +
+      '  - O campo "hints" deve ter exatamente 3 dicas progressivas: hint1 (época/área de atuação), hint2 (maior feito/obra icônica), hint3 (iniciais/local de nascimento/fatos marcantes).\n' +
+      '  - NUNCA inclua o nome da personalidade nas dicas ou no intro.\n' +
+      'Responda APENAS no formato JSON: ' +
+      '{"name":"Nome","aliases":["a1","a2"],"intro":"Em primeira pessoa...","hints":["h1","h2","h3"]}' + recentTxt;
+    const user = 'Gere uma personalidade fascinante e amplamente reconhecida agora.';
+    return tryLlmJson('dailyguess', system, user);
+  }
+
+  async function launchWhoAmI(scopeKey, now) {
+    const memoryLimit = cfg().dailyChallengeContentMemory?.person || 40;
+    const recent = repository.getRecentContent(scopeKey, 'person', memoryLimit);
+    const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
+
+    const llmPerson = await tryLlmWhoAmI(scopeKey, recent);
+    let person = null;
+    if (llmPerson?.name) {
+      const filtered = String(llmPerson.name).trim();
+      const filteredNorm = normalizeAnswer(filtered);
+      if (!recentSet.has(filteredNorm)) {
+        person = {
+          name: filtered,
+          aliases: (llmPerson.aliases || []).map((a) => String(a).trim()).filter(Boolean),
+          intro: String(llmPerson.intro || '').trim(),
+          hints: Array.isArray(llmPerson.hints) ? llmPerson.hints.slice(0, MAX_HINTS) : [],
+        };
+      }
+    }
+
+    if (!person || !person.name) {
+      const pick = pickNonRepeating(
+        scopeKey,
+        'person',
+        FALLBACK_WHO_AM_I.map((p) => ({ ...p, key: p.name })),
+        memoryLimit
+      );
+      if (!pick) return null;
+      person = {
+        name: pick.name,
+        aliases: pick.aliases || [pick.name],
+        intro: pick.intro || '',
+        hints: pick.hints || [],
+      };
+    }
+
+    const aliases = Array.from(
+      new Set([person.name, ...(person.aliases || [])].map(normalizeAnswer).filter(Boolean))
+    );
+    const answer = normalizeAnswer(person.name);
+    const data = {
+      name: person.name,
+      aliases,
+      intro: person.intro,
+      hints: (person.hints || []).slice(0, MAX_HINTS),
+    };
+
+    return {
+      answer,
+      data,
+      recordContent: () => repository.recordContent(scopeKey, 'person', answer),
+      kind: 'who_am_i',
+      title: 'DESAFIO DO DIA — QUEM SOU EU?',
+      header: '👤',
+      instructions: 'Descubra a personalidade misteriosa!',
+    };
+  }
+
+  /* ---------- Enigma Matemático (math_puzzle) ---------- */
+
+  async function launchMathPuzzle(scopeKey, now) {
+    const puzzle = generateMathPuzzle(random);
+    const answer = normalizeAnswer(puzzle.answer);
+    const data = {
+      problemText: puzzle.problemText,
+      hints: puzzle.hints,
+      answer: puzzle.answer,
+    };
+
+    return {
+      answer,
+      data,
+      recordContent: () => {},
+      kind: 'math_puzzle',
+      title: 'DESAFIO DO DIA — EQUAÇÃO LÓGICA',
+      header: '🧮',
+      instructions: 'Resolva a equação e digite o número!',
+    };
+  }
+
+  /* ---------- Anagrama / Palavra Embaralhada (word_scramble) ---------- */
+
+  async function launchWordScramble(scopeKey, now) {
+    const memoryLimit = cfg().dailyChallengeContentMemory?.word || 30;
+    const recent = repository.getRecentContent(scopeKey, 'word', memoryLimit);
+    const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
+
+    const pick = pickNonRepeating(
+      scopeKey,
+      'word',
+      WORDS_POOL.map((w) => ({ ...w, key: w.word })),
+      memoryLimit
+    );
+    if (!pick) return null;
+
+    const scrambled = scrambleWord(pick.word, random);
+    const aliases = Array.from(
+      new Set([pick.word, ...(pick.aliases || [])].map(normalizeAnswer).filter(Boolean))
+    );
+    const answer = normalizeAnswer(pick.word);
+    const data = {
+      word: pick.word,
+      theme: pick.theme,
+      scrambled,
+      aliases,
+      hints: (pick.hints || []).slice(0, MAX_HINTS),
+    };
+
+    return {
+      answer,
+      data,
+      recordContent: () => repository.recordContent(scopeKey, 'word', answer),
+      kind: 'word_scramble',
+      title: 'DESAFIO DO DIA — ANAGRAMA',
+      header: '🔤',
+      instructions: 'Desembaralhe as letras e acerte a palavra!',
     };
   }
 
@@ -972,7 +1199,12 @@ export function createDailyChallengeService(deps = {}) {
     const type = challenge?.challengeType;
     if (type === 'guess_game') return { data, image, title: 'DESAFIO DO DIA — ADIVINHE O JOGO' };
     if (type === 'riddle') return { data, image, title: 'DESAFIO DO DIA — ENIGMA' };
-    return { data, image, title: 'DESAFIO DO DIA — QUEM E ESSE POKEMON?' };
+    if (type === 'pokemon') return { data, image, title: 'DESAFIO DO DIA — QUEM E ESSE POKEMON?' };
+    if (type === 'guess_movie_emoji') return { data, image, title: 'DESAFIO DO DIA — CINE EMOJI' };
+    if (type === 'who_am_i') return { data, image, title: 'DESAFIO DO DIA — QUEM SOU EU?' };
+    if (type === 'math_puzzle') return { data, image, title: 'DESAFIO DO DIA — EQUAÇÃO LÓGICA' };
+    if (type === 'word_scramble') return { data, image, title: 'DESAFIO DO DIA — ANAGRAMA' };
+    return { data, image, title: 'DESAFIO DO DIA' };
   }
 
   function recordPublishedLaunch(challenge, payload, launchedAt) {
@@ -1043,6 +1275,39 @@ export function createDailyChallengeService(deps = {}) {
         `${payload.data?.riddle || ''}\n\n` +
         `⏳ *Tempo:* ${durationMin} min\n🎁 *Recompensa:* surpresa!\n\n` +
         `💬 *Responda:* /responder <palpite>\n💡 *Dica:* /dica\n🔄 *Pular (3 votos):* /trocar desafio`;
+    } else if (type === 'guess_movie_emoji') {
+      const emojis = payload?.data?.emojis || '🎬 🍿 🎥';
+      const synopsis = payload?.data?.synopsis ? `"${payload.data.synopsis}"\n\n` : '';
+      body =
+        `🎬 *${payload.title}*\n\n` +
+        `Enigma: *${emojis}*\n\n` +
+        synopsis +
+        `⏳ *Tempo:* ${durationMin} min\n🎁 *Recompensa:* surpresa!\n\n` +
+        `💬 *Responda:* /responder <filme>\n💡 *Dica:* /dica\n🔄 *Pular (3 votos):* /trocar desafio`;
+    } else if (type === 'who_am_i') {
+      const intro = payload?.data?.intro || 'Quem sou eu?';
+      body =
+        `👤 *${payload.title}*\n\n` +
+        `"${intro}"\n\n` +
+        `⏳ *Tempo:* ${durationMin} min\n🎁 *Recompensa:* surpresa!\n\n` +
+        `💬 *Responda:* /responder <nome>\n💡 *Dica:* /dica\n🔄 *Pular (3 votos):* /trocar desafio`;
+    } else if (type === 'math_puzzle') {
+      const problem = payload?.data?.problemText || '';
+      body =
+        `🧮 *${payload.title}*\n\n` +
+        `${problem}\n\n` +
+        `⏳ *Tempo:* ${durationMin} min\n🎁 *Recompensa:* surpresa!\n\n` +
+        `💬 *Responda:* /responder <número>\n💡 *Dica:* /dica\n🔄 *Pular (3 votos):* /trocar desafio`;
+    } else if (type === 'word_scramble') {
+      const theme = payload?.data?.theme || 'Geral';
+      const scrambled = payload?.data?.scrambled || '';
+      body =
+        `🔤 *${payload.title}*\n\n` +
+        `Tema: *${theme}*\n` +
+        `Letras: *${scrambled}*\n\n` +
+        `Desembaralhe as letras e descubra a palavra!\n\n` +
+        `⏳ *Tempo:* ${durationMin} min\n🎁 *Recompensa:* surpresa!\n\n` +
+        `💬 *Responda:* /responder <palavra>\n💡 *Dica:* /dica\n🔄 *Pular (3 votos):* /trocar desafio`;
     } else {
       const caption =
         `🎮 *${payload.title}*\n\n` +
@@ -1163,6 +1428,18 @@ export function createDailyChallengeService(deps = {}) {
     }
     if (t === 'pokemon') {
       return challenge?.challengeData?.name || challenge?.answer || '';
+    }
+    if (t === 'guess_movie_emoji') {
+      return challenge?.challengeData?.movie || challenge?.answer || '';
+    }
+    if (t === 'who_am_i') {
+      return challenge?.challengeData?.name || challenge?.answer || '';
+    }
+    if (t === 'math_puzzle') {
+      return challenge?.challengeData?.answer || challenge?.answer || '';
+    }
+    if (t === 'word_scramble') {
+      return challenge?.challengeData?.word || challenge?.answer || '';
     }
     return challenge?.answer || '';
   }
@@ -1386,7 +1663,6 @@ export function createDailyChallengeService(deps = {}) {
         '- Responda apenas com a dica, sem prefixos como "Dica:" ou "Resposta:".\n' +
         '- Responda em portugues brasileiro.\n' +
         '- ANTES de responder, verifique mentalmente: minha dica contém a palavra resposta ou um sinonimo obvio? Se sim, reescreva.';
-      const lore = buildGroupLore(challenge.scopeKey, { limit: Infinity });
       const user =
         `Enigma: ${data.riddle || ''}\n` +
         `Resposta correta (para voce saber, NUNCA revele): ${answer}\n` +
@@ -1394,7 +1670,6 @@ export function createDailyChallengeService(deps = {}) {
         (prior.length
           ? `Dicas JA dadas (NAO repita nem use conteudo similar):\n${prior.map((h) => `  - ${h.text}`).join('\n')}\n`
           : 'Nenhuma dica dada ainda.\n') +
-        (lore ? `Clima do grupo para calibrar somente o tom (não revele nomes/fatos):\n${lore}\n` : '') +
         `De a ${hintIndex + 1}a dica:`;
       const llmHint = await llmText(system, user);
       if (llmHint) return llmHint;
@@ -1433,6 +1708,11 @@ export function createDailyChallengeService(deps = {}) {
       const llmHint = await llmText(system, user);
       if (llmHint) return llmHint;
       return 'Observe a silhueta e as cores.';
+    }
+    if (type === 'guess_movie_emoji' || type === 'who_am_i' || type === 'math_puzzle' || type === 'word_scramble') {
+      const hints = Array.isArray(data.hints) ? data.hints : [];
+      if (hints[hintIndex]) return String(hints[hintIndex]);
+      return 'Pense bem nas pistas iniciais!';
     }
     return 'Sem dica disponivel para este desafio.';
   }
