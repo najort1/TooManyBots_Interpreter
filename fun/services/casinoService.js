@@ -97,6 +97,23 @@ export function createCasinoService({
 
   const rouletteHistory = createRouletteHistory({ getDatabase });
 
+  function withDbTransaction(fn) {
+    let db = null;
+    try {
+      if (typeof getDatabase === 'function') db = getDatabase();
+      else if (typeof repository?.getDatabase === 'function') db = repository.getDatabase();
+      else if (typeof casinoRepository?.getDatabase === 'function') db = casinoRepository.getDatabase();
+    } catch {
+      db = null;
+    }
+
+    if (db && typeof db.transaction === 'function') {
+      const tx = db.transaction(fn);
+      return tx();
+    }
+    return fn();
+  }
+
   function stakeBounds(funConfig) {
     return {
       min: Math.max(1, Math.floor(numOr(funConfig.casinoMin, 5))),
@@ -214,70 +231,72 @@ export function createCasinoService({
     if (!choice) return { ok: false, reason: 'missing-choice' };
     if (stake < min || stake > max) return { ok: false, reason: 'invalid-amount', min, max };
 
-    let usedCharm = false;
-    if (effectsRepository) {
-      const charm = effectsRepository.getEffect(userJid, scopeKey, 'roulette_charm', now);
-      if (charm?.charges > 0 && choice.type === 'color') {
-        usedCharm = true;
+    return withDbTransaction(() => {
+      let usedCharm = false;
+      if (effectsRepository) {
+        const charm = effectsRepository.getEffect(userJid, scopeKey, 'roulette_charm', now);
+        if (charm?.charges > 0 && choice.type === 'color') {
+          usedCharm = true;
+        }
       }
-    }
 
-    const debit = debitStake({
-      userJid,
-      scopeKey,
-      stake,
-      game: 'roulette',
-      cooldownMs: numOr(funConfig.rouletteCooldownMs, 15_000),
-      now,
-      reason: 'roulette-bet',
+      const debit = debitStake({
+        userJid,
+        scopeKey,
+        stake,
+        game: 'roulette',
+        cooldownMs: numOr(funConfig.rouletteCooldownMs, 15_000),
+        now,
+        reason: 'roulette-bet',
+      });
+      if (!debit.ok) return debit;
+      if (usedCharm) effectsRepository.consumeCharge(userJid, scopeKey, 'roulette_charm', now);
+
+      const jackpotCut = applyJackpotCut(scopeKey, stake, funConfig, now);
+      const { ball, color } = spinWheel(random);
+
+      const result = determineWin(ball, choice);
+      let { win, payoutMult } = result;
+
+      if (usedCharm && !win && choice.type === 'color' && ball !== 0 && random() < 0.05) {
+        win = true;
+        payoutMult = 2;
+      }
+
+      const laPartageResult = applyLaPartage(ball, choice, stake);
+
+      const happy = happyMult(scopeKey, now);
+      let payout = calculatePayout(stake, win, payoutMult, happy, funConfig, choice);
+
+      if (!win && laPartageResult.applied) {
+        payout = laPartageResult.refund;
+      }
+
+      const coins = finishSolo({ userJid, scopeKey, stake, payout, game: 'roulette', now });
+      const jackpotHit = tryJackpotHit(scopeKey, userJid, funConfig, now);
+
+      rouletteHistory.addResult(scopeKey, ball, color, now);
+
+      return {
+        ok: true,
+        ball,
+        color,
+        choice,
+        win,
+        stake,
+        payout,
+        payoutMult,
+        profit: payout - stake,
+        coins,
+        jackpotCut,
+        jackpotHit,
+        happy,
+        usedCharm,
+        laPartage: laPartageResult.applied,
+        laPartageRefund: laPartageResult.refund,
+        pot: casinoRepository.getJackpot(scopeKey).pot,
+      };
     });
-    if (!debit.ok) return debit;
-    if (usedCharm) effectsRepository.consumeCharge(userJid, scopeKey, 'roulette_charm', now);
-
-    const jackpotCut = applyJackpotCut(scopeKey, stake, funConfig, now);
-    const { ball, color } = spinWheel(random);
-
-    const result = determineWin(ball, choice);
-    let { win, payoutMult } = result;
-
-    if (usedCharm && !win && choice.type === 'color' && ball !== 0 && random() < 0.05) {
-      win = true;
-      payoutMult = 2;
-    }
-
-    const laPartageResult = applyLaPartage(ball, choice, stake);
-
-    const happy = happyMult(scopeKey, now);
-    let payout = calculatePayout(stake, win, payoutMult, happy, funConfig, choice);
-
-    if (!win && laPartageResult.applied) {
-      payout = laPartageResult.refund;
-    }
-
-    const coins = finishSolo({ userJid, scopeKey, stake, payout, game: 'roulette', now });
-    const jackpotHit = tryJackpotHit(scopeKey, userJid, funConfig, now);
-
-    rouletteHistory.addResult(scopeKey, ball, color, now);
-
-    return {
-      ok: true,
-      ball,
-      color,
-      choice,
-      win,
-      stake,
-      payout,
-      payoutMult,
-      profit: payout - stake,
-      coins,
-      jackpotCut,
-      jackpotHit,
-      happy,
-      usedCharm,
-      laPartage: laPartageResult.applied,
-      laPartageRefund: laPartageResult.refund,
-      pot: casinoRepository.getJackpot(scopeKey).pot,
-    };
   }
 
   function playSlot({ userJid, scopeKey, amount, funConfig = {}, now = Date.now() }) {
@@ -286,68 +305,70 @@ export function createCasinoService({
     const stake = Math.floor(Number(amount) || 0);
     if (stake < min || stake > max) return { ok: false, reason: 'invalid-amount', min, max };
 
-    let multBoost = 1;
-    let usedCharm = false;
-    if (effectsRepository) {
-      const charm = effectsRepository.getEffect(userJid, scopeKey, 'slot_charm', now);
-      if (charm?.charges > 0) {
-        multBoost = Number(charm.payload?.payoutMult) || 1.25;
-        usedCharm = true;
+    return withDbTransaction(() => {
+      let multBoost = 1;
+      let usedCharm = false;
+      if (effectsRepository) {
+        const charm = effectsRepository.getEffect(userJid, scopeKey, 'slot_charm', now);
+        if (charm?.charges > 0) {
+          multBoost = Number(charm.payload?.payoutMult) || 1.25;
+          usedCharm = true;
+        }
       }
-    }
 
-    const debit = debitStake({
-      userJid,
-      scopeKey,
-      stake,
-      game: 'slot',
-      cooldownMs: numOr(funConfig.slotCooldownMs, 20_000),
-      now,
-      reason: 'slot-bet',
+      const debit = debitStake({
+        userJid,
+        scopeKey,
+        stake,
+        game: 'slot',
+        cooldownMs: numOr(funConfig.slotCooldownMs, 20_000),
+        now,
+        reason: 'slot-bet',
+      });
+      if (!debit.ok) return debit;
+      if (usedCharm) effectsRepository.consumeCharge(userJid, scopeKey, 'slot_charm', now);
+
+      const jackpotCut = applyJackpotCut(scopeKey, stake, funConfig, now);
+      const reels = [
+        SLOT_REELS[Math.floor(random() * SLOT_REELS.length)],
+        SLOT_REELS[Math.floor(random() * SLOT_REELS.length)],
+        SLOT_REELS[Math.floor(random() * SLOT_REELS.length)],
+      ];
+
+      let baseMult = 0;
+      if (reels[0] === reels[1] && reels[1] === reels[2]) {
+        if (reels[0] === '💎') baseMult = 20;
+        else if (reels[0] === '7️⃣') baseMult = 10;
+        else if (reels[0] === '⭐') baseMult = 5;
+        else if (reels[0] === '🍒') baseMult = 3;
+        else baseMult = 2;
+      } else if (reels.filter(r => r === '💎').length >= 2) {
+        baseMult = 1.5;
+      } else if (reels.filter(r => r === '7️⃣').length >= 2) {
+        baseMult = 1.2;
+      }
+
+      const happy = happyMult(scopeKey, now);
+      const payout = baseMult > 0 ? Math.floor(stake * baseMult * multBoost * happy) : 0;
+      const coins = finishSolo({ userJid, scopeKey, stake, payout, game: 'slot', now });
+      const jackpotHit = tryJackpotHit(scopeKey, userJid, funConfig, now);
+
+      return {
+        ok: true,
+        reels,
+        stake,
+        payout,
+        mult: baseMult,
+        win: payout > 0,
+        profit: payout - stake,
+        coins,
+        jackpotCut,
+        jackpotHit,
+        happy,
+        usedCharm,
+        pot: casinoRepository.getJackpot(scopeKey).pot,
+      };
     });
-    if (!debit.ok) return debit;
-    if (usedCharm) effectsRepository.consumeCharge(userJid, scopeKey, 'slot_charm', now);
-
-    const jackpotCut = applyJackpotCut(scopeKey, stake, funConfig, now);
-    const reels = [
-      SLOT_REELS[Math.floor(random() * SLOT_REELS.length)],
-      SLOT_REELS[Math.floor(random() * SLOT_REELS.length)],
-      SLOT_REELS[Math.floor(random() * SLOT_REELS.length)],
-    ];
-
-    let baseMult = 0;
-    if (reels[0] === reels[1] && reels[1] === reels[2]) {
-      if (reels[0] === '💎') baseMult = 20;
-      else if (reels[0] === '7️⃣') baseMult = 10;
-      else if (reels[0] === '⭐') baseMult = 5;
-      else if (reels[0] === '🍒') baseMult = 3;
-      else baseMult = 2;
-    } else if (reels.filter(r => r === '💎').length >= 2) {
-      baseMult = 1.5;
-    } else if (reels.filter(r => r === '7️⃣').length >= 2) {
-      baseMult = 1.2;
-    }
-
-    const happy = happyMult(scopeKey, now);
-    const payout = baseMult > 0 ? Math.floor(stake * baseMult * multBoost * happy) : 0;
-    const coins = finishSolo({ userJid, scopeKey, stake, payout, game: 'slot', now });
-    const jackpotHit = tryJackpotHit(scopeKey, userJid, funConfig, now);
-
-    return {
-      ok: true,
-      reels,
-      stake,
-      payout,
-      mult: baseMult,
-      win: payout > 0,
-      profit: payout - stake,
-      coins,
-      jackpotCut,
-      jackpotHit,
-      happy,
-      usedCharm,
-      pot: casinoRepository.getJackpot(scopeKey).pot,
-    };
   }
 
   function getJackpot(scopeKey) {
@@ -502,98 +523,102 @@ export function createCasinoService({
     const stake = Math.floor(Number(amount) || 0);
     if (stake < min || stake > max) return { ok: false, reason: 'invalid-amount', min, max };
 
-    if (casinoRepository.getSession(userJid, scopeKey, 'crash', now)) {
-      return { ok: false, reason: 'already-flying' };
-    }
+    return withDbTransaction(() => {
+      if (casinoRepository.getSession(userJid, scopeKey, 'crash', now)) {
+        return { ok: false, reason: 'already-flying' };
+      }
 
-    const debit = debitStake({
-      userJid,
-      scopeKey,
-      stake,
-      game: 'crash',
-      cooldownMs: numOr(funConfig.crashCooldownMs, 30_000),
-      now,
-      reason: 'crash-bet',
+      const debit = debitStake({
+        userJid,
+        scopeKey,
+        stake,
+        game: 'crash',
+        cooldownMs: numOr(funConfig.crashCooldownMs, 30_000),
+        now,
+        reason: 'crash-bet',
+      });
+      if (!debit.ok) return debit;
+
+      applyJackpotCut(scopeKey, stake, funConfig, now);
+
+      // crash point: ~ house edge distribution, min 1.05
+      const maxMult = Math.max(2, Number(funConfig.crashMaxMult) || 12);
+      const u = Math.max(0.001, random());
+      let crashAt = Math.floor((1 / u) * 100) / 100; // heavy tail
+      crashAt = Math.min(maxMult, Math.max(1.05, crashAt));
+
+      const ttl = Math.floor(numOr(funConfig.crashTtlMs, CRASH_TTL_MS));
+      const session = casinoRepository.upsertSession({
+        userJid,
+        scopeKey,
+        kind: 'crash',
+        stake,
+        ttlMs: ttl,
+        now,
+        state: { crashAt, startedAt: now },
+      });
+
+      return {
+        ok: true,
+        stake,
+        ttlMs: ttl,
+        sessionId: session?.id,
+        expiresAt: session?.expiresAt,
+      };
     });
-    if (!debit.ok) return debit;
-
-    applyJackpotCut(scopeKey, stake, funConfig, now);
-
-    // crash point: ~ house edge distribution, min 1.05
-    const maxMult = Math.max(2, Number(funConfig.crashMaxMult) || 12);
-    const u = Math.max(0.001, random());
-    let crashAt = Math.floor((1 / u) * 100) / 100; // heavy tail
-    crashAt = Math.min(maxMult, Math.max(1.05, crashAt));
-
-    const ttl = Math.floor(numOr(funConfig.crashTtlMs, CRASH_TTL_MS));
-    const session = casinoRepository.upsertSession({
-      userJid,
-      scopeKey,
-      kind: 'crash',
-      stake,
-      ttlMs: ttl,
-      now,
-      state: { crashAt, startedAt: now },
-    });
-
-    return {
-      ok: true,
-      stake,
-      ttlMs: ttl,
-      sessionId: session?.id,
-      expiresAt: session?.expiresAt,
-    };
   }
 
   function cashoutCrash({ userJid, scopeKey, funConfig = {}, now = Date.now() }) {
-    const session = casinoRepository.getSession(userJid, scopeKey, 'crash', now);
-    if (!session) return { ok: false, reason: 'no-flight' };
+    return withDbTransaction(() => {
+      const session = casinoRepository.getSession(userJid, scopeKey, 'crash', now);
+      if (!session) return { ok: false, reason: 'no-flight' };
 
-    const growth = Number(funConfig.crashGrowthPerSec) || 0.18;
-    const crashAt = Number(session.state?.crashAt) || 1.1;
-    const startedAt = Number(session.state?.startedAt) || session.createdAt;
-    const elapsedSec = Math.max(0, (now - startedAt) / 1000);
-    const currentMult = Math.floor((1 + elapsedSec * growth) * 100) / 100;
-    const stake = session.stake;
+      const growth = Number(funConfig.crashGrowthPerSec) || 0.18;
+      const crashAt = Number(session.state?.crashAt) || 1.1;
+      const startedAt = Number(session.state?.startedAt) || session.createdAt;
+      const elapsedSec = Math.max(0, (now - startedAt) / 1000);
+      const currentMult = Math.floor((1 + elapsedSec * growth) * 100) / 100;
+      const stake = session.stake;
 
-    casinoRepository.deleteSession(session.id);
+      casinoRepository.deleteSession(session.id);
 
-    if (currentMult >= crashAt) {
-      casinoRepository.recordStats({
-        userJid,
-        scopeKey,
-        wagered: stake,
-        lost: stake,
-        games: 1,
-        now,
-      });
+      if (currentMult >= crashAt) {
+        casinoRepository.recordStats({
+          userJid,
+          scopeKey,
+          wagered: stake,
+          lost: stake,
+          games: 1,
+          now,
+        });
+        return {
+          ok: true,
+          crashed: true,
+          crashAt,
+          currentMult: Math.min(currentMult, crashAt),
+          stake,
+          payout: 0,
+          profit: -stake,
+          coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+        };
+      }
+
+      const happy = happyMult(scopeKey, now);
+      const payout = Math.max(1, Math.floor(stake * currentMult * happy));
+      const coins = finishSolo({ userJid, scopeKey, stake, payout, game: 'crash', now });
+
       return {
         ok: true,
-        crashed: true,
+        crashed: false,
         crashAt,
-        currentMult: Math.min(currentMult, crashAt),
+        currentMult,
         stake,
-        payout: 0,
-        profit: -stake,
-        coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+        payout,
+        profit: payout - stake,
+        coins,
+        happy,
       };
-    }
-
-    const happy = happyMult(scopeKey, now);
-    const payout = Math.max(1, Math.floor(stake * currentMult * happy));
-    const coins = finishSolo({ userJid, scopeKey, stake, payout, game: 'crash', now });
-
-    return {
-      ok: true,
-      crashed: false,
-      crashAt,
-      currentMult,
-      stake,
-      payout,
-      profit: payout - stake,
-      coins,
-      happy,
-    };
+    });
   }
 
   function drawCard() {
@@ -606,93 +631,95 @@ export function createCasinoService({
     const stake = Math.floor(Number(amount) || 0);
     if (stake < min || stake > max) return { ok: false, reason: 'invalid-amount', min, max };
 
-    if (casinoRepository.getSession(userJid, scopeKey, 'blackjack', now)) {
-      return { ok: false, reason: 'already-playing' };
-    }
+    return withDbTransaction(() => {
+      if (casinoRepository.getSession(userJid, scopeKey, 'blackjack', now)) {
+        return { ok: false, reason: 'already-playing' };
+      }
 
-    const debit = debitStake({
-      userJid,
-      scopeKey,
-      stake,
-      game: 'blackjack',
-      cooldownMs: numOr(funConfig.blackjackCooldownMs, 25_000),
-      now,
-      reason: 'bj-bet',
-    });
-    if (!debit.ok) return debit;
-    applyJackpotCut(scopeKey, stake, funConfig, now);
+      const debit = debitStake({
+        userJid,
+        scopeKey,
+        stake,
+        game: 'blackjack',
+        cooldownMs: numOr(funConfig.blackjackCooldownMs, 25_000),
+        now,
+        reason: 'bj-bet',
+      });
+      if (!debit.ok) return debit;
+      applyJackpotCut(scopeKey, stake, funConfig, now);
 
-    const player = [drawCard(), drawCard()];
-    const dealer = [drawCard(), drawCard()];
-    const pTotal = handTotal(player);
+      const player = [drawCard(), drawCard()];
+      const dealer = [drawCard(), drawCard()];
+      const pTotal = handTotal(player);
 
-    // natural blackjack
-    if (pTotal === 21) {
-      const dTotal = handTotal(dealer);
-      if (dTotal === 21) {
-        repository.addCoins({
-          userJid,
-          scopeKey,
-          amount: stake,
-          now,
-          reason: 'bj-push',
-        });
-        casinoRepository.recordStats({
-          userJid,
-          scopeKey,
-          wagered: stake,
-          games: 1,
-          now,
-        });
+      // natural blackjack
+      if (pTotal === 21) {
+        const dTotal = handTotal(dealer);
+        if (dTotal === 21) {
+          repository.addCoins({
+            userJid,
+            scopeKey,
+            amount: stake,
+            now,
+            reason: 'bj-push',
+          });
+          casinoRepository.recordStats({
+            userJid,
+            scopeKey,
+            wagered: stake,
+            games: 1,
+            now,
+          });
+          return {
+            ok: true,
+            done: true,
+            result: 'push',
+            player,
+            dealer,
+            pTotal,
+            dTotal,
+            stake,
+            payout: stake,
+            coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+          };
+        }
+        const happy = happyMult(scopeKey, now);
+        const payout = Math.floor(stake * 2.5 * happy);
+        const coins = finishSolo({ userJid, scopeKey, stake, payout, game: 'blackjack', now });
         return {
           ok: true,
           done: true,
-          result: 'push',
+          result: 'blackjack',
           player,
           dealer,
           pTotal,
           dTotal,
           stake,
-          payout: stake,
-          coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+          payout,
+          coins,
         };
       }
-      const happy = happyMult(scopeKey, now);
-      const payout = Math.floor(stake * 2.5 * happy);
-      const coins = finishSolo({ userJid, scopeKey, stake, payout, game: 'blackjack', now });
+
+      const session = casinoRepository.upsertSession({
+        userJid,
+        scopeKey,
+        kind: 'blackjack',
+        stake,
+        ttlMs: BLACKJACK_TTL_MS,
+        now,
+        state: { player, dealer },
+      });
+
       return {
         ok: true,
-        done: true,
-        result: 'blackjack',
+        done: false,
         player,
-        dealer,
+        dealerVisible: dealer[0],
         pTotal,
-        dTotal,
         stake,
-        payout,
-        coins,
+        sessionId: session?.id,
       };
-    }
-
-    const session = casinoRepository.upsertSession({
-      userJid,
-      scopeKey,
-      kind: 'blackjack',
-      stake,
-      ttlMs: BLACKJACK_TTL_MS,
-      now,
-      state: { player, dealer },
     });
-
-    return {
-      ok: true,
-      done: false,
-      player,
-      dealerVisible: dealer[0],
-      pTotal,
-      stake,
-      sessionId: session?.id,
-    };
   }
 
   function resolveDealer(player, dealer) {
@@ -710,100 +737,104 @@ export function createCasinoService({
   }
 
   function hitBlackjack({ userJid, scopeKey, funConfig = {}, now = Date.now() }) {
-    const session = casinoRepository.getSession(userJid, scopeKey, 'blackjack', now);
-    if (!session) return { ok: false, reason: 'no-hand' };
-    const player = [...(session.state.player || [])];
-    const dealer = [...(session.state.dealer || [])];
-    player.push(drawCard());
-    const pTotal = handTotal(player);
-    const stake = session.stake;
+    return withDbTransaction(() => {
+      const session = casinoRepository.getSession(userJid, scopeKey, 'blackjack', now);
+      if (!session) return { ok: false, reason: 'no-hand' };
+      const player = [...(session.state.player || [])];
+      const dealer = [...(session.state.dealer || [])];
+      player.push(drawCard());
+      const pTotal = handTotal(player);
+      const stake = session.stake;
 
-    if (pTotal > 21) {
+      if (pTotal > 21) {
+        casinoRepository.deleteSession(session.id);
+        casinoRepository.recordStats({
+          userJid,
+          scopeKey,
+          wagered: stake,
+          lost: stake,
+          games: 1,
+          now,
+        });
+        return {
+          ok: true,
+          done: true,
+          result: 'bust',
+          player,
+          dealer,
+          pTotal,
+          dTotal: handTotal(dealer),
+          stake,
+          payout: 0,
+          coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+        };
+      }
+
+      casinoRepository.updateSession(session.id, {
+        state: { player, dealer },
+        expiresAt: now + BLACKJACK_TTL_MS,
+      });
+
+      return {
+        ok: true,
+        done: false,
+        player,
+        dealerVisible: dealer[0],
+        pTotal,
+        stake,
+      };
+    });
+  }
+
+  function standBlackjack({ userJid, scopeKey, funConfig = {}, now = Date.now() }) {
+    return withDbTransaction(() => {
+      const session = casinoRepository.getSession(userJid, scopeKey, 'blackjack', now);
+      if (!session) return { ok: false, reason: 'no-hand' };
+      const player = [...(session.state.player || [])];
+      const dealerStart = [...(session.state.dealer || [])];
+      const stake = session.stake;
       casinoRepository.deleteSession(session.id);
+
+      const { dealer, pTotal, dTotal, result } = resolveDealer(player, dealerStart);
+      const happy = happyMult(scopeKey, now);
+      let payout = 0;
+      if (result === 'win') payout = Math.floor(stake * 2 * happy);
+      else if (result === 'push') payout = stake;
+
+      if (payout > 0) {
+        repository.addCoins({
+          userJid,
+          scopeKey,
+          amount: payout,
+          now,
+          reason: result === 'push' ? 'bj-push' : 'bj-win',
+        });
+      }
       casinoRepository.recordStats({
         userJid,
         scopeKey,
         wagered: stake,
-        lost: stake,
+        won: result === 'win' ? payout : result === 'push' ? stake : 0,
+        lost: result === 'lose' || result === 'bust' ? stake : 0,
         games: 1,
         now,
       });
+
       return {
         ok: true,
         done: true,
-        result: 'bust',
+        result,
         player,
         dealer,
         pTotal,
-        dTotal: handTotal(dealer),
+        dTotal,
         stake,
-        payout: 0,
+        payout,
+        profit: payout - stake,
         coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
+        happy,
       };
-    }
-
-    casinoRepository.updateSession(session.id, {
-      state: { player, dealer },
-      expiresAt: now + BLACKJACK_TTL_MS,
     });
-
-    return {
-      ok: true,
-      done: false,
-      player,
-      dealerVisible: dealer[0],
-      pTotal,
-      stake,
-    };
-  }
-
-  function standBlackjack({ userJid, scopeKey, funConfig = {}, now = Date.now() }) {
-    const session = casinoRepository.getSession(userJid, scopeKey, 'blackjack', now);
-    if (!session) return { ok: false, reason: 'no-hand' };
-    const player = [...(session.state.player || [])];
-    const dealerStart = [...(session.state.dealer || [])];
-    const stake = session.stake;
-    casinoRepository.deleteSession(session.id);
-
-    const { dealer, pTotal, dTotal, result } = resolveDealer(player, dealerStart);
-    const happy = happyMult(scopeKey, now);
-    let payout = 0;
-    if (result === 'win') payout = Math.floor(stake * 2 * happy);
-    else if (result === 'push') payout = stake;
-
-    if (payout > 0) {
-      repository.addCoins({
-        userJid,
-        scopeKey,
-        amount: payout,
-        now,
-        reason: result === 'push' ? 'bj-push' : 'bj-win',
-      });
-    }
-    casinoRepository.recordStats({
-      userJid,
-      scopeKey,
-      wagered: stake,
-      won: result === 'win' ? payout : result === 'push' ? stake : 0,
-      lost: result === 'lose' || result === 'bust' ? stake : 0,
-      games: 1,
-      now,
-    });
-
-    return {
-      ok: true,
-      done: true,
-      result,
-      player,
-      dealer,
-      pTotal,
-      dTotal,
-      stake,
-      payout,
-      profit: payout - stake,
-      coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
-      happy,
-    };
   }
 
   function joinTournament({
@@ -1421,59 +1452,61 @@ export function createCasinoService({
       return { ok: false, reason: 'invalid-amount', min: opts.min, max: opts.max };
     }
 
-    const existing = getBingoSession(scopeKey, now);
-    if (existing) {
-      return { ok: false, reason: 'room-open', room: existing };
-    }
+    return withDbTransaction(() => {
+      const existing = getBingoSession(scopeKey, now);
+      if (existing) {
+        return { ok: false, reason: 'room-open', room: existing };
+      }
 
-    const debit = debitStake({
-      userJid,
-      scopeKey,
-      stake,
-      game: 'bingo',
-      cooldownMs: opts.cooldownMs,
-      now,
-      reason: 'bingo-solo',
+      const debit = debitStake({
+        userJid,
+        scopeKey,
+        stake,
+        game: 'bingo',
+        cooldownMs: opts.cooldownMs,
+        now,
+        reason: 'bingo-solo',
+      });
+      if (!debit.ok) return debit;
+
+      applyJackpotCut(scopeKey, stake, funConfig, now);
+
+      const card = makeBingoCard(random, { poolMax: opts.poolMax });
+      const drawn = pickDistinct(opts.drawCount, opts.poolMax, random);
+      const ev = evaluateBingoCard(card, drawn);
+      const happy = happyMult(scopeKey, now);
+      const payout = soloBingoPayout(ev, stake, {
+        lineMult: opts.soloLineMult,
+        fullMult: opts.soloFullMult,
+        happy,
+      });
+      const coins = finishSolo({
+        userJid,
+        scopeKey,
+        stake,
+        payout,
+        game: 'bingo',
+        now,
+      });
+
+      return {
+        ok: true,
+        solo: true,
+        mode: BINGO_MODES.FAST,
+        stake,
+        payout,
+        profit: payout - stake,
+        full: ev.full,
+        hasLine: ev.hasLine,
+        lines: ev.lines,
+        markedCount: ev.markedCount,
+        card,
+        drawn,
+        cardText: formatBingoCard(card, drawn),
+        happy,
+        coins,
+      };
     });
-    if (!debit.ok) return debit;
-
-    applyJackpotCut(scopeKey, stake, funConfig, now);
-
-    const card = makeBingoCard(random, { poolMax: opts.poolMax });
-    const drawn = pickDistinct(opts.drawCount, opts.poolMax, random);
-    const ev = evaluateBingoCard(card, drawn);
-    const happy = happyMult(scopeKey, now);
-    const payout = soloBingoPayout(ev, stake, {
-      lineMult: opts.soloLineMult,
-      fullMult: opts.soloFullMult,
-      happy,
-    });
-    const coins = finishSolo({
-      userJid,
-      scopeKey,
-      stake,
-      payout,
-      game: 'bingo',
-      now,
-    });
-
-    return {
-      ok: true,
-      solo: true,
-      mode: BINGO_MODES.FAST,
-      stake,
-      payout,
-      profit: payout - stake,
-      full: ev.full,
-      hasLine: ev.hasLine,
-      lines: ev.lines,
-      markedCount: ev.markedCount,
-      card,
-      drawn,
-      cardText: formatBingoCard(card, drawn),
-      happy,
-      coins,
-    };
   }
 
   function rankCasino(scopeKey, limit = 10) {

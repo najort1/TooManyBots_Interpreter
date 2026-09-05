@@ -17,6 +17,8 @@ export async function handlePayCommand({
   identityMap,
   socialHooks,
   funConfig,
+  messageId = '',
+  messageKey = null,
 }) {
   const amount = parseAmountFromArgs(args);
   if (!amount) {
@@ -58,11 +60,13 @@ export async function handlePayCommand({
     return { handled: true };
   }
 
+  const idempotencyKey = String(messageId || messageKey?.id || '').trim();
   const result = coinsService.transfer({
     fromJid: userJid,
     toJid: target,
     scopeKey,
     amount,
+    idempotencyKey,
   });
 
   if (!result.ok) {
@@ -81,7 +85,7 @@ export async function handlePayCommand({
   const toName = nameOf(getContactDisplayName, target);
 
   let eventLine = null;
-  if (typeof socialHooks?.onSocialPair === 'function') {
+  if (!result.replayed && typeof socialHooks?.onSocialPair === 'function') {
     const hook = socialHooks.onSocialPair({
       scopeKey,
       fromJid: userJid,
@@ -94,9 +98,21 @@ export async function handlePayCommand({
     }
   }
 
+  const receipt = fmt.transferComplete({
+    to: toName,
+    amount: result.amount,
+    fromBalance: result.fromCoins,
+    toBalance: result.toCoins,
+  });
+
+  const replayedNotice = result.replayed
+    ? 'ℹ️ _Comprovante reenviado (transferência já processada anteriormente)._'
+    : null;
+
   await reply(
     [
-      fmt.transferComplete({ to: toName, amount: result.amount, fromBalance: result.fromCoins, toBalance: result.toCoins }),
+      receipt,
+      replayedNotice,
       eventLine,
     ]
       .filter(Boolean)

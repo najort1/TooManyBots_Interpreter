@@ -823,3 +823,46 @@ test('facade: /bingo solo e /bingo sala', async () => {
   });
   assert.ok(sent.some((m) => /Bingo!|sorteados|devolvida|Linha|cheia/i.test(m.text)), JSON.stringify(sent));
 });
+
+test('casino atomicidade: falha no payout de jogo solo dá rollback no saldo debitado', () => {
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+  const actionRepo = createFunActionRepository({ getDatabase: getDb });
+  const casinoRepo = createFunCasinoRepository({ getDatabase: getDb });
+
+  const casino = createCasinoService({
+    repository: repo,
+    actionRepository: actionRepo,
+    casinoRepository: casinoRepo,
+    getDatabase: getDb,
+    random: () => 0.1, // ball = 3 red
+  });
+
+  const scope = uniqueGroup();
+  const u = uniqueJid('5588');
+  repo.addCoins({ userJid: u, scopeKey: scope, amount: 100, reason: 'seed' });
+  const originalAddCoins = repo.addCoins;
+
+  repo.addCoins = ({ reason, ...rest }) => {
+    if (reason === 'roulette-win') {
+      throw new Error('falha-simulada-no-payout');
+    }
+    return originalAddCoins({ reason, ...rest });
+  };
+
+  assert.throws(
+    () => {
+      casino.playRoulette({
+        userJid: u,
+        scopeKey: scope,
+        amount: 20,
+        choice: { type: 'color', value: 'red' },
+        funConfig: resolveFunConfig({ rouletteCooldownMs: 0, jackpotRate: 0 }),
+      });
+    },
+    /falha-simulada-no-payout/
+  );
+
+  repo.addCoins = originalAddCoins;
+  assert.equal(repo.getUserStats(u, scope).coins, 100);
+});

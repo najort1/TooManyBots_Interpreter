@@ -739,6 +739,7 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     toJid,
     scopeKey,
     amount,
+    idempotencyKey = '',
     now = Date.now(),
     reason = 'pay',
   }) {
@@ -749,6 +750,7 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     const s = String(scopeKey || '').trim();
     const value = Math.floor(Number(amount) || 0);
     const ts = Number(now) || Date.now();
+    const rawIdemKey = String(idempotencyKey || '').trim();
 
     if (!from || !to || !s) {
       return { ok: false, reason: 'invalid-identity' };
@@ -761,6 +763,29 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     }
 
     const run = db.transaction(() => {
+      if (rawIdemKey) {
+        const existing = db
+          .prepare(
+            `SELECT from_jid, to_jid, amount, from_coins, to_coins
+             FROM ${ANALYTICS_SCHEMA}.fun_transfer_idempotency
+             WHERE scope_key = ? AND idempotency_key = ?`
+          )
+          .get(s, rawIdemKey);
+
+        if (existing) {
+          return {
+            ok: true,
+            replayed: true,
+            reason: 'ok',
+            amount: Number(existing.amount) || value,
+            fromCoins: Number(existing.from_coins) || 0,
+            toCoins: Number(existing.to_coins) || 0,
+            fromJid: String(existing.from_jid || from),
+            toJid: String(existing.to_jid || to),
+          };
+        }
+      }
+
       ensureUserRow(from, s, ts);
       ensureUserRow(to, s, ts);
 
@@ -797,12 +822,24 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
          VALUES (?, ?, ?, ?, ?, ?)`
       ).run(s, from, to, value, String(reason || 'pay'), ts);
 
+      const remainingFromCoins = fromCoins - value;
+      const finalToCoins = Number(select.get(to, s)?.coins) || 0;
+
+      if (rawIdemKey) {
+        db.prepare(
+          `INSERT INTO ${ANALYTICS_SCHEMA}.fun_transfer_idempotency
+           (scope_key, idempotency_key, from_jid, to_jid, amount, from_coins, to_coins, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(s, rawIdemKey, from, to, value, remainingFromCoins, finalToCoins, ts);
+      }
+
       return {
         ok: true,
+        replayed: false,
         reason: 'ok',
         amount: value,
-        fromCoins: fromCoins - value,
-        toCoins: (Number(select.get(to, s)?.coins) || 0),
+        fromCoins: remainingFromCoins,
+        toCoins: finalToCoins,
       };
     });
 
@@ -1095,6 +1132,7 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     refundEscrow,
     setTitle,
     countUsersInScope,
+    getDatabase,
     sumLedgerForUser,
     biggestLossSince,
     sumLedgerByReason,

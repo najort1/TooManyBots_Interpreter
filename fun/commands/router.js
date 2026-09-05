@@ -226,6 +226,8 @@ export async function routeFunCommand(ctx) {
     imageGenerationService,
     msgTimeMs,
     farewellService,
+    messageId,
+    messageKey,
   } = ctx;
 
   const parsed = parseFunCommand(text, funConfig.prefix);
@@ -312,6 +314,8 @@ export async function routeFunCommand(ctx) {
     imageGenerationService,
     farewellService,
     msgTimeMs,
+    messageId,
+    messageKey,
   };
 
   switch (parsed.command) {

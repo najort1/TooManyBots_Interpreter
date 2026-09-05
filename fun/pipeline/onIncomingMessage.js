@@ -1013,6 +1013,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
           mediaMimeType: mediaMimeType || ctx.mediaMimeType || '',
           getLogger,
           msgTimeMs,
+          messageId,
+          messageKey: rawMessage?.key || null,
         });
 
         // evento surpresa + mercado de arte só em grupo
