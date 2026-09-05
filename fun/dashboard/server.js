@@ -239,13 +239,50 @@ export function startFunDashboardServer(deps = {}) {
     return true;
   }
 
-  function requireAdmin(req, res) {
+  function hasAdminAccess(req) {
     if (!dashboardApiKey) return true;
     const headerKey = String(req.headers['x-api-key'] || '').trim();
-    const cookieKey = String(req.headers.cookie || '').match(/(?:^|;\s*)fun_dash_key=([^;]+)/)?.[1] || '';
-    if (headerKey === dashboardApiKey || decodeURIComponent(cookieKey) === dashboardApiKey) return true;
+    const encodedCookieKey = String(req.headers.cookie || '').match(/(?:^|;\s*)fun_dash_key=([^;]+)/)?.[1] || '';
+    let cookieKey = '';
+    try {
+      cookieKey = decodeURIComponent(encodedCookieKey);
+    } catch {
+      cookieKey = '';
+    }
+    return headerKey === dashboardApiKey || cookieKey === dashboardApiKey;
+  }
+
+  function requireAdmin(req, res) {
+    if (hasAdminAccess(req)) return true;
     sendJson(res, 401, { error: 'unauthorized' });
     return false;
+  }
+
+  function maskUserJid(jid) {
+    const raw = String(jid || '').trim();
+    if (!raw) return '';
+    const [userPart] = raw.split('@');
+    const digits = String(userPart || '').replace(/\D/g, '');
+    if (digits.length >= 4) {
+      return `user_****${digits.slice(-4)}`;
+    }
+    const safeTail = String(userPart || '').slice(-4);
+    return `user_****${safeTail.padStart(4, '*')}`;
+  }
+
+  function publicLeaderboardEntry(entry) {
+    if (!entry) return entry;
+    return {
+      ...entry,
+      userJid: maskUserJid(entry.userJid),
+    };
+  }
+
+  function publicGroupJid(jid) {
+    const raw = String(jid || '').trim();
+    if (!raw) return '';
+    if (raw.endsWith('@g.us')) return raw;
+    return maskUserJid(raw);
   }
 
   function selfHealConfig(cfg = getConfig()) {
@@ -320,7 +357,13 @@ export function startFunDashboardServer(deps = {}) {
           return;
         }
         const cfg = getConfig();
-        const owns = true;
+        const authToken = String(req.headers['x-house-token'] || '').trim();
+        const caller = authToken ? await resolveHouseToken(authToken) : null;
+        const owns = Boolean(
+          caller &&
+          caller.scopeKey === target.scopeKey &&
+          caller.userJid === target.userJid
+        );
         const neighborMatch = action.match(/^neighbors\/([^/]+)(?:\/(visit|gifts|rob))?$/);
 
         if (neighborMatch) {
@@ -336,23 +379,21 @@ export function startFunDashboardServer(deps = {}) {
             sendJson(res, 200, { owns: false, house: current.house, items: current.items.filter((item) => item.placed).map(publicHouseItem), avatar: publicAvatar(avatar), host: { nickname: getContactDisplayName(neighbor.userJid) || 'Morador' }, mural });
             return;
           }
-          const authToken = String(req.headers['x-house-token'] || '').trim();
-          const actor = authToken ? await resolveHouseToken(authToken) : null;
-          if (!actor) { sendJson(res, 401, { error: 'house-token-required' }); return; }
-          if (actor.scopeKey !== target.scopeKey || actor.userJid !== target.userJid) { sendJson(res, 403, { error: 'fora-do-bairro' }); return; }
+          if (!caller) { sendJson(res, 401, { error: 'house-token-required' }); return; }
+          if (!owns) { sendJson(res, 403, { error: 'fora-do-bairro' }); return; }
           const body = await readBody(req);
           if (req.method === 'POST' && neighborMatch[2] === 'visit') {
-            const result = visitService.visit({ scopeKey: target.scopeKey, ownerJid: neighbor.userJid, visitorJid: actor.userJid, note: body.note, funConfig: cfg });
+            const result = visitService.visit({ scopeKey: target.scopeKey, ownerJid: neighbor.userJid, visitorJid: caller.userJid, note: body.note, funConfig: cfg });
             sendJson(res, result.ok ? 200 : 409, result.ok ? { ok: true, visit: { note: result.visit.note, createdAt: result.visit.createdAt } } : { error: result.reason });
             return;
           }
           if (req.method === 'POST' && neighborMatch[2] === 'gifts') {
-            const result = giftService.give({ scopeKey: target.scopeKey, giverJid: actor.userJid, recipientJid: neighbor.userJid, itemInstanceId: body.itemId, coins: body.coins, funConfig: cfg });
+            const result = giftService.give({ scopeKey: target.scopeKey, giverJid: caller.userJid, recipientJid: neighbor.userJid, itemInstanceId: body.itemId, coins: body.coins, funConfig: cfg });
             sendJson(res, result.ok ? 200 : 409, result.ok ? { ok: true, gift: { coins: result.gift.coins, itemId: result.gift.itemInstanceId } } : { error: result.reason });
             return;
           }
           if (req.method === 'POST' && neighborMatch[2] === 'rob') {
-            const result = robberyService.rob({ scopeKey: target.scopeKey, robberJid: actor.userJid, ownerJid: neighbor.userJid, funConfig: cfg });
+            const result = robberyService.rob({ scopeKey: target.scopeKey, robberJid: caller.userJid, ownerJid: neighbor.userJid, funConfig: cfg });
             sendJson(res, result.ok ? 200 : 409, result.ok ? { ok: true, result: result.result, item: result.item ? publicHouseItem(result.item) : null, fine: result.fine || 0, wantedDelta: result.wantedDelta || 0 } : { error: result.reason, result: result.result });
             return;
           }
@@ -607,8 +648,8 @@ export function startFunDashboardServer(deps = {}) {
           return;
         }
         if (req.method === 'GET' && action === 'avatar') {
-          if (!owns) { sendJson(res, 403, { error: 'house-token-required' }); return; }
-          sendJson(res, 200, avatarService.get({ scopeKey: target.scopeKey, userJid: target.userJid }));
+          const avatar = avatarService.get({ scopeKey: target.scopeKey, userJid: target.userJid });
+          sendJson(res, 200, owns ? avatar : publicAvatar(avatar));
           return;
         }
         if (req.method === 'GET' && action === 'visits') {
@@ -618,49 +659,48 @@ export function startFunDashboardServer(deps = {}) {
           return;
         }
 
-        const authToken = String(req.headers['x-house-token'] || '').trim();
-        const actor = authToken ? await resolveHouseToken(authToken) : null;
-        if (!actor) { sendJson(res, 401, { error: 'house-token-required' }); return; }
-        if (actor.scopeKey !== target.scopeKey) { sendJson(res, 403, { error: 'fora-do-bairro' }); return; }
+        if (['collect', 'items/move', 'styles/apply', 'items/place', 'items/sell', 'security', 'avatar/shop'].includes(action) || (req.method === 'PUT' && action === 'avatar')) {
+          if (!caller) { sendJson(res, 401, { error: 'house-token-required' }); return; }
+          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
+        }
+
+        const actor = caller;
+        if (['visit', 'gifts', 'rob'].includes(action)) {
+          if (!actor) { sendJson(res, 401, { error: 'house-token-required' }); return; }
+          if (actor.scopeKey !== target.scopeKey) { sendJson(res, 403, { error: 'fora-do-bairro' }); return; }
+        }
         const body = await readBody(req);
         if (req.method === 'POST' && action === 'collect') {
-          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
           const result = houseService.collect({ scopeKey: target.scopeKey, userJid: target.userJid, funConfig: cfg });
           sendJson(res, result.ok ? 200 : 409, result.ok ? { ok: true, coins: result.coins, reason: result.reason } : { error: result.reason, nextAt: result.nextAt });
           return;
         }
         if (req.method === 'PUT' && action === 'items/move') {
-          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
           const result = houseService.move({ scopeKey: target.scopeKey, userJid: target.userJid, itemInstanceId: body.itemId, x: body.x, y: body.y, rotation: body.rotation, rotated: body.rotated });
           sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, item: publicHouseItem(result.item) } : { error: result.reason });
           return;
         }
         if (req.method === 'PUT' && action === 'styles/apply') {
-          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
           const result = houseService.applyStyle({ scopeKey: target.scopeKey, userJid: target.userJid, itemId: body.itemId, funConfig: cfg });
           sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, house: result.house, coins: result.coins, purchased: result.purchased } : { error: result.reason, need: result.need, coins: result.coins });
           return;
         }
         if (req.method === 'POST' && action === 'items/place') {
-          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
           const result = houseService.place({ scopeKey: target.scopeKey, userJid: target.userJid, itemId: body.itemId, x: body.x, y: body.y, funConfig: cfg });
           sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, item: publicHouseItem(result.item), coins: result.coins } : { error: result.reason, need: result.need, coins: result.coins });
           return;
         }
         if (req.method === 'POST' && action === 'items/sell') {
-          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
           const result = houseService.sell({ scopeKey: target.scopeKey, userJid: target.userJid, itemInstanceId: body.itemId });
           sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, coins: result.coins } : { error: result.reason });
           return;
         }
         if (req.method === 'POST' && action === 'security') {
-          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
           const result = houseService.upgradeSecurity({ scopeKey: target.scopeKey, userJid: target.userJid, funConfig: cfg });
           sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, house: result.house, coins: result.coins } : { error: result.reason, need: result.need, coins: result.coins });
           return;
         }
         if (req.method === 'PUT' && action === 'avatar') {
-          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
           const result = body.slots
             ? avatarService.apply({
                 scopeKey: target.scopeKey,
@@ -684,7 +724,6 @@ export function startFunDashboardServer(deps = {}) {
           return;
         }
         if (req.method === 'POST' && action === 'avatar/shop') {
-          if (!owns) { sendJson(res, 403, { error: 'somente-dono' }); return; }
           const result = avatarService.buy({ scopeKey: target.scopeKey, userJid: target.userJid, itemId: body.itemId, funConfig: cfg });
           sendJson(res, result.ok ? 200 : 400, result.ok ? { ok: true, avatar: publicAvatar(result.state), coins: result.coins } : { error: result.reason, need: result.need, coins: result.coins });
           return;
@@ -742,6 +781,7 @@ export function startFunDashboardServer(deps = {}) {
       }
 
       if (req.method === 'GET' && path === '/api/fun/groups') {
+        const isAdmin = hasAdminAccess(req);
         const cfg = getConfig();
         const jids = Array.isArray(cfg.groupWhitelistJids) ? cfg.groupWhitelistJids : [];
         const groups = jids.map((jid) => {
@@ -760,7 +800,7 @@ export function startFunDashboardServer(deps = {}) {
             event = null;
           }
           return {
-            jid,
+            jid: isAdmin ? jid : publicGroupJid(jid),
             name: getContactDisplayName(jid) || '',
             settings,
             players,
@@ -774,6 +814,7 @@ export function startFunDashboardServer(deps = {}) {
       }
 
       if (req.method === 'GET' && path === '/api/fun/overview') {
+        const isAdmin = hasAdminAccess(req);
         const cfg = getConfig();
         const scope = String(url.searchParams.get('scope') || '').trim();
         const jids = Array.isArray(cfg.groupWhitelistJids) ? cfg.groupWhitelistJids : [];
@@ -809,6 +850,10 @@ export function startFunDashboardServer(deps = {}) {
           topCoins = (repository.getCoinsLeaderboard?.(scopeKey, 5) || []).map((e) =>
             withDisplayName(getContactDisplayName, e)
           );
+          if (!isAdmin) {
+            topXp = topXp.map(publicLeaderboardEntry);
+            topCoins = topCoins.map(publicLeaderboardEntry);
+          }
         }
 
         let outbound = null;
@@ -819,7 +864,7 @@ export function startFunDashboardServer(deps = {}) {
         }
 
         sendJson(res, 200, {
-          scope: scopeKey,
+          scope: isAdmin ? scopeKey : publicGroupJid(scopeKey),
           groups: jids.length,
           players,
           jackpot,
@@ -857,6 +902,7 @@ export function startFunDashboardServer(deps = {}) {
       }
 
       if (req.method === 'GET' && path === '/api/fun/leaderboard') {
+        const isAdmin = hasAdminAccess(req);
         const scope = String(url.searchParams.get('scope') || '').trim();
         const limit = Number(url.searchParams.get('limit') || 10);
         const kind = String(url.searchParams.get('kind') || 'xp').trim().toLowerCase();
@@ -873,8 +919,11 @@ export function startFunDashboardServer(deps = {}) {
           entries = repository.getLeaderboard(scope, limit) || [];
         }
         entries = entries.map((e) => withDisplayName(getContactDisplayName, e));
+        if (!isAdmin) {
+          entries = entries.map(publicLeaderboardEntry);
+        }
         sendJson(res, 200, {
-          scope,
+          scope: isAdmin ? scope : publicGroupJid(scope),
           kind,
           entries,
           total: repository.countUsersInScope(scope),
@@ -942,6 +991,7 @@ export function startFunDashboardServer(deps = {}) {
       }
 
       if (req.method === 'POST' && path === '/api/fun/chaos/trigger') {
+        if (!requireAdmin(req, res)) return;
         const body = await readBody(req);
         const scope = String(body.scope || '').trim();
         if (!scope) {
@@ -1282,6 +1332,7 @@ export function startFunDashboardServer(deps = {}) {
           return;
         }
         if (req.method === 'PUT' || req.method === 'POST') {
+          if (!requireAdmin(req, res)) return;
           const body = await readBody(req);
           const saved = groupRepository.upsertGroupSettings({
             groupJid,
@@ -1316,6 +1367,7 @@ export function startFunDashboardServer(deps = {}) {
       }
 
       if (req.method === 'POST' && path === '/api/fun/daily-challenge/launch-all') {
+        if (!requireAdmin(req, res)) return;
         if (typeof funModule.launchDailyChallengeForWhitelist !== 'function') {
           sendJson(res, 503, { error: 'daily-challenge-unavailable' });
           return;
@@ -1343,6 +1395,7 @@ export function startFunDashboardServer(deps = {}) {
       }
 
       if (req.method === 'POST' && path === '/api/fun/changelog') {
+        if (!requireAdmin(req, res)) return;
         if (typeof funModule.broadcastChangelog !== 'function') {
           sendJson(res, 503, { error: 'changelog-indisponivel' });
           return;
