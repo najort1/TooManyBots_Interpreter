@@ -17,13 +17,12 @@
  */
 
 import { readFileSync } from 'node:fs';
-import { randomUUID } from 'crypto';
 import { sanitizeFlavor, looksLikeScoreboardEcho } from '../llm/flavorService.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { PERSONA_CONTEXT_TURNS, PERSONA_DERIVE_INTERVAL_MS, PERSONA_TOKEN_HALF_LIFE_MS, PERSONA_TOP_TOKENS } from '../constants.js';
-import { buildPersonaToolManifest, parsePersonaEnvelope, looksLikeRawJson } from './personaToolProtocol.js';
+import { buildPersonaToolManifest, parseFollowupEnvelope, parsePersonaEnvelope, looksLikeRawJson } from './personaToolProtocol.js';
 import { isUsablePromptFact } from '../utils/promptFactSanitizer.js';
 import { buildFactTemporalContext, formatDatedFact } from '../utils/factTemporalContext.js';
 import { resolveStickerPath } from './personaStickerCatalog.js';
@@ -31,10 +30,12 @@ import { imageBufferToSticker } from '../utils/stickerConvert.js';
 import { resolveMediaFromRawMessage, downloadResolvedMedia } from '../utils/mediaDownload.js';
 import {
   cleanPromptText,
+  buildPersonaIdentityBlock,
   buildTemporalBlock,
   buildToneBlock,
   buildPersonaSystemPrompt,
   buildPersonaUserPrompt,
+  buildPersonaFollowupPrompt,
   buildSocialHintBlock,
   memorySignalText,
 } from './personaPromptBuilder.js';
@@ -83,6 +84,25 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function stripToolEcho(text, toolText) {
+  const norm = (str) =>
+    String(str || '')
+      .replace(/[“”„‟]/g, '"')
+      .replace(/[‘’]/g, "'")
+      .replace(/\s+/g, ' ')
+      .trim();
+  const source = String(text || '').trim();
+  const sourceNorm = norm(source);
+  const toolNorm = norm(toolText);
+  if (!sourceNorm || !toolNorm) return source;
+  if (sourceNorm === toolNorm) return '';
+  if (sourceNorm.startsWith(toolNorm)) {
+    const rawRest = source.slice(toolText ? toolText.length : 0).trim();
+    return rawRest.replace(/^[:\-–—\s]+/, '').trim();
+  }
+  return source;
+}
+
 export function createPersonaService({
   personaRepository,
   groupRepository,
@@ -95,6 +115,9 @@ export function createPersonaService({
   random = Math.random,
   adapters = {},
   promptContextBuilder = null,
+  personaRecentMessageRepository = null,
+  personaAutonomyPolicy = null,
+  clock = () => Date.now(),
 } = {}) {
   if (!personaRepository) throw new Error('[fun/personaService] personaRepository required');
   if (!groupRepository) throw new Error('[fun/personaService] groupRepository required');
@@ -272,6 +295,96 @@ export function createPersonaService({
     });
   }
 
+  async function runPersonaToolLoop({ initialCall, system, prompt, endpoint, zen, timeoutMs, funConfig, agentContext, scopeKey, text, maxChars }) {
+    const maxCalls = Math.max(1, Math.min(6, Number(funConfig?.personaAgentMaxToolCalls) || 4));
+    const deadlineAt = clock() + Math.max(5_000, Number(funConfig?.personaAgentDeadlineMs) || timeoutMs);
+    const executed = new Set();
+    const trace = [];
+    let lastDisplayText = '';
+    let call = initialCall;
+
+    for (let index = 0; index < maxCalls && clock() < deadlineAt; index += 1) {
+      const callKey = `${call.name}:${JSON.stringify(call.arguments || {})}`;
+      if (executed.has(callKey)) break;
+      executed.add(callKey);
+
+      const toolResult = await personaToolExecutor.execute(call, {
+        ...agentContext,
+        scopeKey,
+        text,
+        funConfig,
+        now: Number(agentContext?.now) || Date.now(),
+      });
+      const displayText = cleanPromptText(toolResult?.text, Math.max(600, maxChars * 6));
+      if (toolResult?.ok && displayText) lastDisplayText = displayText;
+      const summary = cleanPromptText(
+        toolResult?.summary || displayText || `Ferramenta ${call.name} terminou sem texto.`,
+        Math.max(600, maxChars * 6)
+      );
+      trace.push({ name: call.name, ok: Boolean(toolResult?.ok), summary });
+      const traceText = trace.map((item, itemIndex) => `${itemIndex + 1}. ${item.name} (${item.ok ? 'ok' : 'falhou'}): ${item.summary}`).join('\n');
+      const remainingMs = deadlineAt - clock();
+
+      // A tool já concluiu dentro do seu próprio timeout. Não inicia uma geração
+      // que não cabe mais no orçamento do loop nem reexecuta a tool em retry.
+      if (remainingMs <= 0) break;
+
+      const raw = await generateZen({
+        baseUrl: endpoint.baseUrl,
+        model: endpoint.model,
+        prompt: `${prompt}\n\nResultados reais das ferramentas:\n${traceText}\n\nEscolha a próxima tool, se precisar, ou responda naturalmente com reply/actions. Não invente dados ausentes.`,
+        system: `${system}\n\n${buildPersonaToolManifest()}`,
+        timeoutMs: Math.min(timeoutMs, remainingMs),
+        maxTokens: zen.maxTokens,
+        temperature: zen.temperature,
+        apiKey: endpoint.apiKey,
+        sendSamplingParams: funConfig?.zenSendSamplingParams !== false,
+        jsonMode: true,
+        jsonOnly: true,
+      });
+      const decision = parsePersonaEnvelope(raw, { maxChars });
+      if (!decision.ok) break;
+      if (decision.envelope.type === 'tool_call') {
+        const fallback = sanitizeFlavor(lastDisplayText, Math.max(maxChars, 1_600));
+        return fallback ? { text: fallback, actions: [{ type: 'text', text: fallback }] } : '';
+      }
+      if (decision.envelope.type === 'actions') {
+        const finalActions = [];
+        for (const action of decision.envelope.actions) {
+          if (action.type !== 'text') {
+            finalActions.push(action);
+            continue;
+          }
+          const stripped = stripToolEcho(action.text, lastDisplayText);
+          const sanitized = sanitizeFlavor(stripped, maxChars);
+          if (sanitized) finalActions.push({ ...action, text: sanitized });
+        }
+        const finalText = finalActions.filter((action) => action.type === 'text')
+          .map((action) => action.text).filter(Boolean).join('\n\n');
+        const combined = [lastDisplayText, finalText].filter(Boolean).join('\n\n');
+        return {
+          text: combined || '👍',
+          actions: lastDisplayText
+            ? [{ type: 'text', text: lastDisplayText }, ...finalActions]
+            : finalActions,
+        };
+      }
+      if (decision.envelope.type === 'reply') {
+        const stripped = stripToolEcho(decision.envelope.text, lastDisplayText);
+        const reply = sanitizeFlavor(stripped, maxChars);
+        if (reply && !looksLikeScoreboardEcho(reply)) {
+          const combined = [lastDisplayText, reply].filter(Boolean).join('\n\n');
+          return { text: combined, actions: [{ type: 'text', text: combined }] };
+        }
+      }
+      break;
+    }
+
+    const lastResult = lastDisplayText || trace.at(-1)?.summary || '';
+    const fallback = sanitizeFlavor(lastResult, Math.max(maxChars, 1_600));
+    return fallback ? { text: fallback, actions: [{ type: 'text', text: fallback }] } : '';
+  }
+
   async function generateResponse({
     text,
     images = [],
@@ -288,6 +401,7 @@ export function createPersonaService({
     const o = opts(funConfig);
     const groupIdentity = responseContextPack?.groupIdentity || {};
     const identityStyle = (groupIdentity.voiceStyle || []).filter(Boolean).join(', ') || '';
+    const personaIdentityBlock = buildPersonaIdentityBlock(groupIdentity);
     const toneBlock = buildToneBlock(groupIdentity);
     const lore = String(groupIdentity.groupLoreSummary || '').trim();
     const loreBlock = lore ? `Contexto do grupo (lore extraída dos fatos):\n${lore}` : '';
@@ -346,6 +460,7 @@ export function createPersonaService({
     const styleBlock = [
       buildStyleBlock(scopeKey),
       identityStyle ? `Voz observada do grupo: ${identityStyle}.` : '',
+      personaIdentityBlock,
       toneBlock,
       loreBlock,
       identityBlock,
@@ -358,6 +473,9 @@ export function createPersonaService({
     const contextTurns = responseContextPack?.threadContext?.topicSummary
       ? [...(threadContext || []), { role: 'contexto', text: responseContextPack.threadContext.topicSummary }]
       : threadContext;
+    const immediateContext = Array.isArray(responseContextPack?.immediateContext)
+      ? responseContextPack.immediateContext
+      : [];
 
     const currentNow = Number(agentContext?.now) || Date.now();
     const facts = (responseContextPack?.confirmedFacts || [])
@@ -369,7 +487,13 @@ export function createPersonaService({
       .filter(Boolean);
 
     const system = [
-      buildPersonaSystemPrompt({ styleBlock, threadContext: contextTurns, maxChars: o.maxChars, contextTurns: o.contextTurns }),
+      buildPersonaSystemPrompt({
+        styleBlock,
+        threadContext: contextTurns,
+        immediateContext,
+        maxChars: o.maxChars,
+        contextTurns: o.contextTurns,
+      }),
       buildTemporalBlock(currentNow, o.timezone),
       buildFactTemporalContext({ now: currentNow, timeZone: o.timezone }),
       facts.length ? `Fatos confirmados relevantes (não invente além deles):\n${facts.map((fact) => `- ${fact}`).join('\n')}` : '',
@@ -382,6 +506,12 @@ export function createPersonaService({
       quotedText,
       maxChars: o.maxChars,
     });
+    const toolContextText = [
+      text,
+      quotedText,
+      ...(Array.isArray(contextTurns) ? contextTurns.map((turn) => turn?.text) : []),
+      ...immediateContext.map((message) => message?.text),
+    ].map((value) => cleanPromptText(value, 500)).filter(Boolean).join('\n');
 
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') return '';
 
@@ -435,56 +565,23 @@ export function createPersonaService({
             }
           }
 
-          // Caso 3: Execução de Ferramenta + Follow-up
+          // Caso 3: loop agentivo limitado. Cada resultado é real e retorna ao
+          // modelo, que pode consultar outra tool ou finalizar com actions/reply.
           if (decision.ok && decision.envelope.type === 'tool_call') {
-            const toolResult = await personaToolExecutor.execute(decision.envelope, {
-              ...agentContext,
+            const result = await runPersonaToolLoop({
+              initialCall: decision.envelope,
+              system,
+              prompt,
+              endpoint: ep,
+              zen,
+              timeoutMs: Math.min(o.timeoutMs, zen.timeoutMs || 15_000),
+              funConfig,
+              agentContext: { ...agentContext, toolContextText },
               scopeKey,
               text,
-              funConfig,
-              now: Number(agentContext?.now) || Date.now(),
+              maxChars: o.maxChars,
             });
-            const resultText = cleanPromptText(toolResult?.text, Math.max(300, o.maxChars * 3));
-            const resultSummary = cleanPromptText(toolResult?.summary || resultText || `Ferramenta ${decision.envelope.name} executada.`, Math.max(300, o.maxChars * 3));
-            let followUp = '';
-            let followUpActions = [];
-
-            try {
-              const finalRaw = await generateZen({
-                baseUrl: ep.baseUrl,
-                model: ep.model,
-                prompt: `${prompt}\n\nResultado seguro da ação:\n${resultSummary}\n\nResponda com uma fala natural ou sequência multi-ação ("actions" ou "reply"), sem repetir o bloco acima.`,
-                system: `${system}\n\nA ação já foi validada pelo servidor. Responda SOMENTE JSON: {"type":"actions","actions":[...]} ou {"type":"reply","text":"..."}. Não chame ferramenta.`,
-                timeoutMs: Math.min(o.timeoutMs, zen.timeoutMs || 15_000),
-                maxTokens: zen.maxTokens,
-                temperature: zen.temperature,
-                apiKey: ep.apiKey,
-                sendSamplingParams: funConfig.zenSendSamplingParams !== false,
-                jsonMode: true,
-                jsonOnly: true,
-              });
-              const finalEnvelope = parsePersonaEnvelope(finalRaw, { maxChars: o.maxChars });
-              if (finalEnvelope.ok && finalEnvelope.envelope.type === 'actions') {
-                followUpActions = finalEnvelope.envelope.actions;
-                followUp = followUpActions.filter((a) => a.type === 'text').map((a) => sanitizeFlavor(a.text, o.maxChars)).join('\n\n');
-              } else if (finalEnvelope.ok && finalEnvelope.envelope.type === 'reply') {
-                followUp = sanitizeFlavor(finalEnvelope.envelope.text, o.maxChars);
-                followUpActions = [{ type: 'text', text: followUp }];
-              } else {
-                followUp = sanitizeFlavor(finalRaw, o.maxChars);
-                followUpActions = [{ type: 'text', text: followUp }];
-              }
-            } catch (err) {
-              logger?.debug?.('[personaService] fala pós-tool falhou: %s', String(err?.message || err));
-            }
-
-            const combined = [resultText, followUp].filter(Boolean).join('\n\n').slice(0, Math.max(o.maxChars, 1_600));
-            // No modo tool_call simples com follow-up textual, preservamos o envio consolidado
-            // para manter 100% de coerência com ferramentas de status/caos/oráculo.
-            return {
-              text: combined,
-              actions: [{ type: 'text', text: combined }, ...followUpActions.filter((a) => a.type !== 'text')],
-            };
+            if (result) return result;
           }
 
           const legacy = sanitizeFlavor(raw, o.maxChars);
@@ -582,6 +679,133 @@ export function createPersonaService({
     }
   }
 
+  async function tryIdleFollowUp(ctx = {}) {
+    const scopeKey = String(ctx.scopeKey || '');
+    const candidates = Array.isArray(ctx.candidates) ? ctx.candidates.filter((item) => item?.messageId && item?.text) : [];
+    const o = opts(ctx.funConfig);
+    if (!o.enabled) return { responded: false, reason: 'disabled-global' };
+    if (!scopeKey.endsWith('@g.us')) return { responded: false, reason: 'invalid' };
+    if (!candidates.length) return { responded: false, reason: 'no-candidates' };
+    if ((ctx.groupSettings || groupRepository.getGroupSettings(scopeKey))?.personaEnabled === false) {
+      return { responded: false, reason: 'disabled-group' };
+    }
+    if (inFlightScopes.has(scopeKey)) return { responded: false, reason: 'in-flight' };
+    if (process.env.FUN_DISABLE_LIVE_LLM === '1' || ctx.funConfig?.zenEnabled === false) {
+      return { responded: false, reason: 'llm-disabled' };
+    }
+
+    const now = Number(ctx.now) || Date.now();
+    const candidateIds = candidates.map((candidate) => String(candidate.messageId));
+    const system = [
+      buildPersonaSystemPrompt({
+        styleBlock: buildStyleBlock(scopeKey),
+        threadContext: ctx.responseContextPack?.threadContext?.context || [],
+        immediateContext: ctx.responseContextPack?.immediateContext || [],
+        maxChars: o.maxChars,
+        contextTurns: o.contextTurns,
+      }),
+      buildTemporalBlock(now, o.timezone),
+      'Neste turno, não use ferramentas, stickers ou reações. Só entre se sua fala for naturalmente bem-vinda.',
+    ].filter(Boolean).join('\n\n');
+    const prompt = buildPersonaFollowupPrompt({ candidates, maxChars: o.maxChars });
+    const zen = resolveZenTaskParams('persona', ctx.funConfig || {});
+    const endpoint = resolveZenEndpoint(ctx.funConfig || {});
+
+    inFlightScopes.add(scopeKey);
+    try {
+      const raw = await generateZen({
+        baseUrl: endpoint.baseUrl,
+        model: endpoint.model,
+        apiKey: endpoint.apiKey,
+        system,
+        prompt,
+        timeoutMs: Math.min(o.timeoutMs, zen.timeoutMs || o.timeoutMs),
+        maxTokens: zen.maxTokens,
+        temperature: zen.temperature,
+        sendSamplingParams: ctx.funConfig?.zenSendSamplingParams !== false,
+        jsonMode: true,
+        jsonOnly: true,
+      });
+      const parsed = parseFollowupEnvelope(raw, { maxChars: o.maxChars, allowedReplyMessageIds: candidateIds });
+      if (!parsed.ok || parsed.envelope.type === 'ignore') return { responded: false, reason: parsed.reason || 'ignored' };
+      const selected = candidates.find((candidate) => String(candidate.messageId) === parsed.envelope.replyToMessageId);
+      if (!selected) return { responded: false, reason: 'invalid-reply-target' };
+      const text = parsed.envelope.text || parsed.envelope.actions
+        ?.filter((action) => action.type === 'text').map((action) => action.text).join('\n\n');
+      const response = sanitizeFlavor(text, o.maxChars);
+      if (!response || looksLikeScoreboardEcho(response)) return { responded: false, reason: 'invalid-generation' };
+      if (typeof ctx.sock?.sendMessage !== 'function') return { responded: false, reason: 'sender-unavailable' };
+
+      const quoteSource = {
+        key: {
+          remoteJid: scopeKey,
+          id: String(selected.messageId),
+          participant: String(selected.authorJid || ''),
+          fromMe: false,
+        },
+        message: { conversation: String(selected.text || '') },
+      };
+      const sent = await ctx.sock.sendMessage(scopeKey, { text: response }, { quoted: quoteSource });
+      const responseMessageId = String(sent?.key?.id || '');
+      if (responseMessageId) {
+        try {
+          personaRecentMessageRepository?.recordMessage?.({
+            scopeKey,
+            messageId: responseMessageId,
+            authorJid: String(ctx.sock?.user?.id || ''),
+            authorLabel: 'eu',
+            source: 'bot',
+            messageType: 'text',
+            text: response,
+            now,
+          });
+        } catch { /* registro observacional */ }
+      }
+      // O follow-up é uma fala normal da persona. Ancore-a na thread ativa para
+      // que um reply do membro a esta mensagem volte pelo fluxo de continuação.
+      const responseMessageIds = responseMessageId ? [responseMessageId] : [];
+      let thread = personaRepository.getActiveThread(scopeKey, { now, ttlMs: o.threadTtlMs });
+      const followupContext = [
+        ...(thread?.context || []),
+        memberTurn(selected.authorLabel || 'membro', selected.text),
+        { role: 'bot', text: response.slice(0, Math.max(400, o.maxChars)) },
+      ].slice(-Math.max(4, o.contextTurns));
+      if (thread?.id) {
+        const continued = personaRepository.continueThread({ threadId: thread.id, context: followupContext, now });
+        if (!continued?.ok) thread = null;
+      }
+      if (!thread?.id) {
+        thread = personaRepository.openThread({
+          scopeKey,
+          maxTurns: o.maxTurns,
+          context: followupContext,
+          now,
+        });
+      }
+      if (thread?.id && responseMessageIds.length) {
+        personaRepository.setAnchor({
+          threadId: thread.id,
+          anchorMessageIds: responseMessageIds,
+          anchorText: response,
+          now,
+        });
+      }
+      return {
+        responded: true,
+        response,
+        responseMessageIds,
+        sourceMessageId: String(selected.messageId),
+        threadId: thread?.id || 0,
+        trigger: 'idle-follow-up',
+      };
+    } catch (error) {
+      logger?.debug?.('[personaService] follow-up autônomo falhou: %s', String(error?.message || error));
+      return { responded: false, reason: 'generation-or-send-error' };
+    } finally {
+      inFlightScopes.delete(scopeKey);
+    }
+  }
+
   async function tryRespond(ctx = {}) {
     try {
       const o = opts(ctx.funConfig);
@@ -620,16 +844,42 @@ export function createPersonaService({
       const quotedRaw = normalizeJid(ctx.quotedParticipant);
       const quotedIsBot = botJids.has(quotedRaw) || botJids.has(resolveJid(quotedRaw, ctx.identityMap));
 
-      let thread = personaRepository.getActiveThread(scopeKey, { now, ttlMs: o.threadTtlMs });
+      // A continuação é resolvida pela âncora citada, não pela thread mais
+      // recente do grupo. Conversas paralelas não podem competir por recência.
+      const anchoredThread = personaRepository.getActiveThreadByAnchor
+        ? personaRepository.getActiveThreadByAnchor(scopeKey, {
+            quotedMessageId: ctx.quotedMessageId,
+            quotedText: ctx.quotedText,
+            now,
+            ttlMs: o.threadTtlMs,
+          })
+        : personaRepository.getActiveThread(scopeKey, { now, ttlMs: o.threadTtlMs });
       const isContinuation = !mention && !atMention && isThreadContinuation({
         quotedIsBot,
-        thread,
+        thread: anchoredThread,
         quotedMessageId: ctx.quotedMessageId,
         quotedText: ctx.quotedText,
       });
+      let thread = isContinuation ? anchoredThread : null;
 
-      if (!mention && !atMention && !isContinuation) return { responded: false, reason: 'no-trigger' };
-      if (o.cooldownMs > 0 && !isContinuation && isInCooldown(scopeKey, now, o.cooldownMs)) return { responded: false, reason: 'cooldown' };
+      const autonomy = !mention && !atMention && !isContinuation
+        ? personaAutonomyPolicy?.evaluate?.({
+            scopeKey,
+            text: ctx.text,
+            messageType: ctx.messageType,
+            immediateContext: ctx.responseContextPack?.immediateContext || [],
+            socialSignals: ctx.responseContextPack?.socialSignals || [],
+            funConfig: ctx.funConfig,
+            currentNow: now,
+          })
+        : null;
+      const isAutonomous = Boolean(autonomy?.eligible);
+
+      if (!mention && !atMention && !isContinuation && !isAutonomous) {
+        personaAutonomyPolicy?.observeHumanMessage?.(scopeKey, { text: ctx.text, currentNow: now });
+        return { responded: false, reason: autonomy?.reason || 'no-trigger' };
+      }
+      if (o.cooldownMs > 0 && !isContinuation && !isAutonomous && isInCooldown(scopeKey, now, o.cooldownMs)) return { responded: false, reason: 'cooldown' };
       if (o.maxTurns > 0 && isContinuation && thread && thread.turnCount >= thread.maxTurns) return { responded: false, reason: 'thread-limit' };
 
       // Resolução / Download de imagens para visão da persona
@@ -776,30 +1026,43 @@ export function createPersonaService({
           getContactDisplayName: profileService?.displayName
             ? (jid) => profileService.displayName(jid, scopeKey)
             : null,
-          replyImageUrl: async (imageUrl, caption, mimeType) => {
-            const url = String(imageUrl || '').trim();
-            if (!url || typeof ctx.sock?.sendMessage !== 'function') throw new Error('image-sender-unavailable');
-            const quoted = ctx.funConfig?.replyQuoted !== false && ctx.quoteSource?.key
-              ? ctx.quoteSource
-              : undefined;
-            return ctx.sock.sendMessage(
-              scopeKey,
-              { image: { url }, caption: String(caption || ''), mimetype: String(mimeType || '') || undefined },
-              quoted ? { quoted } : undefined
-            );
-          },
-          replySticker: async (stickerBuffer) => {
-            if (!Buffer.isBuffer(stickerBuffer) || typeof ctx.sock?.sendMessage !== 'function') {
-              throw new Error('sticker-sender-unavailable');
-            }
-            const quoted = ctx.funConfig?.replyQuoted !== false && ctx.quoteSource?.key
-              ? ctx.quoteSource
-              : undefined;
-            return ctx.sock.sendMessage(
-              scopeKey,
-              { sticker: stickerBuffer },
-              quoted ? { quoted } : undefined
-            );
+          replyImageUrl: typeof ctx.replyImageUrl === 'function'
+            ? ctx.replyImageUrl
+            : async (imageUrl, caption, mimeType) => {
+                const url = String(imageUrl || '').trim();
+                if (!url || typeof ctx.sock?.sendMessage !== 'function') throw new Error('image-sender-unavailable');
+                const quoted = ctx.funConfig?.replyQuoted !== false && ctx.quoteSource?.key
+                  ? ctx.quoteSource
+                  : undefined;
+                return ctx.sock.sendMessage(
+                  scopeKey,
+                  { image: { url }, caption: String(caption || ''), mimetype: String(mimeType || '') || undefined },
+                  quoted ? { quoted } : undefined
+                );
+              },
+          replySticker: typeof ctx.replySticker === 'function'
+            ? ctx.replySticker
+            : async (stickerBuffer) => {
+                if (!Buffer.isBuffer(stickerBuffer) || typeof ctx.sock?.sendMessage !== 'function') {
+                  throw new Error('sticker-sender-unavailable');
+                }
+                const quoted = ctx.funConfig?.replyQuoted !== false && ctx.quoteSource?.key
+                  ? ctx.quoteSource
+                  : undefined;
+                return ctx.sock.sendMessage(
+                  scopeKey,
+                  { sticker: stickerBuffer },
+                  quoted ? { quoted } : undefined
+                );
+              },
+          replyReact: async (emoji) => {
+            const e = String(emoji || '').trim();
+            if (!e || typeof ctx.sock?.sendMessage !== 'function') return;
+            const targetKey = ctx.quoteSource?.key || ctx.messageKey;
+            if (!targetKey) return;
+            return ctx.sock.sendMessage(scopeKey, {
+              react: { text: e, key: targetKey },
+            });
           },
           now,
         },
@@ -840,6 +1103,20 @@ export function createPersonaService({
             const sent = await ctx.sock.sendMessage(scopeKey, { text: action.text }, quoted ? { quoted } : undefined);
             if (sent?.key?.id) {
               responseMessageIds.push(String(sent.key.id));
+              try {
+                personaRecentMessageRepository?.recordMessage?.({
+                  scopeKey,
+                  messageId: String(sent.key.id),
+                  authorJid: [...botJids][0] || '',
+                  authorLabel: 'eu',
+                  source: 'bot',
+                  messageType: 'text',
+                  text: action.text,
+                  now,
+                });
+              } catch {
+                // histórico recente nunca desfaz uma resposta já enviada
+              }
             }
           } else if (action.type === 'sticker' && hasSock) {
             const stickerPath = resolveStickerPath(action.slug);
@@ -867,6 +1144,7 @@ export function createPersonaService({
       }
 
       setCooldown(scopeKey, now);
+      if (isAutonomous) personaAutonomyPolicy?.recordSent?.(scopeKey, now);
 
       if (isContinuation && thread) {
         const cont = personaRepository.continueThread({
@@ -874,8 +1152,8 @@ export function createPersonaService({
           context: [
             ...threadContext,
             memberTurn(authorLabel, ctx.text),
-            { role: 'bot', text: responseText.slice(0, 200) },
-          ],
+            { role: 'bot', text: responseText.slice(0, Math.max(400, o.maxChars)) },
+          ].slice(-Math.max(4, o.contextTurns)),
           now,
         });
         if (!cont?.ok) logger?.debug?.('[personaService] continueThread falhou: %s', cont?.reason || '?');
@@ -885,16 +1163,15 @@ export function createPersonaService({
           maxTurns: o.maxTurns,
           context: [
             memberTurn(authorLabel, ctx.text),
-            { role: 'bot', text: responseText.slice(0, 200) },
-          ],
+            { role: 'bot', text: responseText.slice(0, Math.max(400, o.maxChars)) },
+          ].slice(-Math.max(4, o.contextTurns)),
           now,
         });
       }
 
       const uniqueResponseMessageIds = [...new Set(responseMessageIds.filter(Boolean))];
-      if (!uniqueResponseMessageIds.length) uniqueResponseMessageIds.push(randomUUID());
 
-      if (thread?.id) {
+      if (thread?.id && (uniqueResponseMessageIds.length || responseText)) {
         const anchored = personaRepository.setAnchor({
           threadId: thread.id,
           anchorMessageIds: uniqueResponseMessageIds,
@@ -905,7 +1182,7 @@ export function createPersonaService({
       }
 
       const threadKey = String(ctx.responseContextPack?.threadContext?.threadKey || '');
-      if (threadKey) {
+      if (threadKey && uniqueResponseMessageIds.length) {
         threadContextService?.anchorResponse?.({
           scopeKey,
           threadKey,
@@ -917,7 +1194,14 @@ export function createPersonaService({
         });
       }
 
-      return { responded: true, response: responseText, usedFallback, threadId: thread?.id || 0 };
+      return {
+        responded: true,
+        response: responseText,
+        responseMessageIds: uniqueResponseMessageIds,
+        usedFallback,
+        threadId: thread?.id || 0,
+        trigger: isAutonomous ? 'autonomous' : isContinuation ? 'continuation' : atMention ? 'at-mention' : 'mention',
+      };
     } catch (err) {
       logger?.warn?.('[personaService] tryRespond erro: %s', String(err?.message || err));
       return { responded: false, reason: 'error' };
@@ -929,6 +1213,7 @@ export function createPersonaService({
 
   return {
     tryRespond,
+    tryIdleFollowUp,
     observeMessage,
     deriveAndPersistProfile,
     maybeDeriveProfile,
