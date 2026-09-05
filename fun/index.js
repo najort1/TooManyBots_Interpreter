@@ -1387,11 +1387,19 @@ export function createFunModule(deps = {}) {
     for (const jid of targets) {
       try {
         const active = dailyChallengeRepository.getActiveChallenge(jid);
-        await dailyChallengeService.processExpired({
-          scopeKey: jid,
-          now: now + 9e15,
-          sendText: async () => {},
-        });
+        if (typeof dailyChallengeService.forceExpireChallenge === 'function') {
+          await dailyChallengeService.forceExpireChallenge({
+            scopeKey: jid,
+            now,
+            reason: 'admin-launch',
+          });
+        } else {
+          await dailyChallengeService.processExpired({
+            scopeKey: jid,
+            now,
+            sendText: async () => {},
+          });
+        }
         const challenge = await dailyChallengeService.launchChallenge({
           scopeKey: jid,
           type,

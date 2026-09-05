@@ -239,8 +239,8 @@ export async function handleDiceDuelCommand({
   if (!amount || !target || !isCanonicalUserJid(target)) {
     await reply(
       [
-        '🎲 *Desafio de dados*',
-        'Uso: `/desafio @pessoa 30`',
+        '🎲 *Duelo de dados*',
+        `Uso: \`${p}dados @pessoa 30\``,
         'Maior d20 leva o pot. Aceite: `/aceitar`',
         `Min *${funConfig.diceDuelMin || 5}* · max *${funConfig.diceDuelMax || 150}*`,
       ].join('\n')
@@ -269,7 +269,7 @@ export async function handleDiceDuelCommand({
       await reply(`*${nameOf(getContactDisplayName, target)}* não tem coins suficientes.`);
       return { handled: true };
     }
-    await reply(fmt.genericError({ command: 'desafio' }));
+    await reply(fmt.genericError({ command: 'dados' }));
     return { handled: true };
   }
 

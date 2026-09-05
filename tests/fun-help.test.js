@@ -61,7 +61,26 @@ test('help resolve comandos a partir dos próprios textos renderizados', () => {
   assert.equal(resolveHelpTarget('roletarussa'), 'jogos');
   assert.equal(resolveHelpTarget('rr'), 'jogos');
   assert.equal(resolveHelpTarget('bolsa'), 'economia');
+  assert.equal(resolveHelpTarget('dados'), 'cassino');
+  assert.equal(resolveHelpTarget('d20'), 'cassino');
+  assert.equal(resolveHelpTarget('duelo'), 'cassino');
+  assert.equal(resolveHelpTarget('duelodados'), 'cassino');
+  assert.equal(resolveHelpTarget('desafio'), 'jogos');
+  assert.equal(resolveHelpTarget('responder'), 'jogos');
+  assert.equal(resolveHelpTarget('dica'), 'jogos');
+  assert.equal(resolveHelpTarget('skip'), 'jogos');
+  assert.equal(resolveHelpTarget('gerar'), 'midia');
+  assert.equal(resolveHelpTarget('imaginar'), 'midia');
+  assert.equal(resolveHelpTarget('despedir'), 'social');
+  assert.equal(resolveHelpTarget('despedida'), 'social');
+  assert.equal(resolveHelpTarget('roles'), 'mundo');
+  assert.equal(resolveHelpTarget('removerrole'), 'mundo');
   assert.equal(resolveHelpTarget('comando_inexistente'), null);
+});
+
+test('help removeu alias fantasma guerra de faccoes', () => {
+  assert.equal(resolveHelpTopic('guerra'), null);
+  assert.equal(resolveHelpTarget('guerra'), null);
 });
 
 test('todos os topics do catálogo têm id único', () => {

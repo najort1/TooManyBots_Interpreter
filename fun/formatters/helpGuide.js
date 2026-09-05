@@ -68,13 +68,13 @@ export const HELP_TOPICS = Object.freeze([
       'roles',
     ],
   },
-  { id: 'social', title: 'Social', aliases: ['social', 'casar', 'marry', 'ship', 'reacao', 'reacoes', 'kiss', 'hug', 'nsfw', 'h', 'hentai'] },
+  { id: 'social', title: 'Social', aliases: ['social', 'casar', 'marry', 'ship', 'reacao', 'reacoes', 'kiss', 'hug', 'nsfw', 'h', 'hentai', 'despedir', 'despedida'] },
   { id: 'emprego', title: 'Emprego', aliases: ['emprego', 'trabalho', 'job', 'clt'] },
-  { id: 'jogos', title: 'Jogos', aliases: ['jogos', 'games', 'games', 'cf', 'aposta'] },
+  { id: 'jogos', title: 'Jogos', aliases: ['jogos', 'games', 'cf', 'aposta', 'desafio', 'responder', 'dica', 'skip'] },
   {
     id: 'cassino',
     title: 'Cassino',
-    aliases: ['cassino', 'casino', 'roleta', 'bingo', 'bj', 'crash'],
+    aliases: ['cassino', 'casino', 'roleta', 'bingo', 'bj', 'crash', 'dados', 'duelo'],
   },
   {
     id: 'zoeira',
@@ -95,9 +95,9 @@ export const HELP_TOPICS = Object.freeze([
   {
     id: 'faccoes',
     title: 'Panelinhas',
-    aliases: ['faccoes', 'faccao', 'panelinha', 'panelinhas', 'missao', 'guerra', 'times'],
+    aliases: ['faccoes', 'faccao', 'panelinha', 'panelinhas', 'missao', 'times'],
   },
-  { id: 'midia', title: 'Mídia', aliases: ['midia', 'media', 'fig', 'figurinha', 'sticker'] },
+  { id: 'midia', title: 'Mídia', aliases: ['midia', 'media', 'fig', 'figurinha', 'sticker', 'gerar', 'imaginar', 'imagem'] },
   { id: 'privado', title: 'Privado', aliases: ['privado', 'dm', 'pv', 'grupo'] },
 ]);
 
@@ -258,6 +258,9 @@ function topicSocial(p, nsfwPermitted) {
     `\`${p}highfive\` · \`${p}wave\``,
     '*Memes*',
     `\`${p}happy\` · \`${p}cry\` · \`${p}laugh\` · \`${p}bruh\` · \`${p}sus\``,
+    '*Despedidas*',
+    `\`${p}despedir @user\` — verso poético de despedida`,
+    `\`${p}despedida\` — ranking de despedidas`,
     ...nsfwLine,
     '',
     `_Voltar: \`${p}ajuda\`_`,
@@ -286,6 +289,12 @@ function topicJogos(p) {
     `\`${p}aposta @user 20 cara\` — duelo de moeda`,
     `\`${p}roletarussa\` → \`${p}puxar\` — sem XP 15 min se morrer`,
     '',
+    '*Desafio Diário*',
+    `\`${p}responder <palpite>\` — responder desafio diário`,
+    `\`${p}dica\` — pedir dica do desafio diário`,
+    `\`${p}skip\` ou \`${p}trocar desafio\` — votar para pular (3 votos)`,
+    `\`${p}desafio status\` — status do desafio ativo`,
+    '',
     `_Voltar: \`${p}ajuda\`_`,
   ].join('\n');
 }
@@ -297,7 +306,7 @@ function topicCassino(p) {
     `\`${p}roleta 20 vermelho\` · \`${p}slot 15\` · \`${p}jackpot\``,
     `\`${p}crash 20\` → \`${p}sair\` (cashout)`,
     `\`${p}bj 25\` → \`${p}hit\` / \`${p}stand\``,
-    `\`${p}desafio @user 30\` — dados d20`,
+    `\`${p}dados @user 30\` — duelo de dados d20`,
     `\`${p}torneio 20\` · \`${p}rankcassino\``,
     `\`${p}bingo 15\` · \`${p}bingo start\` · \`${p}bingo solo 15\``,
     '',
@@ -345,8 +354,12 @@ function topicMidia(p) {
   return [
     '🖼️ *Mídia*',
     '',
+    '*Figurinhas*',
     `\`${p}fig\` / \`${p}figurinha\` — vira sticker`,
     '• legenda na mídia *ou* responda a mídia com o comando',
+    '',
+    '*Geração de imagem*',
+    `\`${p}gerar <prompt>\` / \`${p}imaginar <prompt>\` — gera imagem por IA`,
     '',
     `_Voltar: \`${p}ajuda\`_`,
   ].join('\n');

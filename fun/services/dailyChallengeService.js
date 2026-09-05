@@ -1103,6 +1103,55 @@ export function createDailyChallengeService(deps = {}) {
     return { ok: true, announced: true };
   }
 
+  /**
+   * Força a expiração de um desafio ativo imediatamente, sem depender de timestamps futuros.
+   * Suporta anúncio opcional de encerramento e revelação de imagem.
+   */
+  async function forceExpireChallenge({
+    scopeKey,
+    now = Date.now(),
+    reason = 'forced',
+    announce = false,
+    sendText,
+    sendImage,
+    sharp,
+  } = {}) {
+    if (!scopeKey) return { ok: false, reason: 'no-scope' };
+    const challenge = repository.getActiveChallenge(scopeKey);
+    if (!challenge) return { ok: false, reason: 'no-active' };
+
+    const ts = Number(now) || Date.now();
+    repository.expireChallenge(challenge.id, ts);
+
+    let announced = false;
+    if (announce) {
+      try {
+        await sendText?.(
+          scopeKey,
+          `⏰ *DESAFIO DO DIA — ENCERRADO*\n\n` +
+            `Ninguem conseguiu resolver hoje.\n\n` +
+            `A resposta correta era: *${displayAnswer(challenge)}*\n\n` +
+            `Amanha tem mais! 🎯`
+        );
+        announced = true;
+      } catch (err) {
+        log({ err: err?.message }, 'dailyChallenge forceExpireChallenge send fail');
+      }
+      if (challenge.challengeType === 'pokemon') {
+        await revealPokemonImage(challenge, sendImage, sharp);
+      }
+    }
+
+    return {
+      ok: true,
+      expired: true,
+      challengeId: challenge.id,
+      reason,
+      announced,
+      challenge,
+    };
+  }
+
   function displayAnswer(challenge) {
     const t = challenge?.challengeType;
     if (t === 'guess_game') {
@@ -1499,6 +1548,7 @@ export function createDailyChallengeService(deps = {}) {
   return {
     tryLaunchToday,
     processExpired,
+    forceExpireChallenge,
     pickChallengeType,
     launchChallenge,
     handleAnswer,

@@ -185,13 +185,21 @@ export async function handleDesafioCommand(ctx) {
       const challengeType = TYPE_MAP[typeArg] || typeArg || null;
 
       // Expira qualquer desafio existente silenciosamente
-      const existing = dailyChallengeService.getStatus(scopeKey);
-      if (existing.active && existing.challenge) {
-        await dailyChallengeService.processExpired({
+      if (typeof dailyChallengeService.forceExpireChallenge === 'function') {
+        await dailyChallengeService.forceExpireChallenge({
           scopeKey,
-          now: Date.now() + 9e15,
-          sendText: async () => {},
+          now: Date.now(),
+          reason: 'force-launch',
         });
+      } else {
+        const existing = dailyChallengeService.getStatus(scopeKey);
+        if (existing.active && existing.challenge) {
+          await dailyChallengeService.processExpired({
+            scopeKey,
+            now: Date.now(),
+            sendText: async () => {},
+          });
+        }
       }
 
       const finalType = challengeType && ['guess_game', 'riddle', 'pokemon'].includes(challengeType)
@@ -216,13 +224,26 @@ export async function handleDesafioCommand(ctx) {
     }
 
     case 'expirar': {
-      const result = await dailyChallengeService.processExpired({
-        scopeKey,
-        now: Date.now() + 9e15,
-        sendText,
-        sendImage,
-        sharp,
-      });
+      let result;
+      if (typeof dailyChallengeService.forceExpireChallenge === 'function') {
+        result = await dailyChallengeService.forceExpireChallenge({
+          scopeKey,
+          now: Date.now(),
+          reason: 'forced',
+          announce: true,
+          sendText,
+          sendImage,
+          sharp,
+        });
+      } else {
+        result = await dailyChallengeService.processExpired({
+          scopeKey,
+          now: Date.now(),
+          sendText,
+          sendImage,
+          sharp,
+        });
+      }
       if (result?.ok) {
         await reply('✅ Desafio expirado e resposta anunciada.');
       } else {
@@ -234,15 +255,23 @@ export async function handleDesafioCommand(ctx) {
     case 'reiniciar':
     case 'resetar': {
       // Expira existente silenciosamente
-      const existing = dailyChallengeService.getStatus(scopeKey);
-      if (existing.active && existing.challenge) {
-        await dailyChallengeService.processExpired({
+      if (typeof dailyChallengeService.forceExpireChallenge === 'function') {
+        await dailyChallengeService.forceExpireChallenge({
           scopeKey,
-          now: Date.now() + 9e15,
-          sendText: async () => {},
-          sendImage,
-          sharp,
+          now: Date.now(),
+          reason: 'restart',
         });
+      } else {
+        const existing = dailyChallengeService.getStatus(scopeKey);
+        if (existing.active && existing.challenge) {
+          await dailyChallengeService.processExpired({
+            scopeKey,
+            now: Date.now(),
+            sendText: async () => {},
+            sendImage,
+            sharp,
+          });
+        }
       }
 
       const type = dailyChallengeService.pickChallengeType(null);
