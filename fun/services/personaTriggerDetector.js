@@ -164,6 +164,9 @@ export function isThreadContinuation({
   const idMatches = quotedIdIsReal && anchorIds.includes(quotedId);
   const textMatches = Boolean(anchorTextNorm && quotedTextNorm && quotedTextNorm === anchorTextNorm);
 
-  const quotePointsToAnchor = (idMatches || (!quotedId && !quotedTextNorm) || (quotedIdIsReal && textMatches));
+  // Alguns clients fornecem só o texto citado. A igualdade com a âncora é
+  // suficiente nesse fallback; um ID presente e diferente continua exigindo
+  // esse texto exato para não capturar replies de comandos do bot.
+  const quotePointsToAnchor = (idMatches || (!quotedId && !quotedTextNorm) || textMatches);
   return Boolean(quotePointsToAnchor);
 }

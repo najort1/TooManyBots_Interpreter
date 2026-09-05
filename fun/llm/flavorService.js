@@ -1057,6 +1057,15 @@ export function createFlavorService(deps = {}) {
   let warm = false;
   let lastWarmAt = 0;
   let lastProvider = '';
+  /** @type {Map<string, string>} */
+  const lastProviderByScope = new Map();
+
+  function setLastProvider(provider, scopeKey = null) {
+    lastProvider = String(provider || '');
+    if (scopeKey) {
+      lastProviderByScope.set(String(scopeKey), lastProvider);
+    }
+  }
 
   // testes setam FUN_DISABLE_LIVE_LLM=1; mocks injetados ainda funcionam
   const liveLlmAllowed =
@@ -1550,6 +1559,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
     const safeFallback = fallback(key, vars);
 
     if (!isEnabled(cfg)) {
+      setLastProvider('template', scopeKey);
       return safeFallback;
     }
 
@@ -1567,7 +1577,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         maxRetries: DEFAULT_ZEN_MAX_RETRIES,
       });
       if (zenResult.ok) {
-        lastProvider = 'zen';
+        setLastProvider('zen', scopeKey);
         pushRecent(zenResult.text, cfg, scopeKey);
         recordLlmHit('flavor', 'zen', { scenario: key });
         return zenResult.text;
@@ -1584,7 +1594,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         });
       }
 
-      lastProvider = 'template';
+      setLastProvider('template', scopeKey);
       recordLlmHit('flavor', 'template', { scenario: key });
       // flavorAlways false: devolve template mesmo assim (comando espera texto); italicLine pode omitir
       pushRecent(safeFallback, cfg, scopeKey);
@@ -1599,7 +1609,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         }),
         new Promise((resolve) => {
           budgetTimer = setTimeout(() => {
-            lastProvider = 'template-timeout';
+            setLastProvider('template-timeout', scopeKey);
             recordLlmHit('flavor', 'template-timeout', { scenario: key });
             resolve(safeFallback);
           }, budgetMs);
@@ -1609,7 +1619,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
       return result;
     } catch {
       if (budgetTimer) clearTimeout(budgetTimer);
-      lastProvider = 'template';
+      setLastProvider('template', scopeKey);
       recordLlmHit('flavor', 'template', { scenario: key });
       return safeFallback;
     }
@@ -1626,7 +1636,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
     const safeFallback = fallback(key, vars);
 
     if (!isEnabled(cfg)) {
-      lastProvider = 'template';
+      setLastProvider('template', scopeKey);
       return safeFallback;
     }
 
@@ -1662,7 +1672,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         maxRetries: DEFAULT_ZEN_MAX_RETRIES,
       });
       if (zenResult.ok) {
-        lastProvider = 'zen';
+        setLastProvider('zen', scopeKey);
         pushRecent(zenResult.text, cfg, scopeKey);
         recordLlmHit('chaos', 'zen', { scenario: key, scope: scopeKey.slice(0, 24) });
         return zenResult.text;
@@ -1679,7 +1689,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         }, 'Fun chaos');
       }
 
-      lastProvider = 'template';
+      setLastProvider('template', scopeKey);
       recordLlmHit('chaos', 'template', { scenario: key });
       pushRecent(safeFallback, cfg, scopeKey);
       return safeFallback;
@@ -1693,7 +1703,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         }),
         new Promise((resolve) => {
           budgetTimer = setTimeout(() => {
-            lastProvider = 'template-timeout';
+            setLastProvider('template-timeout', scopeKey);
             recordLlmHit('chaos', 'template-timeout', { scenario: key });
             if (key === 'group_times') {
               console.warn(
@@ -1708,7 +1718,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
       return result;
     } catch {
       if (budgetTimer) clearTimeout(budgetTimer);
-      lastProvider = 'template';
+      setLastProvider('template', scopeKey);
       recordLlmHit('chaos', 'template', { scenario: key });
       return safeFallback;
     }
@@ -1744,7 +1754,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         maxRetries: DEFAULT_ZEN_MAX_RETRIES,
       });
       if (zenResult.ok) {
-        lastProvider = 'zen';
+        setLastProvider('zen', scopeKey);
         pushRecent(zenResult.text.slice(0, 120), cfg);
         recordLlmHit('assault', 'zen', { scenario: key });
         return zenResult.text;
@@ -1761,7 +1771,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         });
       }
 
-      lastProvider = 'template';
+      setLastProvider('template', scopeKey);
       recordLlmHit('assault', 'template', { scenario: key });
       return safeFallback;
     };
@@ -1774,7 +1784,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         }),
         new Promise((resolve) => {
           budgetTimer = setTimeout(() => {
-            lastProvider = 'template-timeout';
+            setLastProvider('template-timeout', scopeKey);
             recordLlmHit('assault', 'template-timeout', { scenario: key });
             resolve(safeFallback);
           }, budgetMs);
@@ -1784,7 +1794,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
       return result;
     } catch {
       if (budgetTimer) clearTimeout(budgetTimer);
-      lastProvider = 'template';
+      setLastProvider('template', scopeKey);
       recordLlmHit('assault', 'template', { scenario: key });
       return safeFallback;
     }
@@ -1819,7 +1829,12 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
     stopKeepAliveLoop,
     isWarm: () => warm,
     lastWarmAt: () => lastWarmAt,
-    lastProvider: () => lastProvider,
+    lastProvider: (scopeKey = null) => {
+      if (scopeKey && lastProviderByScope.has(String(scopeKey))) {
+        return lastProviderByScope.get(String(scopeKey));
+      }
+      return lastProvider;
+    },
     recentFingerprints: (scopeKey = '__global__') => [
       ...(recentByScope.get(String(scopeKey || '__global__')) || []),
     ],
