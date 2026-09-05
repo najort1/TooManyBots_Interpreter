@@ -1104,7 +1104,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   /** Base URL da proxy de geração de imagens (se provider='openai'). */
   imageGenBaseUrl: 'http://127.0.0.1:3300',
   /** API key para Gemini ou Bearer da proxy. */
-  imageGenApiKey: 'AIzaSyCa8abDWui05xuIRq31vZjNSPW-rEMO6lk',
+  imageGenApiKey: '',
   /** Modelo do Gemini ou da proxy. */
   imageGenModel: 'models/gemini-3.1-flash-lite-image',
   /** Limite global diário (todos os grupos). Reset 00h America/Sao_Paulo. */
