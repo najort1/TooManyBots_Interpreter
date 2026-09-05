@@ -120,6 +120,17 @@ test('casino P0: roleta, slot, jackpot, duelo dados', () => {
   }
 });
 
+test('casino aliases: dados, d20, dice, duelodados, duelo mapeiam para DICE_DUEL e desafio não', () => {
+  assert.equal(parseFunCommand('/dados @user 30')?.command, FUN_COMMANDS.DICE_DUEL);
+  assert.equal(parseFunCommand('/d20 @user 30')?.command, FUN_COMMANDS.DICE_DUEL);
+  assert.equal(parseFunCommand('/dice @user 30')?.command, FUN_COMMANDS.DICE_DUEL);
+  assert.equal(parseFunCommand('/duelodados @user 30')?.command, FUN_COMMANDS.DICE_DUEL);
+  assert.equal(parseFunCommand('/duelo @user 30')?.command, FUN_COMMANDS.DICE_DUEL);
+  // /desafio é reservado para o desafio diário
+  assert.equal(parseFunCommand('/desafio status')?.command, FUN_COMMANDS.DESAFIO);
+  assert.notEqual(parseFunCommand('/desafio')?.command, FUN_COMMANDS.DICE_DUEL);
+});
+
 test('casino P1: crash + blackjack', () => {
   const repo = createFunStatsRepository({ getDatabase: getDb });
   repo.ensureFunSchema();

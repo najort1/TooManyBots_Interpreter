@@ -368,6 +368,55 @@ test('dailyChallenge service: processExpired expira e anuncia resposta', async (
   assert.equal(today, null);
 });
 
+test('dailyChallenge service: forceExpireChallenge expira silenciosamente ou com anúncio', async () => {
+  const now = new Date('2099-01-07T12:00:00.000Z').getTime();
+  const { service, repository } = createServiceHarness();
+  const scope = uniqueGroup();
+
+  // Nenhum desafio ativo
+  const noActive = await service.forceExpireChallenge({ scopeKey: scope, now });
+  assert.equal(noActive.ok, false);
+  assert.equal(noActive.reason, 'no-active');
+
+  // Lança desafio
+  await service.launchChallenge({
+    scopeKey: scope,
+    type: 'riddle',
+    now,
+    sendText: async () => {},
+  });
+  const active1 = repository.getActiveChallenge(scope);
+  assert.ok(active1);
+
+  // Expira silenciosamente
+  const silent = await service.forceExpireChallenge({ scopeKey: scope, now, reason: 'test-silent' });
+  assert.equal(silent.ok, true);
+  assert.equal(silent.expired, true);
+  assert.equal(silent.announced, false);
+  assert.equal(repository.getActiveChallenge(scope), null);
+
+  // Lança outro e expira com anúncio
+  await service.launchChallenge({
+    scopeKey: scope,
+    type: 'riddle',
+    now: now + 1000,
+    sendText: async () => {},
+  });
+  const messages = [];
+  const announced = await service.forceExpireChallenge({
+    scopeKey: scope,
+    now: now + 2000,
+    reason: 'forced',
+    announce: true,
+    sendText: async (_to, msg) => messages.push(msg),
+  });
+  assert.equal(announced.ok, true);
+  assert.equal(announced.expired, true);
+  assert.equal(announced.announced, true);
+  assert.ok(messages.some((m) => /ENCERRADO/i.test(m)));
+  assert.equal(repository.getActiveChallenge(scope), null);
+});
+
 test('dailyChallenge service: tryLaunchToday agenda e lança desafio do dia', async () => {
   const now = new Date('2099-01-08T12:00:00.000Z').getTime();
   const { service, repository } = createServiceHarness({
