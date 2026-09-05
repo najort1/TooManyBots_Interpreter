@@ -226,8 +226,7 @@ export function createFunModule(deps = {}) {
       getLogger,
       getProfileService: () => profileService,
       getGroupMemoryService: () => groupMemoryService,
-      generateZen: deps.openaiChatComplete,
-      generateOllama: deps.ollamaGenerate,
+      generateZen: deps.openaiChatComplete || deps.zenGenerate,
     });
   const profileRepository =
     deps.profileRepository || createFunProfileRepository({ getDatabase });
@@ -239,7 +238,6 @@ export function createFunModule(deps = {}) {
       getContactDisplayName: resolveContactName,
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
-      generateOllama: deps.ollamaGenerate || deps.generate,
     });
   const cardRepository =
     deps.cardRepository || createFunCardRepository({ getDatabase });
@@ -259,7 +257,6 @@ export function createFunModule(deps = {}) {
       profileService,
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
-      generateOllama: deps.ollamaGenerate || deps.generate,
     });
   const shopService = createShopService({
     repository,
@@ -312,8 +309,7 @@ export function createFunModule(deps = {}) {
       profileService,
       getGroupMemoryService: () => groupMemoryService,
       getLogger,
-      generateZen: deps.openaiChatComplete,
-      generateOllama: deps.ollamaGenerate,
+      generateZen: deps.openaiChatComplete || deps.zenGenerate,
     });
   const missionService = createMissionService({
     missionRepository,
@@ -393,7 +389,6 @@ export function createFunModule(deps = {}) {
       getContactDisplayName: resolveContactName,
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
-      generateOllama: deps.ollamaGenerate || deps.generate,
       getNewsService: () => newsService,
       evidenceRepository,
       adapters: extractionAdapters,
@@ -432,9 +427,7 @@ export function createFunModule(deps = {}) {
     createFlavorService({
       getConfig: () => resolveFunConfig(getConfig() || {}),
       getLogger,
-      // Zen principal · Ollama fallback · template no fim
       zenGenerate: deps.openaiChatComplete || deps.zenGenerate,
-      generate: deps.ollamaGenerate || deps.generate,
     });
   const reactionMediaService =
     deps.reactionMediaService ||
@@ -479,7 +472,6 @@ export function createFunModule(deps = {}) {
       groupMemoryService,
       getContactDisplayName: resolveContactName,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
-      generateOllama: deps.ollamaGenerate || deps.generate,
       getConfig: () => resolveFunConfig(getConfig() || {}),
       getLogger,
     });

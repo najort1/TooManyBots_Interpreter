@@ -58,3 +58,51 @@ test('roast: dossiê e template sem LLM', async () => {
   assert.equal(hit.provider, 'template');
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
+
+test('roast: incorpora bio, nick e resumo de lore no dossiê', async () => {
+  const repository = createFunStatsRepository({ getDatabase: getDb });
+  repository.ensureFunSchema();
+  const scope = uniqueGroup();
+  const u = uniqueJid();
+
+  let capturedVars = null;
+  const flavorService = {
+    line: async (scenario, vars) => {
+      capturedVars = { scenario, vars };
+      return 'Você gasta tudo no tigrinho e ainda quer respeito.';
+    },
+    lastProvider: () => 'zen',
+  };
+
+  const roastService = createRoastService({
+    repository,
+    flavorService,
+    profileService: {
+      getProfile: () => ({
+        nickname: 'Jão Foguete',
+        bio: 'Mestre da procrastinação e fã de pastel',
+        title: 'Membro Caótico',
+      }),
+      getNickname: () => 'Jão Foguete',
+    },
+    groupMemoryService: {
+      buildLoreContext: () => '<group_lore>\n- [running_gag] Sempre pede PIX depois das 23h\n</group_lore>',
+    },
+  });
+
+  const res = await roastService.roast({
+    userJid: u,
+    scopeKey: scope,
+    funConfig: { roastEnabled: true },
+    getContactDisplayName: () => 'João',
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.provider, 'zen');
+  assert.equal(res.dossier.customNick, 'Jão Foguete');
+  assert.match(res.dossier.bio, /Mestre da procrastinação/);
+  assert.match(res.dossier.loreSummary, /PIX depois das 23h/);
+  assert.match(capturedVars.vars.facts, /Jão Foguete/);
+  assert.match(capturedVars.vars.facts, /Mestre da procrastinação/);
+  assert.match(capturedVars.vars.facts, /PIX depois das 23h/);
+});

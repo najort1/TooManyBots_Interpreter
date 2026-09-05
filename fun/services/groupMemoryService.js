@@ -5,7 +5,6 @@
  */
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
-import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
@@ -624,7 +623,6 @@ export function createGroupMemoryService({
   random = Math.random,
   getLogger = () => null,
   generateZen = openaiChatComplete,
-  generateOllama = ollamaGenerate,
   getNewsService = null,
   evidenceRepository = null,
   adapters = {},

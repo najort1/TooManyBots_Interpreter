@@ -855,21 +855,6 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.qmpInventRetries,
       { min: 1, max: 4, rounding: 'floor', clamp: true }
     ),
-    qmpTimeoutMs: normalizeInt(raw.qmpTimeoutMs, DEFAULT_FUN_CONFIG.qmpTimeoutMs, {
-      min: 3000,
-      max: 90_000,
-      rounding: 'floor',
-      clamp: true,
-    }),
-    qmpMaxTokens: normalizeInt(raw.qmpMaxTokens, DEFAULT_FUN_CONFIG.qmpMaxTokens, {
-      min: 64,
-      max: 500,
-      rounding: 'floor',
-      clamp: true,
-    }),
-    qmpTemperature: Number.isFinite(Number(raw.qmpTemperature))
-      ? Math.min(1.5, Math.max(0, Number(raw.qmpTemperature)))
-      : DEFAULT_FUN_CONFIG.qmpTemperature,
     qmpZenModel:
       toText(raw.qmpZenModel, DEFAULT_FUN_CONFIG.qmpZenModel) ||
       DEFAULT_FUN_CONFIG.qmpZenModel ||

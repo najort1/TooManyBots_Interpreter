@@ -880,9 +880,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   /** Tentativas totais de gerar via Zen antes do template mockado (1 + retries = default 4).
    *  Fallback Ollama descontinuado. */
   qmpInventRetries: 4,
-  qmpTimeoutMs: 18_000,
-  qmpMaxTokens: 320,
-  qmpTemperature: 0.95,
+  /** Parâmetros do QMP são resolvidos exclusivamente pelos knobs Zen abaixo. */
   zenQmpTemperature: 0.95,
   zenQmpMaxTokens: 320,
   zenQmpTimeoutMs: 18_000,

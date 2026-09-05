@@ -1,4 +1,3 @@
-import { ollamaGenerate, ollamaWarmup, ollamaTouch } from './ollamaClient.js';
 import { openaiChatComplete } from './openaiClient.js';
 import { resolveZenEndpoint } from './zenEndpoint.js';
 import {
@@ -9,8 +8,6 @@ import {
 import { recordLlmHit } from './llmMetrics.js';
 import { withRetries, BREAK } from '../utils/retry.js';
 
-/** Fallback Ollama foi descontinuado — Zen agora cai direto em template mockado. */
-const OLLAMA_DISABLED_REASON = 'ollama-deprecated';
 /**
  * Retentativas do Zen antes do fallback mockado (template): 1 chamada + retries.
  * Configurável via funConfig.zenMaxRetries (default 3 = 4 tentativas totais).
@@ -1000,15 +997,11 @@ function logFlavor(getLogger, payload, tag = 'Fun flavor') {
  * @param {object} deps
  * @param {() => object} [deps.getConfig]
  * @param {() => object|null} [deps.getLogger]
- * @param {typeof ollamaGenerate} [deps.generate] — ollama (ou mock)
  * @param {typeof openaiChatComplete} [deps.zenGenerate] — zen/openai (ou mock)
- * @param {typeof ollamaWarmup} [deps.warmup]
- * @param {typeof ollamaTouch} [deps.touch]
  */
 export function createFlavorService(deps = {}) {
   const getConfig = deps.getConfig || (() => ({}));
   const getLogger = deps.getLogger || (() => null);
-  const generateOllama = deps.generate || ollamaGenerate;
   /**
    * Anti-repeat por escopo (grupo). Antes era global e vazava
    * "vish paulo…" de um grupo pro prompt do jornal de outro.
@@ -1049,11 +1042,7 @@ export function createFlavorService(deps = {}) {
     return t;
   }
   const generateZen = deps.zenGenerate || openaiChatComplete;
-  const warmupFn = deps.warmup || ollamaWarmup;
-  const touchFn = deps.touch || ollamaTouch;
 
-  /** @type {ReturnType<typeof setInterval> | null} */
-  let keepAliveTimer = null;
   let warm = false;
   let lastWarmAt = 0;
   let lastProvider = '';
@@ -1076,13 +1065,8 @@ export function createFlavorService(deps = {}) {
     return cfg?.zenEnabled !== false;
   }
 
-  function ollamaOn(cfg) {
-    // Ollama foi descontinuado como fallback — Zen encadeia direto em template mockado.
-    return false;
-  }
-
   function isEnabled(cfg) {
-    return zenOn(cfg) || ollamaOn(cfg);
+    return zenOn(cfg);
   }
 
   function fallback(scenario, vars) {
@@ -1112,6 +1096,8 @@ export function createFlavorService(deps = {}) {
         attacker: String(vars?.attacker || '').trim() || 'O Protagonista',
         target: String(vars?.target || '').trim() || 'o alvo',
         weapon: String(vars?.weapon || '').trim() || 'arma',
+        vehicle: String(vars?.vehicle || '').trim(),
+        inventory: String(vars?.inventory || vars?.inventoryDetails || '').trim(),
         mode: String(vars?.mode || '').trim(),
         success: String(vars?.success || '').trim(),
         gas: String(vars?.gas || '').trim(),
@@ -1131,6 +1117,8 @@ export function createFlavorService(deps = {}) {
         `- Assaltante/protagonista: "${cast.attacker}" ← use ESTE nome em todas as cenas; NÃO invente outro`,
         `- Alvo: "${cast.target}"`,
         `- Arma: "${cast.weapon}"`,
+        cast.vehicle ? `- Veículo de fuga: "${cast.vehicle}"` : null,
+        cast.inventory ? `- Equipamento/inventário: "${cast.inventory}"` : null,
         cast.gas === 'sim' ? '- Fuga com gasolina: sim' : null,
         cast.success ? `- Resultado: ${cast.success === 'sim' ? 'DEU CERTO' : 'FALHOU'}` : null,
       ]
@@ -1405,138 +1393,19 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
     }
   }
 
-  async function tryOllama(cfg, key, vars, { simple = false, assault = false, chaos = false } = {}) {
-    if (!ollamaOn(cfg)) return { ok: false, reason: 'ollama-disabled' };
-    const ep = resolveOllamaEndpoint(cfg);
-    const scopeKey = scopeKeyOf(vars);
-    const { prompt, system, maxChars, maxTokens } = buildPromptParts(cfg, key, vars, simple, {
-      forZen: false,
-      assault,
-      chaos,
-    });
-    try {
-      const raw = await generateOllama({
-        baseUrl: ep.baseUrl,
-        model: ep.model,
-        system,
-        prompt,
-        timeoutMs:
-          key === 'group_times'
-            ? Math.max(ep.timeoutMs, 60_000)
-            : assault
-              ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.assaultStoryTimeoutMs) || 40_000))
-              : chaos
-                ? Math.max(ep.timeoutMs, Math.floor(Number(cfg.chaosTimeoutMs) || 28_000))
-                : ep.timeoutMs,
-        keepAlive: ep.keepAlive,
-        think: false,
-        numPredict: assault
-          ? Math.max(280, Math.min(700, Math.floor(Number(cfg.assaultStoryMaxTokens) || 550)))
-          : key === 'group_times'
-            ? Math.max(280, Math.floor(Number(cfg.chaosMaxTokens) || maxTokens || 500))
-            : chaos
-              ? Math.max(180, Math.floor(Number(cfg.chaosMaxTokens) || maxTokens || 360))
-              : Math.max(32, Math.floor(Number(cfg.ollamaNumPredict) || 80)),
-        temperature: Number.isFinite(Number(cfg.ollamaTemperature))
-          ? Math.min(1.1, Number(cfg.ollamaTemperature) + (chaos ? 0.1 : 0))
-          : chaos
-            ? 0.95
-            : 0.85,
-      });
-      void maxTokens;
-      const clean = assault
-        ? sanitizeAssaultStory(raw, maxChars)
-        : key === 'group_times'
-          ? sanitizeGroupTimes(raw, maxChars)
-          : sanitizeFlavor(raw, maxChars);
-      if (!clean) return { ok: false, reason: 'ollama-empty', model: ep.model };
-      warm = true;
-      lastWarmAt = Date.now();
-      return { ok: true, text: clean, provider: 'ollama', model: ep.model };
-    } catch (err) {
-      return {
-        ok: false,
-        reason: err?.message || 'ollama-fail',
-        model: ep.model,
-        err,
-      };
-    }
-  }
-
   /**
-   * Pré-carrega Ollama (fallback local). Zen não precisa de warmup de VRAM.
+   * Stubs mínimos mantidos para retrocompatibilidade de chamadas legadas.
    */
   async function warmup() {
-    const cfg = getConfig() || {};
-    if (!ollamaOn(cfg)) {
-      return { ok: false, reason: ollamaOn(cfg) ? 'skip' : 'ollama-disabled', ms: 0 };
-    }
-    const ep = resolveOllamaEndpoint(cfg);
-    const result = await warmupFn({
-      baseUrl: ep.baseUrl,
-      model: ep.model,
-      keepAlive: ep.keepAlive,
-      timeoutMs: ep.warmupTimeoutMs,
-    });
-    if (result.ok) {
-      warm = true;
-      lastWarmAt = Date.now();
-      getLogger?.()?.info?.(
-        { model: result.model, ms: result.ms },
-        'Fun Ollama: modelo aquecido e residente'
-      );
-    } else {
-      warm = false;
-      getLogger?.()?.warn?.(
-        { model: result.model, ms: result.ms, reason: result.reason },
-        'Fun Ollama: warmup falhou — ainda tenta sob demanda como fallback'
-      );
-    }
-    return result;
+    return { ok: false, reason: 'ollama-deprecated', ms: 0 };
   }
 
   function startKeepAliveLoop() {
-    stopKeepAliveLoop();
-    const cfg = getConfig() || {};
-    if (!ollamaOn(cfg)) return { started: false, reason: 'ollama-disabled' };
-
-    const ep = resolveOllamaEndpoint(cfg);
-    const refreshMs =
-      cfg.ollamaKeepAliveRefreshMs === 0 ? 0 : ep.refreshMs || 10 * 60_000;
-
-    if (refreshMs <= 0) return { started: false, reason: 'refresh-disabled' };
-
-    keepAliveTimer = setInterval(() => {
-      const live = getConfig() || {};
-      if (!ollamaOn(live)) return;
-      const e = resolveOllamaEndpoint(live);
-      touchFn({
-        baseUrl: e.baseUrl,
-        model: e.model,
-        keepAlive: e.keepAlive,
-        timeoutMs: Math.min(e.warmupTimeoutMs, 60_000),
-      })
-        .then((r) => {
-          if (r.ok) {
-            warm = true;
-            lastWarmAt = Date.now();
-          }
-        })
-        .catch(() => {});
-    }, refreshMs);
-
-    if (typeof keepAliveTimer.unref === 'function') {
-      keepAliveTimer.unref();
-    }
-
-    return { started: true, refreshMs };
+    return { started: false, reason: 'ollama-deprecated' };
   }
 
   function stopKeepAliveLoop() {
-    if (keepAliveTimer) {
-      clearInterval(keepAliveTimer);
-      keepAliveTimer = null;
-    }
+    // noop
   }
 
   /**
@@ -1731,6 +1600,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
   async function assaultStory(scenario, vars = {}) {
     const cfg = getConfig() || {};
     const key = String(scenario || 'assault_bank_win');
+    const scopeKey = scopeKeyOf(vars);
     const safeFallback = fallback(key, vars);
 
     if (!isEnabled(cfg)) {
