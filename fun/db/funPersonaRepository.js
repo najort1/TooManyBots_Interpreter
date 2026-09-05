@@ -127,6 +127,33 @@ export function createFunPersonaRepository({ getDatabase = getDb } = {}) {
     return thread;
   }
 
+  function getActiveThreadByAnchor(scopeKey, {
+    quotedMessageId = '',
+    quotedText = '',
+    now = Date.now(),
+    ttlMs = 30 * 60_000,
+  } = {}) {
+    ensureSchema();
+    const id = String(quotedMessageId || '').trim();
+    const text = String(quotedText || '').trim();
+    const rows = getDatabase().prepare(
+      `SELECT * FROM ${ANALYTICS_SCHEMA}.fun_persona_thread
+       WHERE scope_key = ?
+       ORDER BY last_activity_at DESC`
+    ).all(String(scopeKey || ''));
+    for (const row of rows) {
+      const thread = mapThreadRow(row);
+      if (Number(now) - thread.lastActivityAt > Number(ttlMs)) continue;
+      const idMatches = id && thread.anchorMessageIds.includes(id);
+      const textMatches = text && thread.anchorText === text;
+      // Alguns clients não expõem messageId/texto no quote. Esse caso legado
+      // já foi confirmado como reply do bot pelo detector e usa a thread ativa.
+      const legacyQuotedBot = !id && !text;
+      if (idMatches || textMatches || legacyQuotedBot) return thread;
+    }
+    return null;
+  }
+
   // maxTurns 0 = sem limite de turnos (chat infinito).
   function openThread({ scopeKey, maxTurns = 0, context = [], now = Date.now() }) {
     ensureSchema();
@@ -226,6 +253,7 @@ export function createFunPersonaRepository({ getDatabase = getDb } = {}) {
     getProfile,
     upsertProfile,
     getActiveThread,
+    getActiveThreadByAnchor,
     openThread,
     continueThread,
     getThreadById,

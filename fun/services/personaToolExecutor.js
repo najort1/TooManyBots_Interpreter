@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { formatHelp, resolveHelpTarget } from '../formatters/helpGuide.js';
 import { getReactionKind, normalizeReactionAction } from './reactionMediaService.js';
 import { resolveStickerPath, STICKER_SLUGS } from './personaStickerCatalog.js';
+import { EMOJI_RE } from './personaToolProtocol.js';
 import { imageBufferToSticker } from '../utils/stickerConvert.js';
 import { formatDatedFact } from '../utils/factTemporalContext.js';
 
@@ -17,11 +18,11 @@ function hasContextualInvite(text, kind) {
     start_russian: /roleta|russa|gatilho|coragem|duelo|resolver|desafio|jogar/iu,
     oracle: /or[aá]culo|previs[aã]o|destino|vou .*namorar|pergunta/iu,
     illuminati: /illuminati|conspira|teoria/iu,
-    gossip: /fofoca|boato|rumor|fofoca/iu,
+    gossip: /go+s+i+p|fofoca|boato|rumor/iu,
     tarot: /tar[oô]|cartas|arcano|tiragem|leitura/iu,
     ship: /ship|casal|combin|qu[ií]mica|namor|romance/iu,
     cancel: /cancel|cancelamento/iu,
-    reaction: /abra[cç]|hug|beij|kiss|tapa|slap|rea[cç][aã]o|high.?five|acena|wave|rir|laugh|chora|cry/iu,
+    reaction: /reaction|reag|rea[cç]|abra[cç]|hug|beij|kiss|tapa|slap|carinho|pat|cuddle|cafun[eé]|mord|bite|lamb|lick|cutuc|poke|high.?five|tocaqui|acena|wave|rir|laugh|chora|cry|bruh|sus/iu,
   };
   return patterns[kind]?.test(source) !== false;
 }
@@ -66,6 +67,8 @@ export function createPersonaToolExecutor({
   tarotService = null,
   relationshipService = null,
   reactionMediaService = null,
+  personaRecentMessageRepository = null,
+  personaIdentityService = null,
   getContactDisplayName = null,
 } = {}) {
   if (!chaosService) throw new Error('[fun/personaToolExecutor] chaosService required');
@@ -86,6 +89,7 @@ export function createPersonaToolExecutor({
     const scopeKey = String(ctx.scopeKey || '');
     const now = Number(ctx.now) || Date.now();
     const base = { tool: name, ok: false, text: '' };
+    const cooldownScopeKey = `${scopeKey}:${name}`;
     if (!scopeKey.endsWith('@g.us')) return { ...base, reason: 'group-only', text: 'Isso só rola no grupo.' };
 
     if (name === 'help') {
@@ -114,6 +118,37 @@ export function createPersonaToolExecutor({
       };
     }
 
+    if (name === 'recent_conversation') {
+      const messages = personaRecentMessageRepository?.listRecentBefore?.(scopeKey, {
+        beforeAt: now + 1,
+        windowMs: Number(ctx.funConfig?.personaImmediateContextWindowMs) || 6 * 60 * 60_000,
+        limit: 20,
+      }) || [];
+      const query = clean(args.query || '', 120).toLowerCase();
+      const matches = messages.filter((message) => !query || String(message.text || '').toLowerCase().includes(query)).slice(-10);
+      return {
+        ...base,
+        ok: true,
+        text: matches.length
+          ? matches.map((message) => `${clean(message.authorLabel || 'membro', 60)}: ${clean(message.text, 400)}`).join('\n')
+          : 'Não achei conversa recente sobre isso.',
+        summary: matches.length ? `Encontrei ${matches.length} mensagens recentes.` : 'Nenhuma mensagem recente encontrada.',
+        data: matches,
+      };
+    }
+
+    if (name === 'group_identity') {
+      const identity = personaIdentityService?.get?.(scopeKey) || {};
+      const details = [
+        identity.botName && `Nome: ${clean(identity.botName, 80)}`,
+        identity.botAliases?.length && `Apelidos: ${identity.botAliases.join(', ')}`,
+        identity.botRole && `Papel: ${clean(identity.botRole, 240)}`,
+        identity.botTraits?.length && `Traços: ${identity.botTraits.join(', ')}`,
+        identity.groupLoreSummary && `Lore: ${clean(identity.groupLoreSummary, 800)}`,
+      ].filter(Boolean);
+      return { ...base, ok: true, text: details.length ? details.join('\n') : 'Ainda não tenho uma identidade configurada neste grupo.', data: identity };
+    }
+
     if (name === 'lore') {
       const query = clean(args.query || ctx.text, 120).toLowerCase();
       const tokens = query.normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\W+/).filter((x) => x.length >= 3);
@@ -133,10 +168,26 @@ export function createPersonaToolExecutor({
       };
     }
 
-    if (!hasContextualInvite(ctx.text, name)) {
+    const toolContextText = String(ctx.toolContextText || ctx.text || '');
+    if (!hasContextualInvite(toolContextText, name)) {
       return { ...base, reason: 'not-contextual', text: 'Não vou forçar essa brincadeira do nada.' };
     }
-    const remaining = inCooldown(scopeKey, now, ctx.funConfig);
+
+    // Reações de emoji não consomem nem são barradas pelo cooldown de mídia
+    if (name === 'reaction') {
+      const rawAction = String(args.action || '').trim();
+      const rawEmoji = String(args.emoji || '').trim();
+      const emojiCandidate = (EMOJI_RE.test(rawAction) ? rawAction : '') ||
+                             (EMOJI_RE.test(rawEmoji) ? rawEmoji : '');
+      if (emojiCandidate) {
+        if (typeof ctx.replyReact === 'function') {
+          await ctx.replyReact(emojiCandidate);
+        }
+        return { ...base, ok: true, text: '', summary: `Reagiu com emoji ${emojiCandidate}.`, emoji: emojiCandidate };
+      }
+    }
+
+    const remaining = inCooldown(cooldownScopeKey, now, ctx.funConfig);
     if (remaining) return { ...base, reason: 'cooldown', text: `Vou segurar a onda por mais ${remaining}s.` };
 
     const chaosKind = { oracle: 'oracle', illuminati: 'illuminati', gossip: 'gossip', cancel: 'cancel' }[name];
@@ -232,9 +283,13 @@ export function createPersonaToolExecutor({
     }
 
     if (name === 'reaction') {
-      const action = normalizeReactionAction(args.action);
-      if (!action || getReactionKind(action) === 'nsfw') {
+      const rawAction = String(args.action || '').trim();
+      const action = normalizeReactionAction(rawAction || 'wave');
+      if (action && getReactionKind(action) === 'nsfw') {
         return { ...base, reason: 'unsafe-action', text: 'Só mando reações SFW por aqui.' };
+      }
+      if (!action) {
+        return { ...base, reason: 'invalid-action', text: 'Ação de reação inválida. Escolha uma ação (ex: hug, slap, wave) ou reaja com emoji.' };
       }
       if (!reactionMediaService?.getReaction || typeof ctx.replyImageUrl !== 'function') {
         return { ...base, reason: 'unavailable', text: 'Não consigo mandar mídia agora.' };
