@@ -144,6 +144,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
     roastService,
     newsService,
     journalMessageRepository,
+    personaRecentMessageRepository,
+    personaFollowupService,
     achievementService,
     cardService,
     qmpService,
@@ -647,6 +649,38 @@ export async function handleFunIncomingMessage(deps, ctx) {
     }
   }
 
+  // Buffer próprio da persona: contexto conversacional curto e persistente.
+  // Não é o jornal diário e nunca afeta o fluxo principal se a gravação falhar.
+  if (isGroup && scope.scopeKey && funConfig.personaImmediateContextEnabled !== false) {
+    try {
+      personaRecentMessageRepository?.recordMessage?.({
+        scopeKey: scope.scopeKey,
+        messageId,
+        authorJid: userJid,
+        authorLabel: displayNameOnly(getContactDisplayName, userJid),
+        source: 'human',
+        messageType,
+        text,
+        quotedText,
+        mentionedJids,
+        now: msgTimeMs,
+      });
+      personaFollowupService?.observeHumanMessage?.({
+        scopeKey: scope.scopeKey,
+        messageId,
+        now: Date.now(),
+      });
+      if (Math.random() < 0.01) {
+        personaRecentMessageRepository?.pruneOlderThan?.(
+          scope.scopeKey,
+          msgTimeMs - (Number(funConfig.personaImmediateContextRetentionMs) || 24 * 60 * 60_000)
+        );
+      }
+    } catch {
+      // contexto imediato nunca quebra comando, XP ou persona
+    }
+  }
+
   // Lore seletiva: observa chat do grupo (async extract em batch; ignora comandos)
   if (isGroup && groupMemoryService?.observeMessage && scope.scopeKey) {
     try {
@@ -813,8 +847,18 @@ export async function handleFunIncomingMessage(deps, ctx) {
           identityMap,
           groupSettings,
           funConfig,
+          replyImageUrl,
+          replySticker,
           now: Date.now(),
         }).then((r) => {
+          if (r?.responded) {
+            personaFollowupService?.observePersonaResponse?.({
+              scopeKey: scope.scopeKey,
+              responseMessageIds: r.responseMessageIds,
+              trigger: r.trigger,
+              now: Date.now(),
+            });
+          }
           // #region debug-point persona-runtime-D-result
           reportDebug('D', 'pipeline.personaService.tryRespond.result', 'resultado da persona', { responded: Boolean(r?.responded), reason: String(r?.reason || ''), usedFallback: Boolean(r?.usedFallback) });
           // #endregion

@@ -70,6 +70,8 @@ import { createFunEvidenceRepository } from './db/funEvidenceRepository.js';
 import { createFunSelfHealRepository } from './db/funSelfHealRepository.js';
 import { createSelfHealingService } from './services/selfHealingService.js';
 import { createFunPersonaRepository } from './db/funPersonaRepository.js';
+import { createFunPersonaRecentMessageRepository } from './db/funPersonaRecentMessageRepository.js';
+import { createFunPersonaFollowupRepository } from './db/funPersonaFollowupRepository.js';
 import { createFunPersonaSocialHintRepository } from './db/funPersonaSocialHintRepository.js';
 import { createFunProfileRepository } from './db/funProfileRepository.js';
 import { createFunCardRepository } from './db/funCardRepository.js';
@@ -91,6 +93,8 @@ import { createMemoryDecayService } from './services/memoryDecayService.js';
 import { createPersonaIdentityService } from './services/personaIdentityService.js';
 import { createSocialMemoryService } from './services/socialMemoryService.js';
 import { createPersonaContextService } from './services/personaContextService.js';
+import { createPersonaAutonomyPolicy } from './services/personaAutonomyPolicy.js';
+import { createPersonaFollowupService } from './services/personaFollowupService.js';
 import { createProfileService } from './services/profileService.js';
 import { createCardService } from './services/cardService.js';
 import { createQmpService } from './services/qmpService.js';
@@ -402,6 +406,8 @@ export function createFunModule(deps = {}) {
     generateZen: deps.openaiChatComplete || deps.zenGenerate,
   });
   const conversationMemoryRepository = deps.conversationMemoryRepository || createFunConversationMemoryRepository({ getDatabase });
+  const personaRecentMessageRepository = deps.personaRecentMessageRepository || createFunPersonaRecentMessageRepository({ getDatabase });
+  const personaFollowupRepository = deps.personaFollowupRepository || createFunPersonaFollowupRepository({ getDatabase });
   const threadContextRepository = deps.threadContextRepository || createFunThreadContextRepository({ getDatabase });
   const personaIdentityRepository = deps.personaIdentityRepository || createFunPersonaIdentityRepository({ getDatabase });
   const threadContextService = deps.threadContextService || createThreadContextService({ threadContextRepository });
@@ -409,11 +415,13 @@ export function createFunModule(deps = {}) {
   const memoryIngestionService = deps.memoryIngestionService || createMemoryIngestionService({ conversationMemoryRepository, getLogger });
   const memoryDecayService = deps.memoryDecayService || createMemoryDecayService({ conversationMemoryRepository });
   const personaIdentityService = deps.personaIdentityService || createPersonaIdentityService({ personaIdentityRepository });
+  const personaAutonomyPolicy = deps.personaAutonomyPolicy || createPersonaAutonomyPolicy();
   const socialMemoryService = deps.socialMemoryService || createSocialMemoryService();
   const personaContextService = deps.personaContextService || createPersonaContextService({
     threadContextService,
     memoryRetrievalService,
     personaIdentityService,
+    personaRecentMessageRepository,
     groupMemoryService,
     memoryRepository,
     getLogger,
@@ -506,6 +514,7 @@ export function createFunModule(deps = {}) {
       dailyChallengeService,
       groupMemoryService,
       getContactDisplayName: resolveContactName,
+      identityMap,
     });
 
   const personaToolExecutor =
@@ -518,6 +527,8 @@ export function createFunModule(deps = {}) {
       tarotService,
       relationshipService,
       reactionMediaService,
+      personaRecentMessageRepository,
+      personaIdentityService,
       getContactDisplayName: resolveContactName,
     });
   if (!personaService) {
@@ -531,8 +542,18 @@ export function createFunModule(deps = {}) {
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
       adapters: extractionAdapters,
+      personaRecentMessageRepository,
+      personaAutonomyPolicy,
     });
   }
+  const personaFollowupService = deps.personaFollowupService || createPersonaFollowupService({
+    followupRepository: personaFollowupRepository,
+    personaRecentMessageRepository,
+    personaService,
+    personaContextService,
+    groupRepository,
+    getLogger,
+  });
   const eventBatchExtractor =
     deps.eventBatchExtractor ||
     createEventBatchExtractor({
@@ -647,6 +668,8 @@ export function createFunModule(deps = {}) {
         roastService,
         newsService,
         journalMessageRepository,
+        personaRecentMessageRepository,
+        personaFollowupService,
         achievementService,
         cardService,
         qmpService,
@@ -855,7 +878,8 @@ export function createFunModule(deps = {}) {
         try {
           const edition = await newsService.tryPublish(scopeKey, funConfig, now);
           if (edition?.ok && edition.text) {
-            await post(sock, scopeKey, edition.text);
+            const sendOptions = edition.mentions?.length ? { mentions: edition.mentions } : undefined;
+            await post(sock, scopeKey, edition.text, sendOptions);
             return {
               scopeKey,
               kind: 'group-news',
@@ -900,6 +924,15 @@ export function createFunModule(deps = {}) {
         results,
         fired: results.filter((r) => r.ok).length,
       };
+    }
+
+    if (personaFollowupService?.tick) {
+      try {
+        const followups = await personaFollowupService.tick({ sock, funConfig, now });
+        if (followups.length) results.push(...followups);
+      } catch (err) {
+        results.push({ kind: 'persona-followup', ok: false, reason: err?.message || 'persona-followup-tick-error' });
+      }
     }
 
     for (const scopeKey of groups) {
@@ -1483,6 +1516,16 @@ export function createFunModule(deps = {}) {
       imageGenerationRepository,
       farewellRepository,
       farewellService,
+      personaRecentMessageRepository,
+      personaFollowupRepository,
+      personaFollowupService,
+      personaService,
+      personaIdentityRepository,
+      personaIdentityService,
+      personaAutonomyPolicy,
+      personaContextService,
+      threadContextService,
+      personaToolExecutor,
     },
   };
 }
