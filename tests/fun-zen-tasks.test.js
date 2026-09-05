@@ -271,11 +271,17 @@ Fim.`;
     attacker: 'Eduardo',
     target: 'Lojinha da esquina',
     weapon: 'Pistola 9mm',
+    vehicle: 'Fusca Rebaixado',
+    inventory: 'Pistola 9mm, lockpick',
     mode: 'shop',
     success: 'sim',
   });
   assert.match(seenPrompt, /Eduardo/);
   assert.match(seenPrompt, /Assaltante\/protagonista/i);
+  assert.match(seenPrompt, /Veículo de fuga/i);
+  assert.match(seenPrompt, /Fusca Rebaixado/i);
+  assert.match(seenPrompt, /Equipamento\/inventário/i);
+  assert.match(seenPrompt, /lockpick/i);
   assert.match(seenPrompt, /N[AÃ]O invente outro/i);
   assert.match(text, /Eduardo/);
   assert.ok(!/@\d{8,}/.test(seenPrompt), 'prompt não deve carregar JID como elenco');

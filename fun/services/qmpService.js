@@ -4,7 +4,6 @@
  */
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
-import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
@@ -332,7 +331,6 @@ export function createQmpService({
   qmpRepository,
   profileService = null,
   generateZen = openaiChatComplete,
-  generateOllama = ollamaGenerate,
   random = Math.random,
   getLogger = () => null,
 } = {}) {
@@ -364,7 +362,7 @@ export function createQmpService({
         : 0.42,
       inventRetries: Math.max(1, Math.min(8, Math.floor(numOr(funConfig.qmpInventRetries, 4)))),
       ...resolveZenTaskParams('qmp', funConfig),
-      /** Override explícito por task; vazio mantém o modelo Zen global. */
+      /** Override explícito de modelo; parâmetros continuam sob autoridade Zen. */
       zenModel: String(funConfig.qmpZenModel || '').trim(),
     };
   }
@@ -372,11 +370,6 @@ export function createQmpService({
   function zenOn(cfg) {
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') return false;
     return cfg.zenEnabled !== false;
-  }
-
-  function ollamaOn(cfg) {
-    // Ollama descontinuado como fallback — Zen cai direto em template mockado.
-    return false;
   }
 
   function fallbackPrompt(tone = 'normal', recent = []) {
@@ -495,7 +488,7 @@ export function createQmpService({
             prompt: userPrompt + nudge,
             timeoutMs: o.timeoutMs,
             maxTokens: o.maxTokens,
-            temperature: Math.min(1.3, o.temperature + attempt * 0.08),
+            temperature: o.temperature,
             apiKey: ep.apiKey,
             sendSamplingParams: funConfig.zenSendSamplingParams === true,
           });

@@ -27,7 +27,7 @@ export function createRoastService({
     return funConfig.roastEnabled !== false;
   }
 
-  function buildDossier({ userJid, scopeKey, now = Date.now(), getContactDisplayName }) {
+  function buildDossier({ userJid, scopeKey, now = Date.now(), getContactDisplayName, funConfig = {} }) {
     const stats =
       repository.getUserStats(userJid, scopeKey) ||
       repository.ensureUserRow(userJid, scopeKey, now);
@@ -58,9 +58,33 @@ export function createRoastService({
         ? repository.getUserRankPosition(userJid, scopeKey)
         : null;
 
+    const profile = profileService?.getProfile?.(userJid, scopeKey) || null;
+    const customNick = profileService?.getNickname?.(userJid, scopeKey) || profile?.nickname || null;
+    const bio = profile?.bio || null;
+    const title = profile?.title || null;
+    const extras = profile?.extras || null;
+
+    let loreSummary = '';
+    try {
+      if (typeof groupMemoryService?.buildLoreContext === 'function') {
+        loreSummary = groupMemoryService.buildLoreContext(scopeKey, {
+          userJids: [userJid],
+          limit: 5,
+          funConfig,
+        }) || '';
+      }
+    } catch {
+      loreSummary = '';
+    }
+
     return {
       name,
       userJid,
+      customNick,
+      bio,
+      title,
+      extras,
+      loreSummary,
       level: Number(stats.level) || 1,
       xp: Number(stats.xp) || 0,
       coins: Number(stats.coins) || 0,
@@ -79,6 +103,12 @@ export function createRoastService({
   function factsLines(dossier, getContactDisplayName) {
     const lines = [];
     lines.push(`Apelido/nome: ${dossier.name}`);
+    if (dossier.customNick && dossier.customNick !== dossier.name) {
+      lines.push(`Apelido customizado: ${dossier.customNick}`);
+    }
+    if (dossier.title) lines.push(`Título no grupo: ${dossier.title}`);
+    if (dossier.bio) lines.push(`Bio do perfil: ${dossier.bio}`);
+    if (dossier.extras) lines.push(`Extras do perfil: ${dossier.extras}`);
     lines.push(`Nível ${dossier.level}, ${dossier.coins} coins`);
     if (dossier.rank) lines.push(`Rank XP #${dossier.rank}`);
     if (dossier.jobName) lines.push(`Emprego: ${dossier.jobName}`);
@@ -103,6 +133,9 @@ export function createRoastService({
       );
     } else {
       lines.push('Sem perda grande recente no ledger');
+    }
+    if (dossier.loreSummary) {
+      lines.push(`Lore e histórico do alvo no grupo:\n${dossier.loreSummary}`);
     }
     return lines;
   }
@@ -132,6 +165,7 @@ export function createRoastService({
       scopeKey,
       now,
       getContactDisplayName,
+      funConfig,
     });
     const facts = factsLines(dossier, getContactDisplayName).join('\n');
 

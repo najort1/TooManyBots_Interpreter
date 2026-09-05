@@ -4,7 +4,6 @@
  */
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
-import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
@@ -423,7 +422,6 @@ export function createProfileService({
   getContactDisplayName = null,
   getLogger = () => null,
   generateZen = openaiChatComplete,
-  generateOllama = ollamaGenerate,
 } = {}) {
   if (!profileRepository) throw new Error('[fun/profileService] profileRepository required');
 

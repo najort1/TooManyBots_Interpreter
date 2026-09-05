@@ -770,8 +770,28 @@ export async function handleAssaultCommand({
     : (pvpName || displayNameOnly(getContactDisplayName, result.targetJid || ''));
   const weaponLabel = [result.weapon?.emoji, result.weapon?.name].filter(Boolean).join(' ').trim();
 
+  let attackerVehicle = '';
+  let attackerInventorySummary = '';
+  try {
+    const bag = marketService?.inventoryOf?.(userJid, scopeKey, funConfig) || [];
+    const vItem = bag.find((i) => i.collectible?.category === 'veiculo' && i.condition === 'ok');
+    if (vItem) {
+      attackerVehicle = [vItem.collectible?.emoji, vItem.collectible?.name || vItem.itemId].filter(Boolean).join(' ');
+    }
+    const tools = bag
+      .filter((i) => i.condition === 'ok' && !i.listed && ['arma', 'utilidade', 'veiculo', 'defesa'].includes(i.collectible?.category))
+      .map((i) => i.collectible?.name || i.itemId)
+      .slice(0, 5);
+    attackerInventorySummary = tools.join(', ');
+  } catch {
+    attackerVehicle = '';
+    attackerInventorySummary = '';
+  }
+
   const inventoryDetails = [
     result.weapon?.name ? `arma usada: ${result.weapon.name}` : '',
+    attackerVehicle ? `veículo: ${attackerVehicle}` : '',
+    attackerInventorySummary ? `itens no bolso: ${attackerInventorySummary}` : '',
     result.weapon?.requires === 'municao' ? 'munição usada: sim' : '',
     result.mode === 'bank' ? 'lockpick usado: sim' : '',
     result.usedGas ? 'veículo usado: sim; gasolina usada: sim' : '',
@@ -796,6 +816,8 @@ export async function handleAssaultCommand({
     attacker: attackerStoryName,
     target: targetStoryName,
     weapon: weaponLabel || result.weapon?.id || '',
+    vehicle: attackerVehicle,
+    inventory: attackerInventorySummary,
     mode: result.mode || 'player',
     success: result.success ? 'sim' : 'nao',
     gas: result.usedGas ? 'sim' : 'nao',

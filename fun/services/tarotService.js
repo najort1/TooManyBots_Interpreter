@@ -1,10 +1,9 @@
 /**
- * Tarô Fun — tiragem local + leitura via Zen (prompt específico) → Ollama → template.
+ * Tarô Fun — tiragem local + leitura via Zen (prompt específico) → template.
  * Humor BR, leitura resumida (até tarotMaxChars, default 3000).
  */
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
-import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
@@ -93,7 +92,7 @@ export function sanitizeTarotText(raw, maxChars = 3000) {
   return `${cut.trim()}…`;
 }
 
-function buildTarotUserPrompt({ question, cards, maxChars, identityBlock = '', loreContext = '' }) {
+export function buildTarotUserPrompt({ question, cards, maxChars, identityBlock = '', loreContext = '' }) {
   const q = String(question || '').trim() || '(sem pergunta — leitura geral do clima atual)';
   const cardBlock = (cards || [])
     .map((c, i) => {
@@ -128,7 +127,6 @@ export function createTarotService({
   getGroupMemoryService = null,
   random = Math.random,
   generateZen = openaiChatComplete,
-  generateOllama = ollamaGenerate,
   getLogger = () => null,
 } = {}) {
   function opts(funConfig = {}) {
@@ -153,22 +151,28 @@ export function createTarotService({
     return cfg.zenEnabled !== false;
   }
 
-  function ollamaOn(cfg) {
-    // Ollama descontinuado como fallback — Zen cai direto em template.
-    return false;
-  }
-
   async function narrate({ question, cards, userJid = '', scopeKey = '', funConfig = {} }) {
     const o = opts(funConfig);
     const profiles = profileService || getProfileService?.();
     const memories = groupMemoryService || getGroupMemoryService?.();
+    const profile = profiles?.getProfile?.(userJid, scopeKey) || null;
     const identityBlock = profiles?.buildIdentityBlock
       ? profiles.buildIdentityBlock(scopeKey, [userJid], funConfig)
-      : '';
+      : profile
+        ? [
+            '<user_identity>',
+            `Consulente: ${profiles?.displayName?.(userJid, scopeKey) || profile.nickname || 'alguém'}.`,
+            profile.nickname ? `Apelido: ${profile.nickname}.` : '',
+            profile.bio ? `Bio: ${profile.bio}.` : '',
+            profile.title ? `Título: ${profile.title}.` : '',
+            profile.extras ? `Extras: ${profile.extras}.` : '',
+            '</user_identity>',
+          ].filter(Boolean).join('\n')
+        : '';
     const loreContext = memories?.buildLoreContext
       ? memories.buildLoreContext(scopeKey, {
           userJids: [userJid],
-          limit: Infinity,
+          limit: 8,
           funConfig,
         })
       : '';
