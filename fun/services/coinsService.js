@@ -6,12 +6,13 @@ export function createCoinsService({ repository } = {}) {
     return Number(stats?.coins) || 0;
   }
 
-  function transfer({ fromJid, toJid, scopeKey, amount, now = Date.now() }) {
+  function transfer({ fromJid, toJid, scopeKey, amount, idempotencyKey = '', now = Date.now() }) {
     return repository.transferCoins({
       fromJid,
       toJid,
       scopeKey,
       amount,
+      idempotencyKey,
       now,
       reason: 'pay',
     });

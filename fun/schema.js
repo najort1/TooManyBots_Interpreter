@@ -144,6 +144,18 @@ export function buildFunSchemaSql() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_coin_ledger_scope
       ON fun_coin_ledger(scope_key, created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_transfer_idempotency (
+      scope_key       TEXT    NOT NULL,
+      idempotency_key TEXT    NOT NULL,
+      from_jid        TEXT    NOT NULL,
+      to_jid          TEXT    NOT NULL,
+      amount          INTEGER NOT NULL,
+      from_coins      INTEGER NOT NULL,
+      to_coins        INTEGER NOT NULL,
+      created_at      INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, idempotency_key)
+    );
+
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_marriages (
       scope_key    TEXT    NOT NULL,
       user_jid     TEXT    NOT NULL,

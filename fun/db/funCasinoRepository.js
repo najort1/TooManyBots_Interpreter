@@ -385,5 +385,6 @@ export function createFunCasinoRepository({ getDatabase = getDb } = {}) {
     getOpenTournament,
     createTournament,
     saveTournament,
+    getDatabase,
   };
 }

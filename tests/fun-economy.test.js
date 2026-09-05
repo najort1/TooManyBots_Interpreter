@@ -612,3 +612,50 @@ test('economia: resolveEventProposal descarta copy se bias troca por overheat', 
     assert.ok(resolved.biasMismatch || resolved.archetypeSwapped);
   }
 });
+
+// ─── Idempotência /pay ────────────────────────────────────────
+
+test('idempotência /pay: reentrega da mesma mensagem com mesmo messageId não debita duas vezes', () => {
+  const repo = createFunStatsRepository({ getDatabase: getDb });
+  repo.ensureFunSchema();
+
+  const scope = uniqueGroup();
+  const sender = uniqueJid('5511');
+  const receiver = uniqueJid('5512');
+  const messageId = `msg-${Date.now()}-abc`;
+
+  repo.addCoins({ userJid: sender, scopeKey: scope, amount: 100, reason: 'seed' });
+  repo.addCoins({ userJid: receiver, scopeKey: scope, amount: 10, reason: 'seed' });
+
+  const first = repo.transferCoins({
+    fromJid: sender,
+    toJid: receiver,
+    scopeKey: scope,
+    amount: 35,
+    idempotencyKey: messageId,
+    reason: 'pay',
+  });
+
+  assert.equal(first.ok, true);
+  assert.equal(first.replayed, false);
+  assert.equal(first.fromCoins, 65);
+  assert.equal(first.toCoins, 45);
+
+  const replayed = repo.transferCoins({
+    fromJid: sender,
+    toJid: receiver,
+    scopeKey: scope,
+    amount: 35,
+    idempotencyKey: messageId,
+    reason: 'pay',
+  });
+
+  assert.equal(replayed.ok, true);
+  assert.equal(replayed.replayed, true);
+  assert.equal(replayed.amount, 35);
+  assert.equal(replayed.fromCoins, 65);
+  assert.equal(replayed.toCoins, 45);
+
+  assert.equal(repo.getUserStats(sender, scope).coins, 65);
+  assert.equal(repo.getUserStats(receiver, scope).coins, 45);
+});
