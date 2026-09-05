@@ -1130,10 +1130,61 @@ export function normalizeFunConfig(input) {
     ),
     personaEnabled: normalizeBoolean(raw.personaEnabled, DEFAULT_FUN_CONFIG.personaEnabled),
     personaToolsEnabled: normalizeBoolean(raw.personaToolsEnabled, DEFAULT_FUN_CONFIG.personaToolsEnabled),
+    personaAutonomyEnabled: normalizeBoolean(raw.personaAutonomyEnabled, DEFAULT_FUN_CONFIG.personaAutonomyEnabled),
+    personaAutonomyMode: ['explicit', 'soft', 'natural'].includes(String(raw.personaAutonomyMode || ''))
+      ? String(raw.personaAutonomyMode)
+      : DEFAULT_FUN_CONFIG.personaAutonomyMode,
+    personaAutonomyMinScore: normalizeInt(raw.personaAutonomyMinScore, DEFAULT_FUN_CONFIG.personaAutonomyMinScore, {
+      min: 1, max: 20, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyCooldownMs: normalizeInt(raw.personaAutonomyCooldownMs, DEFAULT_FUN_CONFIG.personaAutonomyCooldownMs, {
+      min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyMaxPerHour: normalizeInt(raw.personaAutonomyMaxPerHour, DEFAULT_FUN_CONFIG.personaAutonomyMaxPerHour, {
+      min: 1, max: 30, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyMaxPerDay: normalizeInt(raw.personaAutonomyMaxPerDay, DEFAULT_FUN_CONFIG.personaAutonomyMaxPerDay, {
+      min: 1, max: 200, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyMaxConsecutive: normalizeInt(raw.personaAutonomyMaxConsecutive, DEFAULT_FUN_CONFIG.personaAutonomyMaxConsecutive, {
+      min: 1, max: 5, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyNegativeBlockMs: normalizeInt(raw.personaAutonomyNegativeBlockMs, DEFAULT_FUN_CONFIG.personaAutonomyNegativeBlockMs, {
+      min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true,
+    }),
+    personaFollowupEnabled: normalizeBoolean(raw.personaFollowupEnabled, DEFAULT_FUN_CONFIG.personaFollowupEnabled),
+    personaFollowupSilenceMs: normalizeInt(raw.personaFollowupSilenceMs, DEFAULT_FUN_CONFIG.personaFollowupSilenceMs, {
+      min: 60_000, max: 30 * 60_000, rounding: 'floor', clamp: true,
+    }),
+    personaFollowupMaxCandidates: normalizeInt(raw.personaFollowupMaxCandidates, DEFAULT_FUN_CONFIG.personaFollowupMaxCandidates, {
+      min: 1, max: 100, rounding: 'floor', clamp: true,
+    }),
+    personaFollowupCandidateWindowMs: normalizeInt(raw.personaFollowupCandidateWindowMs, DEFAULT_FUN_CONFIG.personaFollowupCandidateWindowMs, {
+      min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true,
+    }),
+    personaFollowupMaxContextChars: normalizeInt(raw.personaFollowupMaxContextChars, DEFAULT_FUN_CONFIG.personaFollowupMaxContextChars, {
+      min: 4_000, max: 18_000, rounding: 'floor', clamp: true,
+    }),
+    personaFollowupLeaseMs: normalizeInt(raw.personaFollowupLeaseMs, DEFAULT_FUN_CONFIG.personaFollowupLeaseMs, {
+      min: 10_000, max: 10 * 60_000, rounding: 'floor', clamp: true,
+    }),
+    personaFollowupMaxRetries: normalizeInt(raw.personaFollowupMaxRetries, DEFAULT_FUN_CONFIG.personaFollowupMaxRetries, {
+      min: 1, max: 10, rounding: 'floor', clamp: true,
+    }),
     personaToolCooldownMs: normalizeInt(
       raw.personaToolCooldownMs,
       DEFAULT_FUN_CONFIG.personaToolCooldownMs,
       { min: 5_000, max: 30 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    personaAgentMaxToolCalls: normalizeInt(
+      raw.personaAgentMaxToolCalls,
+      DEFAULT_FUN_CONFIG.personaAgentMaxToolCalls,
+      { min: 1, max: 1, rounding: 'floor', clamp: true }
+    ),
+    personaAgentDeadlineMs: normalizeInt(
+      raw.personaAgentDeadlineMs,
+      DEFAULT_FUN_CONFIG.personaAgentDeadlineMs,
+      { min: 5_000, max: 90_000, rounding: 'floor', clamp: true }
     ),
     loreReconciliationEnabled: normalizeBoolean(
       raw.loreReconciliationEnabled,
@@ -1155,6 +1206,30 @@ export function normalizeFunConfig(input) {
       { min: 5_000, max: 90_000, rounding: 'floor', clamp: true }
     ),
     personaMemoryEnabled: normalizeBoolean(raw.personaMemoryEnabled, DEFAULT_FUN_CONFIG.personaMemoryEnabled),
+    personaImmediateContextEnabled: normalizeBoolean(
+      raw.personaImmediateContextEnabled,
+      DEFAULT_FUN_CONFIG.personaImmediateContextEnabled
+    ),
+    personaImmediateContextMessages: normalizeInt(
+      raw.personaImmediateContextMessages,
+      DEFAULT_FUN_CONFIG.personaImmediateContextMessages,
+      { min: 8, max: 500, rounding: 'floor', clamp: true }
+    ),
+    personaImmediateContextWindowMs: normalizeInt(
+      raw.personaImmediateContextWindowMs,
+      DEFAULT_FUN_CONFIG.personaImmediateContextWindowMs,
+      { min: 5 * 60_000, max: 7 * 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    personaImmediateContextRetentionMs: normalizeInt(
+      raw.personaImmediateContextRetentionMs,
+      DEFAULT_FUN_CONFIG.personaImmediateContextRetentionMs,
+      { min: 60 * 60_000, max: 30 * 24 * 60 * 60_000, rounding: 'floor', clamp: true }
+    ),
+    personaImmediateContextMaxChars: normalizeInt(
+      raw.personaImmediateContextMaxChars,
+      DEFAULT_FUN_CONFIG.personaImmediateContextMaxChars,
+      { min: 1_000, max: 80_000, rounding: 'floor', clamp: true }
+    ),
     personaSocialHintsEnabled: normalizeBoolean(raw.personaSocialHintsEnabled, DEFAULT_FUN_CONFIG.personaSocialHintsEnabled),
     personaSocialHintsBatchSize: normalizeInt(raw.personaSocialHintsBatchSize, DEFAULT_FUN_CONFIG.personaSocialHintsBatchSize, {
       min: 8, max: 200, rounding: 'floor', clamp: true,
@@ -1222,7 +1297,7 @@ export function normalizeFunConfig(input) {
     personaTimeoutMs: normalizeInt(
       raw.personaTimeoutMs,
       DEFAULT_FUN_CONFIG.personaTimeoutMs,
-      { min: 5_000, max: 15_000, rounding: 'floor', clamp: true }
+      { min: 5_000, max: 60_000, rounding: 'floor', clamp: true }
     ),
     personaMaxChars: normalizeInt(raw.personaMaxChars, DEFAULT_FUN_CONFIG.personaMaxChars, {
       min: 80,

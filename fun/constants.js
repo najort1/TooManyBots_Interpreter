@@ -533,7 +533,8 @@ export const PERSONA_MAX_TURNS = 0;
 export const PERSONA_THREAD_TTL_MS = 30 * 60_000;
 export const PERSONA_WINDOW_SIZE = 100;
 export const PERSONA_WINDOW_MS = 24 * 60 * 60 * 1000;
-export const PERSONA_TIMEOUT_MS = 15_000;
+// O modelo decide tools e redige respostas; 15s expira antes de provedores lentos responderem.
+export const PERSONA_TIMEOUT_MS = 35_000;
 export const PERSONA_MAX_CHARS = 280;
 /** Intervalo mínimo entre derivações do perfil de voz por grupo (evita write a cada msg). */
 export const PERSONA_DERIVE_INTERVAL_MS = 5 * 60_000;
@@ -976,6 +977,13 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   personaEnabled: true,
   personaMemoryEnabled: true,
   personaMemoryMaxContextItems: PERSONA_MEMORY_DEFAULTS.maxContextItems,
+  /** Contexto conversacional próprio da persona; não usa o jornal diário. */
+  personaImmediateContextEnabled: true,
+  personaImmediateContextMessages: 120,
+  personaImmediateContextWindowMs: 6 * 60 * 60_000,
+  personaImmediateContextRetentionMs: 24 * 60 * 60_000,
+  /** Orçamento de caracteres do contexto recente dentro da janela de 32K. */
+  personaImmediateContextMaxChars: 32_000,
   personaCooldownMs: PERSONA_COOLDOWN_MS,
   personaMaxTurns: PERSONA_MAX_TURNS,
   personaThreadTtlMs: PERSONA_THREAD_TTL_MS,
@@ -993,6 +1001,28 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // Persona agentiva: protocolo JSON e allowlist de consultas/zoeira segura.
   personaToolsEnabled: true,
   personaToolCooldownMs: 45_000,
+  /** Cada mensagem pode executar uma tool e gerar uma fala final sobre o resultado. */
+  personaAgentMaxToolCalls: 1,
+  /** Tempo para tools de domínio concluírem e a persona formular a resposta final. */
+  personaAgentDeadlineMs: 60_000,
+  /** Participação espontânea continua desligada até ativação por grupo/config. */
+  personaAutonomyEnabled: false,
+  personaAutonomyMode: 'explicit',
+  personaAutonomyMinScore: 7,
+  personaAutonomyCooldownMs: 15 * 60_000,
+  personaAutonomyMaxPerHour: 2,
+  personaAutonomyMaxPerDay: 8,
+  personaAutonomyMaxConsecutive: 1,
+  personaAutonomyNegativeBlockMs: 60 * 60_000,
+  // Continuação pós-silêncio: só após uma resposta acionada explicitamente.
+  personaFollowupEnabled: true,
+  personaFollowupSilenceMs: 60_000,
+  personaFollowupMaxCandidates: 60,
+  personaFollowupCandidateWindowMs: 30 * 60_000,
+  // Reserva contexto para identidade/memória; grupos grandes normalmente usam ~12k de 32k.
+  personaFollowupMaxContextChars: 18_000,
+  personaFollowupLeaseMs: 90_000,
+  personaFollowupMaxRetries: 3,
   // Reconciliação inversa: pedido explícito pode remover lore antiga ou errada.
   loreReconciliationEnabled: true,
   loreReconciliationCooldownMs: 60_000,

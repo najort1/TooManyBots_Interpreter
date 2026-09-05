@@ -60,6 +60,26 @@ export function memorySignalText(signal) {
 /**
  * Bloco de tom e humor do grupo.
  */
+export function buildPersonaIdentityBlock(identity = {}) {
+  if (!identity || typeof identity !== 'object') return '';
+  const parts = [];
+  if (identity.botName) parts.push(`Meu nome no grupo: ${cleanPromptText(identity.botName, 80)}.`);
+  if (Array.isArray(identity.botAliases) && identity.botAliases.length) {
+    parts.push(`Também respondo por: ${identity.botAliases.join(', ')}.`);
+  }
+  if (identity.botRole) parts.push(`Meu papel no grupo: ${cleanPromptText(identity.botRole, 240)}.`);
+  if (Array.isArray(identity.botTraits) && identity.botTraits.length) {
+    parts.push(`Meus traços: ${identity.botTraits.join(', ')}.`);
+  }
+  if (Array.isArray(identity.botOpinions) && identity.botOpinions.length) {
+    parts.push(`Coisas/opiniões minhas que posso sustentar: ${identity.botOpinions.join(' | ')}.`);
+  }
+  if (Array.isArray(identity.botCatchphrases) && identity.botCatchphrases.length) {
+    parts.push(`Bordões que posso usar naturalmente: ${identity.botCatchphrases.join(', ')}.`);
+  }
+  return parts.length ? `<persona_identity>\n${parts.join('\n')}\n</persona_identity>` : '';
+}
+
 export function buildToneBlock(identity) {
   const allowed = Array.isArray(identity?.allowedTones) && identity.allowedTones.length
     ? identity.allowedTones.join(', ')
@@ -78,9 +98,24 @@ export function buildToneBlock(identity) {
 /**
  * Monta o System Prompt completo da Persona com todas as diretrizes de personalidade.
  */
+function formatImmediateContext(messages = []) {
+  if (!Array.isArray(messages) || !messages.length) return '';
+  const lines = ['Conversa recente antes do chamado (use para entender o assunto e quem falou o quê):'];
+  for (const message of messages) {
+    const author = cleanPromptText(message.authorLabel, 100)
+      || (message.source === 'bot' ? 'eu' : 'membro');
+    const text = cleanPromptText(message.text, 4_000);
+    const quote = cleanPromptText(message.quotedText, 800);
+    if (!text) continue;
+    lines.push(`- ${author}: "${text}"${quote ? ` (citava: "${quote}")` : ''}`);
+  }
+  return lines.length > 1 ? lines.join('\n') : '';
+}
+
 export function buildPersonaSystemPrompt({
   styleBlock = '',
   threadContext = [],
+  immediateContext = [],
   maxChars = 280,
   contextTurns = 4,
 }) {
@@ -108,6 +143,12 @@ export function buildPersonaSystemPrompt({
     parts.push(`Estilo aprendido do grupo:\n${styleBlock}`);
   }
 
+  const recentBlock = formatImmediateContext(immediateContext);
+  if (recentBlock) {
+    parts.push('');
+    parts.push(recentBlock);
+  }
+
   if (threadContext?.length) {
     parts.push('');
     parts.push('Últimas trocas da conversa atual (para dar continuidade):');
@@ -125,6 +166,24 @@ export function buildPersonaSystemPrompt({
 /**
  * Monta o User Prompt com identificação clara do interlocutor e citação.
  */
+export function buildPersonaFollowupPrompt({ candidates = [], maxChars = 280 } = {}) {
+  const rows = Array.isArray(candidates) ? candidates : [];
+  const lines = [
+    'Você respondeu antes porque foi chamado. Depois disso, estas mensagens humanas chegaram no grupo.',
+    'Decida se é natural continuar a conversa sem ser chamado de novo. Na dúvida, ignore.',
+    'Responda SOMENTE JSON: {"type":"ignore"} ou {"type":"follow_up","replyToMessageId":"ID_EXATO","text":"..."}.',
+    `Se responder, replyToMessageId DEVE ser exatamente um dos IDs abaixo e o texto deve ter até ${maxChars} caracteres.`,
+    'Candidatas:',
+  ];
+  for (const candidate of rows) {
+    const id = cleanPromptText(candidate?.messageId, 160);
+    const author = cleanPromptText(candidate?.authorLabel, 100) || 'membro';
+    const text = cleanPromptText(candidate?.text, 2_000);
+    if (id && text) lines.push(`- [id=${id}] ${author}: "${text}"`);
+  }
+  return lines.join('\n');
+}
+
 export function buildPersonaUserPrompt({
   text = '',
   authorLabel = 'membro',

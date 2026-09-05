@@ -976,6 +976,44 @@ export function buildFunSchemaSql() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_persona_thread_scope
       ON fun_persona_thread(scope_key, last_activity_at DESC);
 
+    -- Contexto conversacional imediato da persona. Não é o jornal diário:
+    -- preserva a conversa recente para uma menção sobreviver a restart.
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_persona_recent_messages (
+      scope_key           TEXT NOT NULL,
+      message_id          TEXT NOT NULL,
+      author_jid          TEXT NOT NULL DEFAULT '',
+      author_label        TEXT NOT NULL DEFAULT '',
+      source              TEXT NOT NULL DEFAULT 'human',
+      message_type        TEXT NOT NULL DEFAULT 'text',
+      message_text        TEXT NOT NULL DEFAULT '',
+      quoted_text         TEXT NOT NULL DEFAULT '',
+      mentioned_jids_json TEXT NOT NULL DEFAULT '[]',
+      occurred_at         INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, message_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_persona_recent_messages_scope_time
+      ON fun_persona_recent_messages(scope_key, occurred_at DESC, message_id DESC);
+
+    -- Janela durável de follow-up da persona após uma resposta explicitamente chamada.
+    -- Há no máximo um turno pendente por grupo; o lease permite recuperar reinícios.
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_persona_followups (
+      scope_key             TEXT PRIMARY KEY,
+      anchor_message_id     TEXT NOT NULL DEFAULT '',
+      anchor_at             INTEGER NOT NULL DEFAULT 0,
+      last_human_message_id TEXT NOT NULL DEFAULT '',
+      last_human_at         INTEGER NOT NULL DEFAULT 0,
+      status                TEXT NOT NULL DEFAULT 'completed',
+      lease_until           INTEGER NOT NULL DEFAULT 0,
+      attempt_count         INTEGER NOT NULL DEFAULT 0,
+      completed_at          INTEGER NOT NULL DEFAULT 0,
+      last_error            TEXT NOT NULL DEFAULT '',
+      updated_at            INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_persona_followups_due
+      ON fun_persona_followups(status, last_human_at, lease_until);
+
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_conversation_memories (
       id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, memory_type TEXT NOT NULL,
       subject_user_jid TEXT NOT NULL DEFAULT '', target_user_jid TEXT NOT NULL DEFAULT '',
@@ -1000,7 +1038,11 @@ export function buildFunSchemaSql() {
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_persona_identities (
       scope_key TEXT PRIMARY KEY, voice_style_json TEXT NOT NULL DEFAULT '[]', allowed_tones_json TEXT NOT NULL DEFAULT '[]',
       forbidden_tones_json TEXT NOT NULL DEFAULT '[]', signature_traits_json TEXT NOT NULL DEFAULT '[]',
-      group_lore_summary TEXT NOT NULL DEFAULT '', updated_at INTEGER NOT NULL
+      group_lore_summary TEXT NOT NULL DEFAULT '',
+      bot_name TEXT NOT NULL DEFAULT '', bot_aliases_json TEXT NOT NULL DEFAULT '[]',
+      bot_role TEXT NOT NULL DEFAULT '', bot_traits_json TEXT NOT NULL DEFAULT '[]',
+      bot_opinions_json TEXT NOT NULL DEFAULT '[]', bot_catchphrases_json TEXT NOT NULL DEFAULT '[]',
+      updated_at INTEGER NOT NULL
     );
 
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_persona_social_hints (
@@ -1276,6 +1318,27 @@ export function ensureFunSchema(db) {
       db.exec(
         `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_persona_profile ADD COLUMN token_counts_json TEXT NOT NULL DEFAULT '{}'`
       );
+    }
+  } catch {
+    // ignore
+  }
+
+  // Migra identidade estável da persona sem alterar a voz/lore já extraídas.
+  try {
+    const identityCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_persona_identities)`).all();
+    const identityNames = new Set(identityCols.map((column) => String(column.name || '')));
+    const additions = [
+      ['bot_name', "TEXT NOT NULL DEFAULT ''"],
+      ['bot_aliases_json', "TEXT NOT NULL DEFAULT '[]'"],
+      ['bot_role', "TEXT NOT NULL DEFAULT ''"],
+      ['bot_traits_json', "TEXT NOT NULL DEFAULT '[]'"],
+      ['bot_opinions_json', "TEXT NOT NULL DEFAULT '[]'"],
+      ['bot_catchphrases_json', "TEXT NOT NULL DEFAULT '[]'"],
+    ];
+    for (const [name, definition] of additions) {
+      if (identityNames.size && !identityNames.has(name)) {
+        db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_persona_identities ADD COLUMN ${name} ${definition}`);
+      }
     }
   } catch {
     // ignore
