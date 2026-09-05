@@ -1208,14 +1208,16 @@ test('persona: prompt inclui até personaContextTurns (default 40 = 20 trocas)',
       ctx.push({ role: 'membro', name: `M${i}`, text: `membro-${i}` });
       ctx.push({ role: 'bot', text: `bot-${i}` });
     }
-    personaRepository.openThread({ scopeKey: scope, context: ctx, now: 1_000_000 });
+    const seeded = personaRepository.openThread({ scopeKey: scope, context: ctx, now: 1_000_000 });
+    personaRepository.setAnchor({ threadId: seeded.id, anchorText: 'resposta anterior', now: 1_000_000 });
 
     // Reply ao bot = continuação → carrega a thread persistida no prompt.
     await svc.tryRespond({
       scopeKey: scope,
-      text: 'bot, continua aí',
+      text: 'continua aí',
       authorJid: uniqueJid(),
       quotedParticipant: botJ,
+      quotedText: 'resposta anterior',
       sock,
       identityMap,
       funConfig: cfg,
@@ -1320,25 +1322,23 @@ test('persona: reply ao bot com messageId que NÃO é da persona não continua t
   assert.equal(r.reason, 'no-trigger');
 });
 
-test('persona: socket sem retorno de key → âncora UUID e continuação por esse UUID', async () => {
+test('persona: socket sem retorno de key mantém âncora textual, sem fabricar ID do WhatsApp', async () => {
   const { svc, sock, botJ, identityMap, cfg, personaRepository } = setup();
   const scope = uniqueGroup();
-  // Sem stub de sendMessage → sock.sendMessage é undefined → fallback de ID.
   await svc.tryRespond({
     scopeKey: scope, text: 'bot eai', authorJid: uniqueJid(),
     sock, identityMap, funConfig: cfg, now: 5_000_000,
   });
   const thread = personaRepository.getActiveThread(scope, { now: 5_000_000 });
-  assert.ok(thread.anchorMessageId, 'âncora deve existir mesmo sem retorno do socket');
-  assert.match(thread.anchorMessageId, /^[0-9a-f-]{36}$/i, 'fallback deve ser um UUID');
-  assert.ok(thread.anchorText, 'âncora deve guardar o texto da resposta');
+  assert.equal(thread.anchorMessageId, '', 'sem retorno do socket não há ID real para ancorar');
+  assert.ok(thread.anchorText, 'fallback conserva o texto da resposta');
 
   const r = await svc.tryRespond({
     scopeKey: scope, text: 'kkkk concordo', quotedParticipant: botJ,
-    quotedMessageId: thread.anchorMessageId, messageType: 'extended-text',
+    quotedText: thread.anchorText, messageType: 'extended-text',
     authorJid: uniqueJid(), sock, identityMap, funConfig: cfg, now: 5_000_001,
   });
-  assert.equal(r.responded, true, 'reply ao UUID da resposta continua thread');
+  assert.equal(r.responded, true, 'reply com o texto da resposta continua thread');
   assert.equal(personaRepository.getActiveThread(scope, { now: 5_000_001 }).turnCount, 1);
 });
 

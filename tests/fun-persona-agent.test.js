@@ -13,7 +13,7 @@ import { createChaosService } from '../fun/services/chaosService.js';
 import { createLoreReconciliationService } from '../fun/services/loreReconciliationService.js';
 import { createPersonaService } from '../fun/services/personaService.js';
 import { createPersonaToolExecutor } from '../fun/services/personaToolExecutor.js';
-import { parsePersonaEnvelope } from '../fun/services/personaToolProtocol.js';
+import { buildPersonaToolManifest, parsePersonaEnvelope } from '../fun/services/personaToolProtocol.js';
 import { createIdentityMap } from '../fun/utils/identity.js';
 
 await initDb();
@@ -32,17 +32,34 @@ test('persona agent: protocolo aceita só reply ou tool_call da allowlist', () =
   assert.equal(parsePersonaEnvelope('<tool_call>start_russian</tool_call>').reason, 'invalid-json');
   assert.equal(parsePersonaEnvelope('{"type":"tool_call","name":"pay","arguments":{}}').reason, 'unknown-tool');
   assert.equal(parsePersonaEnvelope('{"type":"tool_call","name":"oracle","arguments":"oi"}').reason, 'invalid-arguments');
+  const manifest = buildPersonaToolManifest();
+  assert.match(manifest, /Nunca diga que vai usar, tentar ou chamar uma tool/i);
+  assert.match(manifest, /chame group_status/i);
+  assert.match(manifest, /no máximo UMA tool/i);
 });
 
 test('persona agent: configurações novas têm defaults e clamps seguros', () => {
   const cfg = resolveFunConfig({
     personaToolCooldownMs: 1,
+    personaAgentDeadlineMs: 1,
+    personaTimeoutMs: 1,
     loreReconciliationCooldownMs: 999_999_999,
     loreReconciliationMaxCandidates: 999,
     loreReconciliationTimeoutMs: 1,
   });
+  const defaultCfg = resolveFunConfig({});
+  const maxDeadlineCfg = resolveFunConfig({ personaAgentDeadlineMs: 999_999 });
+  const maxPersonaTimeoutCfg = resolveFunConfig({ personaTimeoutMs: 999_999 });
+  assert.equal(DEFAULT_FUN_CONFIG.personaAgentDeadlineMs, 60_000);
+  assert.equal(DEFAULT_FUN_CONFIG.personaTimeoutMs, 35_000);
+  assert.equal(defaultCfg.personaAgentDeadlineMs, 60_000);
+  assert.equal(defaultCfg.personaTimeoutMs, 35_000);
   assert.equal(cfg.personaToolsEnabled, true);
   assert.equal(cfg.personaToolCooldownMs, 5_000);
+  assert.equal(cfg.personaAgentDeadlineMs, 5_000);
+  assert.equal(cfg.personaTimeoutMs, 5_000);
+  assert.equal(maxDeadlineCfg.personaAgentDeadlineMs, 90_000);
+  assert.equal(maxPersonaTimeoutCfg.personaTimeoutMs, 60_000);
   assert.equal(cfg.loreReconciliationCooldownMs, 24 * 60 * 60_000);
   assert.equal(cfg.loreReconciliationMaxCandidates, 100);
   assert.equal(cfg.loreReconciliationTimeoutMs, 5_000);
@@ -88,6 +105,50 @@ test('persona agent: status do jornal apenas consulta e nunca publica', async ()
   assert.equal(result.ok, true);
   assert.match(result.text, /23:59/);
   assert.equal(published, 0);
+});
+
+test('persona agent: gossip aceita o nome da tool e usa o autor como alvo padrão', async () => {
+  const chaos = createChaosService({ repository: { getLeaderboard: () => [] }, random: () => 0.99 });
+  const executor = createPersonaToolExecutor({ chaosService: chaos });
+  const scope = uniqueGroup();
+  const author = uniqueJid();
+  const result = await executor.execute(
+    { name: 'gossip', arguments: {} },
+    {
+      scopeKey: scope,
+      authorJid: author,
+      text: 'bot, tenta o goosip pra ver se sai algo sujo sobre você',
+      funConfig: { ...DEFAULT_FUN_CONFIG, personaToolCooldownMs: 5_000 },
+      now: 1_000_000,
+    }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.target, author.split('@')[0]);
+  assert.match(result.text, /Fofoca/);
+});
+
+test('persona agent: tools diferentes não compartilham cooldown', async () => {
+  const chaos = {
+    checkCooldown: () => ({ ok: true }),
+    gossipFake: () => 'fofoca de teste',
+    oracleInsane: () => 'oráculo de teste',
+  };
+  const executor = createPersonaToolExecutor({ chaosService: chaos });
+  const scope = uniqueGroup();
+  const author = uniqueJid();
+  const cfg = { ...DEFAULT_FUN_CONFIG, personaToolCooldownMs: 45_000 };
+  const gossip = await executor.execute(
+    { name: 'gossip', arguments: { target: 'author' } },
+    { scopeKey: scope, authorJid: author, text: 'bot, usa o gossip em mim', funConfig: cfg, now: 1_000_000 }
+  );
+  const oracle = await executor.execute(
+    { name: 'oracle', arguments: { question: 'vou ganhar?' } },
+    { scopeKey: scope, authorJid: author, text: 'bot, faz um oráculo pra mim?', funConfig: cfg, now: 1_001_000 }
+  );
+
+  assert.equal(gossip.ok, true, JSON.stringify(gossip));
+  assert.equal(oracle.ok, true, JSON.stringify(oracle));
 });
 
 test('persona agent: ações de caos respeitam o cooldown do comando existente', async () => {
@@ -191,6 +252,37 @@ test('persona agent: reação só usa ação SFW, alvo contextual e callback con
   );
   assert.equal(unsafe.ok, false);
   assert.equal(unsafe.reason, 'unsafe-action');
+
+  const generic = await executor.execute(
+    { name: 'reaction', arguments: { action: 'reaction' } },
+    { scopeKey: scope, authorJid: author, text: 'reaction', funConfig: cfg, now: 1_012_000, replyImageUrl: async (...args) => sent.push(args) }
+  );
+  assert.equal(generic.ok, true);
+  assert.equal(generic.action, 'wave');
+
+  const invalid = await executor.execute(
+    { name: 'reaction', arguments: { action: 'inexistente_xyz' } },
+    { scopeKey: scope, authorJid: author, text: 'reaction', funConfig: cfg, now: 1_018_000 }
+  );
+  assert.equal(invalid.ok, false);
+  assert.equal(invalid.reason, 'invalid-action');
+  assert.match(invalid.text, /Ação de reação inválida/);
+
+  const emojiSent = [];
+  const emojiReact = await executor.execute(
+    { name: 'reaction', arguments: { action: '🔥' } },
+    {
+      scopeKey: scope,
+      authorJid: author,
+      text: 'reage com fogo',
+      funConfig: cfg,
+      now: 1_024_000,
+      replyReact: async (emoji) => emojiSent.push(emoji),
+    }
+  );
+  assert.equal(emojiReact.ok, true);
+  assert.equal(emojiReact.emoji, '🔥');
+  assert.deepEqual(emojiSent, ['🔥']);
 });
 
 test('persona agent: tool_call recebe resultado e ganha fala final sem executar duas vezes', async () => {

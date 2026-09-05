@@ -74,6 +74,70 @@ test('news: publica conversa do grupo, não placar de eventos, e deduplica', asy
   assert.equal(again.reason, 'already-today');
 });
 
+test('news: parseConversationEdition tolera Markdown em rotulos e strip de nomes nao quebra com safeLines', async () => {
+  const { parseConversationEdition } = await import('../fun/services/news/newsLlm.js');
+
+  const conversation = {
+    messages: [
+      { name: 'Lucas', authorJid: 'lucas@s.whatsapp.net' },
+      { name: 'Eduardo', authorJid: 'eduardo@s.whatsapp.net' },
+    ],
+    quotes: [
+      { name: 'Lucas', text: 'Você consegue automodificar seus arquivos?' },
+    ],
+  };
+
+  // Texto com **CAPA:**, **MANCHETES:**, etc. e com atribuição de nome não suportado (ex: "Desconhecido disse...")
+  const rawLlmText = [
+    '**CAPA:** O grupo discutiu autoconsciência de bots',
+    '**MANCHETES:**',
+    '• Lucas levantou a questão sobre IA autoconsciente.',
+    '• Desconhecido disse que a resposta era complicada.',
+    '**DETALHES:**',
+    'Eduardo falou que o bot estava estranho.',
+    'Alguemfalou respondeu no final.',
+    '**CITAÇÕES:**',
+    'Lucas: “Você consegue automodificar seus arquivos?”',
+    '**FECHO:**',
+    'Amanhã saberemos se o bot aprendeu a pensar.',
+  ].join('\n');
+
+  const edition = parseConversationEdition(rawLlmText, conversation);
+  assert.ok(edition, 'Deveria fazer o parse com sucesso mesmo com Markdown nos rótulos e atribuições não suportadas');
+  assert.match(edition.capa, /O grupo discutiu autoconsciência de bots/);
+  assert.match(edition.manchetes, /Lucas levantou a questão/);
+  // Garante que stripUnsupportedParticipantAttributions rodou sem lançar ReferenceError
+  assert.doesNotMatch(edition.manchetes, /Desconhecido disse/);
+});
+
+test('news: extrai mencoes das citacoes e do texto corretamente (incluindo LIDs)', async () => {
+  const { extractEditionMentions } = await import('../fun/services/newsService.js');
+
+  const text = [
+    '📰 *THE GROUP TIMES*',
+    '2026-09-03 · quinta-feira',
+    '',
+    '*Grupo discute carinha de punheteiro e emprego bugado de bombeiro*',
+    '',
+    '*FRASES PARA O ARQUIVO*',
+    '• Eduardo: “@174994885714120 mo carinha de punheteiro né?”',
+    '• Lucas: “@5511999998888 blablabla”',
+  ].join('\n');
+
+  const quotes = [
+    {
+      name: 'Eduardo',
+      text: '@174994885714120 mo carinha de punheteiro né?',
+      mentionedJids: ['174994885714120@lid'],
+    },
+  ];
+
+  const mentions = extractEditionMentions(text, quotes);
+  assert.ok(Array.isArray(mentions));
+  assert.ok(mentions.includes('174994885714120@lid'), 'Deveria conter o LID mencionado');
+  assert.ok(mentions.includes('5511999998888@s.whatsapp.net'), 'Deveria conter o PN mencionado');
+});
+
 test('news: fora da janela não publica', async () => {
   const newsService = createNewsService({ newsRepository: createFunNewsRepository({ getDatabase: getDb }) });
   const result = await newsService.tryPublish(uniqueGroup(), {
