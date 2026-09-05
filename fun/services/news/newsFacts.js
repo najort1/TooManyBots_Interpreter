@@ -134,7 +134,12 @@ function selectQuotes(messages) {
   for (const candidate of candidates) {
     if (authors.has(candidate.authorJid)) continue;
     authors.add(candidate.authorJid);
-    quotes.push({ name: candidate.name, text: candidate.text, messageId: candidate.messageId });
+    quotes.push({
+      name: candidate.name,
+      text: candidate.text,
+      messageId: candidate.messageId,
+      mentionedJids: Array.isArray(candidate.mentionedJids) ? candidate.mentionedJids : [],
+    });
     if (quotes.length >= QUOTE_MAX) break;
   }
   return quotes;

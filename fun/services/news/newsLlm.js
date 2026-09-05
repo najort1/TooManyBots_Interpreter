@@ -1,9 +1,20 @@
-const LABELS = ['CAPA', 'MANCHETES', 'DETALHES', 'CITACOES', 'FECHO'];
+const LABELS = ['CAPA', 'MANCHETES', 'DETALHES', 'CITACOES', 'CITAÇÕES', 'FECHO'];
+
+function normalizeSectionHeaders(text) {
+  let normalized = String(text || '').replace(/\r/g, '');
+  for (const label of LABELS) {
+    // Tolera Markdown em negrito/itálico/título: **CAPA:**, *CAPA*:, ### CAPA:, etc.
+    const regex = new RegExp(`^[\\s*#_-]*${label}[\\s*#_-]*:\\s*`, 'gim');
+    normalized = normalized.replace(regex, `${label}: `);
+  }
+  return normalized;
+}
 
 function extractLabel(text, label) {
+  const normalized = normalizeSectionHeaders(text);
   const next = LABELS.filter((item) => item !== label).join('|');
   const expression = new RegExp(`(?:^|\\n)${label}:\\s*([\\s\\S]*?)(?=\\n(?:${next}):|$)`, 'i');
-  const value = text.match(expression)?.[1]?.trim() || '';
+  const value = normalized.match(expression)?.[1]?.trim() || '';
   return value.length >= 3 ? value : '';
 }
 
@@ -53,22 +64,25 @@ function hasUnsupportedParticipantName(value, conversation) {
 
 function stripUnsupportedParticipantAttributions(value, conversation) {
   const names = allowedNames(conversation);
-  return safeLines(value, 4, 1000)
+  return String(value || '')
+    .split('\n')
     .filter((line) => {
       const match = line.match(/\b([A-ZÀ-Ý][A-Za-zÀ-ÿ'-]{2,})\s+(?:disse|falou|voltou|abriu|confirmou|entrou|respondeu)\b/i);
       return !match || names.has(match[1].toLowerCase());
     })
-    .join('\n');
+    .join('\n')
+    .trim();
 }
 
 export function parseConversationEdition(raw, conversation) {
   const text = String(raw || '').replace(/\r/g, '').trim();
   if (!text || text.length < 30) return null;
+  const quotesRaw = extractLabel(text, 'CITACOES') || extractLabel(text, 'CITAÇÕES');
   const edition = {
     capa: sanitizeLines(extractLabel(text, 'CAPA'), 1, 180),
     manchetes: sanitizeLines(extractLabel(text, 'MANCHETES'), 4, 500),
     detalhes: sanitizeLines(extractLabel(text, 'DETALHES'), 4, 1000),
-    citacoes: validateQuotedLines(extractLabel(text, 'CITACOES'), conversation),
+    citacoes: validateQuotedLines(quotesRaw, conversation),
     fecho: sanitizeLines(extractLabel(text, 'FECHO'), 1, 260),
   };
   if (!edition.capa || (!edition.manchetes && !edition.detalhes)) return null;
@@ -96,10 +110,11 @@ export async function composeLlmBits(conversation, flavorService, scopeKey, _ran
       historicalMoods: conversation.historicalMoods.join(', ') || 'sem histórico',
       groupNewsConversationMaxChars: funConfig.groupNewsConversationMaxChars,
     });
-    const provider = typeof flavorService.lastProvider === 'function' ? flavorService.lastProvider() : '';
+    const provider = typeof flavorService.lastProvider === 'function' ? flavorService.lastProvider(scopeKey) : '';
     if (String(provider).includes('template')) return null;
     return parseConversationEdition(typeof raw === 'string' ? raw : raw?.text, conversation);
-  } catch {
+  } catch (error) {
+    console.warn(`[fun/news] llm error scope=${String(scopeKey).slice(0, 28)}: ${error?.message || error}`);
     return null;
   }
 }

@@ -3,6 +3,46 @@
 import { collectDayConversation, conversationToSnapshotPayload } from './news/newsFacts.js';
 import { renderEdition } from './news/newsRender.js';
 import { composeLlmBits } from './news/newsLlm.js';
+import { jidLocalPart, looksLikeOpaqueLid } from '../utils/identity.js';
+
+export function extractEditionMentions(text = '', quotes = [], identityMap = null) {
+  const result = new Set();
+  const body = String(text || '');
+  if (!body) return [];
+
+  // 1. Menções das citações incluídas no jornal cujo número está presente no texto
+  for (const quote of quotes || []) {
+    for (const rawJid of quote?.mentionedJids || []) {
+      const jid = String(rawJid || '').trim();
+      if (!jid) continue;
+      const local = jidLocalPart(jid);
+      if (local && body.includes(`@${local}`)) {
+        const canonical = identityMap?.resolve?.(jid) || jid;
+        result.add(canonical);
+        if (canonical !== jid) result.add(jid);
+      }
+    }
+  }
+
+  // 2. Extração de padrões @digits no texto (ex: @174994885714120 ou @551199999999)
+  const mentionMatches = body.matchAll(/@(\d{8,20})\b/g);
+  for (const match of mentionMatches) {
+    const digits = match[1];
+    if (identityMap?.resolve) {
+      const resolved = identityMap.resolve(digits);
+      if (resolved && resolved !== digits) {
+        result.add(resolved);
+      }
+    }
+    if (looksLikeOpaqueLid(digits)) {
+      result.add(`${digits}@lid`);
+    } else {
+      result.add(`${digits}@s.whatsapp.net`);
+    }
+  }
+
+  return [...result].filter(Boolean);
+}
 
 function dayKeyInTz(now, timeZone = 'America/Sao_Paulo') {
   try {
@@ -51,6 +91,7 @@ export function createNewsService({
   snapshotRepository = null,
   flavorService = null,
   getContactDisplayName = null,
+  identityMap = null,
   random = Math.random,
 } = {}) {
   function enabled(funConfig = {}) {
@@ -89,9 +130,10 @@ export function createNewsService({
     const dayLabel = `${dayKeyInTz(now, timeZone)} · ${new Date(now).toLocaleDateString('pt-BR', { weekday: 'long', timeZone })}`;
     const text = renderEdition(conversation, llmBits, { dayLabel, random });
     const provider = llmBits?.capa ? 'llm-enhanced' : 'deterministic';
+    const mentions = extractEditionMentions(text, conversation.quotes, identityMap);
 
     console.log(
-      `[fun/news] edition scope=${String(scopeKey).slice(0, 28)} provider=${provider} messages=${conversation.totalMessageCount} mood=${conversation.mood}`
+      `[fun/news] edition scope=${String(scopeKey).slice(0, 28)} provider=${provider} messages=${conversation.totalMessageCount} mood=${conversation.mood} mentions=${mentions.length}`
     );
 
     return {
@@ -100,6 +142,7 @@ export function createNewsService({
       eventCount: 0,
       messageCount: conversation.totalMessageCount,
       facts: conversation,
+      mentions,
     };
   }
 
@@ -137,6 +180,7 @@ export function createNewsService({
       eventCount: edition.eventCount,
       messageCount: edition.messageCount,
       newsDay,
+      mentions: edition.mentions || [],
     };
   }
 
