@@ -22,7 +22,14 @@ import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { PERSONA_CONTEXT_TURNS, PERSONA_DERIVE_INTERVAL_MS, PERSONA_TOKEN_HALF_LIFE_MS, PERSONA_TOP_TOKENS } from '../constants.js';
-import { buildPersonaToolManifest, parseFollowupEnvelope, parsePersonaEnvelope, looksLikeRawJson } from './personaToolProtocol.js';
+import {
+  buildPersonaToolManifest,
+  findPersonaActionClaims,
+  isPersonaSideEffectTool,
+  parseFollowupEnvelope,
+  parsePersonaEnvelope,
+  looksLikeRawJson,
+} from './personaToolProtocol.js';
 import { isUsablePromptFact } from '../utils/promptFactSanitizer.js';
 import { buildFactTemporalContext, formatDatedFact } from '../utils/factTemporalContext.js';
 import { resolveStickerPath } from './personaStickerCatalog.js';
@@ -296,16 +303,26 @@ export function createPersonaService({
   }
 
   async function runPersonaToolLoop({ initialCall, system, prompt, endpoint, zen, timeoutMs, funConfig, agentContext, scopeKey, text, maxChars }) {
-    const maxCalls = Math.max(1, Math.min(6, Number(funConfig?.personaAgentMaxToolCalls) || 4));
+    const maxCalls = Math.max(1, Math.min(5, Number(funConfig?.personaAgentMaxToolCalls) || 3));
     const deadlineAt = clock() + Math.max(5_000, Number(funConfig?.personaAgentDeadlineMs) || timeoutMs);
     const executed = new Set();
     const trace = [];
+    const dispatchActions = [];
+    const claimTokens = [];
     let lastDisplayText = '';
+    let sideEffectExecuted = false;
     let call = initialCall;
 
     for (let index = 0; index < maxCalls && clock() < deadlineAt; index += 1) {
       const callKey = `${call.name}:${JSON.stringify(call.arguments || {})}`;
-      if (executed.has(callKey)) break;
+      if (executed.has(callKey)) {
+        logger?.debug?.('[personaService] tool duplicada bloqueada scope=%s tool=%s', scopeKey, call.name);
+        break;
+      }
+      if (isPersonaSideEffectTool(call.name) && sideEffectExecuted) {
+        trace.push({ name: call.name, ok: false, summary: 'Bloqueada: já houve uma ação externa neste turno.' });
+        break;
+      }
       executed.add(callKey);
 
       const toolResult = await personaToolExecutor.execute(call, {
@@ -317,22 +334,34 @@ export function createPersonaService({
       });
       const displayText = cleanPromptText(toolResult?.text, Math.max(600, maxChars * 6));
       if (toolResult?.ok && displayText) lastDisplayText = displayText;
+      if (toolResult?.ok && isPersonaSideEffectTool(call.name)) sideEffectExecuted = true;
+      if (toolResult?.ok) {
+        const toolDispatchActions = Array.isArray(toolResult?.dispatchActions) ? toolResult.dispatchActions : [];
+        const toolClaimTokens = Array.isArray(toolResult?.claimTokens) ? toolResult.claimTokens : [];
+        if (toolDispatchActions.length) {
+          dispatchActions.push(...toolDispatchActions.map((action) => ({
+            ...action,
+            claimTokens: Array.isArray(action.claimTokens) ? action.claimTokens : toolClaimTokens,
+          })));
+        } else {
+          claimTokens.push(...toolClaimTokens);
+        }
+      }
       const summary = cleanPromptText(
         toolResult?.summary || displayText || `Ferramenta ${call.name} terminou sem texto.`,
         Math.max(600, maxChars * 6)
       );
       trace.push({ name: call.name, ok: Boolean(toolResult?.ok), summary });
+      logger?.debug?.('[personaService] tool scope=%s step=%d tool=%s ok=%s', scopeKey, index + 1, call.name, Boolean(toolResult?.ok));
       const traceText = trace.map((item, itemIndex) => `${itemIndex + 1}. ${item.name} (${item.ok ? 'ok' : 'falhou'}): ${item.summary}`).join('\n');
       const remainingMs = deadlineAt - clock();
 
-      // A tool já concluiu dentro do seu próprio timeout. Não inicia uma geração
-      // que não cabe mais no orçamento do loop nem reexecuta a tool em retry.
       if (remainingMs <= 0) break;
 
       const raw = await generateZen({
         baseUrl: endpoint.baseUrl,
         model: endpoint.model,
-        prompt: `${prompt}\n\nResultados reais das ferramentas:\n${traceText}\n\nEscolha a próxima tool, se precisar, ou responda naturalmente com reply/actions. Não invente dados ausentes.`,
+        prompt: `${prompt}\n\nResultados reais das ferramentas:\n${traceText}\n\nEscolha a próxima tool somente se ela for necessária, ou responda com reply/actions. Não invente dados nem diga que uma tool falhou executou com sucesso.`,
         system: `${system}\n\n${buildPersonaToolManifest()}`,
         timeoutMs: Math.min(timeoutMs, remainingMs),
         maxTokens: zen.maxTokens,
@@ -345,8 +374,8 @@ export function createPersonaService({
       const decision = parsePersonaEnvelope(raw, { maxChars });
       if (!decision.ok) break;
       if (decision.envelope.type === 'tool_call') {
-        const fallback = sanitizeFlavor(lastDisplayText, Math.max(maxChars, 1_600));
-        return fallback ? { text: fallback, actions: [{ type: 'text', text: fallback }] } : '';
+        call = decision.envelope;
+        continue;
       }
       if (decision.envelope.type === 'actions') {
         const finalActions = [];
@@ -367,6 +396,8 @@ export function createPersonaService({
           actions: lastDisplayText
             ? [{ type: 'text', text: lastDisplayText }, ...finalActions]
             : finalActions,
+          dispatchActions,
+          claimTokens,
         };
       }
       if (decision.envelope.type === 'reply') {
@@ -374,7 +405,12 @@ export function createPersonaService({
         const reply = sanitizeFlavor(stripped, maxChars);
         if (reply && !looksLikeScoreboardEcho(reply)) {
           const combined = [lastDisplayText, reply].filter(Boolean).join('\n\n');
-          return { text: combined, actions: [{ type: 'text', text: combined }] };
+          return {
+            text: combined,
+            actions: [{ type: 'text', text: combined }],
+            dispatchActions,
+            claimTokens,
+          };
         }
       }
       break;
@@ -382,7 +418,13 @@ export function createPersonaService({
 
     const lastResult = lastDisplayText || trace.at(-1)?.summary || '';
     const fallback = sanitizeFlavor(lastResult, Math.max(maxChars, 1_600));
-    return fallback ? { text: fallback, actions: [{ type: 'text', text: fallback }] } : '';
+    if (!fallback && !dispatchActions.length) return '';
+    return {
+      text: fallback,
+      actions: fallback ? [{ type: 'text', text: fallback }] : [],
+      dispatchActions,
+      claimTokens,
+    };
   }
 
   async function generateResponse({
@@ -606,6 +648,24 @@ export function createPersonaService({
       }
     }
     return '';
+  }
+
+  const UNCONFIRMED_ACTION_FALLBACK_TEXT = 'Não consegui confirmar essa ação agora.';
+
+  function applyVerifiedActionClaims(responseText, actions, dispatchReceipts = []) {
+    const hasFailedReceipt = dispatchReceipts.some((receipt) => !receipt.ok && receipt.claimTokens?.length);
+    const verifiedTokens = dispatchReceipts
+      .filter((receipt) => receipt.ok)
+      .flatMap((receipt) => receipt.claimTokens || []);
+    const claims = findPersonaActionClaims(responseText, verifiedTokens);
+    if (!claims.length && !hasFailedReceipt) return { text: responseText, actions, claims: [] };
+
+    if (claims.length) {
+      logger?.warn?.('[personaService] persona-action-claim-rejected claims=%s', claims.join(','));
+    }
+    const safeActions = actions.filter((action) => action.type !== 'text');
+    safeActions.push({ type: 'text', text: UNCONFIRMED_ACTION_FALLBACK_TEXT });
+    return { text: UNCONFIRMED_ACTION_FALLBACK_TEXT, actions: safeActions, claims };
   }
 
   function fallbackResponse(rotationIndex) {
@@ -1070,6 +1130,8 @@ export function createPersonaService({
 
       let responseText = '';
       let actions = [];
+      let pendingDispatchActions = [];
+      let executionClaimTokens = [];
       let usedFallback = false;
 
       if (typeof genResult === 'string') {
@@ -1078,9 +1140,11 @@ export function createPersonaService({
       } else if (genResult && typeof genResult === 'object') {
         responseText = String(genResult.text || '');
         actions = Array.isArray(genResult.actions) ? genResult.actions : [{ type: 'text', text: responseText }];
+        pendingDispatchActions = Array.isArray(genResult.dispatchActions) ? genResult.dispatchActions : [];
+        executionClaimTokens = Array.isArray(genResult.claimTokens) ? genResult.claimTokens : [];
       }
 
-      if (!responseText && !actions.length) {
+      if (!responseText && !actions.length && !pendingDispatchActions.length) {
         responseText = fallbackResponse(now);
         actions = [{ type: 'text', text: responseText }];
         usedFallback = true;
@@ -1090,9 +1154,104 @@ export function createPersonaService({
         ? ctx.quoteSource
         : undefined;
 
-      // ── DESPACHO MULTI-AÇÃO COM HUMAN PACING ──
+      // ── DESPACHO CENTRALIZADO COM RECIBOS ──
       const responseMessageIds = [];
+      const dispatchReceipts = executionClaimTokens.map((claimToken) => ({
+        ok: true,
+        type: 'domain-execution',
+        claimTokens: [claimToken],
+      }));
       const hasSock = ctx.sock?.sendMessage && typeof ctx.sock.sendMessage === 'function';
+
+      const recordMessageId = (sent, action) => {
+        const messageId = String(sent?.key?.id || '');
+        if (!messageId) return;
+        responseMessageIds.push(messageId);
+        if (action?.type !== 'text') return;
+        try {
+          personaRecentMessageRepository?.recordMessage?.({
+            scopeKey,
+            messageId,
+            authorJid: [...botJids][0] || '',
+            authorLabel: 'eu',
+            source: 'bot',
+            messageType: 'text',
+            text: action.text,
+            now,
+          });
+        } catch {
+          // histórico recente nunca desfaz uma resposta já enviada
+        }
+      };
+
+      const dispatchToolAction = async (action) => {
+        const receipt = {
+          ok: false,
+          type: String(action?.type || 'unknown'),
+          claimTokens: Array.isArray(action?.claimTokens) ? action.claimTokens : [],
+        };
+        try {
+          let sent;
+          if (action.type === 'image_url') {
+            if (typeof ctx.replyImageUrl === 'function') {
+              sent = await ctx.replyImageUrl(action.imageUrl, action.caption || '', action.mimeType || '');
+            } else if (hasSock) {
+              sent = await ctx.sock.sendMessage(
+                scopeKey,
+                { image: { url: action.imageUrl }, caption: String(action.caption || ''), mimetype: action.mimeType || undefined },
+                quoted ? { quoted } : undefined
+              );
+            } else {
+              throw new Error('image-sender-unavailable');
+            }
+          } else if (action.type === 'sticker' || action.type === 'sticker_buffer') {
+            const stickerBuffer = action.stickerBuffer || await (async () => {
+              const stickerPath = resolveStickerPath(action.slug);
+              if (!stickerPath) throw new Error('sticker-not-found');
+              return imageBufferToSticker(readFileSync(stickerPath));
+            })();
+            if (typeof ctx.replySticker === 'function') {
+              sent = await ctx.replySticker(await stickerBuffer);
+            } else if (hasSock) {
+              sent = await ctx.sock.sendMessage(scopeKey, { sticker: await stickerBuffer }, quoted ? { quoted } : undefined);
+            } else {
+              throw new Error('sticker-sender-unavailable');
+            }
+            if (!receipt.claimTokens.length) receipt.claimTokens = ['sticker'];
+          } else if (action.type === 'react') {
+            const targetKey = ctx.quoteSource?.key || ctx.messageKey;
+            if (!hasSock || !targetKey) throw new Error('reaction-target-unavailable');
+            sent = await ctx.sock.sendMessage(scopeKey, { react: { text: action.emoji, key: targetKey } });
+            if (!receipt.claimTokens.length) receipt.claimTokens = ['emoji_reaction'];
+          } else {
+            throw new Error('unknown-tool-dispatch-action');
+          }
+          if (!sent || sent.skipped) {
+            throw new Error(sent?.reason || 'tool-dispatch-unconfirmed');
+          }
+          recordMessageId(sent, action);
+          receipt.ok = true;
+          receipt.messageId = String(sent?.key?.id || '');
+        } catch (dispatchErr) {
+          receipt.error = String(dispatchErr?.message || dispatchErr);
+          logger?.debug?.('[personaService] tool dispatch falhou scope=%s action=%s: %s', scopeKey, receipt.type, receipt.error);
+        }
+        dispatchReceipts.push(receipt);
+      };
+
+      for (let i = 0; i < pendingDispatchActions.length; i += 1) {
+        await dispatchToolAction(pendingDispatchActions[i]);
+        if (i < pendingDispatchActions.length - 1 && process.env.NODE_ENV !== 'test') {
+          await sleep(Math.floor(Math.random() * 250 + 350));
+        }
+      }
+
+      if (pendingDispatchActions.length) {
+        actions = actions.filter((action) => action?.type === 'text');
+      }
+      const verified = applyVerifiedActionClaims(responseText, actions, dispatchReceipts);
+      responseText = verified.text;
+      actions = verified.actions;
 
       for (let i = 0; i < actions.length; i += 1) {
         const action = actions[i];
@@ -1101,33 +1260,14 @@ export function createPersonaService({
         try {
           if (action.type === 'text' && hasSock) {
             const sent = await ctx.sock.sendMessage(scopeKey, { text: action.text }, quoted ? { quoted } : undefined);
-            if (sent?.key?.id) {
-              responseMessageIds.push(String(sent.key.id));
-              try {
-                personaRecentMessageRepository?.recordMessage?.({
-                  scopeKey,
-                  messageId: String(sent.key.id),
-                  authorJid: [...botJids][0] || '',
-                  authorLabel: 'eu',
-                  source: 'bot',
-                  messageType: 'text',
-                  text: action.text,
-                  now,
-                });
-              } catch {
-                // histórico recente nunca desfaz uma resposta já enviada
-              }
-            }
+            recordMessageId(sent, action);
           } else if (action.type === 'sticker' && hasSock) {
             const stickerPath = resolveStickerPath(action.slug);
-            if (stickerPath) {
-              const rawSticker = readFileSync(stickerPath);
-              const stickerBuffer = await imageBufferToSticker(rawSticker);
-              const sent = await ctx.sock.sendMessage(scopeKey, { sticker: stickerBuffer }, quoted ? { quoted } : undefined);
-              if (sent?.key?.id) {
-                responseMessageIds.push(String(sent.key.id));
-              }
-            }
+            if (!stickerPath) throw new Error('sticker-not-found');
+            const rawSticker = readFileSync(stickerPath);
+            const stickerBuffer = await imageBufferToSticker(rawSticker);
+            const sent = await ctx.sock.sendMessage(scopeKey, { sticker: stickerBuffer }, quoted ? { quoted } : undefined);
+            recordMessageId(sent, action);
           } else if (action.type === 'react' && hasSock && ctx.quoteSource?.key) {
             await ctx.sock.sendMessage(scopeKey, {
               react: { text: action.emoji, key: ctx.quoteSource.key },
@@ -1137,7 +1277,6 @@ export function createPersonaService({
           logger?.debug?.('[personaService] erro ao despachar ação %s: %s', action.type, String(dispatchErr?.message || dispatchErr));
         }
 
-        // Delay natural entre balões/ações (se não for última e não for teste)
         if (i < actions.length - 1 && process.env.NODE_ENV !== 'test') {
           await sleep(Math.floor(Math.random() * 250 + 350));
         }

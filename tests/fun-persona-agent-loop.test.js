@@ -37,7 +37,7 @@ function createPersonaLoopContext(scopeKey) {
   };
 }
 
-test('persona agent loop can chain read tools before producing final reply', async () => {
+test('persona agent loop chains read tools before producing final reply', async () => {
   const previous = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
   try {
@@ -49,7 +49,9 @@ test('persona agent loop can chain read tools before producing final reply', asy
       personaToolExecutor: {
         execute: async (call) => {
           executions.push(call.name);
-          return { ok: true, text: 'identidade real do grupo consultada', summary: 'identidade real do grupo consultada' };
+          return call.name === 'group_identity'
+            ? { ok: true, text: 'identidade real do grupo consultada', summary: 'identidade real do grupo consultada' }
+            : { ok: true, text: 'status real do grupo consultado', summary: 'status real do grupo consultado' };
         },
       },
       generateZen: async () => {
@@ -78,10 +80,10 @@ test('persona agent loop can chain read tools before producing final reply', asy
     });
 
     assert.equal(result.responded, true);
-    assert.deepEqual(executions, ['group_identity']);
-    assert.equal(calls.length, 2);
-    assert.equal(sent[0].text, 'identidade real do grupo consultada');
-    assert.doesNotMatch(sent[0].text, /group_status/);
+    assert.deepEqual(executions, ['group_identity', 'group_status']);
+    assert.equal(calls.length, 3);
+    assert.match(sent[0].text, /status real do grupo consultado/);
+    assert.match(sent[0].text, /pronto, consultei tudo/);
   } finally {
     if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
     else process.env.FUN_DISABLE_LIVE_LLM = previous;
@@ -258,6 +260,165 @@ test('persona agent validates a continued gossip request against recent context'
     assert.deepEqual(executions.map((execution) => execution.name), ['gossip']);
     assert.match(executions[0].toolContextText, /gossip/i);
     assert.equal(sent[0].text, 'fofoca real da ferramenta');
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent blocks a repeated tool call and returns only confirmed output', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const executions = [];
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async (call) => {
+          executions.push(call.name);
+          return { ok: true, text: 'identidade confirmada', summary: 'identidade confirmada' };
+        },
+      },
+      generateZen: async () => '{"type":"tool_call","name":"group_identity","arguments":{}}',
+    });
+    const { sent, ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({
+      ...ctx,
+      funConfig: { ...DEFAULT_FUN_CONFIG, personaAgentMaxToolCalls: 3 },
+    });
+
+    assert.equal(result.responded, true);
+    assert.deepEqual(executions, ['group_identity']);
+    assert.equal(sent[0].text, 'identidade confirmada');
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent suppresses an unverified action claim after a failed tool', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let generations = 0;
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async () => ({ ok: false, reason: 'unavailable', text: 'Não consegui preparar o abraço.', summary: 'Reação indisponível.' }),
+      },
+      generateZen: async () => (++generations === 1)
+        ? '{"type":"tool_call","name":"reaction","arguments":{"action":"hug","target":"author"}}'
+        : '{"type":"reply","text":"pronto, te abracei"}',
+    });
+    const { sent, ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({ ...ctx, text: 'bot me abraça', funConfig: { ...DEFAULT_FUN_CONFIG } });
+
+    assert.equal(result.responded, true);
+    assert.equal(sent[0].text, 'Não consegui confirmar essa ação agora.');
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent dispatches prepared media once before the verified final claim', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let generations = 0;
+    const sent = [];
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async () => ({
+          ok: true,
+          summary: 'Abraço preparado.',
+          dispatchActions: [{
+            type: 'image_url',
+            imageUrl: 'https://media.example/hug.gif',
+            mimeType: 'image/gif',
+            caption: '*Eu* mandei hug para *você*.',
+            claimTokens: ['reaction:hug'],
+          }],
+        }),
+      },
+      generateZen: async () => (++generations === 1)
+        ? '{"type":"tool_call","name":"reaction","arguments":{"action":"hug","target":"author"}}'
+        : '{"type":"reply","text":"pronto, te abracei"}',
+    });
+    const { ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({
+      ...ctx,
+      text: 'bot me abraça',
+      funConfig: { ...DEFAULT_FUN_CONFIG },
+      replyImageUrl: async (...args) => {
+        sent.push({ kind: 'image', args });
+        return { key: { id: 'media-1' } };
+      },
+      sock: {
+        ...ctx.sock,
+        sendMessage: async (_jid, content) => {
+          sent.push({ kind: 'socket', content });
+          return { key: { id: `message-${sent.length}` } };
+        },
+      },
+    });
+
+    assert.equal(result.responded, true);
+    assert.deepEqual(sent.map((item) => item.kind), ['image', 'socket']);
+    assert.match(sent[1].content.text, /te abracei/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent replaces a verified-claim response when media delivery fails', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let generations = 0;
+    const sent = [];
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async () => ({
+          ok: true,
+          summary: 'Beijo preparado.',
+          dispatchActions: [{
+            type: 'image_url',
+            imageUrl: 'https://media.example/kiss.gif',
+            mimeType: 'image/gif',
+            caption: '*Eu* mandei kiss para *você*.',
+            claimTokens: ['reaction:kiss'],
+          }],
+        }),
+      },
+      generateZen: async () => (++generations === 1)
+        ? '{"type":"tool_call","name":"reaction","arguments":{"action":"kiss","target":"author"}}'
+        : '{"type":"reply","text":"pronto, te beijei"}',
+    });
+    const { ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({
+      ...ctx,
+      text: 'bot me beija',
+      funConfig: { ...DEFAULT_FUN_CONFIG },
+      replyImageUrl: async () => { throw new Error('media-down'); },
+      sock: {
+        ...ctx.sock,
+        sendMessage: async (_jid, content) => {
+          sent.push(content);
+          return { key: { id: `message-${sent.length}` } };
+        },
+      },
+    });
+
+    assert.equal(result.responded, true);
+    assert.deepEqual(sent.map((message) => message.text), ['Não consegui confirmar essa ação agora.']);
   } finally {
     if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
     else process.env.FUN_DISABLE_LIVE_LLM = previous;

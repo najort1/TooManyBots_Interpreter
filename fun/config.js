@@ -1164,7 +1164,7 @@ export function normalizeFunConfig(input) {
     personaAgentMaxToolCalls: normalizeInt(
       raw.personaAgentMaxToolCalls,
       DEFAULT_FUN_CONFIG.personaAgentMaxToolCalls,
-      { min: 1, max: 1, rounding: 'floor', clamp: true }
+      { min: 1, max: 5, rounding: 'floor', clamp: true }
     ),
     personaAgentDeadlineMs: normalizeInt(
       raw.personaAgentDeadlineMs,

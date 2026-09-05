@@ -2,7 +2,11 @@ import { readFileSync } from 'node:fs';
 import { formatHelp, resolveHelpTarget } from '../formatters/helpGuide.js';
 import { getReactionKind, normalizeReactionAction } from './reactionMediaService.js';
 import { resolveStickerPath, STICKER_SLUGS } from './personaStickerCatalog.js';
-import { EMOJI_RE } from './personaToolProtocol.js';
+import {
+  EMOJI_RE,
+  claimTokensForPersonaTool,
+  hasPersonaToolInvitation,
+} from './personaToolProtocol.js';
 import { imageBufferToSticker } from '../utils/stickerConvert.js';
 import { formatDatedFact } from '../utils/factTemporalContext.js';
 
@@ -10,21 +14,6 @@ const VIRTUAL_RUSSIAN_ACTOR = '__persona_virtual_russian__';
 
 function clean(value, max = 240) {
   return String(value || '').replace(/[\r\n]+/g, ' ').trim().slice(0, max);
-}
-
-function hasContextualInvite(text, kind) {
-  const source = String(text || '').toLowerCase();
-  const patterns = {
-    start_russian: /roleta|russa|gatilho|coragem|duelo|resolver|desafio|jogar/iu,
-    oracle: /or[aá]culo|previs[aã]o|destino|vou .*namorar|pergunta/iu,
-    illuminati: /illuminati|conspira|teoria/iu,
-    gossip: /go+s+i+p|fofoca|boato|rumor/iu,
-    tarot: /tar[oô]|cartas|arcano|tiragem|leitura/iu,
-    ship: /ship|casal|combin|qu[ií]mica|namor|romance/iu,
-    cancel: /cancel|cancelamento/iu,
-    reaction: /reaction|reag|rea[cç]|abra[cç]|hug|beij|kiss|tapa|slap|carinho|pat|cuddle|cafun[eé]|mord|bite|lamb|lick|cutuc|poke|high.?five|tocaqui|acena|wave|rir|laugh|chora|cry|bruh|sus/iu,
-  };
-  return patterns[kind]?.test(source) !== false;
 }
 
 function resolveTarget(ctx, raw) {
@@ -66,6 +55,7 @@ export function createPersonaToolExecutor({
   memoryRepository = null,
   tarotService = null,
   relationshipService = null,
+  dailyChallengeService = null,
   reactionMediaService = null,
   personaRecentMessageRepository = null,
   personaIdentityService = null,
@@ -88,7 +78,7 @@ export function createPersonaToolExecutor({
     const args = call?.arguments || {};
     const scopeKey = String(ctx.scopeKey || '');
     const now = Number(ctx.now) || Date.now();
-    const base = { tool: name, ok: false, text: '' };
+    const base = { tool: name, ok: false, text: '', dispatchActions: [], claimTokens: [] };
     const cooldownScopeKey = `${scopeKey}:${name}`;
     if (!scopeKey.endsWith('@g.us')) return { ...base, reason: 'group-only', text: 'Isso só rola no grupo.' };
 
@@ -168,22 +158,51 @@ export function createPersonaToolExecutor({
       };
     }
 
+    if (name === 'daily_challenge_status') {
+      if (!dailyChallengeService?.getStatus) {
+        return { ...base, reason: 'unavailable', text: 'Não consigo consultar o desafio diário agora.' };
+      }
+      const status = dailyChallengeService.getStatus(scopeKey);
+      if (!status?.active || !status.challenge) {
+        return { ...base, ok: true, text: '📌 Nenhum desafio diário está ativo agora.', summary: 'Nenhum desafio diário ativo.' };
+      }
+      const challenge = status.challenge;
+      const cooldownMs = Number(dailyChallengeService.getHintCooldownRemaining?.(challenge.id, now) || 0);
+      return {
+        ...base,
+        ok: true,
+        text: [
+          '📌 *Desafio diário ativo*',
+          `Tipo: *${clean(challenge.challengeType, 80)}*.`,
+          cooldownMs > 0 ? `Próxima dica em aproximadamente *${Math.ceil(cooldownMs / 1000)}s*.` : 'A próxima dica pode estar disponível.',
+        ].join('\n'),
+        summary: `Desafio diário ${clean(challenge.challengeType, 80)} está ativo.`,
+        data: { active: true, challengeType: challenge.challengeType, challengeId: challenge.id },
+      };
+    }
+
     const toolContextText = String(ctx.toolContextText || ctx.text || '');
-    if (!hasContextualInvite(toolContextText, name)) {
+    if (!hasPersonaToolInvitation(name, toolContextText)) {
       return { ...base, reason: 'not-contextual', text: 'Não vou forçar essa brincadeira do nada.' };
     }
 
-    // Reações de emoji não consomem nem são barradas pelo cooldown de mídia
+    // Reações de emoji não consomem o cooldown de mídia, mas o despacho continua
+    // centralizado no serviço da persona para gerar um recibo de entrega.
     if (name === 'reaction') {
       const rawAction = String(args.action || '').trim();
       const rawEmoji = String(args.emoji || '').trim();
       const emojiCandidate = (EMOJI_RE.test(rawAction) ? rawAction : '') ||
                              (EMOJI_RE.test(rawEmoji) ? rawEmoji : '');
       if (emojiCandidate) {
-        if (typeof ctx.replyReact === 'function') {
-          await ctx.replyReact(emojiCandidate);
-        }
-        return { ...base, ok: true, text: '', summary: `Reagiu com emoji ${emojiCandidate}.`, emoji: emojiCandidate };
+        return {
+          ...base,
+          ok: true,
+          text: '',
+          summary: `Reação com emoji ${emojiCandidate} preparada.`,
+          emoji: emojiCandidate,
+          dispatchActions: [{ type: 'react', emoji: emojiCandidate }],
+          claimTokens: claimTokensForPersonaTool(name, { action: emojiCandidate }),
+        };
       }
     }
 
@@ -221,7 +240,55 @@ export function createPersonaToolExecutor({
         ...base,
         ok: true,
         text: ['☠️ *Roleta russa*', botTurn, virtual.died ? '' : 'Agora é com vocês: `/puxar`.', '_Não é real. É só o grupo sendo o grupo._'].filter(Boolean).join('\n'),
+        summary: virtual.died ? 'A persona perdeu virtualmente na primeira puxada.' : `A persona puxou virtualmente; restam ${virtual.remaining}/${virtual.chambers} câmaras.`,
         virtual,
+        claimTokens: claimTokensForPersonaTool(name),
+      };
+    }
+
+    if (name === 'pull_russian') {
+      const active = chaosService.getRussian?.(scopeKey, ctx.funConfig, now);
+      if (!active) return { ...base, reason: 'no-game', text: 'Não tem roleta aberta agora. Começa uma com `start_russian`.' };
+      const virtual = chaosService.pullTrigger({
+        userJid: VIRTUAL_RUSSIAN_ACTOR,
+        scopeKey,
+        funConfig: ctx.funConfig,
+        now,
+        virtual: true,
+      });
+      if (!virtual?.ok) {
+        return {
+          ...base,
+          reason: virtual?.reason || 'failed',
+          text: virtual?.reason === 'too-fast' ? 'Calma no gatilho — deixa a mesa respirar um instante.' : 'Não consegui puxar o gatilho virtual agora.',
+        };
+      }
+      const body = virtual.died
+        ? ['☠️ *BANG virtual*', 'Eu puxei e fui de base virtualmente. A mesa fechou sem punir ninguém.', '_Não é real. É só o grupo sendo o grupo._']
+        : ['🔫 *Click virtual*', `Eu puxei e sobrevivi. Restam *${virtual.remaining}/${virtual.chambers}* câmaras.`, 'Agora é com vocês: `/puxar`.'];
+      return {
+        ...base,
+        ok: true,
+        text: body.join('\n'),
+        summary: virtual.died ? 'A persona morreu virtualmente e a roleta foi encerrada.' : `A persona puxou virtualmente; restam ${virtual.remaining}/${virtual.chambers} câmaras.`,
+        virtual,
+        claimTokens: claimTokensForPersonaTool(name),
+      };
+    }
+
+    if (name === 'daily_challenge_hint') {
+      if (!dailyChallengeService?.handleHint) {
+        return { ...base, reason: 'unavailable', text: 'Não consigo liberar dica do desafio agora.' };
+      }
+      const result = await dailyChallengeService.handleHint({ scopeKey, now });
+      if (!result?.ok) {
+        return { ...base, reason: result?.reason || 'hint-unavailable', text: clean(result?.message || 'Não consegui liberar uma dica agora.', 1_000) };
+      }
+      return {
+        ...base,
+        ok: true,
+        text: clean(result.message, 1_000),
+        summary: 'Próxima dica real do desafio diário liberada.',
       };
     }
 
@@ -291,16 +358,29 @@ export function createPersonaToolExecutor({
       if (!action) {
         return { ...base, reason: 'invalid-action', text: 'Ação de reação inválida. Escolha uma ação (ex: hug, slap, wave) ou reaja com emoji.' };
       }
-      if (!reactionMediaService?.getReaction || typeof ctx.replyImageUrl !== 'function') {
-        return { ...base, reason: 'unavailable', text: 'Não consigo mandar mídia agora.' };
+      if (!reactionMediaService?.getReaction) {
+        return { ...base, reason: 'unavailable', text: 'Não consigo preparar mídia agora.' };
       }
       const target = resolveTarget(ctx, args.target);
       if (!target) return { ...base, reason: 'missing-target', text: 'Preciso de uma menção, reply ou de você como alvo.' };
       const label = labelOf({ ...ctx, getContactDisplayName: ctx.getContactDisplayName || getContactDisplayName }, target);
       const media = await reactionMediaService.getReaction(action, { funConfig: ctx.funConfig });
       if (!media?.ok || !media.url) return { ...base, reason: media?.reason || 'no-media', text: 'Não consegui achar uma reação boa agora.' };
-      await ctx.replyImageUrl(media.url, `*Eu* mandei ${action} para *${label}*.`, media.mimeType);
-      return { ...base, ok: true, text: '', summary: `Reação SFW ${action} enviada para ${label}.`, action, target: label };
+      return {
+        ...base,
+        ok: true,
+        text: '',
+        summary: `Reação SFW ${action} preparada para ${label}.`,
+        action,
+        target: label,
+        dispatchActions: [{
+          type: 'image_url',
+          imageUrl: media.url,
+          mimeType: media.mimeType,
+          caption: `*Eu* mandei ${action} para *${label}*.`,
+        }],
+        claimTokens: claimTokensForPersonaTool(name, { action }),
+      };
     }
 
     if (name === 'illuminati' || name === 'gossip') {
@@ -318,9 +398,6 @@ export function createPersonaToolExecutor({
       if (!slug || !STICKER_SLUGS.includes(slug)) {
         return { ...base, reason: 'invalid-slug', text: `Slug inválido. Opções: ${STICKER_SLUGS.slice(0, 8).join(', ')}…` };
       }
-      if (typeof ctx.replySticker !== 'function') {
-        return { ...base, reason: 'unavailable', text: 'Não consigo mandar figurinha agora.' };
-      }
       const filePath = resolveStickerPath(slug);
       if (!filePath) {
         return { ...base, reason: 'file-not-found', text: 'Figurinha não encontrada no disco.' };
@@ -332,8 +409,15 @@ export function createPersonaToolExecutor({
       } catch (err) {
         return { ...base, reason: 'convert-failed', text: 'Não consegui converter a figurinha.' };
       }
-      await ctx.replySticker(stickerBuffer);
-      return { ...base, ok: true, text: '', summary: `Figurinha "${slug}" enviada.`, slug };
+      return {
+        ...base,
+        ok: true,
+        text: '',
+        summary: `Figurinha "${slug}" preparada.`,
+        slug,
+        dispatchActions: [{ type: 'sticker_buffer', stickerBuffer }],
+        claimTokens: claimTokensForPersonaTool(name),
+      };
     }
 
     return { ...base, reason: 'unknown-tool', text: '' };

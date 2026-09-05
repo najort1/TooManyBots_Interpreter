@@ -509,11 +509,10 @@ export async function handleFunIncomingMessage(deps, ctx) {
       if (!response.ok) throw new Error(`fetch-${response.status}`);
       imageBuffer = Buffer.from(await response.arrayBuffer());
     } catch {
-      await sendImage(sock, chatJid, { imageUrl: url, caption: cap, mimeType, mentions }, sendOpts);
-      return;
+      return sendImage(sock, chatJid, { imageUrl: url, caption: cap, mimeType, mentions }, sendOpts);
     }
 
-    await sendImage(
+    return sendImage(
       sock,
       chatJid,
       { imageBuffer, caption: cap, mimeType, mentions },
@@ -526,7 +525,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     if (typeof sendSticker !== 'function') {
       throw new Error('sticker-sender-unavailable');
     }
-    await sendSticker(sock, chatJid, stickerBuffer, useQuoted ? { quoted: quoteSource } : undefined);
+    return sendSticker(sock, chatJid, stickerBuffer, useQuoted ? { quoted: quoteSource } : undefined);
   };
 
   const worldEventsOn = effectiveRates?.worldEventsEnabled !== false;

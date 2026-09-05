@@ -1031,8 +1031,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // Persona agentiva: protocolo JSON e allowlist de consultas/zoeira segura.
   personaToolsEnabled: true,
   personaToolCooldownMs: 45_000,
-  /** Cada mensagem pode executar uma tool e gerar uma fala final sobre o resultado. */
-  personaAgentMaxToolCalls: 1,
+  /** Limite de ferramentas encadeadas antes da fala final da persona. */
+  personaAgentMaxToolCalls: 3,
   /** Tempo para tools de domínio concluírem e a persona formular a resposta final. */
   personaAgentDeadlineMs: 60_000,
   /** Participação espontânea continua desligada até ativação por grupo/config. */

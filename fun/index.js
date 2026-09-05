@@ -518,6 +518,7 @@ export function createFunModule(deps = {}) {
       memoryRepository,
       tarotService,
       relationshipService,
+      dailyChallengeService,
       reactionMediaService,
       personaRecentMessageRepository,
       personaIdentityService,

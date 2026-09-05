@@ -35,12 +35,13 @@ test('persona agent: protocolo aceita só reply ou tool_call da allowlist', () =
   const manifest = buildPersonaToolManifest();
   assert.match(manifest, /Nunca diga que vai usar, tentar ou chamar uma tool/i);
   assert.match(manifest, /chame group_status/i);
-  assert.match(manifest, /no máximo UMA tool/i);
+  assert.match(manifest, /encadear tools/i);
 });
 
 test('persona agent: configurações novas têm defaults e clamps seguros', () => {
   const cfg = resolveFunConfig({
     personaToolCooldownMs: 1,
+    personaAgentMaxToolCalls: 99,
     personaAgentDeadlineMs: 1,
     personaTimeoutMs: 1,
     loreReconciliationCooldownMs: 999_999_999,
@@ -48,14 +49,19 @@ test('persona agent: configurações novas têm defaults e clamps seguros', () =
     loreReconciliationTimeoutMs: 1,
   });
   const defaultCfg = resolveFunConfig({});
+  const minCallsCfg = resolveFunConfig({ personaAgentMaxToolCalls: 0 });
   const maxDeadlineCfg = resolveFunConfig({ personaAgentDeadlineMs: 999_999 });
   const maxPersonaTimeoutCfg = resolveFunConfig({ personaTimeoutMs: 999_999 });
   assert.equal(DEFAULT_FUN_CONFIG.personaAgentDeadlineMs, 60_000);
   assert.equal(DEFAULT_FUN_CONFIG.personaTimeoutMs, 35_000);
+  assert.equal(DEFAULT_FUN_CONFIG.personaAgentMaxToolCalls, 3);
   assert.equal(defaultCfg.personaAgentDeadlineMs, 60_000);
   assert.equal(defaultCfg.personaTimeoutMs, 35_000);
+  assert.equal(defaultCfg.personaAgentMaxToolCalls, 3);
   assert.equal(cfg.personaToolsEnabled, true);
   assert.equal(cfg.personaToolCooldownMs, 5_000);
+  assert.equal(cfg.personaAgentMaxToolCalls, 5);
+  assert.equal(minCallsCfg.personaAgentMaxToolCalls, 1);
   assert.equal(cfg.personaAgentDeadlineMs, 5_000);
   assert.equal(cfg.personaTimeoutMs, 5_000);
   assert.equal(maxDeadlineCfg.personaAgentDeadlineMs, 90_000);
@@ -90,6 +96,55 @@ test('persona agent: roleta virtual não cria efeito persistente e humano contin
   assert.equal(human.ok, true);
   assert.equal(human.died, true);
   assert.equal(effects.isXpBlocked(author, scope, 1_003_001).blocked, true);
+});
+
+test('persona agent: pull_russian mantém a persona virtual e nunca bloqueia XP', async () => {
+  const scope = uniqueGroup();
+  const author = uniqueJid('5592');
+  const effects = createFunEffectsRepository({ getDatabase: getDb });
+  let randomCalls = 0;
+  const chaos = createChaosService({
+    repository: { getLeaderboard: () => [] },
+    effectsRepository: effects,
+    random: () => (++randomCalls === 1 ? 0.99 : 0),
+  });
+  const executor = createPersonaToolExecutor({ chaosService: chaos });
+  const cfg = { ...DEFAULT_FUN_CONFIG, personaToolCooldownMs: 5_000, russianChambers: 6 };
+
+  await executor.execute(
+    { name: 'start_russian', arguments: {} },
+    { scopeKey: scope, authorJid: author, text: 'bot abre a roleta russa', funConfig: cfg, now: 1_000_000 }
+  );
+  const pulled = await executor.execute(
+    { name: 'pull_russian', arguments: {} },
+    { scopeKey: scope, authorJid: author, text: 'bot sua vez, puxa o gatilho', funConfig: cfg, now: 1_003_100 }
+  );
+
+  assert.equal(pulled.ok, true);
+  assert.equal(pulled.virtual.died, true);
+  assert.equal(effects.isXpBlocked(executor.VIRTUAL_RUSSIAN_ACTOR, scope, 1_003_001).blocked, false);
+  assert.equal(chaos.getRussian(scope, cfg, 1_003_001), null);
+});
+
+test('persona agent: challenge tools consultam e liberam dica pelo serviço de domínio', async () => {
+  const scope = uniqueGroup();
+  const executor = createPersonaToolExecutor({
+    chaosService: { checkCooldown: () => ({ ok: true }) },
+    dailyChallengeService: {
+      getStatus: () => ({ active: true, challenge: { id: 42, challengeType: 'riddle' } }),
+      getHintCooldownRemaining: () => 0,
+      handleHint: async () => ({ ok: true, message: '💡 Dica real do desafio.' }),
+    },
+  });
+  const context = { scopeKey: scope, authorJid: uniqueJid(), text: 'bot qual o desafio e manda uma dica', funConfig: { ...DEFAULT_FUN_CONFIG, personaToolCooldownMs: 5_000 }, now: 1_000_000 };
+
+  const status = await executor.execute({ name: 'daily_challenge_status', arguments: {} }, context);
+  const hint = await executor.execute({ name: 'daily_challenge_hint', arguments: {} }, context);
+
+  assert.equal(status.ok, true);
+  assert.match(status.text, /riddle/);
+  assert.equal(hint.ok, true);
+  assert.equal(hint.text, '💡 Dica real do desafio.');
 });
 
 test('persona agent: status do jornal apenas consulta e nunca publica', async () => {
@@ -244,7 +299,14 @@ test('persona agent: reação só usa ação SFW, alvo contextual e callback con
   assert.equal(result.ok, true);
   assert.equal(result.text, '');
   assert.match(result.summary, /SFW hug/);
-  assert.deepEqual(sent[0], ['https://media.example/hug.gif', '*Eu* mandei hug para *Bia*.', 'image/gif']);
+  assert.equal(sent.length, 0, 'O executor não pode despachar mídia diretamente.');
+  assert.deepEqual(result.dispatchActions, [{
+    type: 'image_url',
+    imageUrl: 'https://media.example/hug.gif',
+    mimeType: 'image/gif',
+    caption: '*Eu* mandei hug para *Bia*.',
+  }]);
+  assert.deepEqual(result.claimTokens, ['reaction:hug']);
 
   const unsafe = await executor.execute(
     { name: 'reaction', arguments: { action: 'boquete', target: 'mentioned' } },
@@ -282,7 +344,9 @@ test('persona agent: reação só usa ação SFW, alvo contextual e callback con
   );
   assert.equal(emojiReact.ok, true);
   assert.equal(emojiReact.emoji, '🔥');
-  assert.deepEqual(emojiSent, ['🔥']);
+  assert.deepEqual(emojiSent, [], 'O executor não pode reagir diretamente.');
+  assert.deepEqual(emojiReact.dispatchActions, [{ type: 'react', emoji: '🔥' }]);
+  assert.deepEqual(emojiReact.claimTokens, ['emoji_reaction']);
 });
 
 test('persona agent: tool_call recebe resultado e ganha fala final sem executar duas vezes', async () => {
@@ -506,8 +570,11 @@ test('send_sticker: replySticker é chamado e tool retorna ok', async () => {
 
   assert.equal(result.ok, true);
   assert.equal(result.slug, slug);
-  assert.equal(stickersSent.length, 1);
-  assert.ok(Buffer.isBuffer(stickersSent[0]) && stickersSent[0].length > 0);
+  assert.equal(stickersSent.length, 0, 'O executor não pode despachar figurinha diretamente.');
+  assert.equal(result.dispatchActions.length, 1);
+  assert.equal(result.dispatchActions[0].type, 'sticker_buffer');
+  assert.ok(Buffer.isBuffer(result.dispatchActions[0].stickerBuffer) && result.dispatchActions[0].stickerBuffer.length > 0);
+  assert.deepEqual(result.claimTokens, ['sticker']);
 });
 
 // ── Multi-Action / Multi-Bubble Protocol & Dispatch ────────────────────────────
