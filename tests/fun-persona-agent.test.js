@@ -38,6 +38,16 @@ test('persona agent: protocolo aceita só reply ou tool_call da allowlist', () =
   assert.match(manifest, /encadear tools/i);
 });
 
+test('persona agent: áudio é aceito no protocolo e só aparece no manifesto quando TTS está disponível', () => {
+  const rootAudio = parsePersonaEnvelope('{"type":"audio","text":"fala narrada"}');
+  const actionAudio = parsePersonaEnvelope('{"type":"actions","actions":[{"type":"audio","text":"fala narrada"}]}');
+  assert.deepEqual(rootAudio.envelope.actions, [{ type: 'audio', text: 'fala narrada' }]);
+  assert.deepEqual(actionAudio.envelope.actions, [{ type: 'audio', text: 'fala narrada' }]);
+  assert.equal(parsePersonaEnvelope('{"type":"audio","text":""}').reason, 'empty-audio');
+  assert.doesNotMatch(buildPersonaToolManifest(), /"type":"audio"/);
+  assert.match(buildPersonaToolManifest({ audioEnabled: true }), /"type":"audio"/);
+});
+
 test('persona agent: configurações novas têm defaults e clamps seguros', () => {
   const cfg = resolveFunConfig({
     personaToolCooldownMs: 1,

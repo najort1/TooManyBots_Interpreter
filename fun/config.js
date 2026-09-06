@@ -496,8 +496,10 @@ export function normalizeFunConfig(input) {
     imageGenBaseUrl:
       toText(raw.imageGenBaseUrl, DEFAULT_FUN_CONFIG.imageGenBaseUrl) ||
       DEFAULT_FUN_CONFIG.imageGenBaseUrl,
+    geminiApiKey:
+      toText(raw.geminiApiKey, process.env.GEMINI_API_KEY || DEFAULT_FUN_CONFIG.geminiApiKey) || '',
     imageGenApiKey:
-      toText(raw.imageGenApiKey, process.env.GEMINI_API_KEY || DEFAULT_FUN_CONFIG.imageGenApiKey) || '',
+      toText(raw.imageGenApiKey, raw.geminiApiKey || process.env.GEMINI_API_KEY || DEFAULT_FUN_CONFIG.imageGenApiKey) || '',
     imageGenModel: toText(raw.imageGenModel, DEFAULT_FUN_CONFIG.imageGenModel) || '',
     imageGenDailyLimit: normalizeInt(raw.imageGenDailyLimit, DEFAULT_FUN_CONFIG.imageGenDailyLimit, {
       min: 1,
@@ -1583,6 +1585,7 @@ export function saveFunUserConfig(input) {
     reactionUserAgent: normalized.reactionUserAgent,
     tenorApiKey: normalized.tenorApiKey,
     tenorClientKey: normalized.tenorClientKey,
+    geminiApiKey: normalized.geminiApiKey,
     imageGenEnabled: normalized.imageGenEnabled,
     imageGenProvider: normalized.imageGenProvider,
     imageGenBaseUrl: normalized.imageGenBaseUrl,

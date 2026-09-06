@@ -1127,6 +1127,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   dailyChallengeNewsEnabled: true,
   dailyChallengePokemonMaxGen: 386,
   dailyChallengeContentMemory: { pokemon: 30, game: 30, riddle: 50 },
+  // API Key centralizada do Google Gemini (usada por TTS da persona e geração de imagens)
+  geminiApiKey: '',
   // Geração de imagens (/gerar e /imaginar) — Gemini ou proxy OpenAI
   imageGenEnabled: true,
   /** Provedor: 'gemini' (padrão) ou 'openai' (proxy /v1/images/generations). */

@@ -156,6 +156,10 @@ export function parsePersonaEnvelope(raw, { maxChars = 1_000, maxActions = 4 } =
   if (!value) return { ok: false, reason: 'invalid-json' };
   if (Array.isArray(value)) return sanitizeActions(value, maxChars, maxActions);
   const type = String(value.type || '').toLowerCase();
+  if (type === 'audio') {
+    const text = String(value.text || '').trim();
+    return text ? { ok: true, envelope: { type: 'actions', actions: [{ type: 'audio', text: text.slice(0, maxChars) }] } } : { ok: false, reason: 'empty-audio' };
+  }
   if (type === 'reply' || type === 'text') {
     const text = String(value.text || '').trim();
     return text ? { ok: true, envelope: { type: 'reply', text: text.slice(0, maxChars) } } : { ok: false, reason: 'empty-reply' };
@@ -183,6 +187,8 @@ function sanitizeActions(rawActions, maxChars, maxActions) {
       if (text) actions.push({ type: 'text', text: text.slice(0, maxChars) });
     } else if ((type === 'sticker' || type === 'send_sticker') && STICKER_SLUGS.includes(String(item.slug || item.name || '').trim())) {
       actions.push({ type: 'sticker', slug: String(item.slug || item.name).trim() });
+    } else if (type === 'audio' && String(item.text || '').trim()) {
+      actions.push({ type: 'audio', text: String(item.text).trim().slice(0, maxChars) });
     } else if ((type === 'react' || type === 'reaction_emoji') && EMOJI_RE.test(String(item.emoji || '').trim())) {
       actions.push({ type: 'react', emoji: String(item.emoji).trim() });
     }
@@ -190,13 +196,23 @@ function sanitizeActions(rawActions, maxChars, maxActions) {
   return actions.length ? { ok: true, envelope: { type: 'actions', actions } } : { ok: false, reason: 'empty-actions' };
 }
 
-export function buildPersonaToolManifest() {
+export function buildPersonaToolManifest({ audioEnabled = false } = {}) {
+  const actionExamples = [
+    '{"type":"text","text":"..."}',
+    ...(audioEnabled ? ['{"type":"audio","text":"texto para narrar"}'] : []),
+    '{"type":"sticker","slug":"..."}',
+    '{"type":"react","emoji":"..."}',
+  ].join(',');
   const lines = [
     'Responda SOMENTE JSON.',
-    'Resposta: {"type":"reply","text":"..."} ou {"type":"actions","actions":[{"type":"text","text":"..."},{"type":"sticker","slug":"..."},{"type":"react","emoji":"..."}]}',
+    `Resposta: {"type":"reply","text":"..."} ou {"type":"actions","actions":[${actionExamples}]}`,
+    audioEnabled
+      ? 'ÁUDIO DE VOZ (PTT): Você pode responder por áudio usando {"type":"audio","text":"fala narrada"} ou dentro de "actions". Use áudio preferencialmente quando: (1) o usuário falou com você por áudio/voz; (2) pedirem expressamente ("manda áudio", "grava aí", "fala no zap"); (3) você quiser dar uma resposta mais expressiva, fofoca dramática, desabafo cômico ou zoação em tom de voz. O texto do áudio será convertido em fala real no WhatsApp.'
+      : '',
     'Reações com EMOJI: Você pode reagir à mensagem usando QUALQUER emoji disponível (ex: 🔥, 😂, ❤️, 👍, 💀, 👀, 😮, 🎉, 👏, etc.) através de {"type":"actions","actions":[{"type":"react","emoji":"🔥"}]}. Pode enviar só a reação de emoji ou combiná-la com texto.',
     'Tool: {"type":"tool_call","name":"...","arguments":{},"callId":"opcional"}. Você pode encadear tools quando o resultado de uma for necessário para decidir a próxima. Não repita a mesma tool com os mesmos argumentos e não use mais de uma tool com efeito externo no mesmo turno.',
     'Nunca diga que vai usar, tentar ou chamar uma tool no futuro: chame-a agora com tool_call ou responda sem mencioná-la.',
+    'PROATIVIDADE COM FERRAMENTAS: Você é um bot interativo com capacidades reais. Quando o usuário fizer uma pergunta sobre o grupo, sugerir uma brincadeira, desafiar ou pedir uma interação física/meme, USE SUAS TOOLS em vez de responder apenas texto monótono.',
     'Quando pedirem para você realizar uma ação suportada por tool (como abraçar, beijar, bater/tapa, fazer carinho, acenar, tirar tarô, fofoca, teoria, ship), VOCÊ DEVE CHAMAR A TOOL com tool_call. NUNCA finja em texto que realizou a ação (por exemplo, nunca responda em texto "pronto, te abracei" ou "já te dei um abraço" — execute a tool reaction com action:"hug").',
     'Depois de um resultado de tool que falhou, nunca diga que a ação aconteceu. Explique a falha de forma natural ou escolha uma alternativa suportada.',
     'Quando pedirem para testar, verificar ou demonstrar uma tool sem indicar uma brincadeira específica, chame group_status. Não use oracle/tarot sem pergunta ou pedido de leitura; não use ship sem duas pessoas; não use stickers ou start_russian apenas como teste.',
@@ -204,8 +220,15 @@ export function buildPersonaToolManifest() {
     'A tool "reaction" prepara um GIF animado SFW de ação anime/meme (hug, kiss, pat, slap, wave, etc.) direcionado a um membro. Mapeamento comum: abraçar/abraço -> hug, beijar/beijo -> kiss, bater/tapa -> slap, carinho/cafuné -> pat, acenar/oi -> wave. Para reagir à mensagem com emojis simples, prefira usar diretamente a ação de react no JSON acima.',
     `Ações de GIF/mídia SFW da tool reaction: ${REACTION_ACTIONS.join(', ')}.`,
     `Stickers: ${STICKER_SLUGS.join(', ')}.`,
+    'Guia de Decisão Rápida para Tools:',
+    '- Curiosidade sobre membros, apelidos, tretas e passado: use lore ou group_identity.',
+    '- Zoeira/afeto físico (abraço, tapa, beijo, carinho, aceno): use reaction com a ação correspondente.',
+    '- Futuro, dúvidas da vida, previsão: use tarot ou oracle.',
+    '- Casais, química ou combinação entre membros: use ship.',
+    '- Intrigas, fofocas ou conspirações bem-humoradas: use gossip, illuminati ou cancel.',
+    '- Roleta russa e desafios: use start_russian ou daily_challenge_hint.',
     'Tools disponíveis:',
-  ];
+  ].filter(Boolean);
   for (const [name, definition] of Object.entries(PERSONA_TOOL_DEFINITIONS)) {
     const args = Object.entries(definition.schema || {}).map(([key, rule]) => `${key}:${rule.type === 'enum' ? rule.values.join('|') : 'texto'}`).join(', ');
     lines.push(`- ${name} {${args}}: ${definition.description}`);

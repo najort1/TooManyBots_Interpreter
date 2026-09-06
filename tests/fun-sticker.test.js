@@ -124,6 +124,21 @@ test('parseMessage: reconhece imagem com legenda, albumMessage e documentWithCap
   assert.equal(parsedDoc.messageType, 'document-image');
 });
 
+test('parseMessage: reconhece áudio e PTT', () => {
+  const audio = parseMessage({
+    key: { id: 'audio-1', remoteJid: 'group@g.us', fromMe: false },
+    message: { audioMessage: { mimetype: 'audio/mpeg' } },
+  });
+  const ptt = parseMessage({
+    key: { id: 'ptt-1', remoteJid: 'group@g.us', fromMe: false },
+    message: { audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: true } },
+  });
+  assert.equal(audio.messageType, 'audio');
+  assert.equal(audio.mediaMimeType, 'audio/mpeg');
+  assert.equal(ptt.messageType, 'ptt');
+  assert.equal(ptt.mediaMimeType, 'audio/ogg; codecs=opus');
+});
+
 test('inspectMediaContent + quoted resolve', () => {
   const imageMsg = {
     key: { id: '1', remoteJid: 'x@g.us' },
@@ -155,6 +170,22 @@ test('inspectMediaContent + quoted resolve', () => {
   assert.equal(q.media.messageType, 'gif');
   assert.equal(q.quotedKey.id, 'original-msg-123');
   assert.equal(q.quotedParticipant, '551199999999@s.whatsapp.net');
+});
+
+test('inspectMediaContent: detecta áudio direto e dentro de wrapper aninhado', () => {
+  const direct = resolveMediaFromRawMessage({
+    key: { id: 'audio-direct', remoteJid: 'x@g.us' },
+    message: { audioMessage: { mimetype: 'audio/ogg; codecs=opus', ptt: true } },
+  });
+  assert.equal(direct.media.kind, 'audio');
+  assert.equal(direct.media.messageType, 'ptt');
+
+  const nested = resolveMediaFromRawMessage({
+    key: { id: 'audio-nested', remoteJid: 'x@g.us' },
+    message: { interactiveMessage: { nativeFlowMessage: { audioMessage: { mimetype: 'audio/mpeg' } } } },
+  });
+  assert.equal(nested.media.kind, 'audio');
+  assert.equal(nested.media.mimeType, 'audio/mpeg');
 });
 
 test('resolveMediaFromRawMessage: quoted image resolution in nested viewOnce/ephemeral message', () => {

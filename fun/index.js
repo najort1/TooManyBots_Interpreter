@@ -80,6 +80,7 @@ import { createFunDailyChallengeRepository } from './db/funDailyChallengeReposit
 import { createDailyChallengeService } from './services/dailyChallengeService.js';
 import { createGroupMemoryService } from './services/groupMemoryService.js';
 import { createPersonaService } from './services/personaService.js';
+import { createGeminiTtsService } from './services/geminiTtsService.js';
 import { createPersonaToolExecutor } from './services/personaToolExecutor.js';
 import { createLoreReconciliationService } from './services/loreReconciliationService.js';
 import { createPersonaSocialHintService } from './services/personaSocialHintService.js';
@@ -524,6 +525,12 @@ export function createFunModule(deps = {}) {
       personaIdentityService,
       getContactDisplayName: resolveContactName,
     });
+  const personaTtsService =
+    deps.personaTtsService ||
+    createGeminiTtsService({
+      apiKey: resolveFunConfig(getConfig() || {}).geminiApiKey,
+      logger: getLogger?.(),
+    });
   if (!personaService) {
     personaService = createPersonaService({
       personaRepository,
@@ -532,6 +539,7 @@ export function createFunModule(deps = {}) {
       personaSocialHintService,
       profileService,
       personaToolExecutor,
+      personaTtsService,
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
       adapters: extractionAdapters,

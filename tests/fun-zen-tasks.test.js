@@ -307,6 +307,11 @@ test('config expose knobs e defaults', () => {
   assert.equal(cfg.flavorAlways, true);
   assert.equal(cfg.marketJournalistEnabled, true);
   assert.ok(cfg.flavorRecentMax >= 1);
+  assert.equal(cfg.geminiApiKey, '');
+
+  const custom = resolveFunConfig({ geminiApiKey: 'custom-gemini-key' });
+  assert.equal(custom.geminiApiKey, 'custom-gemini-key');
+  assert.equal(custom.imageGenApiKey, 'custom-gemini-key');
 });
 
 test('flavorService: Zen scoreboard echo → template; anti-repeat', async () => {

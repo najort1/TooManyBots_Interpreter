@@ -103,7 +103,7 @@ function isLoggedOutDisconnect(statusCode) {
 function extractQuotedMessageId(msg) {
   const queue = [msg?.message || {}]; const seen = new Set();
   while (queue.length) { const node = queue.shift(); if (!node || typeof node !== 'object' || seen.has(node)) continue; seen.add(node);
-    const contexts = [node.contextInfo, node.extendedTextMessage?.contextInfo, node.imageMessage?.contextInfo, node.videoMessage?.contextInfo, node.documentMessage?.contextInfo];
+    const contexts = [node.contextInfo, node.extendedTextMessage?.contextInfo, node.audioMessage?.contextInfo, node.imageMessage?.contextInfo, node.videoMessage?.contextInfo, node.documentMessage?.contextInfo];
     for (const context of contexts) { const id = String(context?.stanzaId || '').trim(); if (id) return id; }
     for (const value of Object.values(node)) if (value && typeof value === 'object') queue.push(value);
   } return '';
@@ -240,6 +240,7 @@ function extractQuotedParticipant(msg) {
     const contexts = [
       node.contextInfo,
       node.extendedTextMessage?.contextInfo,
+      node.audioMessage?.contextInfo,
       node.imageMessage?.contextInfo,
       node.videoMessage?.contextInfo,
       node.documentMessage?.contextInfo,

@@ -195,6 +195,20 @@ export function parseMessage(msg) {
     };
   }
 
+  if (content.audioMessage) {
+    return {
+      id: msg.key.id,
+      jid,
+      isGroup,
+      messageKey,
+      messageType: content.audioMessage.ptt ? 'ptt' : 'audio',
+      mediaMimeType: String(content.audioMessage.mimetype || 'audio/ogg; codecs=opus').trim(),
+      mediaFileName: String(content.audioMessage.fileName || '').trim(),
+      text: '',
+      listId: null,
+    };
+  }
+
   if (content.stickerMessage) {
     return {
       id: msg.key.id,

@@ -270,6 +270,7 @@ export function extractChatText(data) {
  * @param {string} [opts.prompt]
  * @param {string} [opts.system]
  * @param {string[]|string} [opts.images] — URLs ou data URLs base64 (`data:image/...;base64,...`)
+ * @param {string[]|string} [opts.audios] — URLs ou data URLs base64 (`data:audio/...;base64,...`)
  * @param {number} [opts.timeoutMs]
  * @param {number} [opts.maxTokens]
  * @param {number} [opts.temperature]
@@ -287,6 +288,7 @@ export async function openaiChatComplete({
   prompt,
   system = '',
   images = [],
+  audios = [],
   timeoutMs = 20_000,
   maxTokens = 400,
   temperature = 0.85,
@@ -309,8 +311,10 @@ export async function openaiChatComplete({
   const userText = String(prompt ?? '').trim();
   const rawImages = Array.isArray(images) ? images : (images ? [images] : []);
   const validImages = rawImages.filter((img) => typeof img === 'string' && img.trim().length > 0);
+  const rawAudios = Array.isArray(audios) ? audios : (audios ? [audios] : []);
+  const validAudios = rawAudios.filter((audio) => typeof audio === 'string' && audio.trim().length > 0);
 
-  if (!userText && validImages.length === 0) return '';
+  if (!userText && validImages.length === 0 && validAudios.length === 0) return '';
 
   const fetchFn = fetchImpl || globalThis.fetch;
   if (typeof fetchFn !== 'function') {
@@ -322,7 +326,7 @@ export async function openaiChatComplete({
     messages.push({ role: 'system', content: String(system).trim() });
   }
 
-  if (validImages.length > 0) {
+  if (validImages.length > 0 || validAudios.length > 0) {
     const content = [];
     if (userText) {
       content.push({ type: 'text', text: userText });
@@ -332,10 +336,17 @@ export async function openaiChatComplete({
       const url = cleanImg.startsWith('data:') || cleanImg.startsWith('http://') || cleanImg.startsWith('https://')
         ? cleanImg
         : `data:image/jpeg;base64,${cleanImg}`;
-      content.push({
-        type: 'image_url',
-        image_url: { url },
-      });
+      content.push({ type: 'image_url', image_url: { url } });
+    }
+    for (const audio of validAudios) {
+      const cleanAudio = audio.trim();
+      const dataUrl = cleanAudio.startsWith('data:')
+        ? cleanAudio
+        : `data:audio/wav;base64,${cleanAudio}`;
+      const match = dataUrl.match(/^data:audio\/(wav|x-wav|mpeg|mp3);base64,([a-z0-9+/=]+)$/i);
+      if (!match) continue;
+      const format = /wav/i.test(match[1]) ? 'wav' : 'mp3';
+      content.push({ type: 'input_audio', input_audio: { data: match[2], format } });
     }
     messages.push({ role: 'user', content });
   } else {

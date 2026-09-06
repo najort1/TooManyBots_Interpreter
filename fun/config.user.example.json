@@ -39,6 +39,7 @@
   "loreReconciliationMaxCandidates": 50,
   "loreReconciliationTimeoutMs": 35000,
   "flavorTimeoutMs": 55000,
+  "geminiApiKey": "",
   "imageGenEnabled": true,
   "imageGenProvider": "gemini",
   "imageGenApiKey": "",

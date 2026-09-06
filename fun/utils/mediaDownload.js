@@ -67,6 +67,15 @@ export function inspectMediaContent(content) {
       mediaData: c.imageMessage,
     };
   }
+  if (c.audioMessage) {
+    return {
+      kind: 'audio',
+      messageType: c.audioMessage.ptt ? 'ptt' : 'audio',
+      mimeType: String(c.audioMessage.mimetype || 'audio/ogg; codecs=opus'),
+      node: { audioMessage: c.audioMessage },
+      mediaData: c.audioMessage,
+    };
+  }
   if (c.videoMessage) {
     return {
       kind: 'video',
@@ -110,18 +119,12 @@ export function inspectMediaContent(content) {
     }
   }
 
-  // Verifica recursivamente nós aninhados caso haja outro wrapper
+  // Verifica recursivamente nós aninhados caso haja outro wrapper.
   for (const key of Object.keys(c)) {
-    const val = c[key];
-    if (val && typeof val === 'object' && key !== 'contextInfo' && key !== 'quotedMessage') {
-      const unwrapped = unwrapContent(val);
-      if (unwrapped && unwrapped !== c) {
-        if (unwrapped.imageMessage || unwrapped.videoMessage || unwrapped.stickerMessage || unwrapped.documentMessage || unwrapped.ptvMessage) {
-          const found = inspectMediaContent(unwrapped);
-          if (found) return found;
-        }
-      }
-    }
+    const value = c[key];
+    if (!value || typeof value !== 'object' || key === 'contextInfo' || key === 'quotedMessage') continue;
+    const found = inspectMediaContent(value);
+    if (found) return found;
   }
 
   return null;
@@ -315,7 +318,7 @@ async function fetchMediaBuffer(msgForDownload, mediaItem, sock, logger) {
   try {
     const mediaData = mediaItem.media?.mediaData || Object.values(mediaItem.media?.node || {})[0];
     if (mediaData && (mediaData.url || mediaData.directPath || mediaData.mediaKey)) {
-      let mediaType = mediaItem.media?.kind === 'video' ? 'video' : mediaItem.media?.kind === 'sticker' ? 'sticker' : 'image';
+      let mediaType = mediaItem.media?.kind === 'audio' ? 'audio' : mediaItem.media?.kind === 'video' ? 'video' : mediaItem.media?.kind === 'sticker' ? 'sticker' : 'image';
       if (mediaItem.media?.messageType === 'document-image' || mediaItem.media?.messageType === 'document-video') {
         mediaType = 'document';
       }

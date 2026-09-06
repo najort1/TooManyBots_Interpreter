@@ -35,6 +35,8 @@ import { buildFactTemporalContext, formatDatedFact } from '../utils/factTemporal
 import { resolveStickerPath } from './personaStickerCatalog.js';
 import { imageBufferToSticker } from '../utils/stickerConvert.js';
 import { resolveMediaFromRawMessage, downloadResolvedMedia } from '../utils/mediaDownload.js';
+import { createGeminiTtsService } from './geminiTtsService.js';
+import { createAudioTranscoder } from '../utils/audioTranscode.js';
 import {
   cleanPromptText,
   buildPersonaIdentityBlock,
@@ -110,6 +112,31 @@ function stripToolEcho(text, toolText) {
   return source;
 }
 
+function actionTranscript(actions, maxChars) {
+  return (Array.isArray(actions) ? actions : [])
+    .filter((action) => action?.type === 'text' || action?.type === 'audio')
+    .map((action) => {
+      const text = String(action.text || '').trim();
+      if (!text) return '';
+      return action.type === 'text'
+        ? sanitizeFlavor(text, maxChars)
+        : cleanPromptText(text, maxChars);
+    })
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function isSuccessfulDispatch(sent) {
+  return sent?.skipped !== true;
+}
+
+function isTtsAvailable(service) {
+  if (!service || typeof service.synthesize !== 'function') return false;
+  return typeof service.isAvailable !== 'function' || service.isAvailable() === true;
+}
+
+const AUDIO_INPUT_PROMPT = 'Recebi uma mensagem de áudio. Escute e responda ao conteúdo; se o áudio não estiver disponível, peça para a pessoa reenviar em texto.';
+
 export function createPersonaService({
   personaRepository,
   groupRepository,
@@ -125,6 +152,9 @@ export function createPersonaService({
   personaRecentMessageRepository = null,
   personaAutonomyPolicy = null,
   clock = () => Date.now(),
+  personaTtsService = null,
+  audioTranscoder = createAudioTranscoder(),
+  downloadMedia = downloadResolvedMedia,
 } = {}) {
   if (!personaRepository) throw new Error('[fun/personaService] personaRepository required');
   if (!groupRepository) throw new Error('[fun/personaService] groupRepository required');
@@ -132,6 +162,7 @@ export function createPersonaService({
   const effectivePromptContextBuilder = promptContextBuilder || adapters.promptContextBuilder || null;
 
   const logger = getLogger();
+  const effectivePersonaTts = personaTtsService || createGeminiTtsService({ logger });
 
   /** @type {Map<string, number>} */
   const cooldowns = new Map();
@@ -302,7 +333,7 @@ export function createPersonaService({
     });
   }
 
-  async function runPersonaToolLoop({ initialCall, system, prompt, endpoint, zen, timeoutMs, funConfig, agentContext, scopeKey, text, maxChars }) {
+  async function runPersonaToolLoop({ initialCall, system, prompt, endpoint, zen, timeoutMs, funConfig, agentContext, scopeKey, text, maxChars, audioEnabled = false }) {
     const maxCalls = Math.max(1, Math.min(5, Number(funConfig?.personaAgentMaxToolCalls) || 3));
     const deadlineAt = clock() + Math.max(5_000, Number(funConfig?.personaAgentDeadlineMs) || timeoutMs);
     const executed = new Set();
@@ -362,7 +393,7 @@ export function createPersonaService({
         baseUrl: endpoint.baseUrl,
         model: endpoint.model,
         prompt: `${prompt}\n\nResultados reais das ferramentas:\n${traceText}\n\nEscolha a próxima tool somente se ela for necessária, ou responda com reply/actions. Não invente dados nem diga que uma tool falhou executou com sucesso.`,
-        system: `${system}\n\n${buildPersonaToolManifest()}`,
+        system: `${system}\n\n${buildPersonaToolManifest({ audioEnabled })}`,
         timeoutMs: Math.min(timeoutMs, remainingMs),
         maxTokens: zen.maxTokens,
         temperature: zen.temperature,
@@ -388,8 +419,7 @@ export function createPersonaService({
           const sanitized = sanitizeFlavor(stripped, maxChars);
           if (sanitized) finalActions.push({ ...action, text: sanitized });
         }
-        const finalText = finalActions.filter((action) => action.type === 'text')
-          .map((action) => action.text).filter(Boolean).join('\n\n');
+        const finalText = actionTranscript(finalActions, maxChars);
         const combined = [lastDisplayText, finalText].filter(Boolean).join('\n\n');
         return {
           text: combined || '👍',
@@ -430,6 +460,7 @@ export function createPersonaService({
   async function generateResponse({
     text,
     images = [],
+    audios = [],
     scopeKey,
     funConfig,
     threadContext,
@@ -565,12 +596,14 @@ export function createPersonaService({
     for (let attempt = 1; attempt <= totalTries; attempt += 1) {
       try {
         const agentEnabled = Boolean(personaToolExecutor && funConfig?.personaToolsEnabled !== false);
+        const audioEnabled = isTtsAvailable(effectivePersonaTts);
         const raw = await generateZen({
           baseUrl: ep.baseUrl,
           model: ep.model,
           prompt,
           images,
-          system: agentEnabled ? `${system}\n\n${buildPersonaToolManifest()}` : system,
+          audios,
+          system: agentEnabled ? `${system}\n\n${buildPersonaToolManifest({ audioEnabled })}` : system,
           timeoutMs: Math.min(o.timeoutMs, zen.timeoutMs || 15_000),
           maxTokens: zen.maxTokens,
           temperature: zen.temperature,
@@ -585,11 +618,7 @@ export function createPersonaService({
 
           // Caso 1: Multi-Ação (Multi-Bubble / Sticker / React)
           if (decision.ok && decision.envelope.type === 'actions') {
-            const combinedText = decision.envelope.actions
-              .filter((a) => a.type === 'text')
-              .map((a) => sanitizeFlavor(a.text, o.maxChars))
-              .filter(Boolean)
-              .join('\n\n');
+            const combinedText = actionTranscript(decision.envelope.actions, o.maxChars);
             return {
               text: combinedText || '👍',
               actions: decision.envelope.actions,
@@ -622,6 +651,7 @@ export function createPersonaService({
               scopeKey,
               text,
               maxChars: o.maxChars,
+              audioEnabled,
             });
             if (result) return result;
           }
@@ -887,7 +917,8 @@ export function createPersonaService({
       const rawMsg = ctx.rawMessage || ctx.quoteSource;
       const mediaResolution = rawMsg ? resolveMediaFromRawMessage(rawMsg) : null;
       const hasImageMedia = mediaResolution?.media?.kind === 'image' || mediaResolution?.media?.messageType === 'image' || mediaResolution?.media?.messageType === 'document-image';
-      const isEligibleMessageType = isTextMessage(ctx.messageType) || ctx.messageType === 'image' || ctx.messageType === 'album' || hasImageMedia;
+      const hasAudioMedia = mediaResolution?.media?.kind === 'audio';
+      const isEligibleMessageType = isTextMessage(ctx.messageType) || ctx.messageType === 'image' || ctx.messageType === 'album' || hasImageMedia || hasAudioMedia;
 
       if (!isEligibleMessageType) return { responded: false, reason: 'message-type' };
       if (inFlightScopes.has(scopeKey)) return { responded: false, reason: 'in-flight' };
@@ -944,9 +975,10 @@ export function createPersonaService({
 
       // Resolução / Download de imagens para visão da persona
       const resolvedImages = [];
+      const resolvedAudios = [];
       if (hasImageMedia && rawMsg) {
         try {
-          const downloaded = await downloadResolvedMedia({
+          const downloaded = await downloadMedia({
             rawMsg,
             sock: ctx.sock,
             logger,
@@ -962,6 +994,18 @@ export function createPersonaService({
         }
       }
 
+      if (hasAudioMedia && rawMsg) {
+        try {
+          const downloaded = await downloadMedia({ rawMsg, sock: ctx.sock, logger, maxBytes: 16 * 1024 * 1024 });
+          if (downloaded?.ok && downloaded.buffer?.length) {
+            const wav = await audioTranscoder.toWav(downloaded.buffer, { mimeType: downloaded.mimeType });
+            resolvedAudios.push(`data:audio/wav;base64,${wav.toString('base64')}`);
+          }
+        } catch (mediaErr) {
+          logger?.debug?.('[personaService] preparação de áudio da persona falhou: %s', String(mediaErr?.message || mediaErr));
+        }
+      }
+
       let threadContext = [];
       if (thread?.context?.length) threadContext = thread.context;
 
@@ -974,7 +1018,11 @@ export function createPersonaService({
         ? profileService.displayName(authorJid, scopeKey)
         : authorJid.split('@')[0] || 'membro';
 
-      const rawPromptText = String(ctx.text || '').trim() || (resolvedImages.length > 0 ? (isContinuation ? 'O que você acha dessa imagem?' : 'Descreva e comente o que você vê nesta imagem.') : '');
+      const rawPromptText = String(ctx.text || '').trim() || (
+        resolvedImages.length > 0
+          ? (isContinuation ? 'O que você acha dessa imagem?' : 'Descreva e comente o que você vê nesta imagem.')
+          : hasAudioMedia ? AUDIO_INPUT_PROMPT : ''
+      );
       const mentionMap = new Map();
       const canonicalMentionedJids = [];
       const looksLikeRawNumber = (value) => /^\d{8,20}$/.test(String(value || '').trim());
@@ -1069,6 +1117,7 @@ export function createPersonaService({
       let genResult = await generateResponse({
         text: promptText,
         images: resolvedImages,
+        audios: resolvedAudios,
         scopeKey,
         funConfig: ctx.funConfig,
         threadContext,
@@ -1156,6 +1205,8 @@ export function createPersonaService({
 
       // ── DESPACHO CENTRALIZADO COM RECIBOS ──
       const responseMessageIds = [];
+      let deliveredActionCount = 0;
+      let audioDispatchFailed = false;
       const dispatchReceipts = executionClaimTokens.map((claimToken) => ({
         ok: true,
         type: 'domain-execution',
@@ -1163,11 +1214,16 @@ export function createPersonaService({
       }));
       const hasSock = ctx.sock?.sendMessage && typeof ctx.sock.sendMessage === 'function';
 
-      const recordMessageId = (sent, action) => {
+      const recordDeliveredAction = (sent, action) => {
+        if (!isSuccessfulDispatch(sent)) return false;
+        deliveredActionCount += 1;
         const messageId = String(sent?.key?.id || '');
-        if (!messageId) return;
+        if (!messageId) return true;
         responseMessageIds.push(messageId);
-        if (action?.type !== 'text') return;
+        const transcript = action?.type === 'text' || action?.type === 'audio'
+          ? String(action.text || '').trim()
+          : '';
+        if (!transcript) return true;
         try {
           personaRecentMessageRepository?.recordMessage?.({
             scopeKey,
@@ -1175,8 +1231,34 @@ export function createPersonaService({
             authorJid: [...botJids][0] || '',
             authorLabel: 'eu',
             source: 'bot',
-            messageType: 'text',
-            text: action.text,
+            messageType: action.type,
+            text: transcript,
+            now,
+          });
+        } catch {
+          // histórico recente nunca desfaz uma resposta já enviada
+        }
+        return true;
+      };
+
+      const recordSentMessage = (sent, action) => {
+        deliveredActionCount += 1;
+        const messageId = String(sent?.key?.id || '');
+        if (!messageId) return;
+        responseMessageIds.push(messageId);
+        const transcript = action?.type === 'text' || action?.type === 'audio'
+          ? String(action.text || '').trim()
+          : '';
+        if (!transcript) return;
+        try {
+          personaRecentMessageRepository?.recordMessage?.({
+            scopeKey,
+            messageId,
+            authorJid: [...botJids][0] || '',
+            authorLabel: 'eu',
+            source: 'bot',
+            messageType: action.type,
+            text: transcript,
             now,
           });
         } catch {
@@ -1226,10 +1308,9 @@ export function createPersonaService({
           } else {
             throw new Error('unknown-tool-dispatch-action');
           }
-          if (!sent || sent.skipped) {
+          if (!recordDeliveredAction(sent, action)) {
             throw new Error(sent?.reason || 'tool-dispatch-unconfirmed');
           }
-          recordMessageId(sent, action);
           receipt.ok = true;
           receipt.messageId = String(sent?.key?.id || '');
         } catch (dispatchErr) {
@@ -1247,7 +1328,7 @@ export function createPersonaService({
       }
 
       if (pendingDispatchActions.length) {
-        actions = actions.filter((action) => action?.type === 'text');
+        actions = actions.filter((action) => action?.type === 'text' || action?.type === 'audio');
       }
       const verified = applyVerifiedActionClaims(responseText, actions, dispatchReceipts);
       responseText = verified.text;
@@ -1258,20 +1339,53 @@ export function createPersonaService({
         if (!action) continue;
 
         try {
-          if (action.type === 'text' && hasSock) {
+          if (action.type === 'audio') {
+            let sent;
+            let audioAttempted = false;
+            if (hasSock && isTtsAvailable(effectivePersonaTts)) {
+              try {
+                const synthesized = await effectivePersonaTts.synthesize(action.text, {
+                  voiceName: ctx.funConfig?.personaTtsVoice || 'Puck',
+                  model: ctx.funConfig?.personaTtsModel || 'gemini-3.1-flash-tts-preview',
+                });
+                if (synthesized?.ok) {
+                  audioAttempted = true;
+                  sent = await ctx.sock.sendMessage(scopeKey, {
+                    audio: synthesized.buffer,
+                    mimetype: synthesized.mimeType || 'audio/ogg; codecs=opus',
+                    ptt: true,
+                  }, quoted ? { quoted } : undefined);
+                  recordSentMessage(sent, action);
+                } else {
+                  audioDispatchFailed = true;
+                }
+              } catch (ttsError) {
+                audioDispatchFailed = true;
+                logger?.debug?.('[personaService] síntese de áudio falhou: %s', String(ttsError?.message || ttsError));
+              }
+            } else {
+              audioDispatchFailed = true;
+            }
+            if (!audioAttempted || !isSuccessfulDispatch(sent)) {
+              if (!hasSock) throw new Error('audio-sender-unavailable');
+              const fallback = await ctx.sock.sendMessage(scopeKey, { text: action.text }, quoted ? { quoted } : undefined);
+              recordSentMessage(fallback, { type: 'text', text: action.text });
+            }
+          } else if (action.type === 'text' && hasSock) {
             const sent = await ctx.sock.sendMessage(scopeKey, { text: action.text }, quoted ? { quoted } : undefined);
-            recordMessageId(sent, action);
+            recordSentMessage(sent, action);
           } else if (action.type === 'sticker' && hasSock) {
             const stickerPath = resolveStickerPath(action.slug);
             if (!stickerPath) throw new Error('sticker-not-found');
             const rawSticker = readFileSync(stickerPath);
             const stickerBuffer = await imageBufferToSticker(rawSticker);
             const sent = await ctx.sock.sendMessage(scopeKey, { sticker: stickerBuffer }, quoted ? { quoted } : undefined);
-            recordMessageId(sent, action);
+            recordSentMessage(sent, action);
           } else if (action.type === 'react' && hasSock && ctx.quoteSource?.key) {
-            await ctx.sock.sendMessage(scopeKey, {
+            const sent = await ctx.sock.sendMessage(scopeKey, {
               react: { text: action.emoji, key: ctx.quoteSource.key },
             });
+            recordSentMessage(sent, action);
           }
         } catch (dispatchErr) {
           logger?.debug?.('[personaService] erro ao despachar ação %s: %s', action.type, String(dispatchErr?.message || dispatchErr));
