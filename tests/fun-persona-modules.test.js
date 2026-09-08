@@ -38,6 +38,22 @@ test('[personaPromptBuilder] buildPersonaSystemPrompt monta prompt com primeira 
   assert.match(prompt, /Fale SEMPRE em primeira pessoa/i);
   assert.match(prompt, /Vocabulário frequente: mano, zoeira/);
   assert.match(prompt, /Lucas: "e aí bot"/);
+  assert.match(prompt, /até 280 caracteres/i);
+});
+
+test('[personaPromptBuilder] modo sem teto deixa o modelo desenvolver quando o assunto pede', () => {
+  const prompt = buildPersonaSystemPrompt({ maxChars: Infinity });
+
+  assert.match(prompt, /desenvolva o quanto for necessário/i);
+  assert.doesNotMatch(prompt, /Limite: até/i);
+  assert.doesNotMatch(prompt, /Infinity caracteres/i);
+});
+
+test('[personaPromptBuilder] user prompt preserva até 4 mil caracteres independentemente do teto da resposta', () => {
+  const text = `bot, explica isso: ${'x'.repeat(700)}`;
+  const prompt = buildPersonaUserPrompt({ text, maxChars: 80 });
+
+  assert.match(prompt, new RegExp(`x{700}`));
 });
 
 test('[personaPromptBuilder] buildTemporalBlock retorna horário e dia formatados sem erro', () => {

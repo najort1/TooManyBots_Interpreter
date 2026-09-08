@@ -361,6 +361,46 @@ test('tryRespond: fallback sem LLM (FUN_DISABLE_LIVE_LLM=1)', async () => {
   assert.ok(r.response.length > 0);
 });
 
+test('persona: resposta longa não é truncada quando personaMaxChars é zero', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const longResponse = 'Essa explicação precisa ficar inteira porque cada detalhe importa. '.repeat(30).trim();
+    let request = null;
+    let sent = null;
+    const { svc, sock, identityMap, cfg } = setup({ ...baseConfig, personaMaxChars: 0 }, undefined, null, {
+      generateZen: async (input) => {
+        request = input;
+        return longResponse;
+      },
+    });
+    sock.sendMessage = async (_scope, payload) => {
+      sent = payload;
+      return { key: { id: 'persona-long-response-1' } };
+    };
+
+    const response = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: 'bot, explica com todos os detalhes',
+      authorJid: uniqueJid(),
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 8_900_000,
+    });
+
+    assert.equal(response.responded, true);
+    assert.equal(response.response, longResponse);
+    assert.equal(sent.text, longResponse);
+    assert.ok(response.response.length > 280);
+    assert.equal(request.maxTokens, 800);
+    assert.doesNotMatch(request.system, /Limite: até/i);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
 test('persona: prompt recebe autor, reply, identidade e pistas de contexto', async () => {
   const previous = process.env.FUN_DISABLE_LIVE_LLM;
   delete process.env.FUN_DISABLE_LIVE_LLM;
@@ -405,7 +445,7 @@ test('persona: prompt recebe autor, reply, identidade e pistas de contexto', asy
     assert.match(request.system, /Nina sempre puxa discussão de cinema/);
     assert.match(request.system, /Nina prefere terror/);
     assert.match(request.system, /Nina entra na zoeira sobre filme/);
-    assert.equal(request.maxTokens, 360);
+    assert.equal(request.maxTokens, 800);
   } finally {
     if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
     else process.env.FUN_DISABLE_LIVE_LLM = previous;

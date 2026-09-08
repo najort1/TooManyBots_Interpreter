@@ -59,10 +59,17 @@ export const ZEN_TASK_DEFAULTS = Object.freeze({
   }),
   persona: Object.freeze({
     temperature: 0.7,
-    maxTokens: 360,
+    maxTokens: 800,
     timeoutMs: 35_000,
     jsonMode: false,
     jsonOnly: false,
+  }),
+  persona_opportunity: Object.freeze({
+    temperature: 0.25,
+    maxTokens: 220,
+    timeoutMs: 12_000,
+    jsonMode: true,
+    jsonOnly: true,
   }),
   lore_reconcile: Object.freeze({
     temperature: 0,
@@ -161,6 +168,11 @@ export function resolveZenTaskParams(task, funConfig = {}) {
       temperature: funConfig.zenPersonaTemperature,
       maxTokens: funConfig.zenPersonaMaxTokens,
       timeoutMs: funConfig.zenPersonaTimeoutMs,
+    },
+    persona_opportunity: {
+      temperature: funConfig.zenPersonaOpportunityTemperature,
+      maxTokens: funConfig.zenPersonaOpportunityMaxTokens,
+      timeoutMs: funConfig.zenPersonaOpportunityTimeoutMs,
     },
     lore_reconcile: {
       timeoutMs: funConfig.loreReconciliationTimeoutMs,

@@ -122,7 +122,7 @@ function validateArguments(name, rawArguments) {
   return { ok: true, arguments: sanitized };
 }
 
-export function parseFollowupEnvelope(raw, { maxChars = 1_000, maxActions = 4, allowedReplyMessageIds = [] } = {}) {
+export function parseFollowupEnvelope(raw, { maxChars = Infinity, maxActions = 4, allowedReplyMessageIds = [] } = {}) {
   const value = parseJsonPayload(raw);
   if (!value || Array.isArray(value)) return { ok: false, reason: 'invalid-json' };
   const type = String(value.type || '').toLowerCase();
@@ -151,7 +151,7 @@ export function parseFollowupEnvelope(raw, { maxChars = 1_000, maxActions = 4, a
   return { ok: false, reason: 'empty-follow-up' };
 }
 
-export function parsePersonaEnvelope(raw, { maxChars = 1_000, maxActions = 4 } = {}) {
+export function parsePersonaEnvelope(raw, { maxChars = Infinity, maxActions = 4 } = {}) {
   const value = parseJsonPayload(raw);
   if (!value) return { ok: false, reason: 'invalid-json' };
   if (Array.isArray(value)) return sanitizeActions(value, maxChars, maxActions);
