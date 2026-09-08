@@ -48,6 +48,28 @@ test('persona agent: áudio é aceito no protocolo e só aparece no manifesto qu
   assert.match(buildPersonaToolManifest({ audioEnabled: true }), /"type":"audio"/);
 });
 
+test('persona agent: protocolo preserva respostas longas sem teto e respeita teto explícito', () => {
+  const longText = 'resposta longa '.repeat(250);
+  const reply = parsePersonaEnvelope(JSON.stringify({ type: 'reply', text: longText }));
+  const audio = parsePersonaEnvelope(JSON.stringify({ type: 'audio', text: longText }));
+  const capped = parsePersonaEnvelope(JSON.stringify({ type: 'reply', text: longText }), { maxChars: 280 });
+
+  assert.equal(reply.envelope.text, longText.trim());
+  assert.equal(audio.envelope.actions[0].text, longText.trim());
+  assert.equal(capped.envelope.text.length, 280);
+});
+
+
+test('persona agent: limite de caracteres pode ser desativado sem reduzir o orçamento de tokens', () => {
+  const unrestricted = resolveFunConfig({ personaMaxChars: 0, zenPersonaMaxTokens: 2_000 });
+  const capped = resolveFunConfig({ personaMaxChars: 280 });
+
+  assert.equal(unrestricted.personaMaxChars, 0);
+  assert.equal(unrestricted.zenPersonaMaxTokens, 2_000);
+  assert.equal(capped.personaMaxChars, 280);
+});
+
+
 test('persona agent: configurações novas têm defaults e clamps seguros', () => {
   const cfg = resolveFunConfig({
     personaToolCooldownMs: 1,

@@ -195,3 +195,96 @@ test('flavor sanitize rejeita rascunho e usa template no cascade', async () => {
     else process.env.FUN_DISABLE_LIVE_LLM = '1';
   }
 });
+
+test('stripThinkingTags e extractChatText tratam modelo Claude com thinking', () => {
+  const claudeResponse = {
+    choices: [
+      {
+        message: {
+          role: 'assistant',
+          content: [
+            '<thinking>',
+            'O usuário quer que eu comente sobre o Eduardo subindo para o nível 10 no bot.',
+            'Preciso: 1. Escrever em português brasileiro informal.',
+            'Vou criar algo animado e informal.',
+            '</thinking>',
+            '',
+            'Eduardo level 10 de entregador, agora já sabe todos os atalhos e fura fila no drive-thru 🏍️',
+          ].join('\n'),
+        },
+      },
+    ],
+  };
+  const extracted = extractChatText(claudeResponse);
+  assert.equal(
+    extracted,
+    'Eduardo level 10 de entregador, agora já sabe todos os atalhos e fura fila no drive-thru 🏍️'
+  );
+  assert.equal(looksLikeIncompleteOrMeta(extracted), false);
+});
+
+test('extractJsonBlob e extractJsonFromChat extraem line sem markdown fences', () => {
+  const rawJson = '{"line":"🎬 TÍTULO: O Assalto Perfeito\\n\\nCENA 1 — PREPARAÇÃO\\nEduardo planejou tudo."}';
+  const extracted = extractJsonBlob(rawJson);
+  assert.equal(extracted, rawJson);
+
+  const chatData = {
+    choices: [
+      {
+        message: {
+          content: `<thinking>\nDeve ser no formato JSON: {"line":"texto final"}\n</thinking>\n\n${rawJson}`,
+        },
+      },
+    ],
+  };
+  const json = extractJsonFromChat(chatData);
+  assert.equal(json, rawJson);
+});
+
+test('assaultStory aceita roteiro gerado com diálogos sem cair em template fallback', async () => {
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const generatedScript = [
+      '🎬 TÍTULO: O Trabuco do Século XXI',
+      '',
+      'CENA 1 — PREPARAÇÃO',
+      'Eduardo limpa o trabuco antigo. "Isso ainda funciona?", pergunta ao gato.',
+      '',
+      'CENA 2 — AÇÃO',
+      'Eduardo entra no Banco Central com o trabuco. "É um assalto!", grita.',
+      '',
+      'CENA 3 — FUGA / CONSEQUÊNCIA',
+      'Eduardo foge de patinete elétrico pelas ruas da cidade com o malote.',
+      '',
+      'EPÍLOGO',
+      'Eduardo aposentou o trabuco e agora descansa na praia tranquilo.',
+    ].join('\n');
+
+    const flavor = createFlavorService({
+      getConfig: () => ({
+        zenEnabled: true,
+        ollamaEnabled: false,
+        assaultStoryTimeoutMs: 10_000,
+        flavorTimeoutMs: 10_000,
+      }),
+      zenGenerate: async () => JSON.stringify({ line: generatedScript }),
+      generate: async () => {
+        throw new Error('no-ollama');
+      },
+      allowLiveLlm: true,
+    });
+
+    const text = await flavor.assaultStory('assault_bank_win', {
+      attacker: 'Eduardo',
+      weapon: 'trabuco',
+      target: 'Banco Central',
+    });
+
+    assert.ok(text.includes('O Trabuco do Século XXI'), `esperava roteiro gerado, got: ${text}`);
+    assert.equal(flavor.lastProvider(), 'zen');
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});
