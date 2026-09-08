@@ -6,6 +6,7 @@ import { getDb } from '../db/context.js';
 import { createFunGroupRepository } from '../fun/db/funGroupRepository.js';
 import { createFunPersonaRepository } from '../fun/db/funPersonaRepository.js';
 import { createPersonaService } from '../fun/services/personaService.js';
+import { createGeminiTtsService } from '../fun/services/geminiTtsService.js';
 import { createIdentityMap } from '../fun/utils/identity.js';
 
 await initDb();
@@ -62,6 +63,33 @@ async function withLiveLlm(run) {
   }
 }
 
+test('persona TTS: envia a fala inteira ao SDK sem corte local', async () => {
+  let request = null;
+  const text = 'fala longa e completa '.repeat(140).trim();
+  const service = createGeminiTtsService({
+    apiKey: 'test-key',
+    generateClient: () => ({
+      models: {
+        generateContent: async (input) => {
+          request = input;
+          return {
+            candidates: [{
+              content: { parts: [{ inlineData: { data: Buffer.from('pcm').toString('base64'), mimeType: 'audio/L16;rate=24000' } }] },
+            }],
+          };
+        },
+      },
+    }),
+    audioTranscoder: { toOggOpus: async () => Buffer.from('ogg') },
+  });
+
+  const result = await service.synthesize(text);
+
+  assert.equal(result.ok, true);
+  assert.equal(request.contents[0].parts[0].text, text);
+  assert.ok(text.length > 2_000);
+});
+
 test('persona audio: preserva a transcrição narrada na resposta e na thread', async () => {
   await withLiveLlm(async () => {
     const repository = createFunPersonaRepository({ getDatabase: getDb });
@@ -94,6 +122,41 @@ test('persona audio: preserva a transcrição narrada na resposta e na thread', 
     assert.equal(messages[0].ptt, true);
     assert.equal(messages[0].mimetype, 'audio/ogg; codecs=opus');
     assert.equal(repository.getActiveThread(scope, { now: 1_000_000 }).context.at(-1).text, 'A resposta narrada da persona.');
+  });
+});
+
+test('persona audio: a ação narrada longa chega inteira à síntese', async () => {
+  await withLiveLlm(async () => {
+    const spokenText = 'Essa parte precisa ser narrada sem perder nenhum detalhe importante. '.repeat(25).trim();
+    let synthesizedText = '';
+    const messages = [];
+    const { service } = createService({
+      generateZen: async () => JSON.stringify({ type: 'audio', text: spokenText }),
+      personaTtsService: {
+        isAvailable: () => true,
+        synthesize: async (text) => {
+          synthesizedText = text;
+          return { ok: true, buffer: Buffer.from('ogg'), mimeType: 'audio/ogg; codecs=opus' };
+        },
+      },
+    });
+
+    const result = await service.tryRespond({
+      scopeKey: uniqueGroup(),
+      authorJid: '551199999999@s.whatsapp.net',
+      text: 'bot manda um áudio explicando tudo',
+      messageType: 'text',
+      funConfig: { personaMaxChars: 0 },
+      sock: socket(messages),
+      identityMap: createIdentityMap(),
+      now: 1_050_000,
+    });
+
+    assert.equal(result.responded, true);
+    assert.equal(result.response, spokenText);
+    assert.equal(synthesizedText, spokenText);
+    assert.ok(spokenText.length > 280);
+    assert.equal(messages[0].ptt, true);
   });
 });
 
