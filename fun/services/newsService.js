@@ -3,6 +3,8 @@
 import { collectDayConversation, conversationToSnapshotPayload } from './news/newsFacts.js';
 import { renderEdition } from './news/newsRender.js';
 import { composeLlmBits } from './news/newsLlm.js';
+import { createNewsCommentatorService } from './news/newsCommentatorService.js';
+import { synthesizeNewsAudio } from './news/newsAudio.js';
 import { jidLocalPart, looksLikeOpaqueLid } from '../utils/identity.js';
 
 export function extractEditionMentions(text = '', quotes = [], identityMap = null) {
@@ -93,7 +95,32 @@ export function createNewsService({
   getContactDisplayName = null,
   identityMap = null,
   random = Math.random,
+  commentatorService = null,
+  groupMemoryService = null,
+  personaService = null,
+  getPersonaService = null,
+  socialMemoryService = null,
+  ttsService = null,
+  getTtsService = null,
 } = {}) {
+  const resolveCurrentPersonaService = () =>
+    personaService || (typeof getPersonaService === 'function' ? getPersonaService() : null);
+
+  const resolveCurrentTtsService = () =>
+    ttsService || (typeof getTtsService === 'function' ? getTtsService() : null);
+
+  const resolvedCommentatorService =
+    commentatorService ||
+    createNewsCommentatorService({
+      newsRepository,
+      get personaService() {
+        return resolveCurrentPersonaService();
+      },
+      groupMemoryService,
+      socialMemoryService,
+      random,
+    });
+
   function enabled(funConfig = {}) {
     return funConfig.groupNewsEnabled !== false;
   }
@@ -119,21 +146,91 @@ export function createNewsService({
       readLimit: funConfig.groupNewsMessageReadLimit,
       conversationMaxChars: funConfig.groupNewsConversationMaxChars,
     });
+
+    const commentator = resolvedCommentatorService?.resolveCommentator?.(scopeKey, { now }) || null;
+    const currentPersonaService = resolveCurrentPersonaService();
+
+    let groupStyle = '';
+    try {
+      groupStyle = currentPersonaService?.buildStyleBlock?.(scopeKey) || '';
+    } catch {
+      groupStyle = '';
+    }
+
+    let groupLore = '';
+    try {
+      groupLore = groupMemoryService?.buildLoreContext?.(scopeKey, {
+        limit: 12,
+        funConfig,
+        now,
+      }) || '';
+    } catch {
+      groupLore = '';
+    }
+
+    let socialVibe = '';
+    try {
+      if (typeof socialMemoryService?.toIdentityInput === 'function') {
+        const identity = socialMemoryService.toIdentityInput();
+        if (Array.isArray(identity?.voiceStyle) && identity.voiceStyle.length) {
+          socialVibe = identity.voiceStyle.join(', ');
+        }
+      }
+    } catch {
+      socialVibe = '';
+    }
+
     const llmBits = await composeLlmBits(
       conversation,
       flavorService,
       scopeKey,
       random,
-      null,
-      funConfig
+      groupMemoryService,
+      funConfig,
+      {
+        commentator,
+        groupStyle,
+        socialVibe,
+        groupLore,
+      }
     );
+
     const dayLabel = `${dayKeyInTz(now, timeZone)} · ${new Date(now).toLocaleDateString('pt-BR', { weekday: 'long', timeZone })}`;
-    const text = renderEdition(conversation, llmBits, { dayLabel, random });
+    const text = renderEdition(conversation, llmBits, {
+      dayLabel,
+      random,
+      commentator,
+      commentatorService: resolvedCommentatorService,
+    });
     const provider = llmBits?.capa ? 'llm-enhanced' : 'deterministic';
     const mentions = extractEditionMentions(text, conversation.quotes, identityMap);
 
+    let audio = null;
+    const effectiveTts = resolveCurrentTtsService();
+    if (effectiveTts?.isAvailable?.() && funConfig.groupNewsAudioEnabled !== false) {
+      try {
+        const audioResult = await synthesizeNewsAudio({
+          edition: llmBits || {
+            capa: conversation.quiet ? 'Plantão do Silêncio' : 'Edição Especial',
+            intro: text,
+          },
+          commentator,
+          conversation,
+          ttsService: effectiveTts,
+          funConfig,
+        });
+        if (audioResult?.ok && audioResult.buffer) {
+          audio = audioResult;
+        }
+      } catch (audioErr) {
+        console.warn(
+          `[fun/news] audio generation failed scope=${String(scopeKey).slice(0, 28)}: ${audioErr?.message || audioErr}`
+        );
+      }
+    }
+
     console.log(
-      `[fun/news] edition scope=${String(scopeKey).slice(0, 28)} provider=${provider} messages=${conversation.totalMessageCount} mood=${conversation.mood} mentions=${mentions.length}`
+      `[fun/news] edition scope=${String(scopeKey).slice(0, 28)} provider=${provider} messages=${conversation.totalMessageCount} mood=${conversation.mood} mentions=${mentions.length} audio=${Boolean(audio?.buffer)}`
     );
 
     return {
@@ -143,6 +240,10 @@ export function createNewsService({
       messageCount: conversation.totalMessageCount,
       facts: conversation,
       mentions,
+      commentator,
+      audioBuffer: audio?.buffer || null,
+      audioMimeType: audio?.mimeType || null,
+      audioTranscript: audio?.transcriptData || null,
     };
   }
 
@@ -181,6 +282,10 @@ export function createNewsService({
       messageCount: edition.messageCount,
       newsDay,
       mentions: edition.mentions || [],
+      commentator: edition.commentator || null,
+      audioBuffer: edition.audioBuffer || null,
+      audioMimeType: edition.audioMimeType || null,
+      audioTranscript: edition.audioTranscript || null,
     };
   }
 

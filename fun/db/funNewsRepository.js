@@ -106,11 +106,75 @@ export function createFunNewsRepository({ getDatabase = getDb } = {}) {
       .run(String(scopeKey || ''), String(dayKey || ''), ts);
   }
 
+  function getCommentator(scopeKey) {
+    ensureSchema();
+    const row = getDatabase()
+      .prepare(
+        `SELECT name, title, personality, catchphrase, style, voice_name, voice_tone, created_at, updated_at
+         FROM ${ANALYTICS_SCHEMA}.fun_group_news_commentator
+         WHERE scope_key = ?`
+      )
+      .get(String(scopeKey || ''));
+    if (!row) return null;
+    return {
+      name: String(row.name || ''),
+      title: String(row.title || ''),
+      personality: String(row.personality || ''),
+      catchphrase: String(row.catchphrase || ''),
+      style: String(row.style || ''),
+      voiceName: String(row.voice_name || ''),
+      voiceTone: String(row.voice_tone || ''),
+      createdAt: Number(row.created_at) || 0,
+      updatedAt: Number(row.updated_at) || 0,
+    };
+  }
+
+  function saveCommentator(scopeKey, commentator = {}, now = Date.now()) {
+    ensureSchema();
+    const s = String(scopeKey || '');
+    if (!s || !commentator?.name) return null;
+    const ts = Number(now) || Date.now();
+    getDatabase()
+      .prepare(
+        `INSERT INTO ${ANALYTICS_SCHEMA}.fun_group_news_commentator
+         (scope_key, name, title, personality, catchphrase, style, voice_name, voice_tone, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(scope_key) DO UPDATE SET
+           name = excluded.name,
+           title = excluded.title,
+           personality = excluded.personality,
+           catchphrase = excluded.catchphrase,
+           style = excluded.style,
+           voice_name = excluded.voice_name,
+           voice_tone = excluded.voice_tone,
+           updated_at = excluded.updated_at`
+      )
+      .run(
+        s,
+        String(commentator.name || ''),
+        String(commentator.title || ''),
+        String(commentator.personality || ''),
+        String(commentator.catchphrase || ''),
+        String(commentator.style || ''),
+        String(commentator.voiceName || ''),
+        String(commentator.voiceTone || ''),
+        ts,
+        ts
+      );
+    return {
+      scopeKey: s,
+      ...commentator,
+      updatedAt: ts,
+    };
+  }
+
   return {
     logEvent,
     listSince,
     pruneOlderThan,
     getNewsMeta,
     setNewsDay,
+    getCommentator,
+    saveCommentator,
   };
 }
