@@ -1,3 +1,9 @@
+import {
+  buildMentionedUsersContextBlock,
+  resolveMentionedUsers,
+  resolveMentionsInText,
+} from '../../utils/mentionResolver.js';
+
 function usage(prefix = '/') {
   return [
     `Uso: ${prefix}gerar <prompt>`,
@@ -26,6 +32,42 @@ function quotaBlockedMessage(limit) {
   ].join('\n');
 }
 
+function buildImageMentionContext({ mentionedJids, profileService, groupMemoryService, identityMap, scopeKey }) {
+  if (!Array.isArray(mentionedJids) || !mentionedJids.length || !profileService) return { users: new Map(), context: '' };
+
+  const users = resolveMentionedUsers(
+    mentionedJids,
+    (jid) => profileService.displayName?.(jid, scopeKey) || '',
+    scopeKey
+  );
+  if (!users.size) return { users, context: '' };
+
+  const subjectJids = new Set(users.keys());
+  for (const jid of users.keys()) {
+    const pn = identityMap?.getPn?.(jid);
+    if (pn) subjectJids.add(pn);
+  }
+  const loreFacts = groupMemoryService?.getFactsForSubjects?.(scopeKey, [...subjectJids], { limit: 20 }) || [];
+  const context = buildMentionedUsersContextBlock(users, {
+    getProfile: (jid, groupJid) => profileService.getProfile?.(jid, groupJid),
+    scopeKey,
+    loreFacts,
+    includeJid: false,
+  });
+
+  return {
+    users,
+    context: context
+      ? [
+          '<image_subject_context>',
+          'Dados confirmados sobre pessoas marcadas. Use-os apenas para representar a pessoa quando o pedido pedir isso; não invente traços, fatos ou identidades.',
+          context,
+          '</image_subject_context>',
+        ].join('\n')
+      : '',
+  };
+}
+
 function failMessage(result) {
   if (!result) return 'Falha ao gerar imagem agora. Tente novamente em instantes.';
   if (result.reason === 'empty-prompt') return 'Escreva o prompt da imagem após o comando.';
@@ -47,6 +89,10 @@ async function handleImageLikeCommand(ctx, { withMemory, commandLabel }) {
     replyImage,
     replyImageUrl,
     funConfig,
+    mentionedJids,
+    profileService,
+    groupMemoryService,
+    identityMap,
   } = ctx;
 
   if (!imageGenerationService) {
@@ -60,12 +106,20 @@ async function handleImageLikeCommand(ctx, { withMemory, commandLabel }) {
     return { handled: true, reason: 'empty-prompt' };
   }
 
+  const mention = buildImageMentionContext({
+    mentionedJids,
+    profileService,
+    groupMemoryService,
+    identityMap,
+    scopeKey,
+  });
   const result = await imageGenerationService.generateImage({
     scopeKey,
     userJid,
-    prompt,
+    prompt: resolveMentionsInText(prompt, mention.users),
     command: commandLabel,
     withMemory,
+    mentionedContext: mention.context,
     now: Date.now(),
   });
 

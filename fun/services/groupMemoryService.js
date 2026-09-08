@@ -1562,6 +1562,14 @@ export function createGroupMemoryService({
    * SEM LIMITE de fatos — usuário pediu para enviar toda a lore do grupo
    * pro modelo (até o teto de `o.maxFacts` persistido, que já é o cap real).
    */
+  function getFactsForSubjects(scopeKey, userJids = [], { limit = 20 } = {}) {
+    const targets = new Set((userJids || []).map((jid) => String(jid || '').trim()).filter(Boolean));
+    if (!scopeKey || !targets.size) return [];
+    return memoryRepository.listFacts(scopeKey, { limit: 200, minScore: 0 })
+      .filter((fact) => (fact.subjects || []).some((subject) => targets.has(String(subject))))
+      .slice(0, Math.max(1, Math.min(50, Number(limit) || 20)));
+  }
+
   function buildLoreContext(
     scopeKey,
     { userJids = [], limit = Infinity, funConfig = {}, now = Date.now() } = {}
@@ -1754,6 +1762,7 @@ export function createGroupMemoryService({
     flushDueScopes,
     shouldFlushBuffer,
     getBufferStats,
+    getFactsForSubjects,
     buildLoreContext,
     buildPersonaLoreContext,
     formatLoreList,

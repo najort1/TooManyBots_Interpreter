@@ -119,7 +119,7 @@ export function resolveMentionsInText(text, mentionedUsersMap) {
  */
 export function buildMentionedUsersContextBlock(
   mentionedUsersMap,
-  { getProfile, scopeKey, loreFacts = [], timeZone } = {}
+  { getProfile, scopeKey, loreFacts = [], timeZone, includeJid = true } = {}
 ) {
   if (!mentionedUsersMap?.size) return '';
 
@@ -150,7 +150,7 @@ export function buildMentionedUsersContextBlock(
     const profile = typeof getProfile === 'function' ? getProfile(jid, scopeKey) : null;
     const hasProfile = profile && !profile.empty;
 
-    const lines = [`Membro mencionado: ${info.displayName}${info.nickname ? ` (${info.nickname})` : ''} [JID: ${info.localPart}]`];
+    const lines = [`Membro mencionado: ${info.displayName}${info.nickname ? ` (${info.nickname})` : ''}${includeJid ? ` [JID: ${info.localPart}]` : ''}`];
 
     if (hasProfile) {
       const bits = [];

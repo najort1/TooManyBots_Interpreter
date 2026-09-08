@@ -50,7 +50,8 @@ function isSafeUrl(value) {
 function joinUrl(base, path) {
   const b = String(base || '').trim().replace(/\/+$/, '');
   if (!b) return String(path || '');
-  const p = String(path || '').trim().replace(/^\/+/, '');
+  let p = String(path || '').trim().replace(/^\/+/, '');
+  if (/\/v1$/i.test(b) && /^v1\//i.test(p)) p = p.slice(3);
   if (!p) return b;
   return `${b}/${p}`;
 }
@@ -123,34 +124,43 @@ export function createImageGenerationService(deps = {}) {
    * prefixa a lore (ja em <group_lore>...</group_lore>) ao prompt do usuario.
    * Trunca a lore em imageGenLoreMaxChars para nao estourar o limite da API.
    */
-  function buildPromptWithMemory({ scopeKey, userPrompt, funConfig, userJid }) {
+  function buildPromptWithMemory({
+    scopeKey,
+    userPrompt,
+    funConfig,
+    userJid,
+    withMemory = true,
+    mentionedContext = '',
+  }) {
     const base = clampPrompt(userPrompt);
     if (!base) return '';
-    if (!withMemoryEnabled(funConfig) || !groupMemoryService) return base;
 
-    const maxLore = Math.max(
-      0,
-      Math.floor(Number(funConfig?.imageGenLoreMaxChars) || Infinity)
-    );
-    if (maxLore === 0) return base;
-
-    let lore = '';
-    try {
-      lore = String(
-        groupMemoryService.buildLoreContext(scopeKey, {
-          userJids: userJid ? [userJid] : [],
-          limit: Infinity,
-          funConfig,
-        }) || ''
-      ).trim();
-    } catch (err) {
-      log('debug', { err: err?.message }, 'imageGen buildLoreContext fail');
-      return base;
+    const parts = [base];
+    if (withMemory && withMemoryEnabled(funConfig) && groupMemoryService) {
+      const maxLore = Math.max(
+        0,
+        Math.floor(Number(funConfig?.imageGenLoreMaxChars) || Infinity)
+      );
+      if (maxLore > 0) {
+        try {
+          let lore = String(
+            groupMemoryService.buildLoreContext(scopeKey, {
+              userJids: userJid ? [userJid] : [],
+              limit: Infinity,
+              funConfig,
+            }) || ''
+          ).trim();
+          if (lore.length > maxLore) lore = `${lore.slice(0, maxLore - 1)}…`;
+          if (lore) parts.push(lore);
+        } catch (err) {
+          log('debug', { err: err?.message }, 'imageGen buildLoreContext fail');
+        }
+      }
     }
-    if (!lore) return base;
 
-    if (lore.length > maxLore) lore = `${lore.slice(0, maxLore - 1)}…`;
-    return `${base}\n\n${lore}`;
+    const mentionBlock = String(mentionedContext || '').trim().slice(0, 2_000);
+    if (mentionBlock) parts.push(mentionBlock);
+    return parts.join('\n\n');
   }
 
   /**
@@ -278,7 +288,7 @@ export function createImageGenerationService(deps = {}) {
    */
   async function callOpenAiImageApi(prompt, opts) {
     const c = cfg();
-    const baseUrl = String(c.imageGenBaseUrl || 'http://127.0.0.1:3300').trim();
+    const baseUrl = String(c.imageGenBaseUrl || c.zenBaseUrl || 'http://localhost:20128/v1').trim();
     if (!baseUrl) return { ok: false, reason: 'no-baseurl' };
 
     const fetchFn = opts.fetchImpl || fetchImpl;
@@ -287,56 +297,91 @@ export function createImageGenerationService(deps = {}) {
     }
 
     const url = joinUrl(baseUrl, '/v1/images/generations');
-    const body = { prompt };
-    if (String(c.imageGenModel || '').trim()) body.model = String(c.imageGenModel).trim();
-    if (String(c.imageGenSize || '').trim()) body.size = String(c.imageGenSize).trim();
-    if (String(c.imageGenQuality || '').trim()) body.quality = String(c.imageGenQuality).trim();
-    const fmt = String(c.imageGenResponseFormat || 'b64_json').trim().toLowerCase();
-    if (fmt === 'b64_json' || fmt === 'url') body.response_format = fmt;
-
+    const primaryModel = String(c.imageGenModel || '').trim();
+    const fallbackModels = Array.isArray(c.imageGenFallbackModels)
+      ? c.imageGenFallbackModels.map((model) => String(model || '').trim()).filter(Boolean)
+      : [];
+    const uniqueFallbacks = [...new Set(fallbackModels.filter((model) => model !== primaryModel))];
+    const primaryAttempts = Math.max(1, Math.min(10, Number(c.imageGenPrimaryAttempts) || 5));
+    const models = [
+      ...Array(primaryAttempts).fill(primaryModel),
+      ...uniqueFallbacks,
+      primaryModel,
+    ].filter(Boolean);
     const headers = { 'Content-Type': 'application/json' };
-    const key = String(c.imageGenApiKey || '').trim();
+    const key = String(c.imageGenApiKey || c.zenApiKey || '').trim();
     if (key) headers.Authorization = `Bearer ${key}`;
-
     const timeoutMs = Math.max(1000, Math.floor(Number(c.imageGenTimeoutMs) || 60_000));
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const useBinaryResponse = /localhost:20128/i.test(baseUrl);
+    const emptyResponses = [];
 
-    try {
-      const res = await fetchFn(url, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      });
-
-      if (!res?.ok) {
-        const errBody = await res.text().catch(() => '');
-        return {
-          ok: false,
-          reason: `http-${res?.status || 'failed'}`,
-          error: errBody ? String(errBody).slice(0, 200) : '',
-        };
+    const buildBody = (model) => {
+      const body = { prompt, model };
+      if (String(c.imageGenSize || '').trim()) body.size = String(c.imageGenSize).trim();
+      if (String(c.imageGenQuality || '').trim()) body.quality = String(c.imageGenQuality).trim();
+      if (!useBinaryResponse) {
+        const fmt = String(c.imageGenResponseFormat || 'b64_json').trim().toLowerCase();
+        if (fmt === 'b64_json' || fmt === 'url') body.response_format = fmt;
       }
+      return body;
+    };
 
-      let data;
+    for (let attempt = 0; attempt < models.length; attempt += 1) {
+      const model = models[attempt];
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        data = await res.json();
-      } catch (err) {
-        return { ok: false, reason: 'bad-json', error: err?.message || 'parse-failed' };
-      }
+        const requestUrl = useBinaryResponse
+          ? `${url}?response_format=binary`
+          : url;
+        const response = await fetchFn(requestUrl, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(buildBody(model)),
+          signal: controller.signal,
+        });
+        const contentType = String(response?.headers?.get?.('content-type') || '').toLowerCase();
 
-      return extractImage(data, fmt);
-    } catch (err) {
-      if (err?.name === 'AbortError') {
-        const e = new Error(`image-timeout-${timeoutMs}ms`);
-        e.name = 'AbortError';
-        return { ok: false, reason: 'timeout', error: e.message };
+        if (response?.ok && contentType.startsWith('image/')) {
+          const buffer = Buffer.from(await response.arrayBuffer());
+          if (buffer.length > 0) return { ok: true, url: '', buffer, format: 'binary', model, attempts: attempt + 1 };
+          emptyResponses.push(`${model}:empty-binary`);
+        } else if (response?.ok) {
+          let data;
+          try {
+            data = await response.json();
+          } catch (error) {
+            emptyResponses.push(`${model}:bad-json`);
+            continue;
+          }
+          const image = extractImage(data);
+          if (image.ok) return { ...image, model, attempts: attempt + 1 };
+          const dataCount = Array.isArray(data?.data) ? data.data.length : 0;
+          const firstKeys = dataCount && data.data[0] && typeof data.data[0] === 'object'
+            ? Object.keys(data.data[0]).join(',')
+            : '';
+          emptyResponses.push(`${model}:dataCount=${dataCount},firstKeys=${firstKeys || '-'}`);
+        } else {
+          const errorBody = await response?.text?.().catch(() => '');
+          const status = Number(response?.status) || 0;
+          if (status === 401 || status === 403) {
+            return { ok: false, reason: `http-${status}`, error: String(errorBody || '').slice(0, 200) };
+          }
+          emptyResponses.push(`${model}:http-${status || 'failed'}`);
+        }
+      } catch (error) {
+        emptyResponses.push(`${model}:${error?.name === 'AbortError' ? 'timeout' : 'fetch-error'}`);
+      } finally {
+        clearTimeout(timer);
       }
-      return { ok: false, reason: 'fetch-error', error: err?.message || 'unknown' };
-    } finally {
-      clearTimeout(timer);
+      logger?.debug?.({ scope: opts.scopeKey, model, attempt: attempt + 1, totalAttempts: models.length }, 'imageGen attempt failed; trying next model');
     }
+
+    return {
+      ok: false,
+      reason: 'no-image',
+      error: `image-attempts-exhausted ${emptyResponses.join(' | ')}`,
+    };
   }
 
   /**
@@ -406,6 +451,7 @@ export function createImageGenerationService(deps = {}) {
    * @param {string} args.prompt            prompt bruto do usuario
    * @param {('gerar'|'imaginar')} [args.command]
    * @param {boolean} [args.withMemory]     true injeta lore (comando /gerar)
+   * @param {string} [args.mentionedContext] perfil e lore confirmada das pessoas marcadas
    * @param {number} [args.now]
    * @param {typeof fetch} [args.fetchImpl] override para testes
    * @param {object} [args.aiClient]        override para testes do Gemini
@@ -417,6 +463,7 @@ export function createImageGenerationService(deps = {}) {
     prompt,
     command = 'imaginar',
     withMemory = false,
+    mentionedContext = '',
     now = Date.now(),
     fetchImpl: overrideFetch,
     aiClient: overrideAiClient,
@@ -446,9 +493,14 @@ export function createImageGenerationService(deps = {}) {
       };
     }
 
-    const finalPrompt = withMemory
-      ? buildPromptWithMemory({ scopeKey, userPrompt, funConfig: c, userJid })
-      : clampPrompt(userPrompt);
+    const finalPrompt = buildPromptWithMemory({
+      scopeKey,
+      userPrompt,
+      funConfig: c,
+      userJid,
+      withMemory,
+      mentionedContext,
+    });
     if (!finalPrompt) {
       return { ok: false, reason: 'empty-prompt-after-lore' };
     }

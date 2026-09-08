@@ -9,6 +9,7 @@ import {
   createImageGenerationService,
   dateStrForSaoPaulo,
 } from '../fun/services/imageGenerationService.js';
+import { handleGerarCommand, handleImaginarCommand } from '../fun/commands/handlers/image.js';
 
 await initDb();
 
@@ -33,6 +34,16 @@ function errorResponse(status, body = 'boom') {
     ok: false,
     status,
     text: async () => body,
+  };
+}
+
+function binaryImageResponse(bytes, contentType = 'image/jpeg') {
+  const buffer = Buffer.from(bytes);
+  return {
+    ok: true,
+    status: 200,
+    headers: { get: (name) => String(name).toLowerCase() === 'content-type' ? contentType : null },
+    arrayBuffer: async () => buffer,
   };
 }
 
@@ -140,16 +151,19 @@ test('imageGenerationService: suporta geracao nativa do Gemini com @google/genai
   assert.equal(out.format, 'b64_json');
 });
 
-test('imageGenerationService: suporta fallback resposta OpenAI b64_json via fetchImpl', async () => {
+test('imageGenerationService: /gerar usa o modelo Zen principal e reaproveita endpoint/chave do Zen', async () => {
   const pngB64 = Buffer.from('png-bytes-here').toString('base64');
+  let request = null;
   const service = makeService({
     getConfig: () =>
       resolveFunConfig({
-        imageGenProvider: 'openai',
-        imageGenBaseUrl: 'http://127.0.0.1:3300',
-        imageGenResponseFormat: 'b64_json',
+        zenBaseUrl: 'http://localhost:20128/v1',
+        zenApiKey: 'zen-test-key',
       }),
-    fetchImpl: async () => jsonResponse({ data: [{ b64_json: pngB64 }] }),
+    fetchImpl: async (url, options) => {
+      request = { url, options };
+      return jsonResponse({ data: [{ b64_json: pngB64 }] });
+    },
   });
 
   const out = await service.generateImage({
@@ -164,6 +178,133 @@ test('imageGenerationService: suporta fallback resposta OpenAI b64_json via fetc
   assert.equal(out.buffer.toString(), 'png-bytes-here');
   assert.equal(out.url, '');
   assert.equal(out.format, 'b64_json');
+  assert.equal(request.url, 'http://localhost:20128/v1/images/generations?response_format=binary');
+  assert.equal(request.options.headers.Authorization, 'Bearer zen-test-key');
+  assert.deepEqual(JSON.parse(request.options.body), {
+    prompt: 'dragao roxo',
+    model: 'ag/gemini-3.1-flash-image',
+    size: '1K',
+  });
+});
+
+test('imageGenerationService: usa retorno binário do Zen quando b64_json chega vazio', async () => {
+  const requests = [];
+  const service = makeService({
+    getConfig: () => resolveFunConfig({ zenBaseUrl: 'http://localhost:20128/v1', zenApiKey: 'zen-test-key' }),
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (requests.length === 1) return jsonResponse({ data: [{ b64_json: '', revised_prompt: 'capivara astronauta' }] });
+      return binaryImageResponse('zen-binary-image');
+    },
+  });
+
+  const out = await service.generateImage({
+    scopeKey: uniqueGroup(),
+    userJid: uniqueJid('12'),
+    prompt: 'capivara astronauta',
+    now: Date.UTC(2026, 6, 30, 16, 0, 0),
+  });
+
+  assert.equal(out.ok, true);
+  assert.equal(out.buffer.toString(), 'zen-binary-image');
+  assert.equal(out.format, 'binary');
+  assert.equal(requests.length, 2);
+  assert.match(requests[1].url, /\/images\/generations\?response_format=binary$/);
+  assert.equal(JSON.parse(requests[1].options.body).response_format, undefined);
+});
+
+test('imageGenerationService: troca para o modelo Zen alternativo após respostas vazias', async () => {
+  const requests = [];
+  const service = makeService({
+    getConfig: () => resolveFunConfig({
+      zenBaseUrl: 'http://localhost:20128/v1',
+      zenApiKey: 'zen-test-key',
+      imageGenFallbackModels: ['gemini/gemini-3.1-flash-image-preview'],
+      imageGenPrimaryAttempts: 1,
+    }),
+    fetchImpl: async (url, options) => {
+      requests.push({ url, options });
+      if (requests.length === 1) return jsonResponse({ data: [{ b64_json: '', revised_prompt: 'vazio' }] });
+      return jsonResponse({ data: [{ b64_json: Buffer.from('fallback-model-image').toString('base64') }] });
+    },
+  });
+
+  const out = await service.generateImage({
+    scopeKey: uniqueGroup(),
+    userJid: uniqueJid('12'),
+    prompt: 'capivara astronauta',
+    now: Date.UTC(2026, 6, 30, 16, 0, 0),
+  });
+
+  assert.equal(out.ok, true);
+  assert.equal(out.buffer.toString(), 'fallback-model-image');
+  assert.equal(requests.length, 2);
+  assert.equal(JSON.parse(requests[0].options.body).model, 'ag/gemini-3.1-flash-image');
+  assert.equal(JSON.parse(requests[1].options.body).model, 'gemini/gemini-3.1-flash-image-preview');
+});
+
+test('image commands: usam perfil e lore confirmada da pessoa marcada sem expor JID', async () => {
+  const generated = [];
+  const mentionedJid = '551199999999@s.whatsapp.net';
+  const common = {
+    scopeKey: uniqueGroup(),
+    userJid: uniqueJid('12'),
+    args: ['como', 'você', 'imagina', '@551199999999'],
+    mentionedJids: [mentionedJid],
+    profileService: {
+      displayName: () => 'Nina',
+      getProfile: () => ({
+        empty: false,
+        nickname: 'Ninoca',
+        title: 'Rainha das Figurinhas',
+        bio: 'cinéfila e torcedora do Bahia',
+        extras: 'adora gatos; vive desenhando',
+      }),
+    },
+    groupMemoryService: {
+      getFactsForSubjects: () => [{
+        kind: 'running_gag',
+        summary: 'Nina sempre chega com uma figurinha de gato na hora errada',
+        subjects: [mentionedJid],
+      }],
+    },
+    imageGenerationService: {
+      generateImage: async (input) => {
+        generated.push(input);
+        return { ok: true, buffer: Buffer.from('image'), used: 1, limit: 25, remaining: 24 };
+      },
+    },
+    reply: async () => {},
+    replyImage: async () => {},
+    funConfig: { prefix: '/' },
+  };
+
+  await handleGerarCommand(common);
+  await handleImaginarCommand(common);
+
+  assert.equal(generated.length, 2);
+  for (const input of generated) {
+    assert.match(input.prompt, /@Nina/);
+    assert.match(input.mentionedContext, /Membro mencionado: Nina/);
+    assert.match(input.mentionedContext, /Rainha das Figurinhas/);
+    assert.match(input.mentionedContext, /adora gatos/);
+    assert.match(input.mentionedContext, /figurinha de gato/);
+    assert.doesNotMatch(input.mentionedContext, /551199999999/);
+  }
+  assert.equal(generated[0].withMemory, true);
+  assert.equal(generated[1].withMemory, false);
+});
+
+test('imageGenerationService: configuração explícita de imagem continua vencendo o Zen', () => {
+  const config = resolveFunConfig({
+    zenBaseUrl: 'http://localhost:20128/v1',
+    zenApiKey: 'zen-key',
+    imageGenBaseUrl: 'http://image.example/v1',
+    imageGenApiKey: 'image-key',
+  });
+
+  assert.equal(config.imageGenBaseUrl, 'http://image.example/v1');
+  assert.equal(config.imageGenApiKey, 'image-key');
 });
 
 test('imageGenerationService: /gerar injeta lore do grupo no prompt final', async () => {
