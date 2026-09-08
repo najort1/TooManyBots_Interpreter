@@ -112,6 +112,12 @@ function stripToolEcho(text, toolText) {
   return source;
 }
 
+function sanitizePersonaResponse(text, maxChars) {
+  return sanitizeFlavor(text, maxChars, {
+    maxLines: Number.isFinite(maxChars) ? 3 : Infinity,
+  });
+}
+
 function actionTranscript(actions, maxChars) {
   return (Array.isArray(actions) ? actions : [])
     .filter((action) => action?.type === 'text' || action?.type === 'audio')
@@ -119,7 +125,7 @@ function actionTranscript(actions, maxChars) {
       const text = String(action.text || '').trim();
       if (!text) return '';
       return action.type === 'text'
-        ? sanitizeFlavor(text, maxChars)
+        ? sanitizePersonaResponse(text, maxChars)
         : cleanPromptText(text, maxChars);
     })
     .filter(Boolean)
@@ -151,6 +157,7 @@ export function createPersonaService({
   promptContextBuilder = null,
   personaRecentMessageRepository = null,
   personaAutonomyPolicy = null,
+  personaOpportunityDetector = null,
   clock = () => Date.now(),
   personaTtsService = null,
   audioTranscoder = createAudioTranscoder(),
@@ -180,7 +187,9 @@ export function createPersonaService({
       windowSize: Number(funConfig.personaWindowSize) || 100,
       windowMs: Number(funConfig.personaWindowMs) || 24 * 60 * 60 * 1000,
       timeoutMs: Number(funConfig.personaTimeoutMs) || 15_000,
-      maxChars: Number(funConfig.personaMaxChars) || 280,
+      maxChars: Number(funConfig.personaMaxChars) > 0
+        ? Number(funConfig.personaMaxChars)
+        : Infinity,
       deriveIntervalMs: Number(funConfig.personaDeriveIntervalMs) || PERSONA_DERIVE_INTERVAL_MS,
       tokenHalfLifeMs: Number(funConfig.personaTokenHalfLifeMs) || PERSONA_TOKEN_HALF_LIFE_MS,
       topTokens: Number(funConfig.personaTopTokens) || PERSONA_TOP_TOKENS,
@@ -232,7 +241,7 @@ export function createPersonaService({
       const w = getWindow(s, o.windowSize, o.windowMs, Number(now) || Date.now());
       w.msgs.push({
         userJid: String(userJid || ''),
-        text: body.slice(0, o.maxChars),
+        text: body.slice(0, 4_000),
         at: Number(now) || Date.now(),
       });
       if (w.msgs.length > o.windowSize) {
@@ -416,7 +425,7 @@ export function createPersonaService({
             continue;
           }
           const stripped = stripToolEcho(action.text, lastDisplayText);
-          const sanitized = sanitizeFlavor(stripped, maxChars);
+          const sanitized = sanitizePersonaResponse(stripped, maxChars);
           if (sanitized) finalActions.push({ ...action, text: sanitized });
         }
         const finalText = actionTranscript(finalActions, maxChars);
@@ -432,7 +441,7 @@ export function createPersonaService({
       }
       if (decision.envelope.type === 'reply') {
         const stripped = stripToolEcho(decision.envelope.text, lastDisplayText);
-        const reply = sanitizeFlavor(stripped, maxChars);
+        const reply = sanitizePersonaResponse(stripped, maxChars);
         if (reply && !looksLikeScoreboardEcho(reply)) {
           const combined = [lastDisplayText, reply].filter(Boolean).join('\n\n');
           return {
@@ -447,7 +456,7 @@ export function createPersonaService({
     }
 
     const lastResult = lastDisplayText || trace.at(-1)?.summary || '';
-    const fallback = sanitizeFlavor(lastResult, Math.max(maxChars, 1_600));
+    const fallback = sanitizePersonaResponse(lastResult, Math.max(maxChars, 1_600));
     if (!fallback && !dispatchActions.length) return '';
     return {
       text: fallback,
@@ -577,7 +586,6 @@ export function createPersonaService({
       text,
       authorLabel,
       quotedText,
-      maxChars: o.maxChars,
     });
     const toolContextText = [
       text,
@@ -627,11 +635,11 @@ export function createPersonaService({
 
           // Caso 2: Reply Direto
           if (decision.ok && decision.envelope.type === 'reply') {
-            const direct = sanitizeFlavor(decision.envelope.text, o.maxChars);
+            const direct = sanitizePersonaResponse(decision.envelope.text, o.maxChars);
             if (direct && !looksLikeScoreboardEcho(direct)) {
               return {
-                text: direct.slice(0, o.maxChars),
-                actions: [{ type: 'text', text: direct.slice(0, o.maxChars) }],
+                text: direct,
+                actions: [{ type: 'text', text: direct }],
               };
             }
           }
@@ -656,20 +664,20 @@ export function createPersonaService({
             if (result) return result;
           }
 
-          const legacy = sanitizeFlavor(raw, o.maxChars);
+          const legacy = sanitizePersonaResponse(raw, o.maxChars);
           if (legacy && !looksLikeScoreboardEcho(legacy) && !looksLikeRawJson(legacy)) {
             return {
-              text: legacy.slice(0, o.maxChars),
-              actions: [{ type: 'text', text: legacy.slice(0, o.maxChars) }],
+              text: legacy,
+              actions: [{ type: 'text', text: legacy }],
             };
           }
         }
 
-        const clean = sanitizeFlavor(raw, o.maxChars);
+        const clean = sanitizePersonaResponse(raw, o.maxChars);
         if (clean && !looksLikeScoreboardEcho(clean) && !looksLikeRawJson(clean)) {
           return {
-            text: clean.slice(0, o.maxChars),
-            actions: [{ type: 'text', text: clean.slice(0, o.maxChars) }],
+            text: clean,
+            actions: [{ type: 'text', text: clean }],
           };
         }
         logger?.debug?.('[personaService] geração LLM vazia/inválida (tentativa %d/%d)', attempt, totalTries);
@@ -822,7 +830,7 @@ export function createPersonaService({
       if (!selected) return { responded: false, reason: 'invalid-reply-target' };
       const text = parsed.envelope.text || parsed.envelope.actions
         ?.filter((action) => action.type === 'text').map((action) => action.text).join('\n\n');
-      const response = sanitizeFlavor(text, o.maxChars);
+      const response = sanitizePersonaResponse(text, o.maxChars);
       if (!response || looksLikeScoreboardEcho(response)) return { responded: false, reason: 'invalid-generation' };
       if (typeof ctx.sock?.sendMessage !== 'function') return { responded: false, reason: 'sender-unavailable' };
 
@@ -953,22 +961,54 @@ export function createPersonaService({
       });
       let thread = isContinuation ? anchoredThread : null;
 
-      const autonomy = !mention && !atMention && !isContinuation
-        ? personaAutonomyPolicy?.evaluate?.({
+      const authorLabelForOpportunity = profileService?.displayName?.(authorJid, scopeKey) || authorJid.split('@')[0] || 'membro';
+      let opportunity = null;
+      if (!mention && !atMention && !isContinuation) {
+        if (typeof personaOpportunityDetector?.observeMessage === 'function' && typeof personaOpportunityDetector?.evaluateBatch === 'function') {
+          const observation = personaOpportunityDetector.observeMessage({
             scopeKey,
             text: ctx.text,
+            authorLabel: authorLabelForOpportunity,
+            authorJid,
             messageType: ctx.messageType,
-            immediateContext: ctx.responseContextPack?.immediateContext || [],
-            socialSignals: ctx.responseContextPack?.socialSignals || [],
+            messageKey: ctx.messageKey,
+            quoteSource: ctx.quoteSource,
             funConfig: ctx.funConfig,
-            currentNow: now,
-          })
-        : null;
-      const isAutonomous = Boolean(autonomy?.eligible);
+            now,
+          });
+          if (observation?.shouldFlush) {
+            opportunity = await personaOpportunityDetector.evaluateBatch({
+              scopeKey,
+              responseContextPack: ctx.responseContextPack,
+              funConfig: ctx.funConfig,
+              now,
+            });
+          } else {
+            opportunity = { eligible: false, reason: 'buffering', count: observation?.count || 0 };
+          }
+        } else {
+          opportunity = await personaOpportunityDetector?.evaluate?.({
+            scopeKey,
+            text: ctx.text,
+            authorLabel: authorLabelForOpportunity,
+            messageType: ctx.messageType,
+            messageKey: ctx.messageKey,
+            quoteSource: ctx.quoteSource,
+            responseContextPack: ctx.responseContextPack,
+            funConfig: ctx.funConfig,
+            now,
+          });
+        }
+      }
+      const isAutonomous = Boolean(opportunity?.eligible && opportunity?.action);
 
       if (!mention && !atMention && !isContinuation && !isAutonomous) {
-        personaAutonomyPolicy?.observeHumanMessage?.(scopeKey, { text: ctx.text, currentNow: now });
-        return { responded: false, reason: autonomy?.reason || 'no-trigger' };
+        personaAutonomyPolicy?.observeHumanMessage?.(scopeKey, {
+          text: ctx.text,
+          funConfig: ctx.funConfig,
+          currentNow: now,
+        });
+        return { responded: false, reason: opportunity?.reason || 'no-trigger' };
       }
       if (o.cooldownMs > 0 && !isContinuation && !isAutonomous && isInCooldown(scopeKey, now, o.cooldownMs)) return { responded: false, reason: 'cooldown' };
       if (o.maxTurns > 0 && isContinuation && thread && thread.turnCount >= thread.maxTurns) return { responded: false, reason: 'thread-limit' };
@@ -1114,68 +1154,74 @@ export function createPersonaService({
       const promptText = resolveMentionsInText(rawPromptText, mentionMap);
 
       inFlightScopes.add(scopeKey);
-      let genResult = await generateResponse({
-        text: promptText,
-        images: resolvedImages,
-        audios: resolvedAudios,
-        scopeKey,
-        funConfig: ctx.funConfig,
-        threadContext,
-        responseContextPack: ctx.responseContextPack,
-        participantJids,
-        authorLabel,
-        quotedText: ctx.quotedText,
-        mentionedUsersMap: mentionMap,
-        agentContext: {
-          authorJid,
-          mentionedJids: canonicalMentionedJids.length
-            ? canonicalMentionedJids
-            : canonicalMentionedJidsFromContext,
-          quotedParticipant: quotedRaw,
-          getContactDisplayName: profileService?.displayName
-            ? (jid) => profileService.displayName(jid, scopeKey)
-            : null,
-          replyImageUrl: typeof ctx.replyImageUrl === 'function'
-            ? ctx.replyImageUrl
-            : async (imageUrl, caption, mimeType) => {
-                const url = String(imageUrl || '').trim();
-                if (!url || typeof ctx.sock?.sendMessage !== 'function') throw new Error('image-sender-unavailable');
-                const quoted = ctx.funConfig?.replyQuoted !== false && ctx.quoteSource?.key
-                  ? ctx.quoteSource
-                  : undefined;
-                return ctx.sock.sendMessage(
-                  scopeKey,
-                  { image: { url }, caption: String(caption || ''), mimetype: String(mimeType || '') || undefined },
-                  quoted ? { quoted } : undefined
-                );
+      let genResult = isAutonomous
+        ? {
+            text: opportunity.action.type === 'text' ? opportunity.action.text : '',
+            actions: opportunity.action.type === 'text' ? [opportunity.action] : [],
+            dispatchActions: opportunity.action.type === 'text' ? [] : [opportunity.action],
+          }
+        : await generateResponse({
+            text: promptText,
+            images: resolvedImages,
+            audios: resolvedAudios,
+            scopeKey,
+            funConfig: ctx.funConfig,
+            threadContext,
+            responseContextPack: ctx.responseContextPack,
+            participantJids,
+            authorLabel,
+            quotedText: ctx.quotedText,
+            mentionedUsersMap: mentionMap,
+            agentContext: {
+              authorJid,
+              mentionedJids: canonicalMentionedJids.length
+                ? canonicalMentionedJids
+                : canonicalMentionedJidsFromContext,
+              quotedParticipant: quotedRaw,
+              getContactDisplayName: profileService?.displayName
+                ? (jid) => profileService.displayName(jid, scopeKey)
+                : null,
+              replyImageUrl: typeof ctx.replyImageUrl === 'function'
+                ? ctx.replyImageUrl
+                : async (imageUrl, caption, mimeType) => {
+                    const url = String(imageUrl || '').trim();
+                    if (!url || typeof ctx.sock?.sendMessage !== 'function') throw new Error('image-sender-unavailable');
+                    const quoted = ctx.funConfig?.replyQuoted !== false && ctx.quoteSource?.key
+                      ? ctx.quoteSource
+                      : undefined;
+                    return ctx.sock.sendMessage(
+                      scopeKey,
+                      { image: { url }, caption: String(caption || ''), mimetype: String(mimeType || '') || undefined },
+                      quoted ? { quoted } : undefined
+                    );
+                  },
+              replySticker: typeof ctx.replySticker === 'function'
+                ? ctx.replySticker
+                : async (stickerBuffer) => {
+                    if (!Buffer.isBuffer(stickerBuffer) || typeof ctx.sock?.sendMessage !== 'function') {
+                      throw new Error('sticker-sender-unavailable');
+                    }
+                    const quoted = ctx.funConfig?.replyQuoted !== false && ctx.quoteSource?.key
+                      ? ctx.quoteSource
+                      : undefined;
+                    return ctx.sock.sendMessage(
+                      scopeKey,
+                      { sticker: stickerBuffer },
+                      quoted ? { quoted } : undefined
+                    );
+                  },
+              replyReact: async (emoji) => {
+                const e = String(emoji || '').trim();
+                if (!e || typeof ctx.sock?.sendMessage !== 'function') return;
+                const targetKey = ctx.quoteSource?.key || ctx.messageKey;
+                if (!targetKey) return;
+                return ctx.sock.sendMessage(scopeKey, {
+                  react: { text: e, key: targetKey },
+                });
               },
-          replySticker: typeof ctx.replySticker === 'function'
-            ? ctx.replySticker
-            : async (stickerBuffer) => {
-                if (!Buffer.isBuffer(stickerBuffer) || typeof ctx.sock?.sendMessage !== 'function') {
-                  throw new Error('sticker-sender-unavailable');
-                }
-                const quoted = ctx.funConfig?.replyQuoted !== false && ctx.quoteSource?.key
-                  ? ctx.quoteSource
-                  : undefined;
-                return ctx.sock.sendMessage(
-                  scopeKey,
-                  { sticker: stickerBuffer },
-                  quoted ? { quoted } : undefined
-                );
-              },
-          replyReact: async (emoji) => {
-            const e = String(emoji || '').trim();
-            if (!e || typeof ctx.sock?.sendMessage !== 'function') return;
-            const targetKey = ctx.quoteSource?.key || ctx.messageKey;
-            if (!targetKey) return;
-            return ctx.sock.sendMessage(scopeKey, {
-              react: { text: e, key: targetKey },
-            });
-          },
-          now,
-        },
-      });
+              now,
+            },
+          });
 
       let responseText = '';
       let actions = [];
@@ -1194,13 +1240,21 @@ export function createPersonaService({
       }
 
       if (!responseText && !actions.length && !pendingDispatchActions.length) {
+        if (isAutonomous) return { responded: false, reason: 'empty-autonomous-action' };
         responseText = fallbackResponse(now);
         actions = [{ type: 'text', text: responseText }];
         usedFallback = true;
       }
+      if (isAutonomous && pendingDispatchActions.length + actions.length !== 1) {
+        return { responded: false, reason: 'invalid-autonomous-action-count' };
+      }
 
-      const quoted = ctx.funConfig?.replyQuoted !== false && ctx.quoteSource?.key
-        ? ctx.quoteSource
+      const targetQuoteSource = (isAutonomous && opportunity?.targetMessage?.quoteSource)
+        ? opportunity.targetMessage.quoteSource
+        : ctx.quoteSource;
+
+      const quoted = ctx.funConfig?.replyQuoted !== false && targetQuoteSource?.key
+        ? targetQuoteSource
         : undefined;
 
       // ── DESPACHO CENTRALIZADO COM RECIBOS ──
@@ -1274,7 +1328,21 @@ export function createPersonaService({
         };
         try {
           let sent;
-          if (action.type === 'image_url') {
+          if (isAutonomous && typeof ctx.dispatchAutonomousAction === 'function') {
+            const dispatchAction = action.type === 'sticker' && !action.stickerBuffer
+              ? {
+                  ...action,
+                  stickerBuffer: await (async () => {
+                    const stickerPath = resolveStickerPath(action.slug);
+                    if (!stickerPath) throw new Error('sticker-not-found');
+                    return imageBufferToSticker(readFileSync(stickerPath));
+                  })(),
+                }
+              : action;
+            sent = await ctx.dispatchAutonomousAction(dispatchAction);
+            if (action.type === 'sticker' && !receipt.claimTokens.length) receipt.claimTokens = ['sticker'];
+            if (action.type === 'react' && !receipt.claimTokens.length) receipt.claimTokens = ['emoji_reaction'];
+          } else if (action.type === 'image_url') {
             if (typeof ctx.replyImageUrl === 'function') {
               sent = await ctx.replyImageUrl(action.imageUrl, action.caption || '', action.mimeType || '');
             } else if (hasSock) {
@@ -1305,6 +1373,9 @@ export function createPersonaService({
             if (!hasSock || !targetKey) throw new Error('reaction-target-unavailable');
             sent = await ctx.sock.sendMessage(scopeKey, { react: { text: action.emoji, key: targetKey } });
             if (!receipt.claimTokens.length) receipt.claimTokens = ['emoji_reaction'];
+          } else if (isAutonomous && action.type === 'text') {
+            if (!hasSock) throw new Error('text-sender-unavailable');
+            sent = await ctx.sock.sendMessage(scopeKey, { text: action.text }, quoted ? { quoted } : undefined);
           } else {
             throw new Error('unknown-tool-dispatch-action');
           }
@@ -1330,6 +1401,9 @@ export function createPersonaService({
       if (pendingDispatchActions.length) {
         actions = actions.filter((action) => action?.type === 'text' || action?.type === 'audio');
       }
+      if (isAutonomous && actions.length && pendingDispatchActions.length) {
+        return { responded: false, reason: 'invalid-autonomous-multi-action' };
+      }
       const verified = applyVerifiedActionClaims(responseText, actions, dispatchReceipts);
       responseText = verified.text;
       actions = verified.actions;
@@ -1339,7 +1413,12 @@ export function createPersonaService({
         if (!action) continue;
 
         try {
-          if (action.type === 'audio') {
+          if (isAutonomous && typeof ctx.dispatchAutonomousAction === 'function') {
+            const sent = await ctx.dispatchAutonomousAction(action);
+            if (!recordDeliveredAction(sent, action)) {
+              throw new Error(sent?.reason || 'autonomous-dispatch-unconfirmed');
+            }
+          } else if (action.type === 'audio') {
             let sent;
             let audioAttempted = false;
             if (hasSock && isTtsAvailable(effectivePersonaTts)) {
@@ -1381,9 +1460,9 @@ export function createPersonaService({
             const stickerBuffer = await imageBufferToSticker(rawSticker);
             const sent = await ctx.sock.sendMessage(scopeKey, { sticker: stickerBuffer }, quoted ? { quoted } : undefined);
             recordSentMessage(sent, action);
-          } else if (action.type === 'react' && hasSock && ctx.quoteSource?.key) {
+          } else if (action.type === 'react' && hasSock && targetQuoteSource?.key) {
             const sent = await ctx.sock.sendMessage(scopeKey, {
-              react: { text: action.emoji, key: ctx.quoteSource.key },
+              react: { text: action.emoji, key: targetQuoteSource.key },
             });
             recordSentMessage(sent, action);
           }
@@ -1396,8 +1475,23 @@ export function createPersonaService({
         }
       }
 
+      if (isAutonomous && deliveredActionCount === 0) {
+        return { responded: false, reason: 'autonomous-dispatch-failed' };
+      }
+
       setCooldown(scopeKey, now);
       if (isAutonomous) personaAutonomyPolicy?.recordSent?.(scopeKey, now);
+
+      if (isAutonomous && !responseText) {
+        return {
+          responded: true,
+          response: '',
+          responseMessageIds: [...new Set(responseMessageIds.filter(Boolean))],
+          usedFallback: false,
+          threadId: 0,
+          trigger: 'autonomous',
+        };
+      }
 
       if (isContinuation && thread) {
         const cont = personaRepository.continueThread({

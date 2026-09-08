@@ -72,6 +72,7 @@ import { createSelfHealingService } from './services/selfHealingService.js';
 import { createFunPersonaRepository } from './db/funPersonaRepository.js';
 import { createFunPersonaRecentMessageRepository } from './db/funPersonaRecentMessageRepository.js';
 import { createFunPersonaFollowupRepository } from './db/funPersonaFollowupRepository.js';
+import { createFunPersonaAutonomyRepository } from './db/funPersonaAutonomyRepository.js';
 import { createFunPersonaSocialHintRepository } from './db/funPersonaSocialHintRepository.js';
 import { createFunProfileRepository } from './db/funProfileRepository.js';
 import { createFunCardRepository } from './db/funCardRepository.js';
@@ -95,6 +96,7 @@ import { createPersonaIdentityService } from './services/personaIdentityService.
 import { createSocialMemoryService } from './services/socialMemoryService.js';
 import { createPersonaContextService } from './services/personaContextService.js';
 import { createPersonaAutonomyPolicy } from './services/personaAutonomyPolicy.js';
+import { createPersonaOpportunityDetector } from './services/personaOpportunityDetector.js';
 import { createPersonaFollowupService } from './services/personaFollowupService.js';
 import { createProfileService } from './services/profileService.js';
 import { createCardService } from './services/cardService.js';
@@ -138,6 +140,9 @@ export function createFunModule(deps = {}) {
   const sendImage = deps.sendImage || sendImageMessage;
   const sendSticker = deps.sendSticker || sendStickerMessage;
   const getSock = typeof deps.getSock === 'function' ? deps.getSock : () => null;
+  const dispatchPersonaAutonomousAction = typeof deps.dispatchPersonaAutonomousAction === 'function'
+    ? deps.dispatchPersonaAutonomousAction
+    : null;
   const identityMap = deps.identityMap || createIdentityMap();
   const getStoredContactName = deps.getContactDisplayName || getContactDisplayName;
   // Dados novos ficam sob LID. Enquanto uma sessão ainda tem um nome legado
@@ -404,6 +409,7 @@ export function createFunModule(deps = {}) {
   const conversationMemoryRepository = deps.conversationMemoryRepository || createFunConversationMemoryRepository({ getDatabase });
   const personaRecentMessageRepository = deps.personaRecentMessageRepository || createFunPersonaRecentMessageRepository({ getDatabase });
   const personaFollowupRepository = deps.personaFollowupRepository || createFunPersonaFollowupRepository({ getDatabase });
+  const personaAutonomyRepository = deps.personaAutonomyRepository || createFunPersonaAutonomyRepository({ getDatabase });
   const threadContextRepository = deps.threadContextRepository || createFunThreadContextRepository({ getDatabase });
   const personaIdentityRepository = deps.personaIdentityRepository || createFunPersonaIdentityRepository({ getDatabase });
   const threadContextService = deps.threadContextService || createThreadContextService({ threadContextRepository });
@@ -411,7 +417,12 @@ export function createFunModule(deps = {}) {
   const memoryIngestionService = deps.memoryIngestionService || createMemoryIngestionService({ conversationMemoryRepository, getLogger });
   const memoryDecayService = deps.memoryDecayService || createMemoryDecayService({ conversationMemoryRepository });
   const personaIdentityService = deps.personaIdentityService || createPersonaIdentityService({ personaIdentityRepository });
-  const personaAutonomyPolicy = deps.personaAutonomyPolicy || createPersonaAutonomyPolicy();
+  const personaAutonomyPolicy = deps.personaAutonomyPolicy || createPersonaAutonomyPolicy({ autonomyRepository: personaAutonomyRepository });
+  const personaOpportunityDetector = deps.personaOpportunityDetector || createPersonaOpportunityDetector({
+    autonomyPolicy: personaAutonomyPolicy,
+    generateZen: deps.openaiChatComplete || deps.zenGenerate || openaiChatComplete,
+    getLogger,
+  });
   const socialMemoryService = deps.socialMemoryService || createSocialMemoryService();
   const personaContextService = deps.personaContextService || createPersonaContextService({
     threadContextService,
@@ -506,6 +517,9 @@ export function createFunModule(deps = {}) {
       flavorService,
       dailyChallengeService,
       groupMemoryService,
+      getPersonaService: () => personaService,
+      getTtsService: () => personaTtsService,
+      socialMemoryService,
       getContactDisplayName: resolveContactName,
       identityMap,
     });
@@ -545,6 +559,7 @@ export function createFunModule(deps = {}) {
       adapters: extractionAdapters,
       personaRecentMessageRepository,
       personaAutonomyPolicy,
+      personaOpportunityDetector,
     });
   }
   const personaFollowupService = deps.personaFollowupService || createPersonaFollowupService({
@@ -681,6 +696,7 @@ export function createFunModule(deps = {}) {
         personaSocialHintService,
         personaService,
         personaContextService,
+        dispatchPersonaAutonomousAction,
         loreReconciliationService,
         threadContextService,
         memoryIngestionService,
@@ -881,6 +897,19 @@ export function createFunModule(deps = {}) {
           if (edition?.ok && edition.text) {
             const sendOptions = edition.mentions?.length ? { mentions: edition.mentions } : undefined;
             await post(sock, scopeKey, edition.text, sendOptions);
+            if (edition.audioBuffer && typeof sock?.sendMessage === 'function') {
+              try {
+                await sock.sendMessage(scopeKey, {
+                  audio: edition.audioBuffer,
+                  mimetype: edition.audioMimeType || 'audio/ogg; codecs=opus',
+                  ptt: true,
+                });
+              } catch (audioSendErr) {
+                console.warn(
+                  `[fun/news] audio send failed ${String(scopeKey).slice(0, 28)}: ${audioSendErr?.message || audioSendErr}`
+                );
+              }
+            }
             return {
               scopeKey,
               kind: 'group-news',
@@ -1528,11 +1557,13 @@ export function createFunModule(deps = {}) {
       farewellService,
       personaRecentMessageRepository,
       personaFollowupRepository,
+      personaAutonomyRepository,
       personaFollowupService,
       personaService,
       personaIdentityRepository,
       personaIdentityService,
       personaAutonomyPolicy,
+      personaOpportunityDetector,
       personaContextService,
       threadContextService,
       personaToolExecutor,

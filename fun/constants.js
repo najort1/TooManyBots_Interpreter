@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '34';
+export const FUN_SCHEMA_VERSION = '35';
 
 export const PERSONA_MEMORY_TYPES = Object.freeze(['thread', 'episodic', 'semantic', 'social']);
 export const PERSONA_MEMORY_EVIDENCE = Object.freeze(['explicit', 'corroborated', 'inferred']);
@@ -567,7 +567,11 @@ export const PERSONA_WINDOW_SIZE = 100;
 export const PERSONA_WINDOW_MS = 24 * 60 * 60 * 1000;
 // O modelo decide tools e redige respostas; 15s expira antes de provedores lentos responderem.
 export const PERSONA_TIMEOUT_MS = 35_000;
-export const PERSONA_MAX_CHARS = 280;
+/**
+ * Sem teto de caracteres por padrão. Defina um inteiro positivo em
+ * `personaMaxChars` quando um grupo precisar de um limite explícito.
+ */
+export const PERSONA_MAX_CHARS = 0;
 /** Intervalo mínimo entre derivações do perfil de voz por grupo (evita write a cada msg). */
 export const PERSONA_DERIVE_INTERVAL_MS = 5 * 60_000;
 /**
@@ -748,7 +752,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   assaultStoryMaxChars: 900,
   assaultStoryMaxTokens: 550,
   zenPersonaTemperature: 0.7,
-  zenPersonaMaxTokens: 360,
+  // Espaço suficiente para respostas explicativas e áudios mais longos.
+  zenPersonaMaxTokens: 800,
   zenDailyGuessTemperature: 0.9,
   zenDailyGuessMaxTokens: 400,
   zenDailyGuessTimeoutMs: 45_000,
@@ -957,6 +962,11 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   groupNewsEnabled: true,
   groupNewsHour: 23,
   groupNewsMinute: 59,
+  /** Se true, o jornal gera narração em áudio (podcast multi-voz) às 23:59. */
+  groupNewsAudioEnabled: true,
+  groupNewsAnchorVoice: 'Puck',
+  groupNewsAudioModel: 'gemini-3.1-flash-tts-preview',
+  groupNewsAudioTemperature: 1.0,
   /** Guarda mensagens elegíveis para o jornal conversacional. */
   groupNewsMessageHistoryEnabled: true,
   /** Retenção curta de texto bruto; snapshots diários nunca guardam citações. */
@@ -1036,14 +1046,23 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   /** Tempo para tools de domínio concluírem e a persona formular a resposta final. */
   personaAgentDeadlineMs: 60_000,
   /** Participação espontânea continua desligada até ativação por grupo/config. */
-  personaAutonomyEnabled: false,
-  personaAutonomyMode: 'explicit',
-  personaAutonomyMinScore: 7,
+  personaAutonomyEnabled: true,
+  personaAutonomyMode: 'llm',
+  personaAutonomyLlmEnabled: true,
+  personaAutonomyMinScore: 75,
   personaAutonomyCooldownMs: 15 * 60_000,
   personaAutonomyMaxPerHour: 2,
   personaAutonomyMaxPerDay: 8,
   personaAutonomyMaxConsecutive: 1,
   personaAutonomyNegativeBlockMs: 60 * 60_000,
+  personaAutonomyAllowedActions: ['react', 'sticker', 'comment'],
+  personaAutonomyCommentMaxChars: 140,
+  personaAutonomyCandidateMinMessages: 2,
+  personaAutonomyContextMessages: 6,
+  personaAutonomyContextMaxChars: 2_400,
+  personaAutonomyBatchSize: 40,
+  personaAutonomyBatchContextMessages: 10,
+  personaAutonomyFlushIntervalMs: 30 * 60_000,
   // Continuação pós-silêncio: só após uma resposta acionada explicitamente.
   personaFollowupEnabled: true,
   personaFollowupSilenceMs: 60_000,
@@ -1129,16 +1148,31 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   dailyChallengeContentMemory: { pokemon: 30, game: 30, riddle: 50 },
   // API Key centralizada do Google Gemini (usada por TTS da persona e geração de imagens)
   geminiApiKey: '',
-  // Geração de imagens (/gerar e /imaginar) — Gemini ou proxy OpenAI
+  // Geração de imagens (/gerar e /imaginar) — Zen/9Router via OpenAI-compat.
   imageGenEnabled: true,
-  /** Provedor: 'gemini' (padrão) ou 'openai' (proxy /v1/images/generations). */
-  imageGenProvider: 'gemini',
-  /** Base URL da proxy de geração de imagens (se provider='openai'). */
-  imageGenBaseUrl: 'http://127.0.0.1:3300',
-  /** API key para Gemini ou Bearer da proxy. */
+  /** Provedor: 'openai' (Zen/9Router) ou 'gemini' direto. */
+  imageGenProvider: 'openai',
+  /** Base URL de imagens do Zen/9Router. */
+  imageGenBaseUrl: 'http://localhost:20128/v1',
+  /** API key da imagem; vazia reutiliza zenApiKey. */
   imageGenApiKey: '',
-  /** Modelo do Gemini ou da proxy. */
-  imageGenModel: 'models/gemini-3.1-flash-lite-image',
+  /** Modelo principal de geração de imagens no Zen/9Router. */
+  imageGenModel: 'ag/gemini-3.1-flash-image',
+  /** Modelos alternativos quando uma geração não retorna imagem utilizável. */
+  imageGenFallbackModels: [
+    'xai/grok-2-image-1212',
+    'cx/gpt-5.6-sol-image',
+    'cx/gpt-5.6-terra-image',
+    'cx/gpt-5.6-luna-image',
+    'cx/gpt-5.5-image',
+    'cx/gpt-5.4-image',
+    'cx/gpt-5.3-image',
+    'gemini/gemini-3.1-flash-image-preview',
+    'gemini/gemini-3-pro-image-preview',
+    'gemini/gemini-2.5-flash-image',
+  ],
+  /** Tentativas iniciais e finais com o modelo principal antes/depois do catálogo. */
+  imageGenPrimaryAttempts: 5,
   /** Limite global diário (todos os grupos). Reset 00h America/Sao_Paulo. */
   imageGenDailyLimit: 25,
   /** Timeout por requisição de geração (ms). */

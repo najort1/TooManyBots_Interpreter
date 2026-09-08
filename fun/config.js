@@ -351,7 +351,7 @@ export function normalizeFunConfig(input) {
     zenPersonaMaxTokens: normalizeInt(
       raw.zenPersonaMaxTokens,
       DEFAULT_FUN_CONFIG.zenPersonaMaxTokens,
-      { min: 64, max: 800, rounding: 'floor', clamp: true }
+      { min: 64, max: 4000, rounding: 'floor', clamp: true }
     ),
     zenDailyGuessTemperature: Number.isFinite(Number(raw.zenDailyGuessTemperature))
       ? Math.min(1.5, Math.max(0, Number(raw.zenDailyGuessTemperature)))
@@ -494,13 +494,26 @@ export function normalizeFunConfig(input) {
       toText(raw.imageGenProvider, DEFAULT_FUN_CONFIG.imageGenProvider).toLowerCase() ||
       DEFAULT_FUN_CONFIG.imageGenProvider,
     imageGenBaseUrl:
-      toText(raw.imageGenBaseUrl, DEFAULT_FUN_CONFIG.imageGenBaseUrl) ||
+      toText(raw.imageGenBaseUrl, raw.zenBaseUrl || DEFAULT_FUN_CONFIG.imageGenBaseUrl) ||
       DEFAULT_FUN_CONFIG.imageGenBaseUrl,
     geminiApiKey:
       toText(raw.geminiApiKey, process.env.GEMINI_API_KEY || DEFAULT_FUN_CONFIG.geminiApiKey) || '',
     imageGenApiKey:
-      toText(raw.imageGenApiKey, raw.geminiApiKey || process.env.GEMINI_API_KEY || DEFAULT_FUN_CONFIG.imageGenApiKey) || '',
+      toText(
+        raw.imageGenApiKey,
+        raw.zenApiKey || raw.geminiApiKey || process.env.GEMINI_API_KEY || DEFAULT_FUN_CONFIG.imageGenApiKey
+      ) || '',
     imageGenModel: toText(raw.imageGenModel, DEFAULT_FUN_CONFIG.imageGenModel) || '',
+    imageGenFallbackModels: Array.isArray(raw.imageGenFallbackModels)
+      ? [...new Set(raw.imageGenFallbackModels
+        .map((model) => String(model || '').trim())
+        .filter(Boolean))].slice(0, 10)
+      : DEFAULT_FUN_CONFIG.imageGenFallbackModels,
+    imageGenPrimaryAttempts: normalizeInt(
+      raw.imageGenPrimaryAttempts,
+      DEFAULT_FUN_CONFIG.imageGenPrimaryAttempts,
+      { min: 1, max: 10, rounding: 'floor', clamp: true }
+    ),
     imageGenDailyLimit: normalizeInt(raw.imageGenDailyLimit, DEFAULT_FUN_CONFIG.imageGenDailyLimit, {
       min: 1,
       max: 500,
@@ -972,6 +985,19 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    groupNewsAudioEnabled: normalizeBoolean(
+      raw.groupNewsAudioEnabled,
+      DEFAULT_FUN_CONFIG.groupNewsAudioEnabled
+    ),
+    groupNewsAnchorVoice:
+      toText(raw.groupNewsAnchorVoice, DEFAULT_FUN_CONFIG.groupNewsAnchorVoice) ||
+      DEFAULT_FUN_CONFIG.groupNewsAnchorVoice,
+    groupNewsAudioModel:
+      toText(raw.groupNewsAudioModel, DEFAULT_FUN_CONFIG.groupNewsAudioModel) ||
+      DEFAULT_FUN_CONFIG.groupNewsAudioModel,
+    groupNewsAudioTemperature: Number.isFinite(Number(raw.groupNewsAudioTemperature))
+      ? Math.min(1.5, Math.max(0, Number(raw.groupNewsAudioTemperature)))
+      : DEFAULT_FUN_CONFIG.groupNewsAudioTemperature,
     groupNewsMessageHistoryEnabled: normalizeBoolean(
       raw.groupNewsMessageHistoryEnabled,
       DEFAULT_FUN_CONFIG.groupNewsMessageHistoryEnabled
@@ -1118,11 +1144,12 @@ export function normalizeFunConfig(input) {
     personaEnabled: normalizeBoolean(raw.personaEnabled, DEFAULT_FUN_CONFIG.personaEnabled),
     personaToolsEnabled: normalizeBoolean(raw.personaToolsEnabled, DEFAULT_FUN_CONFIG.personaToolsEnabled),
     personaAutonomyEnabled: normalizeBoolean(raw.personaAutonomyEnabled, DEFAULT_FUN_CONFIG.personaAutonomyEnabled),
-    personaAutonomyMode: ['explicit', 'soft', 'natural'].includes(String(raw.personaAutonomyMode || ''))
+    personaAutonomyMode: ['explicit', 'soft', 'natural', 'llm'].includes(String(raw.personaAutonomyMode || ''))
       ? String(raw.personaAutonomyMode)
       : DEFAULT_FUN_CONFIG.personaAutonomyMode,
+    personaAutonomyLlmEnabled: normalizeBoolean(raw.personaAutonomyLlmEnabled, DEFAULT_FUN_CONFIG.personaAutonomyLlmEnabled),
     personaAutonomyMinScore: normalizeInt(raw.personaAutonomyMinScore, DEFAULT_FUN_CONFIG.personaAutonomyMinScore, {
-      min: 1, max: 20, rounding: 'floor', clamp: true,
+      min: 0, max: 100, rounding: 'floor', clamp: true,
     }),
     personaAutonomyCooldownMs: normalizeInt(raw.personaAutonomyCooldownMs, DEFAULT_FUN_CONFIG.personaAutonomyCooldownMs, {
       min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true,
@@ -1137,6 +1164,31 @@ export function normalizeFunConfig(input) {
       min: 1, max: 5, rounding: 'floor', clamp: true,
     }),
     personaAutonomyNegativeBlockMs: normalizeInt(raw.personaAutonomyNegativeBlockMs, DEFAULT_FUN_CONFIG.personaAutonomyNegativeBlockMs, {
+      min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyAllowedActions: Array.isArray(raw.personaAutonomyAllowedActions)
+      ? raw.personaAutonomyAllowedActions.map((value) => String(value || '').trim().toLowerCase())
+        .filter((value) => ['react', 'sticker', 'comment'].includes(value))
+      : DEFAULT_FUN_CONFIG.personaAutonomyAllowedActions,
+    personaAutonomyCommentMaxChars: normalizeInt(raw.personaAutonomyCommentMaxChars, DEFAULT_FUN_CONFIG.personaAutonomyCommentMaxChars, {
+      min: 40, max: 280, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyCandidateMinMessages: normalizeInt(raw.personaAutonomyCandidateMinMessages, DEFAULT_FUN_CONFIG.personaAutonomyCandidateMinMessages, {
+      min: 0, max: 20, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyContextMessages: normalizeInt(raw.personaAutonomyContextMessages, DEFAULT_FUN_CONFIG.personaAutonomyContextMessages, {
+      min: 1, max: 12, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyContextMaxChars: normalizeInt(raw.personaAutonomyContextMaxChars, DEFAULT_FUN_CONFIG.personaAutonomyContextMaxChars, {
+      min: 500, max: 8_000, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyBatchSize: normalizeInt(raw.personaAutonomyBatchSize, DEFAULT_FUN_CONFIG.personaAutonomyBatchSize, {
+      min: 1, max: 100, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyBatchContextMessages: normalizeInt(raw.personaAutonomyBatchContextMessages, DEFAULT_FUN_CONFIG.personaAutonomyBatchContextMessages, {
+      min: 0, max: 30, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyFlushIntervalMs: normalizeInt(raw.personaAutonomyFlushIntervalMs, DEFAULT_FUN_CONFIG.personaAutonomyFlushIntervalMs, {
       min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true,
     }),
     personaFollowupEnabled: normalizeBoolean(raw.personaFollowupEnabled, DEFAULT_FUN_CONFIG.personaFollowupEnabled),
@@ -1286,9 +1338,10 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.personaTimeoutMs,
       { min: 5_000, max: 60_000, rounding: 'floor', clamp: true }
     ),
+    // Zero desativa o teto da persona; valores positivos preservam um limite explícito por grupo.
     personaMaxChars: normalizeInt(raw.personaMaxChars, DEFAULT_FUN_CONFIG.personaMaxChars, {
-      min: 80,
-      max: 1_000,
+      min: 0,
+      max: 65_536,
       rounding: 'floor',
       clamp: true,
     }),
@@ -1591,6 +1644,8 @@ export function saveFunUserConfig(input) {
     imageGenBaseUrl: normalized.imageGenBaseUrl,
     imageGenApiKey: normalized.imageGenApiKey,
     imageGenModel: normalized.imageGenModel,
+    imageGenFallbackModels: normalized.imageGenFallbackModels,
+    imageGenPrimaryAttempts: normalized.imageGenPrimaryAttempts,
     imageGenDailyLimit: normalized.imageGenDailyLimit,
     imageGenTimeoutMs: normalized.imageGenTimeoutMs,
     imageGenSize: normalized.imageGenSize,

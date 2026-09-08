@@ -154,6 +154,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     personaSocialHintService,
     personaService,
     personaContextService,
+    dispatchPersonaAutonomousAction,
     loreReconciliationService,
     threadContextService,
     memoryIngestionService,
@@ -848,6 +849,15 @@ export async function handleFunIncomingMessage(deps, ctx) {
           funConfig,
           replyImageUrl,
           replySticker,
+          dispatchAutonomousAction: dispatchPersonaAutonomousAction
+            ? (action) => dispatchPersonaAutonomousAction({
+                sock,
+                scopeKey: scope.scopeKey,
+                action,
+                quoteSource,
+                messageKey: rawMessage?.key || null,
+              })
+            : null,
           now: Date.now(),
         }).then((r) => {
           if (r?.responded) {

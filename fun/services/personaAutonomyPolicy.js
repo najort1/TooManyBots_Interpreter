@@ -19,7 +19,7 @@ function isSensitive(text) {
 }
 
 function normalizeMode(value) {
-  return ['explicit', 'soft', 'natural'].includes(value) ? value : DEFAULTS.mode;
+  return ['explicit', 'soft', 'natural', 'llm'].includes(value) ? value : DEFAULTS.mode;
 }
 
 /**
@@ -27,8 +27,42 @@ function normalizeMode(value) {
  * A política só autoriza o turno; o modelo continua escolhendo texto, reação
  * ou sticker dentro do protocolo já existente.
  */
-export function createPersonaAutonomyPolicy({ now = () => Date.now() } = {}) {
+export function createPersonaAutonomyPolicy({ autonomyRepository = null, now = () => Date.now() } = {}) {
   const groupStates = new Map();
+
+  function toState(raw = {}) {
+    return {
+      sentAt: Array.isArray(raw.actionTimestamps)
+        ? raw.actionTimestamps
+        : Array.isArray(raw.sentAt) ? raw.sentAt : [],
+      lastAt: Number(raw.lastActionAt ?? raw.lastAt) || 0,
+      consecutive: Math.max(0, Number(raw.consecutiveCount ?? raw.consecutive) || 0),
+      negativeUntil: Math.max(0, Number(raw.negativeUntil) || 0),
+    };
+  }
+
+  function persistState(scopeKey, state, currentNow) {
+    if (!autonomyRepository?.saveState) return;
+    autonomyRepository.saveState(scopeKey, {
+      lastActionAt: state.lastAt,
+      actionTimestamps: state.sentAt,
+      consecutiveCount: state.consecutive,
+      negativeUntil: state.negativeUntil,
+    }, { now: currentNow });
+  }
+
+  function readState(scopeKey, currentNow) {
+    if (autonomyRepository?.getState) {
+      const persisted = autonomyRepository.getState(scopeKey, { now: currentNow });
+      if (persisted) return toState(persisted);
+    }
+    return getState(scopeKey);
+  }
+
+  function observeState(scopeKey, state) {
+    groupStates.set(scopeKey, state);
+    return state;
+  }
 
   function getOptions(funConfig = {}) {
     return {
@@ -76,8 +110,11 @@ export function createPersonaAutonomyPolicy({ now = () => Date.now() } = {}) {
     if (hasStopRequest(text)) return { eligible: false, reason: 'stop-request', score: 0 };
     if (isSensitive(text)) return { eligible: false, reason: 'sensitive', score: 0 };
 
-    const state = getState(scopeKey);
+    const state = observeState(scopeKey, readState(scopeKey, currentNow));
     if (state.negativeUntil > currentNow) return { eligible: false, reason: 'negative-signal', score: 0 };
+    if (socialSignals.some((signal) => String(signal?.socialSignal || '').toLowerCase() === 'negative')) {
+      return { eligible: false, reason: 'negative-social-signal', score: 0 };
+    }
     if (state.lastAt && currentNow - state.lastAt < options.cooldownMs) return { eligible: false, reason: 'cooldown', score: 0 };
     if (state.consecutive >= options.maxConsecutive) return { eligible: false, reason: 'consecutive-limit', score: 0 };
 
@@ -92,26 +129,29 @@ export function createPersonaAutonomyPolicy({ now = () => Date.now() } = {}) {
     if (/\b(?:kkkk|kkk|meme|olha isso|socorro|mds|meu deus|parab[eé]ns|feliz anivers[aá]rio)\b/iu.test(lower)) score += 2;
     if (immediateContext.length >= 3) score += 1;
     if (/(?:\b(?:quem|qual|algu[eé]m|voc[eê]s|gente)\b.*\?)/iu.test(lower)) score += 2;
-    if (socialSignals.some((signal) => String(signal?.socialSignal || '').toLowerCase() === 'negative')) {
-      return { eligible: false, reason: 'negative-social-signal', score };
-    }
     if (options.mode === 'soft') return { eligible: false, reason: 'soft-no-strong-continuation', score };
+    if (options.mode === 'llm') return { eligible: true, reason: 'llm-preflight', score };
     return score >= options.minScore
       ? { eligible: true, reason: 'natural-score', score }
       : { eligible: false, reason: 'low-score', score };
   }
 
   function recordSent(scopeKey, currentNow = now()) {
-    const state = getState(scopeKey);
+    const state = observeState(scopeKey, readState(scopeKey, currentNow));
+    state.sentAt = state.sentAt.filter((at) => currentNow - at <= 24 * 60 * 60_000);
     state.sentAt.push(currentNow);
     state.lastAt = currentNow;
     state.consecutive += 1;
+    persistState(scopeKey, state, currentNow);
   }
 
-  function observeHumanMessage(scopeKey, { text, currentNow = now() } = {}) {
-    const state = getState(scopeKey);
+  function observeHumanMessage(scopeKey, { text, funConfig = {}, currentNow = now() } = {}) {
+    const state = observeState(scopeKey, readState(scopeKey, currentNow));
     state.consecutive = 0;
-    if (hasStopRequest(text)) state.negativeUntil = currentNow + DEFAULTS.negativeSignalBlockMs;
+    if (hasStopRequest(text)) {
+      state.negativeUntil = currentNow + getOptions(funConfig).negativeSignalBlockMs;
+    }
+    persistState(scopeKey, state, currentNow);
   }
 
   return { evaluate, recordSent, observeHumanMessage, _states: groupStates };

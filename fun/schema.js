@@ -748,6 +748,20 @@ export function buildFunSchemaSql() {
       updated_at             INTEGER NOT NULL
     );
 
+    -- Comentarista residente do jornal diário (consistente por grupo)
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_group_news_commentator (
+      scope_key       TEXT PRIMARY KEY,
+      name            TEXT NOT NULL,
+      title           TEXT NOT NULL DEFAULT '',
+      personality     TEXT NOT NULL DEFAULT '',
+      catchphrase     TEXT NOT NULL DEFAULT '',
+      style           TEXT NOT NULL DEFAULT '',
+      voice_name      TEXT NOT NULL DEFAULT '',
+      voice_tone      TEXT NOT NULL DEFAULT '',
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
+    );
+
     -- Snapshot diário do jornal: 1 linha/dia/grupo.
     -- Populado em newsService.tryPublish para alimentar memória histórica (30+ dias).
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_daily_snapshot (
@@ -1026,6 +1040,16 @@ export function buildFunSchemaSql() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_persona_followups_due
       ON fun_persona_followups(status, last_human_at, lease_until);
 
+    -- Limites duráveis de participação espontânea. Evita rajada depois de restart.
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_persona_autonomy_state (
+      scope_key             TEXT PRIMARY KEY,
+      last_action_at        INTEGER NOT NULL DEFAULT 0,
+      action_timestamps_json TEXT NOT NULL DEFAULT '[]',
+      consecutive_count     INTEGER NOT NULL DEFAULT 0,
+      negative_until        INTEGER NOT NULL DEFAULT 0,
+      updated_at            INTEGER NOT NULL DEFAULT 0
+    );
+
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_conversation_memories (
       id TEXT PRIMARY KEY, scope_key TEXT NOT NULL, memory_type TEXT NOT NULL,
       subject_user_jid TEXT NOT NULL DEFAULT '', target_user_jid TEXT NOT NULL DEFAULT '',
@@ -1289,6 +1313,19 @@ export function ensureFunSchema(db) {
       db.exec(
         `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_settings ADD COLUMN persona_enabled INTEGER NOT NULL DEFAULT 1`
       );
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const commentatorCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_group_news_commentator)`).all();
+    const cNames = new Set(commentatorCols.map((c) => String(c.name || '')));
+    if (cNames.size && !cNames.has('voice_name')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_news_commentator ADD COLUMN voice_name TEXT NOT NULL DEFAULT ''`);
+    }
+    if (cNames.size && !cNames.has('voice_tone')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_news_commentator ADD COLUMN voice_tone TEXT NOT NULL DEFAULT ''`);
     }
   } catch {
     // ignore

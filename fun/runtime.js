@@ -420,6 +420,27 @@ export async function startFunBot(options = {}) {
     sendText: sendTextMessage,
     sendImage: sendImageMessage,
     sendSticker: sendStickerMessage,
+    dispatchPersonaAutonomousAction: async ({ sock, scopeKey, action, quoteSource, messageKey }) => {
+      const priority = 'flavor';
+      const coalesceKey = `persona-autonomy:${scopeKey}`;
+      const quoted = quoteSource?.key ? { quoted: quoteSource } : undefined;
+      if (action?.type === 'text') {
+        return sendTextMessage(sock, scopeKey, action.text, { priority, coalesceKey, ...(quoted || {}) });
+      }
+      if (action?.type === 'sticker' || action?.type === 'sticker_buffer') {
+        return sendStickerMessage(sock, scopeKey, action.stickerBuffer, { priority, coalesceKey, ...(quoted || {}) });
+      }
+      if (action?.type === 'react') {
+        const targetKey = quoteSource?.key || messageKey;
+        if (!targetKey || typeof sock?.sendMessage !== 'function') {
+          return { skipped: true, reason: 'reaction-target-unavailable' };
+        }
+        return enqueueFunOutput(scopeKey, { priority, coalesceKey }, () => sock.sendMessage(scopeKey, {
+          react: { text: action.emoji, key: targetKey },
+        }));
+      }
+      return { skipped: true, reason: 'unsupported-autonomous-action' };
+    },
     getContactDisplayName,
     getSock: () => currentSocket,
   });
