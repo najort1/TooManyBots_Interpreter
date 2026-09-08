@@ -139,25 +139,25 @@ Invente o tom. 1–3 frases. Sem gore real. Só o comentário.`,
 Você inventa o ângulo e as farpas — sem inventar crimes reais nem dados que não estejam nos fatos.
 2–4 frases em pt-BR. Sem preconceito, sem ofensa a trauma/identidade. Só o roast final.`,
 
-  group_times: `Você é o editor-chefe do jornal "The Group Times" de um grupo de WhatsApp BR.
+  group_times: `Você é o repórter investigativo e cronista opinativo do jornal "The Group Times" de um grupo de WhatsApp BR.
 
-SEU PAPEL: narrar a CONVERSA REAL daquele grupo durante o dia. O leitor quer descobrir quais assuntos renderam, que reviravoltas houve e quais frases entraram para o arquivo.
+SEU PAPEL: Narrar a CONVERSA REAL daquele grupo durante o dia como uma crônica jornalística envolvente, opinativa, sarcástica e carismática. Não seja um robô burocrático que apenas lista horários ou enumera tópicos. Você avalia os acontecimentos com humor editorial, ironia fina e opiniões ácidas sobre as insanidades do grupo.
 
-FORMATO OBRIGATÓRIO (rótulos exatos, cada bloco em linhas próprias):
-CAPA: manchete curta e chamativa (4–15 palavras)
-MANCHETES: 2–4 tópicos curtos sobre fatos claramente sustentados pela conversa
-DETALHES: 2–4 parágrafos curtos, em ordem aproximada do dia, com tom fofoqueiro cômico
-CITACOES: no máximo 3 linhas no formato Nome: “citação literal”. Use EXCLUSIVAMENTE citações fornecidas em sourceQuotes; se não houver, deixe vazio.
-FECHO: uma frase final divertida, sem prever nem inventar o amanhã.
+TEXTO TOTALMENTE NARRATIVO E FLUIDO (REGRA DE OURO):
+• PROIBIDO usar marcadores de tópicos, bullets (•, -, *), listas numéricas ou formato de ata/relatório.
+• Escreva em PROSA CORRIDA, com parágrafos encadeados, ritmo de crônica de jornal e transições narrativas elegantes.
 
-REGRAS DE SEGURANÇA E VERDADE:
-• Use SOMENTE a conversa, a linha do tempo e as citações fornecidas. Não invente fatos, motivações, relacionamentos, acusações nem resultados.
-• Humor fofoqueiro é bem-vindo; humilhação, ataque pessoal, preconceito, exposição de dado privado ou incentivo a briga são proibidos.
-• Conflito deve ser relatado como conversa do grupo (“rolou discussão sobre...”), nunca como fato comprovado ou acusação.
-• Só escreva nomes que apareçam nos dados e só atribua fala ao autor fornecido.
-• Não mencione coins, XP, rankings, comandos, economia do bot ou métricas técnicas.
-• pt-BR natural de WhatsApp, sem preâmbulo, sem meta, sem markdown extra fora dos rótulos.
-• Se o contexto for fraco, seja honesto e seco; nunca preencha lacunas com ficção.`,
+ESTRUTURA OBRIGATÓRIA (use cada rótulo exato no início da respectiva seção):
+CAPA: Manchete provocativa, editorial e chamativa sobre a principal pauta ou absurdo do dia (sem aspas).
+INTRO: Crônica de abertura do repórter contextualizando os temas do dia com análise opinativa, sarcasmo e visão crítica dos acontecimentos em prosa contínua.
+COMENTARISTA: Transição narrativa do repórter convocando o comentarista residente (informado nos dados), seguida da declaração ácida e parecer hilário dele. O comentarista exagera, contradiz os fatos com humor, zomba dos participantes e usa linguagem e gírias do grupo.
+DETALHES: Aprofundamento investigativo das fofocas, discussões e reviravoltas em prosa narrativa fluida, tecendo falas e reações dos membros de forma orgânica na história.
+FORESHADOW: Encerramento editorial com presságios cômicos para o dia seguinte, alertando a redação e os leitores sobre as consequências dos fatos narrados.
+CITACOES: (Opcional) No máximo 3 citações literais autorizadas no formato Nome: “citação literal” se não puderem ser integradas no texto.
+
+REGRAS DE VERDADE E ESTILO:
+• Use SOMENTE a conversa, os participantes e as citações reais fornecidas. Não invente fatos fora do contexto.
+• Adote tom editorial e bem-humorado de WhatsApp brasileiro, sem preâmbulo, sem meta e sem markdown fora dos rótulos.`,
 });
 
 const CHAOS_SYSTEM_DEFAULT = `Você gera texto cômico original de bot WhatsApp BR. 2–4 frases COMPLETAS em pt-BR.
@@ -634,7 +634,7 @@ function looksLikeMetaReasoning(s) {
   }
   // meta em pt-BR (modelo planejando a frase em vez de dizer a frase)
   if (
-    /\b(posso brincar|outra ideia|então posso|talvez algo sobre|preciso (criar|escrever|gerar)|vou (escrever|focar|criar)|a frase (poderia|tem que|seria)|algo que brinque|responda somente|só a frase|em português|em portugues|pode ser$|seria algo|tipo assim)\b/i.test(
+    /\b(posso brincar|outra ideia|então posso|talvez algo sobre|preciso (criar|escrever|gerar)|vou (escrever|focar|criar|com|usar)|a frase (poderia|tem que|seria)|algo que brinque|responda somente|só a frase|em português|em portugues|pode ser$|seria algo|tipo assim)\b/i.test(
       t
     )
   ) {
@@ -676,10 +676,11 @@ export function looksLikeScoreboardEcho(text) {
   return false;
 }
 
-export function sanitizeFlavor(raw, maxLen = 160) {
+export function sanitizeFlavor(raw, maxLen = 160, { maxLines = 3 } = {}) {
   const lines = String(raw || '')
     .replace(/\r/g, '')
-    .replace(/<think>[\s\S]*?<\/think>/gi, ' ')
+    .replace(/<(?:thinking|think|thought|reasoning)>[\s\S]*?<\/(?:thinking|think|thought|reasoning)>/gi, ' ')
+    .replace(/^<(?:thinking|think|thought|reasoning)>[\s\S]*$/gi, ' ')
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/^>\s*/gm, '')
     .split('\n')
@@ -687,7 +688,7 @@ export function sanitizeFlavor(raw, maxLen = 160) {
     .filter(Boolean)
     .filter((l) => !/^(thinking|raciocínio|step\s*\d|racioc)/i.test(l));
 
-  // junta até 3 linhas boas; se todas forem meta/rascunho, falha → template
+  // Junta as linhas boas; callers podem manter todas as linhas em respostas longas.
   const good = [];
   for (const line of lines) {
     let cand = line
@@ -700,7 +701,7 @@ export function sanitizeFlavor(raw, maxLen = 160) {
     cand = cand.replace(/^(aqui vai[:\s]*|segue[:\s]*|claro[!.,]?\s*)/i, '').trim();
     if (cand.length < 12 || looksLikeMetaReasoning(cand)) continue;
     good.push(cand);
-    if (good.length >= 3) break;
+    if (good.length >= maxLines) break;
   }
   if (!good.length) return '';
   let s = good.join(' ').replace(/\s+/g, ' ').trim();
@@ -718,37 +719,52 @@ export function sanitizeFlavor(raw, maxLen = 160) {
 
 /** Extrai o campo `line` de respostas em JSON, preservando texto legado inválido. */
 function unwrapLineJson(raw) {
-  const text = String(raw || '').trim();
-  if (!text) return '';
+  const str = String(raw || '').trim();
+  if (!str) return '';
   try {
-    const parsed = JSON.parse(text);
+    const parsed = JSON.parse(str);
     if (parsed && typeof parsed === 'object' && typeof parsed.line === 'string') {
       return parsed.line;
     }
-  } catch {
-    const wrapped = text.match(/\{[\s\S]*\}/);
-    if (wrapped) {
-      try {
-        const parsed = JSON.parse(wrapped[0]);
-        if (parsed && typeof parsed === 'object' && typeof parsed.line === 'string') {
-          return parsed.line;
-        }
-      } catch {
-        // mantém o texto bruto para os sanitizers legados.
-      }
+  } catch {}
+
+  const wrapped = str.match(/\{[\s\S]*\}/);
+  const target = wrapped ? wrapped[0] : str;
+
+  try {
+    const parsed = JSON.parse(target);
+    if (parsed && typeof parsed === 'object' && typeof parsed.line === 'string') {
+      return parsed.line;
+    }
+  } catch {}
+
+  // Extração resiliente de "line": "..." com suporte a quebras de linha literais (control characters)
+  const prefixMatch = target.match(/"line"\s*:\s*"/);
+  if (prefixMatch) {
+    const startIndex = prefixMatch.index + prefixMatch[0].length;
+    const lastQuoteIndex = target.lastIndexOf('"');
+    if (lastQuoteIndex > startIndex) {
+      const inner = target.slice(startIndex, lastQuoteIndex);
+      return inner
+        .replace(/\\n/g, '\n')
+        .replace(/\\"/g, '"')
+        .replace(/\\t/g, '\t')
+        .replace(/\\r/g, '')
+        .trim();
     }
   }
-  return text;
+  return str;
 }
 
 /**
- * The Group Times: multi-linha (MANCHETE/ECONOMIA/FOFOCA).
- * sanitizeFlavor colapsava tudo e matava a edição.
+ * The Group Times: multi-linha narrativa fluida e opinativa.
+ * Sem cortes artificiais de caracteres para suportar crônicas completas.
  */
-export function sanitizeGroupTimes(raw, maxLen = 1800) {
+export function sanitizeGroupTimes(raw, maxLen = 64000) {
   let t = unwrapLineJson(raw)
     .replace(/\r/g, '')
-    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+    .replace(/<(?:thinking|think|thought|reasoning)>[\s\S]*?<\/(?:thinking|think|thought|reasoning)>/gi, '')
+    .replace(/^<(?:thinking|think|thought|reasoning)>[\s\S]*$/gi, '')
     .replace(/```(?:json|text)?/gi, '')
     .trim();
   if (!t) return '';
@@ -760,16 +776,15 @@ export function sanitizeGroupTimes(raw, maxLen = 1800) {
     .split('\n')
     .map((l) => l.trim())
     .filter(Boolean)
-    .filter((l) => !/^(thinking|raciocínio|step\s*\d)/i.test(l))
-    .slice(0, 20);
+    .filter((l) => !/^(thinking|raciocínio|step\s*\d)/i.test(l));
   if (!lines.length) return '';
 
   let body = lines.join('\n').trim();
   if (body.length < 30) return '';
   if (body.length > maxLen) body = body.slice(0, maxLen).trim();
-  // precisa parecer jornal (pelo menos um rótulo ou 2+ linhas)
+  // precisa parecer jornal (pelo menos um rótulo editorial ou 2+ linhas)
   if (
-    !/capa|manchetes|detalhes|citacoes|citações|fecho/i.test(body) &&
+    !/capa|intro|editorial|manchetes|comentarista|detalhes|citacoes|citações|foreshadow|fecho/i.test(body) &&
     lines.length < 2
   ) {
     return '';
@@ -881,7 +896,8 @@ ${shape}`;
 export function sanitizeAssaultStory(raw, maxLen = 900) {
   let text = unwrapLineJson(raw)
     .replace(/\r/g, '')
-    .replace(/<think>[\s\S]*?<\/think>/gi, '\n')
+    .replace(/<(?:thinking|think|thought|reasoning)>[\s\S]*?<\/(?:thinking|think|thought|reasoning)>/gi, '\n')
+    .replace(/^<(?:thinking|think|thought|reasoning)>[\s\S]*$/gi, '')
     .replace(/```[\s\S]*?```/g, '\n')
     .trim();
 
@@ -895,10 +911,6 @@ export function sanitizeAssaultStory(raw, maxLen = 900) {
 
   const scriptStart = text.search(/🎬|T[IÍ]TULO\s*:|CENA\s*1/i);
   if (scriptStart > 0) text = text.slice(scriptStart);
-  if (!text || looksLikeMetaReasoning(text.slice(0, 200))) {
-    const idx = text.search(/🎬|T[IÍ]TULO|CENA\s*1/i);
-    if (idx > 0) text = text.slice(idx);
-  }
 
   const lines = text
     .split('\n')
@@ -909,7 +921,7 @@ export function sanitizeAssaultStory(raw, maxLen = 900) {
       if (/^(thinking|raciocínio|step\s*\d|contexto:|regras?:)/i.test(t)) return false;
       if (/^(aqui vai|segue o|roteiro besteirol|no tom que)/i.test(t)) return false;
       const isScriptHeading = /^(?:🎬\s*)?(?:T[IÍ]TULO|CENA\s*\d|EP[IÍ]LOGO)\b/i.test(t);
-      if (!isScriptHeading && looksLikeMetaReasoning(t) && t.length < 160) return false;
+      if (!isScriptHeading && looksLikeMetaReasoning(t) && t.length < 160 && !t.includes('"')) return false;
       return true;
     });
 
@@ -923,8 +935,11 @@ export function sanitizeAssaultStory(raw, maxLen = 900) {
       continue;
     }
     blanks = 0;
-    let cand = line
-      .replace(/^["'“”«»]+|["'“”«»]+$/g, '')
+    let cand = line.trim();
+    if (/^["'“”«»].*["'“”«»]$/.test(cand)) {
+      cand = cand.replace(/^["'“”«»]+|["'“”«»]+$/g, '').trim();
+    }
+    cand = cand
       .replace(/^(narrador|bot|assistente|roteiro|resposta|final)\s*:\s*/i, '')
       .trimEnd();
     cleaned.push(cand);
@@ -947,7 +962,10 @@ export function sanitizeAssaultStory(raw, maxLen = 900) {
     const sp = Math.max(cut.lastIndexOf('\n\n'), cut.lastIndexOf('\n'), cut.lastIndexOf('. '));
     s = `${(sp > 200 ? cut.slice(0, sp) : cut).trim()}…`;
   }
-  if (looksLikeMetaReasoning(s.slice(0, 120))) return '';
+  const firstLine = s.split('\n')[0] || '';
+  if (!/^(?:🎬\s*)?(?:T[IÍ]TULO|CENA\s*1)\b/i.test(firstLine) && looksLikeMetaReasoning(firstLine)) {
+    return '';
+  }
   return s;
 }
 
@@ -1167,18 +1185,24 @@ export function createFlavorService(deps = {}) {
         russian_dead: `Comente a “morte” virtual na roleta. Dados: ${facts || 'nenhum'}.`,
         russian_start: `Abra a roleta russa no grupo. Dados: ${facts || 'nenhum'}.`,
         roast_personal: `Roast de *${userName || 'Fulano'}*. Fatos:\n${String(vars?.facts || facts || 'poucos dados')}`,
-        group_times: `Jornal The Group Times — PAUTA DO GRUPO:
-Tom observado: ${vars?.mood || 'conversado'}
-Mensagens no dia: ${vars?.messageCount ?? '?'}
-Participantes: ${vars?.participantCount ?? '?'}
-Linha do tempo:
-${String(vars?.timeline || 'sem linha do tempo')}
-
-CONVERSA-FONTE (use apenas isto; não complete lacunas):
-${String(vars?.conversation || 'nenhuma mensagem elegível')}
-
-CITAÇÕES AUTORIZADAS (copie literalmente somente se usar):
-${String(vars?.sourceQuotes || 'nenhuma')}.`,
+        group_times: [
+          `Jornal The Group Times — PAUTA DO DIA:`,
+          `Tom observado: ${vars?.mood || 'conversado'}`,
+          `Mensagens no dia: ${vars?.messageCount ?? '?'} | Participantes: ${vars?.participantCount ?? '?'}`,
+          vars?.commentator
+            ? `Comentarista residente: ${vars.commentator.name} (${vars.commentator.title || 'comentarista'}) — Personalidade: ${vars.commentator.personality || 'sarcástico'} — Bordão: "${vars.commentator.catchphrase || ''}"`
+            : null,
+          vars?.groupStyle ? `Gírias e vocabulário frequente do grupo: ${vars.groupStyle}` : null,
+          vars?.socialVibe ? `Voz e clima observados: ${vars.socialVibe}` : null,
+          `\nLinha do tempo dos fatos:`,
+          String(vars?.timeline || 'sem linha do tempo'),
+          `\nCONVERSA-FONTE (fatos reais a serem narrados com sarcasmo e opinião editorial em prosa fluida):`,
+          String(vars?.conversation || 'nenhuma mensagem elegível'),
+          `\nCITAÇÕES AUTORIZADAS (use se couber na narrativa):`,
+          String(vars?.sourceQuotes || 'nenhuma') + '.',
+        ]
+          .filter(Boolean)
+          .join('\n'),
       }[key] || `Escreva o texto do comando. Dados: ${facts || 'nenhum'}.`;
 
       // ban só do MESMO grupo — nunca vazamento cross-grupo
@@ -1209,7 +1233,7 @@ ${String(vars?.sourceQuotes || 'nenhuma')}.`,
           : null,
         banHint || null,
         key === 'group_times'
-          ? 'Use APENAS a conversa-fonte e as citações autorizadas acima. Não cite outro grupo, não crie falas e responda só nos rótulos do jornal:'
+          ? 'Escreva a crônica em prosa corrida fluida (PROIBIDO usar bullets ou listas), com opinião editorial e a intervenção do comentarista residente, respeitando os rótulos CAPA:, INTRO:, COMENTARISTA:, DETALHES:, FORESHADOW: (e CITACOES:):'
           : 'Responda só com o texto pronto pro zap (sem instruções, sem meta):',
       ]
         .filter(Boolean)
@@ -1218,12 +1242,12 @@ ${String(vars?.sourceQuotes || 'nenhuma')}.`,
       return {
         prompt,
         system: chaosSystemFor(key),
-        maxChars: key === 'group_times' ? Math.max(maxChars, 1600) : maxChars,
+        maxChars: key === 'group_times' ? Math.max(maxChars, 64000) : maxChars,
         assault: false,
         chaos: true,
         maxTokens:
           key === 'group_times'
-            ? Math.max(600, Math.floor(Number(cfg.chaosMaxTokens) || 700))
+            ? Math.max(2500, Math.floor(Number(cfg.zenNewsMaxTokens) || 2500))
             : Math.max(220, Math.floor(Number(cfg.chaosMaxTokens) || 400)),
       };
     }
@@ -1376,11 +1400,14 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
           ? sanitizeGroupTimes(raw, maxChars)
           : sanitizeFlavor(raw, maxChars);
       const accepted =
-        key === 'group_times'
+        assault || key === 'group_times'
           ? clean
           : acceptOrNull(clean, cfg, scopeKey, {
               skipOverlap: false,
             });
+      if (assault && clean && overlapsRecent(clean.slice(0, 120), recentBanList(cfg, scopeKey))) {
+        return { ok: false, reason: 'zen-empty', model: ep.model };
+      }
       if (!accepted) return { ok: false, reason: 'zen-empty', model: ep.model };
       return { ok: true, text: accepted, provider: 'zen', model: ep.model };
     } catch (err) {

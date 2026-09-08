@@ -57,7 +57,7 @@ export function looksLikeIncompleteOrMeta(text) {
     return true;
   }
   if (
-    /\b(em português|em portugues|assim,?$|outra ideia|posso (escrever|dizer|brincar)|vou (escrever|criar|focar)|preciso (escrever|criar|gerar)|a frase (poderia|seria|tem)|algo como|tipo assim|respond[ae] somente|só o texto|so o texto)\b/i.test(
+    /\b(em português|em portugues|assim,?$|outra ideia|posso (escrever|dizer|brincar)|vou (escrever|criar|focar|com|usar)|preciso (escrever|criar|gerar)|a frase (poderia|seria|tem)|algo como|tipo assim|respond[ae] somente|só o texto|so o texto)\b/i.test(
       s
     )
   ) {
@@ -147,6 +147,30 @@ function pickBestFromReasoning(reasoning) {
 }
 
 /**
+ * Remove blocos de raciocínio (<thinking>, <think>, <thought>, <reasoning>)
+ * preservando a resposta final do modelo (Claude Sonnet thinking, DeepSeek, Qwen, etc.).
+ */
+export function stripThinkingTags(text) {
+  const s = String(text || '');
+  if (!s) return '';
+  return s
+    .replace(/```(?:thought|thinking|reasoning)[\s\S]*?```/gi, '')
+    .replace(/<(?:thinking|think|thought|reasoning)>[\s\S]*?<\/(?:thinking|think|thought|reasoning)>/gi, '')
+    .replace(/^<(?:thinking|think|thought|reasoning)>[\s\S]*$/gi, '')
+    .trim();
+}
+
+/**
+ * Extrai o conteúdo dentro de tags de raciocínio se presente no texto.
+ */
+export function extractThinkingContent(text) {
+  const s = String(text || '');
+  if (!s) return '';
+  const match = s.match(/<(?:thinking|think|thought|reasoning)>([\s\S]*?)<\/(?:thinking|think|thought|reasoning)>/i);
+  return match ? match[1].trim() : '';
+}
+
+/**
  * Extrai objeto JSON embutido em prosa/reasoning (DeepSeek thinking).
  * Preferência: último bloco {...} parseável com chaves úteis.
  */
@@ -183,19 +207,26 @@ export function extractJsonBlob(text) {
               if (values.every((v) => !v || v === '...' || /^\.+$/.test(v))) continue;
               if (values.some((v) => /\|/.test(v) && /combustivel|municao|arma/.test(v))) continue;
               const keys = Object.keys(obj);
-              // extract/memory: {"facts":[...]} — single-key wrapper é o shape preferido
+              // extract/memory: {"facts":[...]} ou single-key wrappers como {"line":"..."}
               if (
                 keys.some((k) => /^(facts|items|data)$/i.test(k)) &&
                 Array.isArray(obj.facts || obj.items || obj.data)
               ) {
                 best = slice;
                 // facts wrapper vence inner objects; pode parar cedo se for o root
-              } else if (keys.some((k) => /^(title|body|archetype|category|companyId)$/i.test(k))) {
-                const title = String(obj.title || '');
-                if (title && !/DEVE|one of|listados|omit/i.test(title)) {
-                  best = slice;
+              } else if (keys.some((k) => /^(line|title|body|archetype|category|companyId)$/i.test(k))) {
+                if (keys.includes('line')) {
+                  const line = String(obj.line || '').trim();
+                  if (line && line !== '...' && line !== 'texto final') {
+                    best = slice;
+                  }
+                } else {
+                  const title = String(obj.title || '');
+                  if (title && !/DEVE|one of|listados|omit/i.test(title)) {
+                    best = slice;
+                  }
                 }
-              } else if (!best && keys.length >= 2) {
+              } else if (!best && keys.length >= 1 && values.some((v) => v && v !== '...' && !/^\.+$/.test(v))) {
                 best = slice;
               }
             }
@@ -218,14 +249,20 @@ export function extractJsonFromChat(data) {
   const choice = Array.isArray(data.choices) ? data.choices[0] : null;
   if (!choice) return '';
   const msg = choice.message || {};
-  const content = normalizeContent(msg.content ?? choice.text ?? '');
-  const reasoning = normalizeContent(
+  const rawContent = normalizeContent(msg.content ?? choice.text ?? '');
+  let reasoning = normalizeContent(
     msg.reasoning_content || msg.reasoning || msg.thinking || choice.reasoning || ''
   );
+  if (!reasoning && rawContent) {
+    reasoning = extractThinkingContent(rawContent);
+  }
+  const cleanContent = stripThinkingTags(rawContent);
+
   return (
-    extractJsonBlob(content) ||
+    extractJsonBlob(cleanContent) ||
+    extractJsonBlob(rawContent) ||
     extractJsonBlob(reasoning) ||
-    extractJsonBlob(`${content}\n${reasoning}`) ||
+    extractJsonBlob(`${cleanContent}\n${reasoning}`) ||
     ''
   );
 }
@@ -241,10 +278,14 @@ export function extractChatText(data) {
   if (!choice) return '';
 
   const msg = choice.message || {};
-  const content = normalizeContent(msg.content ?? choice.text ?? '');
-  const reasoning = normalizeContent(
+  const rawContent = normalizeContent(msg.content ?? choice.text ?? '');
+  let reasoning = normalizeContent(
     msg.reasoning_content || msg.reasoning || msg.thinking || choice.reasoning || ''
   );
+  if (!reasoning && rawContent) {
+    reasoning = extractThinkingContent(rawContent);
+  }
+  const content = stripThinkingTags(rawContent);
 
   // 1) JSON em content ou reasoning (prioridade absoluta p/ invent/market)
   const onlyJson = extractJsonFromChat(data);
