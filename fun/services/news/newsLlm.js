@@ -35,11 +35,11 @@ function allowedNames(conversation) {
 }
 
 /**
- * Sanitiza o texto da seção narrativa eliminando ruídos, metadados e marcadores de bullet,
- * sem impor cortes de caracteres ou de quantidade de linhas.
+ * Sanitiza o texto da seção narrativa eliminando ruídos, metadados e marcadores de bullet.
+ * Suporta teto opcional de caracteres cortando de forma limpa na pontuação da última frase.
  */
-export function sanitizeNarrativeSection(value) {
-  return String(value || '')
+export function sanitizeNarrativeSection(value, maxChars = Infinity) {
+  const sanitized = String(value || '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '')
     .replace(/```[\s\S]*?```/g, '')
     .split('\n')
@@ -48,18 +48,40 @@ export function sanitizeNarrativeSection(value) {
     .filter((line) => !/^(aqui vai|segue|claro|contexto|regras?|raciocínio|thinking)/i.test(line))
     .join('\n')
     .trim();
+
+  if (!Number.isFinite(maxChars) || maxChars <= 0 || sanitized.length <= maxChars) {
+    return sanitized;
+  }
+
+  const sliced = sanitized.slice(0, maxChars);
+  const lastSentenceBreak = Math.max(
+    sliced.lastIndexOf('. '),
+    sliced.lastIndexOf('.\n'),
+    sliced.lastIndexOf('!\n'),
+    sliced.lastIndexOf('?\n'),
+    sliced.lastIndexOf('! '),
+    sliced.lastIndexOf('? ')
+  );
+  if (lastSentenceBreak > Math.floor(maxChars * 0.4)) {
+    return sliced.slice(0, lastSentenceBreak + 1).trim();
+  }
+  const lastCommaOrLine = Math.max(sliced.lastIndexOf(', '), sliced.lastIndexOf('\n'));
+  if (lastCommaOrLine > Math.floor(maxChars * 0.4)) {
+    return `${sliced.slice(0, lastCommaOrLine).trim()}...`;
+  }
+  const lastSpace = sliced.lastIndexOf(' ');
+  return `${(lastSpace > 30 ? sliced.slice(0, lastSpace) : sliced).trim()}…`;
 }
 
 /** Wrapper para retrocompatibilidade; sem truncamentos forçados por padrão. */
 export function sanitizeLines(value, maxLines = Infinity, maxChars = Infinity) {
-  const sanitized = sanitizeNarrativeSection(value);
-  if (!Number.isFinite(maxLines) && !Number.isFinite(maxChars)) {
+  const sanitized = sanitizeNarrativeSection(value, maxChars);
+  if (!Number.isFinite(maxLines)) {
     return sanitized;
   }
   const lines = sanitized.split('\n');
   const sliced = Number.isFinite(maxLines) && maxLines > 0 ? lines.slice(0, maxLines) : lines;
-  const joined = sliced.join('\n').trim();
-  return Number.isFinite(maxChars) && maxChars > 0 ? joined.slice(0, maxChars).trim() : joined;
+  return sliced.join('\n').trim();
 }
 
 function validateQuotedLines(value, conversation) {
@@ -75,7 +97,7 @@ function validateQuotedLines(value, conversation) {
     if (!names.has(name)) continue;
     if (![...sourceQuotes].some((source) => source === quote.toLowerCase())) continue;
     output.push(`${match[1].trim()}: “${quote}”`);
-    if (output.length >= 5) break;
+    if (output.length >= 3) break;
   }
   return output.join('\n');
 }
@@ -108,15 +130,17 @@ export function parseConversationEdition(raw, conversation) {
   if (!text || text.length < 30) return null;
 
   const quotesRaw = extractLabel(text, 'CITACOES') || extractLabel(text, 'CITAÇÕES');
-  const capa = sanitizeNarrativeSection(extractLabel(text, 'CAPA'));
+  const capa = sanitizeNarrativeSection(extractLabel(text, 'CAPA'), 160);
   const intro = sanitizeNarrativeSection(
-    extractLabel(text, 'INTRO') || extractLabel(text, 'EDITORIAL') || extractLabel(text, 'MANCHETES')
+    extractLabel(text, 'INTRO') || extractLabel(text, 'EDITORIAL') || extractLabel(text, 'MANCHETES'),
+    650
   );
-  const comentarista = sanitizeNarrativeSection(extractLabel(text, 'COMENTARISTA'));
-  const detalhes = sanitizeNarrativeSection(extractLabel(text, 'DETALHES'));
+  const comentarista = sanitizeNarrativeSection(extractLabel(text, 'COMENTARISTA'), 500);
+  const detalhes = sanitizeNarrativeSection(extractLabel(text, 'DETALHES'), 800);
   const citacoes = validateQuotedLines(quotesRaw, conversation);
   const foreshadow = sanitizeNarrativeSection(
-    extractLabel(text, 'FORESHADOW') || extractLabel(text, 'FECHO')
+    extractLabel(text, 'FORESHADOW') || extractLabel(text, 'FECHO'),
+    250
   );
 
   const edition = {
@@ -183,7 +207,13 @@ export async function composeLlmBits(
     });
     const provider = typeof flavorService.lastProvider === 'function' ? flavorService.lastProvider(scopeKey) : '';
     if (String(provider).includes('template')) return null;
-    return parseConversationEdition(typeof raw === 'string' ? raw : raw?.text, conversation);
+    const parsed = parseConversationEdition(typeof raw === 'string' ? raw : raw?.text, conversation);
+    if (!parsed) {
+      console.warn(
+        `[fun/news] parse failed for scope=${String(scopeKey).slice(0, 28)} (raw length=${String(raw || '').length})`
+      );
+    }
+    return parsed;
   } catch (error) {
     console.warn(`[fun/news] llm error scope=${String(scopeKey).slice(0, 28)}: ${error?.message || error}`);
     return null;

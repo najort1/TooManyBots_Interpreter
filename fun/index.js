@@ -61,6 +61,7 @@ import { createSoundSystemService } from './services/soundSystemService.js';
 import { createPoliceService } from './services/policeService.js';
 import { createRoastService } from './services/roastService.js';
 import { createNewsService } from './services/newsService.js';
+import { sendNewsAudioWithRetry } from './services/news/newsAudio.js';
 import { createChangelogService } from './services/changelogService.js';
 import { createAchievementService } from './services/achievementService.js';
 import { createFunNsfwVoteRepository } from './db/funNsfwVoteRepository.js';
@@ -421,6 +422,7 @@ export function createFunModule(deps = {}) {
   const personaOpportunityDetector = deps.personaOpportunityDetector || createPersonaOpportunityDetector({
     autonomyPolicy: personaAutonomyPolicy,
     generateZen: deps.openaiChatComplete || deps.zenGenerate || openaiChatComplete,
+    personaSocialHintService,
     getLogger,
   });
   const socialMemoryService = deps.socialMemoryService || createSocialMemoryService();
@@ -880,10 +882,11 @@ export function createFunModule(deps = {}) {
     };
 
     // The Group Times: 23:59 — mesmo em quiet hours (exceção do relógio)
-    // Em paralelo por grupo: serial + timeout curto fazia só o 1º levar LLM e o resto template.
+    // Concorrência controlada (padrão 2 grupos por vez) para não sobrecarregar o backend LLM nem a rede
     if (newsService?.tryPublish && funConfig.groupNewsEnabled !== false) {
       const newsScopes = groups.filter((s) => s && String(s).endsWith('@g.us'));
-      const newsJobs = newsScopes.map(async (scopeKey) => {
+      const concurrency = Math.max(1, Math.min(5, Number(funConfig.groupNewsConcurrency) || 2));
+      const processNewsScope = async (scopeKey) => {
         // Verifica flag granular por grupo
         const journalOn =
           typeof groupRepository?.isGranularEventEnabled === 'function'
@@ -898,17 +901,10 @@ export function createFunModule(deps = {}) {
             const sendOptions = edition.mentions?.length ? { mentions: edition.mentions } : undefined;
             await post(sock, scopeKey, edition.text, sendOptions);
             if (edition.audioBuffer && typeof sock?.sendMessage === 'function') {
-              try {
-                await sock.sendMessage(scopeKey, {
-                  audio: edition.audioBuffer,
-                  mimetype: edition.audioMimeType || 'audio/ogg; codecs=opus',
-                  ptt: true,
-                });
-              } catch (audioSendErr) {
-                console.warn(
-                  `[fun/news] audio send failed ${String(scopeKey).slice(0, 28)}: ${audioSendErr?.message || audioSendErr}`
-                );
-              }
+              await sendNewsAudioWithRetry(sock, scopeKey, {
+                audioBuffer: edition.audioBuffer,
+                audioMimeType: edition.audioMimeType,
+              });
             }
             return {
               scopeKey,
@@ -934,14 +930,18 @@ export function createFunModule(deps = {}) {
             reason: err?.message || 'news-error',
           };
         }
-      });
-      const newsResults = await Promise.all(newsJobs);
-      for (const r of newsResults) {
-        results.push(r);
-        if (r.ok) {
-          console.log(
-            `[fun/news] published ${String(r.scopeKey).slice(0, 28)} provider=${r.provider} messages=${r.messageCount ?? 0}`
-          );
+      };
+
+      for (let i = 0; i < newsScopes.length; i += concurrency) {
+        const chunk = newsScopes.slice(i, i + concurrency);
+        const chunkResults = await Promise.all(chunk.map((scopeKey) => processNewsScope(scopeKey)));
+        for (const r of chunkResults) {
+          results.push(r);
+          if (r.ok) {
+            console.log(
+              `[fun/news] published ${String(r.scopeKey).slice(0, 28)} provider=${r.provider} messages=${r.messageCount ?? 0}`
+            );
+          }
         }
       }
     }

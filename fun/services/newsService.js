@@ -147,7 +147,8 @@ export function createNewsService({
       conversationMaxChars: funConfig.groupNewsConversationMaxChars,
     });
 
-    const commentator = resolvedCommentatorService?.resolveCommentator?.(scopeKey, { now }) || null;
+    const commentator =
+      resolvedCommentatorService?.resolveCommentator?.(scopeKey, { now, mood: conversation?.mood }) || null;
     const currentPersonaService = resolveCurrentPersonaService();
 
     let groupStyle = '';
@@ -201,6 +202,7 @@ export function createNewsService({
       random,
       commentator,
       commentatorService: resolvedCommentatorService,
+      maxChars: funConfig.groupNewsMaxChars || 2500,
     });
     const provider = llmBits?.capa ? 'llm-enhanced' : 'deterministic';
     const mentions = extractEditionMentions(text, conversation.quotes, identityMap);

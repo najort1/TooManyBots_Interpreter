@@ -50,12 +50,35 @@ function fallbackDetails(conversation) {
     return 'Nos bastidores, os repórteres vasculharam os registros em busca de grandes revelações, mas encontraram apenas o rastro habitual de reações desencontradas e meias-palavras soltas ao vento.';
   }
 
-  const narratives = samples.map((sample) => {
+  if (samples.length === 1) {
+    const s0 = samples[0];
+    const textSnippet = String(s0.text).replace(/\s+/g, ' ').trim();
+    return `Durante a movimentação da apuração, ${s0.name} chamou a atenção dos presentes ao disparar: “${textSnippet}”. A colocação resumiu bem o espírito dos acontecimentos e serviu de combustível para que a prosa continuasse girando sem destino certo.`;
+  }
+
+  const narratives = samples.map((sample, index) => {
     const textSnippet = String(sample.text).replace(/\s+/g, ' ').trim();
-    return `Em dado momento da apuração, ${sample.name} chamou a atenção dos presentes ao disparar: “${textSnippet}”. A declaração resumiu bem o espírito dos acontecimentos e serviu de combustível para que a prosa continuasse girando sem destino certo.`;
+    if (index === 0) {
+      return `Durante a movimentação da apuração, ${sample.name} chamou a atenção dos presentes ao disparar: “${textSnippet}”. A colocação serviu de combustível para que o debate ganhasse fôlego logo cedo.`;
+    }
+    if (index === 1) {
+      return `Mais tarde, na apuração dos bastidores, ${sample.name} não deixou barato e rebateu com: “${textSnippet}”. O comentário jogou mais lenha na fogueira e garantiu que ninguém mudasse de assunto tão cedo.`;
+    }
+    return `Para fechar o apanhado das investigações, ${sample.name} arrematou pontuando: “${textSnippet}”. A observação selou o expediente e deixou evidente que o bom senso tirou folga da redação.`;
   });
 
   return narratives.join('\n\n');
+}
+
+function getCommentatorLeadIn(mood, commentator) {
+  const cName = commentator?.name || 'nosso especialista';
+  const leads = {
+    zoeiro: `Para colocar uma lupa sobre esse espetáculo de zoeira e medir a vergonha alheia coletiva, a redação intimou ${cName} para a análise técnica:`,
+    movimentado: `Diante do ritmo frenético e da sequência interminável de mensagens no chat, passamos a palavra para ${cName} auditar o tumulto:`,
+    conversado: `Para dar um parecer sem meias-palavras sobre os rumos dessa prosa de boteco, ouvimos ${cName}:`,
+    silencioso: `Nem mesmo o silêncio absoluto escapou do crivo da redação, que convocou ${cName} para avaliar o marasmo do dia:`,
+  };
+  return leads[mood] || leads.conversado;
 }
 
 function fallbackForeshadow(conversation) {
@@ -90,7 +113,7 @@ function quietEdition(dayLabel, commentator = null) {
 export function renderEdition(
   conversation,
   llmBits,
-  { dayLabel = '', commentator = null, commentatorService = null } = {}
+  { dayLabel = '', commentator = null, commentatorService = null, maxChars = Infinity } = {}
 ) {
   if (conversation?.quiet) return quietEdition(dayLabel, commentator);
 
@@ -136,13 +159,24 @@ export function renderEdition(
   const detalhesRaw = llmBits?.detalhes;
   const detalhes = detalhesRaw ? cleanParagraph(detalhesRaw) : fallbackDetails(safeConversation);
 
-  // Frases literais autorizadas para arquivo
-  const quotesList = llmBits?.citacoes
+  // Frases literais autorizadas para arquivo (deduplicadas e limitadas a no máximo 2)
+  const rawQuotes = llmBits?.citacoes
     ? String(llmBits.citacoes)
         .split('\n')
         .map((l) => l.trim())
         .filter(Boolean)
     : safeConversation.quotes.map((quote) => `${quote.name}: “${quote.text}”`);
+
+  const seenQuotes = new Set();
+  const quotesList = [];
+  for (const q of rawQuotes) {
+    const clean = q.replace(/^[•-]\s*/, '').trim();
+    const key = clean.toLowerCase();
+    if (!clean || seenQuotes.has(key)) continue;
+    seenQuotes.add(key);
+    quotesList.push(clean);
+    if (quotesList.length >= 3) break;
+  }
 
   const foreshadowRaw = llmBits?.foreshadow || llmBits?.fecho;
   const foreshadow = foreshadowRaw ? cleanParagraph(foreshadowRaw) : fallbackForeshadow(safeConversation);
@@ -157,7 +191,8 @@ export function renderEdition(
   ];
 
   if (commentatorBlock) {
-    sections.push('', commentatorBlock);
+    const leadIn = getCommentatorLeadIn(safeConversation.mood, commentator);
+    sections.push('', leadIn, '', commentatorBlock);
   }
 
   if (detalhes) {
@@ -165,13 +200,48 @@ export function renderEdition(
   }
 
   if (quotesList.length) {
-    sections.push('', '*FRASES PARA O ARQUIVO*', ...quotesList.map((q) => `• ${q.replace(/^[•-]\s*/, '')}`));
+    sections.push('', '*FRASES PARA O ARQUIVO*', ...quotesList.map((q) => `• ${q}`));
   }
 
   if (foreshadow) {
     sections.push('', `_${foreshadow}_`);
   }
 
-  // Retorna texto único, fluido e contínuo sem cortes de limite de caracteres
-  return sections.join('\n').trim();
+  const fullText = sections.join('\n').trim();
+  if (Number.isFinite(maxChars) && maxChars > 0 && fullText.length > maxChars) {
+    const excess = fullText.length - maxChars;
+    const trimmedDetalhes = detalhes.length > excess + 80
+      ? cleanParagraph(detalhes.slice(0, Math.max(80, detalhes.length - excess - 20))) + '…'
+      : detalhes;
+
+    const resections = [
+      '📰 *THE GROUP TIMES*',
+      dayLabel,
+      '',
+      `*${headline}*`,
+      '',
+      intro,
+    ];
+
+    if (commentatorBlock) {
+      const leadIn = getCommentatorLeadIn(safeConversation.mood, commentator);
+      resections.push('', leadIn, '', commentatorBlock);
+    }
+
+    if (trimmedDetalhes) {
+      resections.push('', trimmedDetalhes);
+    }
+
+    if (quotesList.length) {
+      resections.push('', '*FRASES PARA O ARQUIVO*', ...quotesList.map((q) => `• ${q}`));
+    }
+
+    if (foreshadow) {
+      resections.push('', `_${foreshadow}_`);
+    }
+
+    return resections.join('\n').trim();
+  }
+
+  return fullText;
 }

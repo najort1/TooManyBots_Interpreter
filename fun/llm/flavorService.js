@@ -141,19 +141,21 @@ Você inventa o ângulo e as farpas — sem inventar crimes reais nem dados que 
 
   group_times: `Você é o repórter investigativo e cronista opinativo do jornal "The Group Times" de um grupo de WhatsApp BR.
 
-SEU PAPEL: Narrar a CONVERSA REAL daquele grupo durante o dia como uma crônica jornalística envolvente, opinativa, sarcástica e carismática. Não seja um robô burocrático que apenas lista horários ou enumera tópicos. Você avalia os acontecimentos com humor editorial, ironia fina e opiniões ácidas sobre as insanidades do grupo.
+SEU PAPEL: Narrar a CONVERSA REAL daquele grupo durante o dia como uma crônica jornalística envolvente, opinativa, sarcástica e BEM RESUMIDA (leitura de no máximo 2 minutos). Não seja um robô burocrático e NÃO escreva redações longas ou palestras cansativas. O texto precisa ser ágil, conciso e divertido para quem lê no WhatsApp.
 
-TEXTO TOTALMENTE NARRATIVO E FLUIDO (REGRA DE OURO):
-• PROIBIDO usar marcadores de tópicos, bullets (•, -, *), listas numéricas ou formato de ata/relatório.
-• Escreva em PROSA CORRIDA, com parágrafos encadeados, ritmo de crônica de jornal e transições narrativas elegantes.
+REGRA DE OURO — CONCISÃO E FLUIDEZ:
+• EDIÇÃO CURTA: Todo o jornal deve ser lido em no máximo 2 minutos (parágrafos curtos, diretos e afiados).
+• PROIBIDO usar marcadores de tópicos, bullets (•, -, *), listas numéricas ou formato de relatório/ata.
+• PROIBIDO usar fórmulas e frases repetitivas entre parágrafos (como "Em dado momento da apuração", "chamou a atenção dos presentes", etc.). Varie sempre os conectivos e a estrutura das frases.
+• Escreva em PROSA CORRIDA, ágil e bem amarrada.
 
 ESTRUTURA OBRIGATÓRIA (use cada rótulo exato no início da respectiva seção):
-CAPA: Manchete provocativa, editorial e chamativa sobre a principal pauta ou absurdo do dia (sem aspas).
-INTRO: Crônica de abertura do repórter contextualizando os temas do dia com análise opinativa, sarcasmo e visão crítica dos acontecimentos em prosa contínua.
-COMENTARISTA: Transição narrativa do repórter convocando o comentarista residente (informado nos dados), seguida da declaração ácida e parecer hilário dele. O comentarista exagera, contradiz os fatos com humor, zomba dos participantes e usa linguagem e gírias do grupo.
-DETALHES: Aprofundamento investigativo das fofocas, discussões e reviravoltas em prosa narrativa fluida, tecendo falas e reações dos membros de forma orgânica na história.
-FORESHADOW: Encerramento editorial com presságios cômicos para o dia seguinte, alertando a redação e os leitores sobre as consequências dos fatos narrados.
-CITACOES: (Opcional) No máximo 3 citações literais autorizadas no formato Nome: “citação literal” se não puderem ser integradas no texto.
+CAPA: 1 manchete curta, provocativa e chamativa sobre a principal pauta ou absurdo do dia (sem aspas, máx 1 frase).
+INTRO: 1 parágrafo curto e afiado contextualizando o clima do dia com humor ácido e ironia (máx 2 a 3 frases).
+COMENTARISTA: Transição rápida do repórter convocando o comentarista residente (informado nos dados), seguida da declaração hilária dele com suas gírias e bordão (máx 2 a 3 frases).
+DETALHES: 1 parágrafo enxuto narrando o melhor das fofocas, discussões e reviravoltas dos bastidores, sem enrolação (máx 3 a 4 frases).
+FORESHADOW: 1 frase final cômica alertando sobre as consequências ou o que esperar para o dia seguinte.
+CITACOES: (Opcional) No máximo 2 citações literais autorizadas no formato Nome: “citação literal”.
 
 REGRAS DE VERDADE E ESTILO:
 • Use SOMENTE a conversa, os participantes e as citações reais fornecidas. Não invente fatos fora do contexto.
@@ -758,9 +760,9 @@ function unwrapLineJson(raw) {
 
 /**
  * The Group Times: multi-linha narrativa fluida e opinativa.
- * Sem cortes artificiais de caracteres para suportar crônicas completas.
+ * Conciso para garantir leitura de no máximo 2 minutos.
  */
-export function sanitizeGroupTimes(raw, maxLen = 64000) {
+export function sanitizeGroupTimes(raw, maxLen = 3500) {
   let t = unwrapLineJson(raw)
     .replace(/\r/g, '')
     .replace(/<(?:thinking|think|thought|reasoning)>[\s\S]*?<\/(?:thinking|think|thought|reasoning)>/gi, '')
@@ -1233,7 +1235,7 @@ export function createFlavorService(deps = {}) {
           : null,
         banHint || null,
         key === 'group_times'
-          ? 'Escreva a crônica em prosa corrida fluida (PROIBIDO usar bullets ou listas), com opinião editorial e a intervenção do comentarista residente, respeitando os rótulos CAPA:, INTRO:, COMENTARISTA:, DETALHES:, FORESHADOW: (e CITACOES:):'
+          ? 'Escreva a crônica em prosa corrida RESUMIDA e DIRETA AO PONTO (leitura de no máximo 2 minutos, parágrafos curtos, PROIBIDO bullets ou redações longas), com opinião editorial e a intervenção do comentarista residente, respeitando os rótulos CAPA:, INTRO:, COMENTARISTA:, DETALHES:, FORESHADOW: (e CITACOES:):'
           : 'Responda só com o texto pronto pro zap (sem instruções, sem meta):',
       ]
         .filter(Boolean)
@@ -1242,12 +1244,15 @@ export function createFlavorService(deps = {}) {
       return {
         prompt,
         system: chaosSystemFor(key),
-        maxChars: key === 'group_times' ? Math.max(maxChars, 64000) : maxChars,
+        maxChars:
+          key === 'group_times'
+            ? Math.min(3500, Math.max(1200, Math.floor(Number(cfg.zenNewsMaxChars) || 3500)))
+            : maxChars,
         assault: false,
         chaos: true,
         maxTokens:
           key === 'group_times'
-            ? Math.max(2500, Math.floor(Number(cfg.zenNewsMaxTokens) || 2500))
+            ? Math.max(500, Math.min(1200, Math.floor(Number(cfg.zenNewsMaxTokens) || 850)))
             : Math.max(220, Math.floor(Number(cfg.chaosMaxTokens) || 400)),
       };
     }
@@ -1312,28 +1317,66 @@ ${banHint}`.trim();
     return { prompt, system, maxChars, assault: false, chaos: false, maxTokens: null };
   }
 
-  async function tryZen(cfg, key, vars, { simple = false, assault = false, chaos = false, maxRetries = 0 } = {}) {
+  async function tryZen(
+    cfg,
+    key,
+    vars,
+    { simple = false, assault = false, chaos = false, maxRetries = 0, timeoutOverrideMs = undefined } = {}
+  ) {
     if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
-    const totalRetries = Math.max(0, Math.floor(Number(cfg?.zenMaxRetries ?? maxRetries) || 0));
-    return withRetries(totalRetries, (attempt, prevFailure) => {
+    const isGroupTimes = key === 'group_times';
+    const totalRetries = isGroupTimes
+      ? Math.max(0, Math.floor(Number(cfg?.groupNewsMaxAttempts ? cfg.groupNewsMaxAttempts - 1 : maxRetries) || 2))
+      : Math.max(0, Math.floor(Number(cfg?.zenMaxRetries ?? maxRetries) || 0));
+    const totalAttempts = totalRetries + 1;
+    const scopePart = String(scopeKeyOf(vars)).slice(0, 24);
+
+    return withRetries(totalRetries, async (attempt, prevFailure) => {
       if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
-      // attempt 0 = chamada inicial; falha 'zen-empty' alterna p/ prompt "simple"
+      if (isGroupTimes) {
+        if (attempt === 0) {
+          console.log(`[fun/news] LLM generation attempt 1/${totalAttempts} started for ${scopePart}...`);
+        } else {
+          console.warn(
+            `[fun/news] LLM generation attempt ${attempt + 1}/${totalAttempts} retrying for ${scopePart} (previous reason: ${prevFailure?.reason || 'fail'})...`
+          );
+        }
+      }
+      // attempt 0 = chamada inicial; falha 'zen-empty' alterna p/ prompt "simple" (exceto group_times que precisa da crônica completa)
       const trySimple =
         attempt === 0
           ? simple
-          : prevFailure?.reason === 'zen-empty'
+          : prevFailure?.reason === 'zen-empty' && !isGroupTimes
             ? !simple
             : simple;
-      return tryZenOnce(cfg, key, vars, {
+      const res = await tryZenOnce(cfg, key, vars, {
         simple: trySimple,
         assault,
         chaos,
         attempt,
+        timeoutOverrideMs,
       });
+
+      if (isGroupTimes) {
+        if (res?.ok) {
+          console.log(`[fun/news] LLM generation succeeded on attempt ${attempt + 1}/${totalAttempts} for ${scopePart}`);
+        } else if (attempt + 1 >= totalAttempts) {
+          console.warn(
+            `[fun/news] LLM generation exhausted all ${totalAttempts} attempts for ${scopePart} (last reason: ${res?.reason || 'fail'}), falling back to template.`
+          );
+        }
+      }
+
+      return res;
     });
   }
 
-  async function tryZenOnce(cfg, key, vars, { simple = false, assault = false, chaos = false, attempt = 0 } = {}) {
+  async function tryZenOnce(
+    cfg,
+    key,
+    vars,
+    { simple = false, assault = false, chaos = false, attempt = 0, timeoutOverrideMs = undefined } = {}
+  ) {
     if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
     const taskName = assault ? 'assault' : chaos ? 'chaos' : 'flavor';
     const task = resolveZenTaskParams(taskName, cfg);
@@ -1345,7 +1388,7 @@ ${banHint}`.trim();
       assault,
       chaos,
     });
-    const jsonLineMode = assault || key === 'group_times';
+    const jsonLineMode = assault;
     const jsonSystem = jsonLineMode
       ? `${system}\n\nResponda SOMENTE JSON válido no formato {"line":"texto final"}. Não use markdown nem campos extras.`
       : system;
@@ -1362,9 +1405,10 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         }`
       : prompt;
     const timeoutMs =
-      key === 'group_times'
-        ? Math.max(ep.timeoutMs, task.timeoutMs, 90_000)
-        : Math.max(ep.timeoutMs, task.timeoutMs);
+      timeoutOverrideMs ||
+      (key === 'group_times'
+        ? Math.max(15_000, Math.min(240_000, Number(cfg.groupNewsTimeoutMs) || 75_000))
+        : Math.max(ep.timeoutMs, task.timeoutMs));
     if (attempt > 0) {
       getLogger?.()?.debug?.(
         { scenario: key, attempt, provider: 'zen', reason: 'retry' },
@@ -1383,7 +1427,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
           assault
             ? maxTokens || 1100
             : key === 'group_times'
-              ? maxTokens || 700
+              ? maxTokens || 850
               : chaos
                 ? maxTokens || 360
                 : task.maxTokens
@@ -1536,36 +1580,33 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
       return safeFallback;
     }
 
-    // jornal da madrugada: budget maior (vários grupos em paralelo no tick)
-    const budgetMs =
-      key === 'group_times'
-        ? Math.max(
-            45_000,
-            Math.min(
-              120_000,
-              Math.floor(
-                Number(cfg.groupNewsTimeoutMs) ||
-                  Number(cfg.chaosTimeoutMs) ||
-                  Number(cfg.flavorTimeoutMs) ||
-                  90_000
-              )
-            )
+    const isGroupTimes = key === 'group_times';
+    const maxAttempts = isGroupTimes
+      ? Math.max(1, Math.min(5, Number(cfg.groupNewsMaxAttempts) || 3))
+      : (DEFAULT_ZEN_MAX_RETRIES + 1);
+
+    const attemptTimeoutMs = isGroupTimes
+      ? Math.max(15_000, Math.min(240_000, Number(cfg.groupNewsTimeoutMs) || 75_000))
+      : Math.max(
+          8_000,
+          Math.min(
+            60_000,
+            Math.floor(Number(cfg.chaosTimeoutMs) || Number(cfg.flavorTimeoutMs) || 28_000)
           )
-        : Math.max(
-            8_000,
-            Math.min(
-              60_000,
-              Math.floor(Number(cfg.chaosTimeoutMs) || Number(cfg.flavorTimeoutMs) || 28_000)
-            )
-          );
+        );
+
+    // Para group_times, o budget geral acomoda todas as tentativas com folga
+    const budgetMs = isGroupTimes
+      ? (attemptTimeoutMs * maxAttempts + 15_000)
+      : attemptTimeoutMs;
 
     const cascade = async () => {
-      // Zen — 3 retentativas (1 chamada + 3 retries = 4 totais) antes do template mockado.
-      // Fallback Ollama descontinuado.
+      // Zen — até maxAttempts para group_times (padrão 3 tentativas = 1 chamada + 2 retries)
       const zenResult = await tryZen(cfg, key, vars, {
         simple: false,
         chaos: true,
-        maxRetries: DEFAULT_ZEN_MAX_RETRIES,
+        maxRetries: isGroupTimes ? (maxAttempts - 1) : DEFAULT_ZEN_MAX_RETRIES,
+        timeoutOverrideMs: isGroupTimes ? attemptTimeoutMs : undefined,
       });
       if (zenResult.ok) {
         setLastProvider('zen', scopeKey);
