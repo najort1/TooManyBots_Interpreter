@@ -12,12 +12,12 @@ export const CARDS_DIR = path.resolve(__dirname, '../assets/cards');
 
 const IMAGE_EXT = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 
-/** Peso de drop por tier (quanto maior, mais comum). */
+/** Peso de drop padrão por tier (escala gacha: T1 comum 70%, T4 épica 1%, T5 lendária 0.2%). */
 export const TIER_DROP_WEIGHTS = Object.freeze({
-  1: 50,
-  2: 28,
-  3: 14,
-  4: 6,
+  1: 700,
+  2: 230,
+  3: 58,
+  4: 10,
   5: 2,
 });
 
@@ -132,9 +132,10 @@ export function listCardsByTier(tier) {
 /**
  * Sorteia uma carta do catálogo com peso por tier.
  * @param {() => number} [random]
+ * @param {Record<number, number> | { weights?: Record<number, number> }} [weightsOrOpts]
  * @returns {CardDef | null}
  */
-export function rollRandomCard(random = Math.random) {
+export function rollRandomCard(random = Math.random, weightsOrOpts = TIER_DROP_WEIGHTS) {
   const all = loadCardCatalog();
   if (!all.length) return null;
 
@@ -144,13 +145,20 @@ export function rollRandomCard(random = Math.random) {
     byTier.get(c.tier).push(c);
   }
 
+  const activeWeights =
+    weightsOrOpts && typeof weightsOrOpts === 'object'
+      ? (weightsOrOpts.weights || weightsOrOpts)
+      : TIER_DROP_WEIGHTS;
+
   let totalW = 0;
   const tiers = [];
   for (const [tier, list] of byTier) {
     if (!list.length) continue;
-    const w = TIER_DROP_WEIGHTS[tier] ?? 1;
-    totalW += w;
-    tiers.push({ tier, list, w });
+    const rawW = activeWeights?.[tier] ?? activeWeights?.[String(tier)] ?? TIER_DROP_WEIGHTS[tier] ?? 1;
+    const w = Number(rawW);
+    const safeW = Number.isFinite(w) && w > 0 ? w : 1;
+    totalW += safeW;
+    tiers.push({ tier, list, w: safeW });
   }
   if (!totalW) return null;
 

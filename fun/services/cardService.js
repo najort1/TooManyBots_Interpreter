@@ -11,6 +11,7 @@ import {
   tierLabel,
   formatCardLine,
   getCardDef,
+  TIER_DROP_WEIGHTS,
 } from '../shop/cards.js';
 
 function numOr(v, fb) {
@@ -33,6 +34,7 @@ export function createCardService({
       packCost: Math.max(1, Math.floor(numOr(funConfig.cardPackCost, PACK_COST))),
       maxPacks: Math.max(1, Math.floor(numOr(funConfig.cardMaxPacksPerOpen, MAX_PACKS_PER_OPEN))),
       tradeTtlMs: Math.max(30_000, Math.floor(numOr(funConfig.cardTradeTtlMs, PROPOSAL_TTL_MS))),
+      tierWeights: funConfig.cardTierWeights || TIER_DROP_WEIGHTS,
     };
   }
 
@@ -126,7 +128,7 @@ export function createCardService({
 
     const opened = [];
     for (let i = 0; i < qty; i++) {
-      const def = rollRandomCard(random);
+      const def = rollRandomCard(random, o.tierWeights);
       if (!def) continue;
       const card = cardRepository.insert({
         userJid,
