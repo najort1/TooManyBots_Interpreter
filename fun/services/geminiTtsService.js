@@ -249,23 +249,57 @@ export function createGeminiTtsService({
 
       const model = opts.model || 'gemini-3.1-flash-tts-preview';
       const temperature = typeof opts.temperature === 'number' ? opts.temperature : 1;
+      const timeoutMs = Number.isFinite(Number(opts.timeoutMs)) && Number(opts.timeoutMs) > 0
+        ? Number(opts.timeoutMs)
+        : 60_000;
       const { speechConfig, isMultiSpeaker } = normalizeSpeechConfig(opts);
 
-      try {
-        const ai = generateClient(apiKey);
-        const response = await ai.models.generateContent({
-          model,
-          config: {
-            temperature,
-            responseModalities: ['AUDIO'],
-            speechConfig,
-          },
-          contents: [{ role: 'user', parts: [{ text: cleanText }] }],
-        });
+      const speakerCount = speechConfig?.multiSpeakerVoiceConfig?.speakerVoiceConfigs?.length || 0;
+      if (isMultiSpeaker && speakerCount > 2) {
+        return { ok: false, reason: 'too-many-speakers' };
+      }
+
+      const safetySettings = opts.safetySettings || [
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+      ];
+
+      const maxAttempts = opts.maxRetries ? Math.max(1, opts.maxRetries + 1) : 2;
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          const ai = generateClient(apiKey);
+          const generatePromise = ai.models.generateContent({
+            model,
+            config: {
+              temperature,
+              responseModalities: ['AUDIO'],
+              speechConfig,
+              safetySettings,
+            },
+            contents: [{ role: 'user', parts: [{ text: cleanText }] }],
+          });
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('tts-timeout')), timeoutMs)
+        );
+
+        const response = await Promise.race([generatePromise, timeoutPromise]);
 
         const parts = response?.candidates?.[0]?.content?.parts || [];
         const audioParts = parts.filter((part) => part?.inlineData?.data);
-        if (!audioParts.length) return { ok: false, reason: 'empty-response' };
+        if (!audioParts.length) {
+          const finishReason = response?.candidates?.[0]?.finishReason;
+          if (finishReason) {
+            logger?.warn?.('[geminiTts] tentativa %d/%d sem áudio (finishReason: %s)', attempt, maxAttempts, finishReason);
+          }
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, 400));
+            continue;
+          }
+          return { ok: false, reason: 'empty-response', finishReason };
+        }
 
         const pcmBuffers = audioParts.map((part) => Buffer.from(part.inlineData.data, 'base64'));
         const pcm = Buffer.concat(pcmBuffers);
@@ -296,9 +330,13 @@ export function createGeminiTtsService({
           isMultiSpeaker,
         };
       } catch (error) {
-        logger?.debug?.('[personaTts] synthesis failed: %s', String(error?.message || error));
-        return { ok: false, reason: 'generation-error' };
+        logger?.debug?.('[personaTts] synthesis attempt %d failed: %s', attempt, String(error?.message || error));
+        if (attempt >= maxAttempts) {
+          return { ok: false, reason: 'generation-error' };
+        }
+        await new Promise((r) => setTimeout(r, 400));
       }
+    }
     },
   };
 }
