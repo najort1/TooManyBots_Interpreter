@@ -362,16 +362,52 @@ export function createFunDailyChallengeRepository({ getDatabase = getDb } = {}) 
   }
 
   /** Busca conteúdos recentes usados (para evitar repetição). */
-  function getRecentContent(scopeKey, contentType, limit = 30) {
+  function getRecentContent(scopeKey, contentType, limit = 150, { includeGlobal = false } = {}) {
     ensureSchema();
     const db = getDatabase();
+    const lim = Math.max(1, Number(limit) || 150);
+    const ct = String(contentType || '');
+    if (includeGlobal) {
+      const rows = db
+        .prepare(
+          `SELECT content_value FROM (
+             SELECT content_value, used_at, 1 AS priority
+               FROM ${ANALYTICS_SCHEMA}.fun_daily_challenge_memory
+              WHERE scope_key = ? AND content_type = ?
+             UNION ALL
+             SELECT content_value, used_at, 2 AS priority
+               FROM ${ANALYTICS_SCHEMA}.fun_daily_challenge_memory
+              WHERE scope_key != ? AND content_type = ?
+           )
+           GROUP BY content_value
+           ORDER BY MIN(priority) ASC, MAX(used_at) DESC
+           LIMIT ?`
+        )
+        .all(String(scopeKey || ''), ct, String(scopeKey || ''), ct, lim);
+      return rows.map((r) => String(r.content_value || ''));
+    }
     const rows = db
       .prepare(
         `SELECT content_value FROM ${ANALYTICS_SCHEMA}.fun_daily_challenge_memory
           WHERE scope_key = ? AND content_type = ?
           ORDER BY used_at DESC LIMIT ?`
       )
-      .all(String(scopeKey || ''), String(contentType || ''), Math.max(1, Number(limit) || 30));
+      .all(String(scopeKey || ''), ct, lim);
+    return rows.map((r) => String(r.content_value || ''));
+  }
+
+  /** Busca conteúdos recentes usados em qualquer escopo (visão global). */
+  function getRecentContentGlobal(contentType, limit = 150) {
+    ensureSchema();
+    const db = getDatabase();
+    const rows = db
+      .prepare(
+        `SELECT content_value FROM ${ANALYTICS_SCHEMA}.fun_daily_challenge_memory
+          WHERE content_type = ?
+          GROUP BY content_value
+          ORDER BY MAX(used_at) DESC LIMIT ?`
+      )
+      .all(String(contentType || ''), Math.max(1, Number(limit) || 150));
     return rows.map((r) => String(r.content_value || ''));
   }
 
@@ -474,6 +510,7 @@ export function createFunDailyChallengeRepository({ getDatabase = getDb } = {}) 
     getLaunchSchedule,
     markScheduleLaunched,
     getRecentContent,
+    getRecentContentGlobal,
     recordContent,
     recordSolved,
     getFastestLeaderboard,

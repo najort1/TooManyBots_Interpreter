@@ -316,13 +316,23 @@ export function createDailyChallengeService(deps = {}) {
   /* ---------- dedup de conteudo ---------- */
 
   function pickNonRepeating(scopeKey, contentType, universe, memoryLimit) {
-    const recent = repository.getRecentContent(scopeKey, contentType, memoryLimit || 30);
+    const recent = repository.getRecentContent
+      ? repository.getRecentContent(scopeKey, contentType, memoryLimit || 30)
+      : [];
     const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
     const available = universe.filter((item) => {
-      const key = normalizeAnswer(item.key || item.game || item.riddle || item.name || '');
+      const key = normalizeAnswer(item.key || item.game || item.riddle || item.name || item.word || '');
       return !recentSet.has(key);
     });
-    const pool = available.length > 0 ? available : universe;
+    let pool = available;
+    if (pool.length === 0) {
+      const lastFew = new Set(recent.slice(0, Math.min(3, Math.max(1, universe.length - 1))).map(normalizeAnswer));
+      const filtered = universe.filter((item) => {
+        const key = normalizeAnswer(item.key || item.game || item.riddle || item.name || item.word || '');
+        return !lastFew.has(key);
+      });
+      pool = filtered.length > 0 ? filtered : universe;
+    }
     return pickOne(pool, random);
   }
 
@@ -569,7 +579,7 @@ export function createDailyChallengeService(deps = {}) {
   }
 
   async function tryLlmGuessGame(scopeKey, recentGames = []) {
-    const recentList = Array.isArray(recentGames) ? recentGames.slice(0, 40) : [];
+    const recentList = Array.isArray(recentGames) ? recentGames.slice(0, 200) : [];
     const recentTxt = recentList.length
       ? `\n\nNUNCA repita um jogo desta lista de recentes (normalize sem acentos/maiúsculas):\n${recentList.map((g) => `  - ${g}`).join('\n')}\n`
       : '';
@@ -599,7 +609,7 @@ export function createDailyChallengeService(deps = {}) {
   }
 
   async function tryLlmRiddle(scopeKey, recentRiddles = []) {
-    const recentList = Array.isArray(recentRiddles) ? recentRiddles.slice(0, 50) : [];
+    const recentList = Array.isArray(recentRiddles) ? recentRiddles.slice(0, 200) : [];
     const recentTxt = recentList.length
       ? `\n\nNUNCA repita um enigma desta lista de recentes (normalize sem acentos/pontuação/maiúsculas):\n${recentList.map((r) => `  - ${r}`).join('\n')}\n`
       : '';
@@ -616,7 +626,7 @@ export function createDailyChallengeService(deps = {}) {
   }
 
   async function launchGuessGame(scopeKey, now) {
-    const memoryLimit = cfg().dailyChallengeContentMemory?.game || 30;
+    const memoryLimit = cfg().dailyChallengeContentMemory?.game || 150;
     const recent = repository.getRecentContent(scopeKey, 'game', memoryLimit);
     const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
 
@@ -682,7 +692,7 @@ export function createDailyChallengeService(deps = {}) {
   /* ---------- Riddle ---------- */
 
   async function launchRiddle(scopeKey, now) {
-    const memoryLimit = cfg().dailyChallengeContentMemory?.riddle || 50;
+    const memoryLimit = cfg().dailyChallengeContentMemory?.riddle || 150;
     const recent = repository.getRecentContent(scopeKey, 'riddle', memoryLimit);
     const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
 
@@ -747,7 +757,7 @@ export function createDailyChallengeService(deps = {}) {
   /* ---------- Cine Emoji (guess_movie_emoji) ---------- */
 
   async function tryLlmGuessMovie(scopeKey, recentMovies = []) {
-    const recentList = Array.isArray(recentMovies) ? recentMovies.slice(0, 40) : [];
+    const recentList = Array.isArray(recentMovies) ? recentMovies.slice(0, 200) : [];
     const recentTxt = recentList.length
       ? `\n\nNUNCA repita um filme desta lista de recentes (normalize sem acentos/maiúsculas):\n${recentList.map((m) => `  - ${m}`).join('\n')}\n`
       : '';
@@ -768,7 +778,7 @@ export function createDailyChallengeService(deps = {}) {
   }
 
   async function launchGuessMovie(scopeKey, now) {
-    const memoryLimit = cfg().dailyChallengeContentMemory?.movie || 40;
+    const memoryLimit = cfg().dailyChallengeContentMemory?.movie || 150;
     const recent = repository.getRecentContent(scopeKey, 'movie', memoryLimit);
     const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
 
@@ -830,33 +840,89 @@ export function createDailyChallengeService(deps = {}) {
 
   /* ---------- Quem Sou Eu? (who_am_i) ---------- */
 
-  async function tryLlmWhoAmI(scopeKey, recentPeople = []) {
-    const recentList = Array.isArray(recentPeople) ? recentPeople.slice(0, 40) : [];
+  const WHO_AM_I_CATEGORIES = [
+    'cientistas, físicos, químicos, matemáticos, astrônomos e inventores geniais',
+    'atletas lendários e multicampeões mundiais/olímpicos (futebol, automobilismo, basquete, atletismo, ginástica, tênis, boxe, natação, judô, vôlei)',
+    'músicos revolucionários, cantores e compositores clássicos ou do rock/pop/jazz/blues/MPB/samba',
+    'grandes líderes históricos, reis, rainhas, imperadores, diplomatas e estrategistas marcantes',
+    'escritores aclamados, romancistas, poetas, dramaturgos e filósofos que moldaram o pensamento humano',
+    'artistas plásticos, pintores revolucionários, escultores e arquitetos icônicos',
+    'ícones do cinema clássico ou moderno, diretores aclamados, cineastas e pioneiros audiovisuais',
+    'grandes heróis, pioneiros, exploradores e personalidades célebres da história e cultura do Brasil',
+  ];
+
+  const WHO_AM_I_ERAS = [
+    'Antiguidade clássica, Grécia/Roma Antiga, Egito ou Idade Média',
+    'Renascimento cultural, Grandes Navegações ou Era do Iluminismo',
+    'Século XIX (Revolução Científica, Era Vitoriana, Romantismo, Impérios)',
+    'Início e meados do Século XX (anos 1900 a 1950, grandes transformações mundiais)',
+    'Segunda metade do Século XX (anos 1960 a 1990, efervescência cultural e científica)',
+    'Final do Século XX e Século XXI contemporâneo',
+  ];
+
+  const WHO_AM_I_REGIONS = [
+    'Brasil (ícone nacional da nossa história, cultura, arte, ciência ou esporte)',
+    'América Latina (grandes personalidades marcantes de nossos vizinhos)',
+    'Europa Ocidental, Oriental ou Nórdica',
+    'Ásia ou Oriente Médio (Japão, China, Índia, etc.)',
+    'África (grandes líderes, inventores, ativistas ou figuras históricas)',
+    'América do Norte',
+  ];
+
+  async function tryLlmWhoAmI(scopeKey, recentPeople = [], category = '', era = '', region = '') {
+    const recentList = Array.isArray(recentPeople) ? recentPeople.slice(0, 200) : [];
     const recentTxt = recentList.length
-      ? `\n\nNUNCA repita uma personalidade desta lista de recentes (normalize sem acentos/maiúsculas):\n${recentList.map((p) => `  - ${p}`).join('\n')}\n`
+      ? `\n\nNUNCA repita nenhuma das seguintes ${recentList.length} personalidades que já saíram em desafios recentes no bot:\n${recentList.map((p) => `  - ${p}`).join('\n')}\n`
       : '';
+    const angleDirectives = [
+      category ? `CATEGORIA/ÁREA: ${category}` : '',
+      era ? `ÉPOCA HISTÓRICA PREFERENCIAL: ${era}` : '',
+      region ? `REGIÃO/ORIGEM: ${region}` : '',
+    ].filter(Boolean).join('\n');
+
     const system =
-      'Voce e o mestre de um jogo "Quem Sou Eu?" no WhatsApp em português brasileiro. ' +
-      'Gere UMA figura histórica, atleta lendário, cientista renomado, artista ou ícone da cultura popular mundial ou brasileira. ' +
-      'REGRAS:\n' +
-      '  - O campo "name" deve conter o nome principal mais conhecido.\n' +
-      '  - O campo "aliases" deve conter 2-3 formas comuns pelas quais as pessoas chamam.\n' +
-      '  - O campo "intro" deve ser um enigma em 1ª PESSOA ("Eu...") poético e marcante sem falar o nome.\n' +
-      '  - O campo "hints" deve ter exatamente 3 dicas progressivas: hint1 (época/área de atuação), hint2 (maior feito/obra icônica), hint3 (iniciais/local de nascimento/fatos marcantes).\n' +
+      'Voce e o mestre erudito de um jogo "Quem Sou Eu?" no WhatsApp em português brasileiro. ' +
+      'Gere UMA personalidade histórica, esportista, cientista, artista, líder ou figura célebre mundial ou brasileira.\n\n' +
+      'DIRETIVAS CRÍTICAS DE ORIGINALIDADE & ANTI-CLICHÊ:\n' +
+      '  - O teto de contexto deste bot é amplo (32k). Use a vasta cultura e história da humanidade!\n' +
+      '  - PROIBIDO escolher clichês rasos de escola primária (como Pelé, Ayrton Senna, Albert Einstein, Santos Dumont, Leonardo da Vinci, Cleópatra, Isaac Newton, Machado de Assis, Napoleão, Beethoven) a não ser que estritamente solicitado.\n' +
+      '  - Escolha figuras fascinantes e respeitadas que qualquer pessoa com cultura geral reconhecerá ao ouvir as dicas, mas que não venham como a primeira resposta óbvia e repetitiva.\n' +
+      (angleDirectives ? `\nDIRETRIZES DESTA RODADA:\n${angleDirectives}\n` : '') +
+      '\nREGRAS DE FORMATAÇÃO (JSON ESTRITO):\n' +
+      '  - "name": Nome principal e mais reconhecível da personalidade.\n' +
+      '  - "aliases": Array com 2-5 formas alternativas, apelidos consagrados ou grafias comuns.\n' +
+      '  - "intro": Enigma envolvente em 1ª PESSOA ("Eu...") poético e marcante, sem citar o nome ou trechos óbvios da resposta.\n' +
+      '  - "hints": Array com exatamente 3 dicas progressivas:\n' +
+      '      * hint1 (sutil): época, área de atuação e contexto histórico;\n' +
+      '      * hint2 (média): maior feito, obra-prima, descoberta ou conquista memorável;\n' +
+      '      * hint3 (reveladora): iniciais, local de nascimento/morte ou curiosidade icônica que fecha o enigma.\n' +
       '  - NUNCA inclua o nome da personalidade nas dicas ou no intro.\n' +
-      'Responda APENAS no formato JSON: ' +
+      'Responda APENAS no formato JSON:\n' +
       '{"name":"Nome","aliases":["a1","a2"],"intro":"Em primeira pessoa...","hints":["h1","h2","h3"]}' + recentTxt;
-    const user = 'Gere uma personalidade fascinante e amplamente reconhecida agora.';
+
+    const user = category
+      ? `Gere uma personalidade inesquecível do universo de: ${category} (${era || 'qualquer época'}, ${region || 'qualquer região'}). Seja criativo e fuja dos clichês.`
+      : 'Gere uma personalidade fascinante, amplamente reconhecível e criativa agora.';
     return tryLlmJson('dailyguess', system, user);
   }
 
   async function launchWhoAmI(scopeKey, now) {
-    const memoryLimit = cfg().dailyChallengeContentMemory?.person || 40;
-    const recent = repository.getRecentContent(scopeKey, 'person', memoryLimit);
+    const memoryLimit = cfg().dailyChallengeContentMemory?.person || 200;
+    const recent = repository.getRecentContent
+      ? repository.getRecentContent(scopeKey, 'person', memoryLimit)
+      : [];
+    const recentGlobal = repository.getRecentContentGlobal
+      ? repository.getRecentContentGlobal('person', memoryLimit)
+      : [];
+    const promptRecent = Array.from(new Set([...recent, ...recentGlobal])).slice(0, 200);
     const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
 
-    const llmPerson = await tryLlmWhoAmI(scopeKey, recent);
+    const cat1 = pickOne(WHO_AM_I_CATEGORIES, random) || '';
+    const era1 = pickOne(WHO_AM_I_ERAS, random) || '';
+    const reg1 = pickOne(WHO_AM_I_REGIONS, random) || '';
+    let llmPerson = await tryLlmWhoAmI(scopeKey, promptRecent, cat1, era1, reg1);
     let person = null;
+
     if (llmPerson?.name) {
       const filtered = String(llmPerson.name).trim();
       const filteredNorm = normalizeAnswer(filtered);
@@ -867,6 +933,25 @@ export function createDailyChallengeService(deps = {}) {
           intro: String(llmPerson.intro || '').trim(),
           hints: Array.isArray(llmPerson.hints) ? llmPerson.hints.slice(0, MAX_HINTS) : [],
         };
+      } else {
+        // Retry de LLM com outra categoria e época em caso de colisão
+        const otherCats = WHO_AM_I_CATEGORIES.filter((c) => c !== cat1);
+        const cat2 = pickOne(otherCats, random) || '';
+        const era2 = pickOne(WHO_AM_I_ERAS, random) || '';
+        const reg2 = pickOne(WHO_AM_I_REGIONS, random) || '';
+        const retryPerson = await tryLlmWhoAmI(scopeKey, promptRecent, cat2, era2, reg2);
+        if (retryPerson?.name) {
+          const retryFiltered = String(retryPerson.name).trim();
+          const retryNorm = normalizeAnswer(retryFiltered);
+          if (!recentSet.has(retryNorm)) {
+            person = {
+              name: retryFiltered,
+              aliases: (retryPerson.aliases || []).map((a) => String(a).trim()).filter(Boolean),
+              intro: String(retryPerson.intro || '').trim(),
+              hints: Array.isArray(retryPerson.hints) ? retryPerson.hints.slice(0, MAX_HINTS) : [],
+            };
+          }
+        }
       }
     }
 
@@ -932,30 +1017,124 @@ export function createDailyChallengeService(deps = {}) {
 
   /* ---------- Anagrama / Palavra Embaralhada (word_scramble) ---------- */
 
+  const WORD_SCRAMBLE_THEMES = [
+    '🍕 Culinária & Gastronomia (pratos típicos, sobremesas, ingredientes marcantes e culinária do mundo)',
+    '🦁 Animais Fascinantes (mamíferos, aves, répteis, vida marinha e criaturas exóticas)',
+    '🪐 Astronomia & Cosmos (estrelas, nebulosas, corpos celestes e fenômenos espaciais)',
+    '💻 Tecnologia & Invenções (computação, engenharia, inovação e conceitos digitais)',
+    '🔬 Ciência & Natureza (fenômenos físicos, químicos, biológicos e geológicos)',
+    '🇧🇷 Cultura Brasileira (folclore, ritmos, instrumentos, festas e tradições)',
+    '🏛️ Mitologia & Civilizações Antigas (monumentos, deuses, criaturas e lendas)',
+    '🎸 Música & Artes (instrumentos, movimentos artísticos, cinema e literatura)',
+    '⚽ Esportes & Aventura (modalidades olímpicas, esportes radicais e atletismo)',
+    '🌍 Geografia & Paisagens (acidentes geográficos, relevo, ilhas e ecossistemas)',
+    '🏺 Objetos & Relíquias Curiosas (ferramentas históricas, artefatos e utensílios)',
+  ];
+
+  async function tryLlmWordScramble(scopeKey, recentWords = [], theme = '') {
+    const recentList = Array.isArray(recentWords) ? recentWords.slice(0, 200) : [];
+    const recentTxt = recentList.length
+      ? `\n\nNUNCA repita nenhuma das seguintes ${recentList.length} palavras que já foram usadas em desafios recentes no bot:\n${recentList.map((w) => `  - ${w}`).join('\n')}\n`
+      : '';
+    const themeDirective = theme
+      ? `\nTEMA DESTE ANAGRAMA: ${theme}.`
+      : '';
+    const system =
+      'Voce e o mestre de um jogo de Anagrama no WhatsApp em português brasileiro. ' +
+      'Gere UMA palavra rica, interessante e desafiadora em português (substantivo comum ou próprio, de 6 a 13 letras, sem espaços nem caracteres especiais).\n\n' +
+      'DIRETIVAS DE QUALIDADE & ENTROPIA:\n' +
+      '  - Evite palavras curtas demais (< 6 letras) ou palavras monótonas e infantis.\n' +
+      '  - Escolha termos com sonoridade marcante e significado interessante, permitindo dicas ricas.\n' +
+      '  - Varie amplamente o vocabulário e explore a riqueza da língua portuguesa e dos temas.\n' +
+      themeDirective +
+      '\nREGRAS TÉCNICAS (JSON ESTRITO):\n' +
+      '  - "word": A palavra correta com acentuação padrão em português.\n' +
+      '  - "theme": O tema da palavra com emoji (ex: "🍕 Culinária", "🦁 Animais", "🪐 Astronomia", "🇧🇷 Cultura Brasileira").\n' +
+      '  - "aliases": Array com 2-4 grafias aceitáveis, sinônimos imediatos ou formas sem acento.\n' +
+      '  - "hints": Array com exatamente 3 dicas progressivas:\n' +
+      '      * hint1 (conceitual): significado, uso, habitat ou curiosidade fascinante sem entregar a palavra;\n' +
+      '      * hint2 (estrutural): letra inicial, letra final e quantidade exata de letras (ex: "A palavra começa com O e termina com O (12 letras)");\n' +
+      '      * hint3 (máscara): máscara com letras intercaladas e sublinhados (ex: "Máscara: O R N _ _ _ _ R I N C O.").' +
+      '\n\nResponda APENAS no formato JSON:\n' +
+      '{"word":"Palavra","theme":"Tema com Emoji","aliases":["palavra","alias2"],"hints":["h1","h2","h3"]}' + recentTxt;
+    const user = theme
+      ? `Gere uma palavra desafiadora de anagrama para o tema: ${theme}. Fuja de palavras banais.`
+      : 'Gere uma palavra rica e desafiadora para o jogo de anagrama agora.';
+    return tryLlmJson('dailyguess', system, user);
+  }
+
   async function launchWordScramble(scopeKey, now) {
-    const memoryLimit = cfg().dailyChallengeContentMemory?.word || 30;
-    const recent = repository.getRecentContent(scopeKey, 'word', memoryLimit);
+    const memoryLimit = cfg().dailyChallengeContentMemory?.word || 200;
+    const recent = repository.getRecentContent
+      ? repository.getRecentContent(scopeKey, 'word', memoryLimit)
+      : [];
+    const recentGlobal = repository.getRecentContentGlobal
+      ? repository.getRecentContentGlobal('word', memoryLimit)
+      : [];
+    const promptRecent = Array.from(new Set([...recent, ...recentGlobal])).slice(0, 200);
     const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
 
-    const pick = pickNonRepeating(
-      scopeKey,
-      'word',
-      WORDS_POOL.map((w) => ({ ...w, key: w.word })),
-      memoryLimit
-    );
-    if (!pick) return null;
+    const theme1 = pickOne(WORD_SCRAMBLE_THEMES, random) || '';
+    let llmWord = await tryLlmWordScramble(scopeKey, promptRecent, theme1);
+    let chosen = null;
 
-    const scrambled = scrambleWord(pick.word, random);
+    if (llmWord?.word) {
+      const rawWord = String(llmWord.word).trim();
+      const norm = normalizeAnswer(rawWord);
+      if (rawWord.length >= 5 && rawWord.length <= 16 && !rawWord.includes(' ') && !recentSet.has(norm)) {
+        chosen = {
+          word: rawWord,
+          theme: String(llmWord.theme || theme1 || 'Geral').trim(),
+          aliases: (llmWord.aliases || []).map((a) => String(a).trim()).filter(Boolean),
+          hints: Array.isArray(llmWord.hints) ? llmWord.hints.slice(0, MAX_HINTS) : [],
+        };
+      } else {
+        // Retry de LLM com outro tema em caso de colisão ou palavra curta/inválida
+        const otherThemes = WORD_SCRAMBLE_THEMES.filter((t) => t !== theme1);
+        const theme2 = pickOne(otherThemes, random) || '';
+        const retryWord = await tryLlmWordScramble(scopeKey, promptRecent, theme2);
+        if (retryWord?.word) {
+          const retryRaw = String(retryWord.word).trim();
+          const retryNorm = normalizeAnswer(retryRaw);
+          if (retryRaw.length >= 5 && retryRaw.length <= 16 && !retryRaw.includes(' ') && !recentSet.has(retryNorm)) {
+            chosen = {
+              word: retryRaw,
+              theme: String(retryWord.theme || theme2 || 'Geral').trim(),
+              aliases: (retryWord.aliases || []).map((a) => String(a).trim()).filter(Boolean),
+              hints: Array.isArray(retryWord.hints) ? retryWord.hints.slice(0, MAX_HINTS) : [],
+            };
+          }
+        }
+      }
+    }
+
+    if (!chosen || !chosen.word) {
+      const pick = pickNonRepeating(
+        scopeKey,
+        'word',
+        WORDS_POOL.map((w) => ({ ...w, key: w.word })),
+        memoryLimit
+      );
+      if (!pick) return null;
+      chosen = {
+        word: pick.word,
+        theme: pick.theme,
+        aliases: pick.aliases || [pick.word],
+        hints: pick.hints || [],
+      };
+    }
+
+    const scrambled = scrambleWord(chosen.word, random);
     const aliases = Array.from(
-      new Set([pick.word, ...(pick.aliases || [])].map(normalizeAnswer).filter(Boolean))
+      new Set([chosen.word, ...(chosen.aliases || [])].map(normalizeAnswer).filter(Boolean))
     );
-    const answer = normalizeAnswer(pick.word);
+    const answer = normalizeAnswer(chosen.word);
     const data = {
-      word: pick.word,
-      theme: pick.theme,
+      word: chosen.word,
+      theme: chosen.theme,
       scrambled,
       aliases,
-      hints: (pick.hints || []).slice(0, MAX_HINTS),
+      hints: (chosen.hints || []).slice(0, MAX_HINTS),
     };
 
     return {
@@ -1136,7 +1315,7 @@ export function createDailyChallengeService(deps = {}) {
   }
 
   async function launchPokemon(scopeKey, now, sendImage, sharp) {
-    const memoryLimit = cfg().dailyChallengeContentMemory?.pokemon || 30;
+    const memoryLimit = cfg().dailyChallengeContentMemory?.pokemon || 100;
     const maxGen = Number(cfg().dailyChallengePokemonMaxGen) || 386;
     const recent = repository.getRecentContent(scopeKey, 'pokemon', memoryLimit);
     const recentSet = new Set(recent.map((v) => normalizeAnswer(v)));
@@ -1209,7 +1388,22 @@ export function createDailyChallengeService(deps = {}) {
 
   function recordPublishedLaunch(challenge, payload, launchedAt) {
     try {
-      payload.recordContent?.();
+      if (typeof payload?.recordContent === 'function') {
+        payload.recordContent();
+      } else if (challenge?.challengeType && challenge?.answer && repository?.recordContent) {
+        const typeToContentType = {
+          guess_game: 'game',
+          riddle: 'riddle',
+          pokemon: 'pokemon',
+          guess_movie_emoji: 'movie',
+          who_am_i: 'person',
+          word_scramble: 'word',
+        };
+        const ct = typeToContentType[challenge.challengeType];
+        if (ct) {
+          repository.recordContent(challenge.scopeKey, ct, challenge.answer);
+        }
+      }
       if (challenge?.challengeType === 'guess_game' && challenge.id && payload?.data?.hints?.[0]) {
         repository.recordHint(challenge.id, 0, launchedAt, String(payload.data.hints[0]));
       }
