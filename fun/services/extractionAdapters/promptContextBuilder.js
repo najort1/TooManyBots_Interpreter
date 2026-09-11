@@ -40,6 +40,7 @@ export function buildExpandedPromptContext({
   getProfile = null,
   loreFacts = [],
   timeZone = 'America/Sao_Paulo',
+  excludeJids = [],
 } = {}) {
   const sections = [];
 
@@ -58,13 +59,14 @@ export function buildExpandedPromptContext({
 
   // 2. Usuários mencionados na mensagem (via @menção)
   if (Array.isArray(mentionedJids) && mentionedJids.length && typeof getDisplayName === 'function' && typeof getProfile === 'function') {
-    const mentionedUsersMap = resolveMentionedUsers(mentionedJids, getDisplayName, scopeKey);
+    const mentionedUsersMap = resolveMentionedUsers(mentionedJids, getDisplayName, scopeKey, { excludeJids });
     if (mentionedUsersMap.size > 0) {
       const mentionedBlock = buildMentionedUsersContextBlock(mentionedUsersMap, {
         getProfile,
         scopeKey,
         loreFacts,
         timeZone,
+        excludeJids,
       });
       if (mentionedBlock) {
         sections.push(mentionedBlock);
