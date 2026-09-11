@@ -14,11 +14,19 @@ import { formatDatedFact } from './factTemporalContext.js';
  * @param {Array<string>} mentionedJids - JIDs mencionados na mensagem
  * @param {Function} getDisplayName - Função que recebe (jid, scopeKey) e retorna string
  * @param {string} scopeKey - Escopo do grupo
+ * @param {object} [options]
+ * @param {Array<string>|Set<string>} [options.excludeJids=[]] - JIDs a excluir do mapa
  * @returns {Map<string, object>} Map de jid -> { jid, localPart, displayName, nickname }
  */
-export function resolveMentionedUsers(mentionedJids = [], getDisplayName, scopeKey) {
+export function resolveMentionedUsers(mentionedJids = [], getDisplayName, scopeKey, { excludeJids = [] } = {}) {
   const map = new Map();
   if (!Array.isArray(mentionedJids) || !mentionedJids.length) return map;
+
+  const excluded = new Set(
+    (Array.isArray(excludeJids) || excludeJids instanceof Set ? [...excludeJids] : [])
+      .map((j) => normalizeMentionJid(j) || String(j || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
 
   for (const jid of mentionedJids) {
     const normalized = normalizeMentionJid(jid);
@@ -26,6 +34,8 @@ export function resolveMentionedUsers(mentionedJids = [], getDisplayName, scopeK
     if (map.has(normalized)) continue;
 
     const local = jidLocalPart(normalized) || '';
+    if (excluded.has(normalized) || (local && excluded.has(local))) continue;
+
     let displayName = '';
     let nickname = '';
 
@@ -119,9 +129,15 @@ export function resolveMentionsInText(text, mentionedUsersMap) {
  */
 export function buildMentionedUsersContextBlock(
   mentionedUsersMap,
-  { getProfile, scopeKey, loreFacts = [], timeZone, includeJid = true } = {}
+  { getProfile, scopeKey, loreFacts = [], timeZone, includeJid = true, excludeJids = [] } = {}
 ) {
   if (!mentionedUsersMap?.size) return '';
+
+  const excluded = new Set(
+    (Array.isArray(excludeJids) || excludeJids instanceof Set ? [...excludeJids] : [])
+      .map((j) => normalizeMentionJid(j) || String(j || '').trim().toLowerCase())
+      .filter(Boolean)
+  );
 
   const sections = [];
   const mentionedJids = Array.from(mentionedUsersMap.keys());
@@ -146,6 +162,7 @@ export function buildMentionedUsersContextBlock(
   for (const jid of mentionedJids) {
     const info = mentionedUsersMap.get(jid);
     if (!info) continue;
+    if (excluded.has(jid) || (info.localPart && excluded.has(info.localPart))) continue;
 
     const profile = typeof getProfile === 'function' ? getProfile(jid, scopeKey) : null;
     const hasProfile = profile && !profile.empty;

@@ -7,11 +7,21 @@ const DEFAULTS = Object.freeze({
   maxPerHour: 2,
   maxPerDay: 8,
   maxConsecutive: 1,
-  negativeSignalBlockMs: 60 * 60_000,
+  negativeSignalBlockMs: 20 * 60_000,
+  causalityWindowMs: 15 * 60_000,
 });
 
-function hasStopRequest(text) {
-  return /\b(?:para|pare|chega|cala|quieto|não fala|nao fala|não responde|nao responde)\b/iu.test(String(text || ''));
+const FALSE_STOP_RE = /\b(?:n[aã]o\s+par[ae]|nunca\s+par[ae]|sem\s+parar|parar?\s+de\s+sumir|para\s+de\s+(?:ser\s+)?(?:foda|bom|lindo|fofo|engra[cç]ado|legal|maravilhoso|carente|gra[cç]a)|quando\s+chega|chega\s+(?:a[ií]|mais)|vou\s+para|vai\s+para|olha\s+para|manda\s+para|passa\s+para)\b/iu;
+
+const STOP_COMMAND_EXACT_RE = /^(?:para|pare|chega|cala|quiet[oa]|calad[oa]|sil[eê]ncio|shh+|shiu+)[!.,? ]*$/iu;
+
+const STOP_PHRASES_RE = /\b(?:cala\s*(?:a\s*)?boca|calaboca|(?:fica|fique)\s+(?:quiet[oa]|calad[oa])|quiet[oa]\s+bot|(?:para|pare)\s+(?:bot|de\s+falar|de\s+responder|de\s+mandar|de\s+encher|por\s+favor|com\s+isso)|(?:chega\s+(?:bot|de\s+falar|de\s+responder|de\s+mandar|de\s+conversa))|(?:n[aã]o|nao)\s+(?:fala|responde)\s+(?:mais|nada|comigo)?|(?:sil[eê]ncio\s+bot))\b/iu;
+
+export function hasStopRequest(text) {
+  const clean = String(text || '').trim();
+  if (!clean) return false;
+  if (FALSE_STOP_RE.test(clean)) return false;
+  return STOP_COMMAND_EXACT_RE.test(clean) || STOP_PHRASES_RE.test(clean);
 }
 
 function isSensitive(text) {
@@ -73,6 +83,7 @@ export function createPersonaAutonomyPolicy({ autonomyRepository = null, now = (
       maxPerDay: Math.max(1, Number(funConfig.personaAutonomyMaxPerDay) || DEFAULTS.maxPerDay),
       maxConsecutive: Math.max(1, Number(funConfig.personaAutonomyMaxConsecutive) || DEFAULTS.maxConsecutive),
       negativeSignalBlockMs: Math.max(60_000, Number(funConfig.personaAutonomyNegativeBlockMs) || DEFAULTS.negativeSignalBlockMs),
+      causalityWindowMs: Math.max(60_000, Number(funConfig.personaAutonomyCausalityWindowMs) || DEFAULTS.causalityWindowMs),
     };
   }
 
@@ -145,11 +156,23 @@ export function createPersonaAutonomyPolicy({ autonomyRepository = null, now = (
     persistState(scopeKey, state, currentNow);
   }
 
-  function observeHumanMessage(scopeKey, { text, funConfig = {}, currentNow = now() } = {}) {
+  function observeHumanMessage(scopeKey, {
+    text,
+    quotedIsBot = false,
+    funConfig = {},
+    currentNow = now(),
+  } = {}) {
     const state = observeState(scopeKey, readState(scopeKey, currentNow));
     state.consecutive = 0;
-    if (hasStopRequest(text)) {
-      state.negativeUntil = currentNow + getOptions(funConfig).negativeSignalBlockMs;
+
+    const options = getOptions(funConfig);
+    const hadRecentAutonomousAction = Boolean(
+      state.lastAt &&
+      (currentNow - state.lastAt) <= options.causalityWindowMs
+    );
+
+    if (hadRecentAutonomousAction && quotedIsBot && hasStopRequest(text)) {
+      state.negativeUntil = currentNow + options.negativeSignalBlockMs;
     }
     persistState(scopeKey, state, currentNow);
   }

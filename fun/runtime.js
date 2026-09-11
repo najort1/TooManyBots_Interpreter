@@ -423,7 +423,9 @@ export async function startFunBot(options = {}) {
     dispatchPersonaAutonomousAction: async ({ sock, scopeKey, action, quoteSource, messageKey }) => {
       const priority = 'flavor';
       const coalesceKey = `persona-autonomy:${scopeKey}`;
-      const quoted = quoteSource?.key ? { quoted: quoteSource } : undefined;
+      const effectiveQuoteSource = action?.targetQuoteSource || quoteSource;
+      const effectiveKey = action?.targetKey || action?.targetMessageKey || messageKey || effectiveQuoteSource?.key;
+      const quoted = effectiveQuoteSource?.key ? { quoted: effectiveQuoteSource } : undefined;
       if (action?.type === 'text') {
         return sendTextMessage(sock, scopeKey, action.text, { priority, coalesceKey, ...(quoted || {}) });
       }
@@ -431,7 +433,7 @@ export async function startFunBot(options = {}) {
         return sendStickerMessage(sock, scopeKey, action.stickerBuffer, { priority, coalesceKey, ...(quoted || {}) });
       }
       if (action?.type === 'react') {
-        const targetKey = quoteSource?.key || messageKey;
+        const targetKey = effectiveKey;
         if (!targetKey || typeof sock?.sendMessage !== 'function') {
           return { skipped: true, reason: 'reaction-target-unavailable' };
         }

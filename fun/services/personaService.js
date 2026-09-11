@@ -26,6 +26,7 @@ import {
   buildPersonaToolManifest,
   findPersonaActionClaims,
   isPersonaSideEffectTool,
+  shouldDisplayPersonaToolOutput,
   parseFollowupEnvelope,
   parsePersonaEnvelope,
   looksLikeRawJson,
@@ -61,6 +62,7 @@ import {
 import {
   deriveGroupStyle,
 } from './personaStyleDeriver.js';
+import { hasStopRequest } from './personaAutonomyPolicy.js';
 
 const FALLBACK_LINES = [
   'kkkkk relaxa',
@@ -130,6 +132,42 @@ function actionTranscript(actions, maxChars) {
     })
     .filter(Boolean)
     .join('\n\n');
+}
+
+export const AUDIO_INTENT_RE = /(?:^|[^\w])(?:(?:manda|mande|envia|envie|grava|grave|solta|solte|fala|cante|canta)\s+(?:a[íi]\s+)?(?:um\s+)?(?:em\s+)?(?:[aá]udio|voz)|(?:em|por)\s+[aá]udio|com\s+a\s+sua\s+voz|mandando\s+voz|formato\s+de\s+[aá]udio|tool\s+de\s+(?:enviar\s+)?[aá]udio)(?:$|[^\w])/i;
+
+export function formatToolExecutionNotice(silentToolCounts = new Map(), fullOutputTexts = [], failedToolCounts = new Map()) {
+  const parts = [];
+  const entries = silentToolCounts instanceof Map
+    ? Array.from(silentToolCounts.entries())
+    : Object.entries(silentToolCounts || {});
+
+  if (entries.length > 0) {
+    const countsText = entries
+      .map(([name, count]) => `(${name}) ${count} ${count === 1 ? 'vez' : 'vezes'}`)
+      .join(', ');
+    parts.push(`Usou ${countsText}`);
+  }
+
+  const failedEntries = failedToolCounts instanceof Map
+    ? Array.from(failedToolCounts.entries())
+    : Object.entries(failedToolCounts || {});
+
+  if (failedEntries.length > 0) {
+    const failedItems = failedEntries.map(([name]) => {
+      const label = name === 'send_voice' ? 'audio' : name;
+      return `(${label})`;
+    });
+    parts.push(`Tentou usar ${failedItems.join(', ')} mas falhou`);
+  }
+
+  const cleanFullTexts = (Array.isArray(fullOutputTexts) ? fullOutputTexts : [])
+    .map((t) => String(t || '').trim())
+    .filter(Boolean);
+  if (cleanFullTexts.length > 0) {
+    parts.push(...cleanFullTexts);
+  }
+  return parts.join('\n\n');
 }
 
 function isSuccessfulDispatch(sent) {
@@ -349,6 +387,9 @@ export function createPersonaService({
     const trace = [];
     const dispatchActions = [];
     const claimTokens = [];
+    const fullOutputTexts = [];
+    const silentToolCounts = new Map();
+    const failedToolCounts = new Map();
     let lastDisplayText = '';
     let sideEffectExecuted = false;
     let call = initialCall;
@@ -361,6 +402,9 @@ export function createPersonaService({
       }
       if (isPersonaSideEffectTool(call.name) && sideEffectExecuted) {
         trace.push({ name: call.name, ok: false, summary: 'Bloqueada: já houve uma ação externa neste turno.' });
+        if (call.name === 'send_voice' || call.name === 'audio') {
+          failedToolCounts.set('audio', (failedToolCounts.get('audio') || 0) + 1);
+        }
         break;
       }
       executed.add(callKey);
@@ -386,6 +430,14 @@ export function createPersonaService({
         } else {
           claimTokens.push(...toolClaimTokens);
         }
+
+        if (shouldDisplayPersonaToolOutput(call.name)) {
+          if (displayText) fullOutputTexts.push(displayText);
+        } else if (!toolDispatchActions.length) {
+          silentToolCounts.set(call.name, (silentToolCounts.get(call.name) || 0) + 1);
+        }
+      } else if (call.name === 'send_voice' || call.name === 'audio') {
+        failedToolCounts.set('audio', (failedToolCounts.get('audio') || 0) + 1);
       }
       const summary = cleanPromptText(
         toolResult?.summary || displayText || `Ferramenta ${call.name} terminou sem texto.`,
@@ -418,6 +470,7 @@ export function createPersonaService({
         continue;
       }
       if (decision.envelope.type === 'actions') {
+        const toolPrefix = formatToolExecutionNotice(silentToolCounts, fullOutputTexts, failedToolCounts);
         const finalActions = [];
         for (const action of decision.envelope.actions) {
           if (action.type !== 'text') {
@@ -429,21 +482,22 @@ export function createPersonaService({
           if (sanitized) finalActions.push({ ...action, text: sanitized });
         }
         const finalText = actionTranscript(finalActions, maxChars);
-        const combined = [lastDisplayText, finalText].filter(Boolean).join('\n\n');
+        const combined = [toolPrefix, finalText].filter(Boolean).join('\n\n');
         return {
           text: combined || '👍',
-          actions: lastDisplayText
-            ? [{ type: 'text', text: lastDisplayText }, ...finalActions]
+          actions: toolPrefix
+            ? [{ type: 'text', text: toolPrefix }, ...finalActions]
             : finalActions,
           dispatchActions,
           claimTokens,
         };
       }
       if (decision.envelope.type === 'reply') {
+        const toolPrefix = formatToolExecutionNotice(silentToolCounts, fullOutputTexts, failedToolCounts);
         const stripped = stripToolEcho(decision.envelope.text, lastDisplayText);
         const reply = sanitizePersonaResponse(stripped, maxChars);
         if (reply && !looksLikeScoreboardEcho(reply)) {
-          const combined = [lastDisplayText, reply].filter(Boolean).join('\n\n');
+          const combined = [toolPrefix, reply].filter(Boolean).join('\n\n');
           return {
             text: combined,
             actions: [{ type: 'text', text: combined }],
@@ -455,7 +509,8 @@ export function createPersonaService({
       break;
     }
 
-    const lastResult = lastDisplayText || trace.at(-1)?.summary || '';
+    const toolPrefix = formatToolExecutionNotice(silentToolCounts, fullOutputTexts, failedToolCounts);
+    const lastResult = lastDisplayText || toolPrefix || trace.at(-1)?.summary || '';
     const fallback = sanitizePersonaResponse(lastResult, Math.max(maxChars, 1_600));
     if (!fallback && !dispatchActions.length) return '';
     return {
@@ -481,7 +536,13 @@ export function createPersonaService({
     agentContext = null,
   }) {
     const o = opts(funConfig);
-    const groupIdentity = responseContextPack?.groupIdentity || {};
+    const groupIdentity = { ...(responseContextPack?.groupIdentity || {}) };
+    if (!groupIdentity.botName && agentContext?.botName) {
+      groupIdentity.botName = agentContext.botName;
+    }
+    if (Array.isArray(agentContext?.botLocalParts) && agentContext.botLocalParts.length) {
+      groupIdentity.botIdentifiers = agentContext.botLocalParts;
+    }
     const identityStyle = (groupIdentity.voiceStyle || []).filter(Boolean).join(', ') || '';
     const personaIdentityBlock = buildPersonaIdentityBlock(groupIdentity);
     const toneBlock = buildToneBlock(groupIdentity);
@@ -527,6 +588,7 @@ export function createPersonaService({
             : null,
           loreFacts: responseContextPack?.loreFacts || [],
           timeZone: o.timezone,
+          excludeJids: agentContext?.botJids || [],
         })
       : '';
     const mentionedUsersBlock = buildMentionedUsersContextBlock(mentionedUsersMap, {
@@ -536,6 +598,7 @@ export function createPersonaService({
       scopeKey,
       loreFacts: responseContextPack?.loreFacts || [],
       timeZone: o.timezone,
+      excludeJids: agentContext?.botJids || [],
     });
     const mentionContextIsAlreadyPresent = extraContextBlock.includes('<mentioned_users>');
 
@@ -575,6 +638,8 @@ export function createPersonaService({
         immediateContext,
         maxChars: o.maxChars,
         contextTurns: o.contextTurns,
+        botLocalParts: new Set(agentContext?.botLocalParts || []),
+        botName: agentContext?.botName || groupIdentity.botName || '',
       }),
       buildTemporalBlock(currentNow, o.timezone),
       buildFactTemporalContext({ now: currentNow, timeZone: o.timezone }),
@@ -605,13 +670,21 @@ export function createPersonaService({
       try {
         const agentEnabled = Boolean(personaToolExecutor && funConfig?.personaToolsEnabled !== false);
         const audioEnabled = isTtsAvailable(effectivePersonaTts);
+        const isExplicitAudioRequest = AUDIO_INTENT_RE.test(String(text || '')) || AUDIO_INTENT_RE.test(String(quotedText || ''));
+        const audioPromptDirective = isExplicitAudioRequest && audioEnabled
+          ? '\n\n[ATENÇÃO: O interlocutor pediu expressamente para você responder EM ÁUDIO! Você DEVE usar a ferramenta send_voice ou responder com {"type":"audio","text":"..."}. Suporta músicas completas, raps e falas longas. Não responda apenas em texto simples.]'
+          : '';
+        const effectiveSystem = agentEnabled
+          ? `${system}\n\n${buildPersonaToolManifest({ audioEnabled })}${audioPromptDirective}`
+          : `${system}${audioPromptDirective}`;
+
         const raw = await generateZen({
           baseUrl: ep.baseUrl,
           model: ep.model,
           prompt,
           images,
           audios,
-          system: agentEnabled ? `${system}\n\n${buildPersonaToolManifest({ audioEnabled })}` : system,
+          system: effectiveSystem,
           timeoutMs: Math.min(o.timeoutMs, zen.timeoutMs || 15_000),
           maxTokens: zen.maxTokens,
           temperature: zen.temperature,
@@ -626,10 +699,17 @@ export function createPersonaService({
 
           // Caso 1: Multi-Ação (Multi-Bubble / Sticker / React)
           if (decision.ok && decision.envelope.type === 'actions') {
-            const combinedText = actionTranscript(decision.envelope.actions, o.maxChars);
+            let actions = decision.envelope.actions;
+            if (isExplicitAudioRequest && audioEnabled && !actions.some((a) => a.type === 'audio')) {
+              const lastTextIdx = actions.findLastIndex((a) => a.type === 'text');
+              if (lastTextIdx >= 0) {
+                actions = actions.map((a, idx) => idx === lastTextIdx ? { ...a, type: 'audio' } : a);
+              }
+            }
+            const combinedText = actionTranscript(actions, o.maxChars);
             return {
               text: combinedText || '👍',
-              actions: decision.envelope.actions,
+              actions,
             };
           }
 
@@ -637,6 +717,12 @@ export function createPersonaService({
           if (decision.ok && decision.envelope.type === 'reply') {
             const direct = sanitizePersonaResponse(decision.envelope.text, o.maxChars);
             if (direct && !looksLikeScoreboardEcho(direct)) {
+              if (isExplicitAudioRequest && audioEnabled) {
+                return {
+                  text: direct,
+                  actions: [{ type: 'audio', text: direct }],
+                };
+              }
               return {
                 text: direct,
                 actions: [{ type: 'text', text: direct }],
@@ -943,6 +1029,18 @@ export function createPersonaService({
       const quotedRaw = normalizeJid(ctx.quotedParticipant);
       const quotedIsBot = botJids.has(quotedRaw) || botJids.has(resolveJid(quotedRaw, ctx.identityMap));
 
+      // Se o usuário responder/citar diretamente o bot com um pedido explícito de parada:
+      // aciona a política de autonomia para registrar o sinal negativo (20 min) e encerra o turno sem responder.
+      if (quotedIsBot && hasStopRequest(ctx.text)) {
+        personaAutonomyPolicy?.observeHumanMessage?.(scopeKey, {
+          text: ctx.text,
+          quotedIsBot: true,
+          funConfig: ctx.funConfig,
+          currentNow: now,
+        });
+        return { responded: false, reason: 'stop-request' };
+      }
+
       // A continuação é resolvida pela âncora citada, não pela thread mais
       // recente do grupo. Conversas paralelas não podem competir por recência.
       const anchoredThread = personaRepository.getActiveThreadByAnchor
@@ -962,6 +1060,7 @@ export function createPersonaService({
       let thread = isContinuation ? anchoredThread : null;
 
       const authorLabelForOpportunity = profileService?.displayName?.(authorJid, scopeKey) || authorJid.split('@')[0] || 'membro';
+      const incomingKey = ctx.rawMessage?.key || ctx.quoteSource?.key || ctx.messageKey || null;
       let opportunity = null;
       if (!mention && !atMention && !isContinuation) {
         if (typeof personaOpportunityDetector?.observeMessage === 'function' && typeof personaOpportunityDetector?.evaluateBatch === 'function') {
@@ -971,7 +1070,7 @@ export function createPersonaService({
             authorLabel: authorLabelForOpportunity,
             authorJid,
             messageType: ctx.messageType,
-            messageKey: ctx.messageKey,
+            messageKey: incomingKey,
             quoteSource: ctx.quoteSource,
             funConfig: ctx.funConfig,
             now,
@@ -992,7 +1091,7 @@ export function createPersonaService({
             text: ctx.text,
             authorLabel: authorLabelForOpportunity,
             messageType: ctx.messageType,
-            messageKey: ctx.messageKey,
+            messageKey: incomingKey,
             quoteSource: ctx.quoteSource,
             responseContextPack: ctx.responseContextPack,
             funConfig: ctx.funConfig,
@@ -1001,10 +1100,14 @@ export function createPersonaService({
         }
       }
       const isAutonomous = Boolean(opportunity?.eligible && opportunity?.action);
+      if (isAutonomous) {
+        console.log(`[fun/autonomy] 🚀 Persona autônoma assumiu turno em ${scopeKey}! Ação planejada: ${opportunity.action.type}`);
+      }
 
       if (!mention && !atMention && !isContinuation && !isAutonomous) {
         personaAutonomyPolicy?.observeHumanMessage?.(scopeKey, {
           text: ctx.text,
+          quotedIsBot,
           funConfig: ctx.funConfig,
           currentNow: now,
         });
@@ -1049,11 +1152,38 @@ export function createPersonaService({
       let threadContext = [];
       if (thread?.context?.length) threadContext = thread.context;
 
+      const botName = String(
+        ctx.responseContextPack?.groupIdentity?.botName
+        || ctx.funConfig?.personaName
+        || ctx.funConfig?.botName
+        || ctx.sock?.user?.name
+        || ctx.sock?.authState?.creds?.me?.name
+        || ''
+      ).trim();
+      const botLocalParts = new Set(
+        [...botJids].map((jid) => String(jid || '').split('@')[0]).filter(Boolean)
+      );
+      const isBotJid = (raw) => {
+        if (!raw) return false;
+        const rawNorm = normalizeJid(raw);
+        if (!rawNorm) return false;
+        const canonical = resolveJid(rawNorm, ctx.identityMap) || rawNorm;
+        const rawLocal = rawNorm.split('@')[0];
+        const canonicalLocal = canonical.split('@')[0];
+        return (
+          botJids.has(rawNorm)
+          || botJids.has(canonical)
+          || botLocalParts.has(rawLocal)
+          || botLocalParts.has(canonicalLocal)
+        );
+      };
+
       const canonicalMentionedJidsFromContext = (ctx.mentionedJids || []).map((jid) => {
         const normalized = normalizeJid(jid);
         return resolveJid(normalized, ctx.identityMap) || normalized;
-      }).filter(Boolean);
-      const participantJids = [authorJid, ...canonicalMentionedJidsFromContext, quotedRaw].filter(Boolean);
+      }).filter((jid) => Boolean(jid) && !isBotJid(jid));
+      const participantJids = [authorJid, ...canonicalMentionedJidsFromContext, quotedRaw]
+        .filter((jid) => Boolean(jid) && !isBotJid(jid));
       const authorLabel = profileService?.displayName
         ? profileService.displayName(authorJid, scopeKey)
         : authorJid.split('@')[0] || 'membro';
@@ -1092,6 +1222,23 @@ export function createPersonaService({
         // (para lid, o número do lid); canonicalLocal, o do JID resolvido.
         const rawLocal = rawNormalized.split('@')[0];
         const canonicalLocal = canonical.split('@')[0];
+
+        // Se for o próprio bot, mapeia para o nome da persona no texto e NUNCA
+        // o coloca na lista de usuários de contexto terceiro (<mentioned_users>)
+        if (isBotJid(rawNormalized) || isBotJid(canonical)) {
+          const botDisplayName = botName || 'você';
+          mentionMap.set(canonical, {
+            jid: canonical,
+            localPart: rawLocal || canonicalLocal,
+            localParts: [...new Set([rawLocal, canonicalLocal, ...botLocalParts].filter(Boolean))],
+            displayName: botDisplayName,
+            hasRealName: true,
+            nickname: '',
+            isBot: true,
+          });
+          return canonical;
+        }
+
         // Alguns snapshots expõem o nome no LID, mas a menção vem como um
         // número opaco em @s.whatsapp.net. Consulta todos os aliases estáveis.
         const displayName = resolveMentionDisplayName([
@@ -1107,6 +1254,7 @@ export function createPersonaService({
           displayName: displayName || rawLocal || 'alguém',
           hasRealName: Boolean(displayName),
           nickname: '',
+          isBot: false,
         });
         if (!canonicalMentionedJids.includes(canonical)) canonicalMentionedJids.push(canonical);
         return canonical;
@@ -1127,9 +1275,34 @@ export function createPersonaService({
         const digits = match[2];
         const alreadyKnown = [...mentionMap.values()].some((info) => info.localParts?.includes?.(digits) || info.localPart === digits);
         if (alreadyKnown) continue;
+        if (botLocalParts.has(digits)) {
+          const botCanonical = [...botJids][0] || `${digits}@lid`;
+          mentionMap.set(botCanonical, {
+            jid: botCanonical,
+            localPart: digits,
+            localParts: [...new Set([digits, ...botLocalParts])],
+            displayName: botName || 'você',
+            hasRealName: true,
+            nickname: '',
+            isBot: true,
+          });
+          continue;
+        }
         for (const candidate of [`${digits}@lid`, `${digits}@s.whatsapp.net`]) {
           const canonical = resolveJid(normalizeJid(candidate), ctx.identityMap);
           if (!canonical) continue;
+          if (isBotJid(canonical) || isBotJid(candidate)) {
+            mentionMap.set(canonical, {
+              jid: canonical,
+              localPart: digits,
+              localParts: [...new Set([digits, canonical.split('@')[0], ...botLocalParts].filter(Boolean))],
+              displayName: botName || 'você',
+              hasRealName: true,
+              nickname: '',
+              isBot: true,
+            });
+            break;
+          }
           const name = resolveMentionDisplayName([
             canonical,
             candidate,
@@ -1145,6 +1318,7 @@ export function createPersonaService({
               displayName: name,
               hasRealName: true,
               nickname: '',
+              isBot: false,
             });
             if (!canonicalMentionedJids.includes(canonical)) canonicalMentionedJids.push(canonical);
           }
@@ -1152,6 +1326,13 @@ export function createPersonaService({
         }
       }
       const promptText = resolveMentionsInText(rawPromptText, mentionMap);
+      const quotedText = ctx.quotedText ? resolveMentionsInText(ctx.quotedText, mentionMap) : '';
+      const thirdPartyMentionMap = new Map();
+      for (const [jid, info] of mentionMap) {
+        if (!info.isBot && !isBotJid(jid) && !botLocalParts.has(info.localPart)) {
+          thirdPartyMentionMap.set(jid, info);
+        }
+      }
 
       inFlightScopes.add(scopeKey);
       let genResult = isAutonomous
@@ -1170,10 +1351,13 @@ export function createPersonaService({
             responseContextPack: ctx.responseContextPack,
             participantJids,
             authorLabel,
-            quotedText: ctx.quotedText,
-            mentionedUsersMap: mentionMap,
+            quotedText,
+            mentionedUsersMap: thirdPartyMentionMap,
             agentContext: {
               authorJid,
+              botName,
+              botJids: [...botJids],
+              botLocalParts: [...botLocalParts],
               mentionedJids: canonicalMentionedJids.length
                 ? canonicalMentionedJids
                 : canonicalMentionedJidsFromContext,
@@ -1252,6 +1436,9 @@ export function createPersonaService({
       const targetQuoteSource = (isAutonomous && opportunity?.targetMessage?.quoteSource)
         ? opportunity.targetMessage.quoteSource
         : ctx.quoteSource;
+      const targetMessageKey = (isAutonomous && (opportunity?.targetMessage?.messageKey || opportunity?.targetMessage?.quoteSource?.key))
+        ? (opportunity.targetMessage.messageKey || opportunity.targetMessage.quoteSource?.key)
+        : (incomingKey || targetQuoteSource?.key || null);
 
       const quoted = ctx.funConfig?.replyQuoted !== false && targetQuoteSource?.key
         ? targetQuoteSource
@@ -1339,9 +1526,16 @@ export function createPersonaService({
                   })(),
                 }
               : action;
-            sent = await ctx.dispatchAutonomousAction(dispatchAction);
+            const targetMeta = {
+              targetQuoteSource,
+              targetMessageKey,
+              targetKey: targetMessageKey || targetQuoteSource?.key,
+            };
+            console.log(`[fun/autonomy] Despachando tool autônoma ${action.type} em ${scopeKey}...`);
+            sent = await ctx.dispatchAutonomousAction(dispatchAction, targetMeta);
             if (action.type === 'sticker' && !receipt.claimTokens.length) receipt.claimTokens = ['sticker'];
             if (action.type === 'react' && !receipt.claimTokens.length) receipt.claimTokens = ['emoji_reaction'];
+            console.log(`[fun/autonomy] ✅ Tool autônoma ${action.type} enviada com sucesso em ${scopeKey}! Id=${sent?.key?.id}`);
           } else if (action.type === 'image_url') {
             if (typeof ctx.replyImageUrl === 'function') {
               sent = await ctx.replyImageUrl(action.imageUrl, action.caption || '', action.mimeType || '');
@@ -1369,13 +1563,44 @@ export function createPersonaService({
             }
             if (!receipt.claimTokens.length) receipt.claimTokens = ['sticker'];
           } else if (action.type === 'react') {
-            const targetKey = ctx.quoteSource?.key || ctx.messageKey;
+            const targetKey = targetMessageKey || targetQuoteSource?.key || ctx.quoteSource?.key || ctx.messageKey;
             if (!hasSock || !targetKey) throw new Error('reaction-target-unavailable');
             sent = await ctx.sock.sendMessage(scopeKey, { react: { text: action.emoji, key: targetKey } });
             if (!receipt.claimTokens.length) receipt.claimTokens = ['emoji_reaction'];
           } else if (isAutonomous && action.type === 'text') {
             if (!hasSock) throw new Error('text-sender-unavailable');
             sent = await ctx.sock.sendMessage(scopeKey, { text: action.text }, quoted ? { quoted } : undefined);
+          } else if (action.type === 'audio') {
+            let audioAttempted = false;
+            if (hasSock && isTtsAvailable(effectivePersonaTts)) {
+              try {
+                const synthesized = await effectivePersonaTts.synthesize(action.text, {
+                  voiceName: ctx.funConfig?.personaTtsVoice || 'Puck',
+                  model: ctx.funConfig?.personaTtsModel || 'gemini-3.1-flash-tts-preview',
+                });
+                if (synthesized?.ok) {
+                  audioAttempted = true;
+                  sent = await ctx.sock.sendMessage(scopeKey, {
+                    audio: synthesized.buffer,
+                    mimetype: synthesized.mimeType || 'audio/ogg; codecs=opus',
+                    ptt: true,
+                  }, quoted ? { quoted } : undefined);
+                  if (!receipt.claimTokens.length) receipt.claimTokens = ['audio'];
+                }
+              } catch (ttsError) {
+                logger?.debug?.('[personaService] síntese de áudio da tool falhou: %s', String(ttsError?.message || ttsError));
+              }
+            }
+            if (!audioAttempted || !isSuccessfulDispatch(sent)) {
+              if (!hasSock) throw new Error('audio-sender-unavailable');
+              const failurePrefix = 'Tentou usar (audio) mas falhou';
+              const textToSend = action.text.startsWith(failurePrefix)
+                ? action.text
+                : `${failurePrefix}\n\n${action.text}`;
+              sent = await ctx.sock.sendMessage(scopeKey, { text: textToSend }, quoted ? { quoted } : undefined);
+              receipt.ok = false;
+              receipt.claimTokens = [];
+            }
           } else {
             throw new Error('unknown-tool-dispatch-action');
           }
@@ -1414,10 +1639,18 @@ export function createPersonaService({
 
         try {
           if (isAutonomous && typeof ctx.dispatchAutonomousAction === 'function') {
-            const sent = await ctx.dispatchAutonomousAction(action);
+            const targetMeta = {
+              targetQuoteSource,
+              targetMessageKey,
+              targetKey: targetMessageKey || targetQuoteSource?.key,
+            };
+            console.log(`[fun/autonomy] Despachando ação autônoma ${action.type} em ${scopeKey}...`);
+            const sent = await ctx.dispatchAutonomousAction(action, targetMeta);
             if (!recordDeliveredAction(sent, action)) {
+              console.warn(`[fun/autonomy] ❌ Despacho autônomo não confirmado em ${scopeKey}: ${sent?.reason || 'unconfirmed'}`);
               throw new Error(sent?.reason || 'autonomous-dispatch-unconfirmed');
             }
+            console.log(`[fun/autonomy] ✅ Ação autônoma ${action.type} despachada com sucesso em ${scopeKey}! Id=${sent?.key?.id}`);
           } else if (action.type === 'audio') {
             let sent;
             let audioAttempted = false;
@@ -1435,6 +1668,7 @@ export function createPersonaService({
                     ptt: true,
                   }, quoted ? { quoted } : undefined);
                   recordSentMessage(sent, action);
+                  dispatchReceipts.push({ ok: true, type: 'audio', claimTokens: ['audio'] });
                 } else {
                   audioDispatchFailed = true;
                 }
@@ -1447,8 +1681,18 @@ export function createPersonaService({
             }
             if (!audioAttempted || !isSuccessfulDispatch(sent)) {
               if (!hasSock) throw new Error('audio-sender-unavailable');
-              const fallback = await ctx.sock.sendMessage(scopeKey, { text: action.text }, quoted ? { quoted } : undefined);
-              recordSentMessage(fallback, { type: 'text', text: action.text });
+              const failurePrefix = 'Tentou usar (audio) mas falhou';
+              const textToSend = action.text.startsWith(failurePrefix)
+                ? action.text
+                : `${failurePrefix}\n\n${action.text}`;
+              const fallback = await ctx.sock.sendMessage(scopeKey, { text: textToSend }, quoted ? { quoted } : undefined);
+              recordSentMessage(fallback, { type: 'text', text: textToSend });
+              dispatchReceipts.push({ ok: false, type: 'audio', claimTokens: ['audio'] });
+              if (responseText && !responseText.includes(failurePrefix)) {
+                responseText = `${failurePrefix}\n\n${responseText}`;
+              } else if (!responseText) {
+                responseText = textToSend;
+              }
             }
           } else if (action.type === 'text' && hasSock) {
             const sent = await ctx.sock.sendMessage(scopeKey, { text: action.text }, quoted ? { quoted } : undefined);
@@ -1460,9 +1704,10 @@ export function createPersonaService({
             const stickerBuffer = await imageBufferToSticker(rawSticker);
             const sent = await ctx.sock.sendMessage(scopeKey, { sticker: stickerBuffer }, quoted ? { quoted } : undefined);
             recordSentMessage(sent, action);
-          } else if (action.type === 'react' && hasSock && targetQuoteSource?.key) {
+          } else if (action.type === 'react' && hasSock && (targetMessageKey || targetQuoteSource?.key)) {
+            const targetKey = targetMessageKey || targetQuoteSource?.key;
             const sent = await ctx.sock.sendMessage(scopeKey, {
-              react: { text: action.emoji, key: targetQuoteSource.key },
+              react: { text: action.emoji, key: targetKey },
             });
             recordSentMessage(sent, action);
           }

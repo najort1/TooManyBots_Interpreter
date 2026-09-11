@@ -420,6 +420,21 @@ export function createPersonaToolExecutor({
       };
     }
 
+    if (name === 'send_voice') {
+      const text = clean(args.text, 4000);
+      if (!text) {
+        return { ...base, reason: 'empty-text', text: 'Preciso de um texto para falar no áudio.' };
+      }
+      return {
+        ...base,
+        ok: true,
+        text: '',
+        summary: `Áudio com a voz da persona preparado: "${text.slice(0, 60)}..."`,
+        dispatchActions: [{ type: 'audio', text, claimTokens: ['audio'] }],
+        claimTokens: claimTokensForPersonaTool(name),
+      };
+    }
+
     return { ...base, reason: 'unknown-tool', text: '' };
   }
 

@@ -67,6 +67,14 @@ export function buildPersonaIdentityBlock(identity = {}) {
   if (Array.isArray(identity.botAliases) && identity.botAliases.length) {
     parts.push(`Também respondo por: ${identity.botAliases.join(', ')}.`);
   }
+  const identifiers = Array.isArray(identity.botIdentifiers)
+    ? identity.botIdentifiers.filter(Boolean)
+    : identity.botIdentifier
+      ? [identity.botIdentifier]
+      : [];
+  if (identifiers.length) {
+    parts.push(`Meus números/identificadores no WhatsApp: ${identifiers.join(', ')} (se alguém citar ou marcar esses números, está falando DIRETAMENTE COMIGO).`);
+  }
   if (identity.botRole) parts.push(`Meu papel no grupo: ${cleanPromptText(identity.botRole, 240)}.`);
   if (Array.isArray(identity.botTraits) && identity.botTraits.length) {
     parts.push(`Meus traços: ${identity.botTraits.join(', ')}.`);
@@ -98,15 +106,30 @@ export function buildToneBlock(identity) {
 /**
  * Monta o System Prompt completo da Persona com todas as diretrizes de personalidade.
  */
-function formatImmediateContext(messages = []) {
+function formatImmediateContext(messages = [], { botLocalParts = new Set(), botName = '' } = {}) {
   if (!Array.isArray(messages) || !messages.length) return '';
   const lines = ['Conversa recente antes do chamado (use para entender o assunto e quem falou o quê):'];
+  const botReplacement = botName ? `@${botName}` : '@você';
+  const locals = botLocalParts instanceof Set
+    ? [...botLocalParts].filter(Boolean)
+    : Array.isArray(botLocalParts)
+      ? botLocalParts.filter(Boolean)
+      : [];
+
   for (const message of messages) {
     const author = cleanPromptText(message.authorLabel, 100)
       || (message.source === 'bot' ? 'eu' : 'membro');
-    const text = cleanPromptText(message.text, 4_000);
-    const quote = cleanPromptText(message.quotedText, 800);
+    let text = cleanPromptText(message.text, 4_000);
+    let quote = cleanPromptText(message.quotedText, 800);
     if (!text) continue;
+    if (locals.length) {
+      for (const local of locals) {
+        const escaped = String(local).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(`@${escaped}\\b`, 'g');
+        text = text.replace(re, botReplacement);
+        if (quote) quote = quote.replace(re, botReplacement);
+      }
+    }
     lines.push(`- ${author}: "${text}"${quote ? ` (citava: "${quote}")` : ''}`);
   }
   return lines.length > 1 ? lines.join('\n') : '';
@@ -118,6 +141,8 @@ export function buildPersonaSystemPrompt({
   immediateContext = [],
   maxChars = Infinity,
   contextTurns = 4,
+  botLocalParts = new Set(),
+  botName = '',
 }) {
   const hasExplicitLengthLimit = Number.isFinite(maxChars) && maxChars > 0;
   const minLen = hasExplicitLengthLimit
@@ -125,7 +150,7 @@ export function buildPersonaSystemPrompt({
     : 0;
   const parts = [
     'Você é um membro comum de um grupo de WhatsApp. Está respondendo naturalmente, como um participante qualquer — não como assistente.',
-    'Você é o bot do grupo e participa dele de verdade: quando alguém chama "bot" ou te marca, é com você. Fale SEMPRE em primeira pessoa (eu, meu, minha), sem se apresentar como assistente genérico.',
+    'Você é o bot do grupo e participa dele de verdade: quando alguém chama "bot", usa seu nome, te marca com @ ou cita seu número/identificador, essa pessoa está falando DIRETAMENTE COM VOCÊ! Fale SEMPRE em primeira pessoa (eu, meu, minha), sem se apresentar como assistente genérico. NUNCA fale de si mesmo em terceira pessoa ("ele", "o fulano") e NUNCA ache que estão chamando outra pessoa quando te marcarem.',
     'Escreva em português do Brasil, de forma autêntica e descontraída, no estilo e ritmo de fala do grupo.',
     'Varie o tom: às vezes debochado, às vezes empático, às vezes irônico ou breve, dependendo do contexto da conversa.',
     hasExplicitLengthLimit
@@ -150,7 +175,7 @@ export function buildPersonaSystemPrompt({
     parts.push(`Estilo aprendido do grupo:\n${styleBlock}`);
   }
 
-  const recentBlock = formatImmediateContext(immediateContext);
+  const recentBlock = formatImmediateContext(immediateContext, { botLocalParts, botName });
   if (recentBlock) {
     parts.push('');
     parts.push(recentBlock);

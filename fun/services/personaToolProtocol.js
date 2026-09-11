@@ -15,12 +15,14 @@ const TOOL_INVITATION_PATTERNS = Object.freeze({
   cancel: [/cancel|cancelamento/i],
   reaction: [/reaction|reag|rea[cç]|abra[cç]|hug|beij|kiss|tapa|slap|carinho|pat|cuddle|cafun[eé]|mord|bite|lamb|lick|cutuc|poke|high.?five|toca\s*aqui|acena|wave|rir|laugh|chora|cry|bruh|sus/i],
   send_sticker: [/figurinha|sticker|fig\b/i],
+  send_voice: [/([aá]udio|voz|grava|canta)/i],
   daily_challenge_status: [/desafio|challenge|enigma|adivinh/i],
   daily_challenge_hint: [/dica|pista|desafio|challenge|enigma|adivinh/i],
 });
 
 const CLAIM_PATTERNS = Object.freeze({
   sticker: [/(?:mandei|enviei|soltei|já\s+foi).{0,24}(?:figurinha|sticker)/i, /(?:figurinha|sticker).{0,24}(?:enviad|entregue)/i],
+  audio: [/(?:mandei|enviei|gravei|t[oô] mandando|vai|foi|cantad[oa] na|agora vai).{0,24}(?:[aá]udio|voz|grava[cç][aã]o)/i, /(?:[aá]udio|voz).{0,24}(?:gravad[oa]|enviad[oa]|entregue|de verdade)/i],
   russian_pull: [/(?:puxei|apertei|disparei|atirei).{0,28}(?:gatilho|roleta)/i, /(?:gatilho|roleta).{0,24}(?:puxad|disparad)/i],
   emoji_reaction: [/(?:reagi|deixei).{0,24}(?:emoji|rea[cç][aã]o)/i],
   'reaction:hug': [/\babracei\b/i, /(?:abra[cç]o).{0,24}(?:enviad|entregue|feito|dado)/i],
@@ -33,29 +35,37 @@ const CLAIM_PATTERNS = Object.freeze({
 
 /** A fonte única de verdade para manifesto, parser e políticas de tool. */
 export const PERSONA_TOOL_DEFINITIONS = Object.freeze({
-  help: { description: 'Mostra ajuda oficial.', schema: { topic: { type: 'string', max: 60 } }, readOnly: true },
-  group_status: { description: 'Consulta o estado seguro do grupo.', schema: {}, readOnly: true },
-  lore: { description: 'Consulta a lore persistida do grupo.', schema: { query: { type: 'string', max: 120 } }, readOnly: true },
-  recent_conversation: { description: 'Consulta a conversa recente da persona.', schema: { query: { type: 'string', max: 120 } }, readOnly: true },
-  group_identity: { description: 'Consulta minha identidade e lore ativa neste grupo.', schema: {}, readOnly: true },
-  daily_challenge_status: { description: 'Consulta o desafio diário ativo no grupo.', schema: {}, readOnly: true },
-  start_russian: { description: 'Abre uma roleta russa fictícia e faz minha primeira puxada virtual.', schema: {}, sideEffect: true, claimTokens: ['russian_pull'] },
-  pull_russian: { description: 'Puxa virtualmente o gatilho da roleta russa que já está aberta.', schema: {}, sideEffect: true, claimTokens: ['russian_pull'] },
-  daily_challenge_hint: { description: 'Libera a próxima dica real do desafio diário ativo.', schema: {}, sideEffect: true },
-  oracle: { description: 'Faz uma pergunta ao oráculo.', schema: { question: { type: 'string', max: 180 } } },
-  illuminati: { description: 'Cria teoria fictícia.', schema: { target: { type: 'enum', values: TARGETS } } },
-  gossip: { description: 'Cria fofoca fictícia.', schema: { target: { type: 'enum', values: TARGETS } } },
-  tarot: { description: 'Faz uma tiragem de tarô.', schema: { question: { type: 'string', max: 500 } } },
-  ship: { description: 'Calcula afinidade.', schema: { mode: { type: 'enum', values: ['auto', 'author_and_mentioned', 'author_and_quoted', 'mentioned_pair'] } } },
-  cancel: { description: 'Faz um cancelamento de brincadeira.', schema: { target: { type: 'enum', values: TARGETS } } },
-  reaction: { description: 'Envia GIF de ação anime/meme (hug, kiss, slap, pat, wave, etc.) direcionada a um membro, ou reage com emoji.', schema: { action: { type: 'string', max: 40 }, target: { type: 'enum', values: TARGETS }, emoji: { type: 'string', max: 10 } }, sideEffect: true },
-  send_sticker: { description: 'Envia figurinha exclusiva.', schema: { slug: { type: 'enum', values: STICKER_SLUGS } }, sideEffect: true, claimTokens: ['sticker'] },
+  help: { description: 'Mostra ajuda oficial.', schema: { topic: { type: 'string', max: 60 } }, readOnly: true, fullOutput: true },
+  group_status: { description: 'Consulta o estado seguro do grupo.', schema: {}, readOnly: true, fullOutput: true },
+  lore: { description: 'Consulta a lore persistida do grupo.', schema: { query: { type: 'string', max: 120 } }, readOnly: true, fullOutput: false },
+  recent_conversation: { description: 'Consulta a conversa recente da persona.', schema: { query: { type: 'string', max: 120 } }, readOnly: true, fullOutput: false },
+  group_identity: { description: 'Consulta minha identidade e lore ativa neste grupo.', schema: {}, readOnly: true, fullOutput: false },
+  daily_challenge_status: { description: 'Consulta o desafio diário ativo no grupo.', schema: {}, readOnly: true, fullOutput: false },
+  start_russian: { description: 'Abre uma roleta russa fictícia e faz minha primeira puxada virtual.', schema: {}, sideEffect: true, claimTokens: ['russian_pull'], fullOutput: true },
+  pull_russian: { description: 'Puxa virtualmente o gatilho da roleta russa que já está aberta.', schema: {}, sideEffect: true, claimTokens: ['russian_pull'], fullOutput: true },
+  daily_challenge_hint: { description: 'Libera a próxima dica real do desafio diário ativo.', schema: {}, sideEffect: true, fullOutput: true },
+  oracle: { description: 'Faz uma pergunta ao oráculo.', schema: { question: { type: 'string', max: 180 } }, fullOutput: true },
+  illuminati: { description: 'Cria teoria fictícia.', schema: { target: { type: 'enum', values: TARGETS } }, fullOutput: true },
+  gossip: { description: 'Cria fofoca fictícia.', schema: { target: { type: 'enum', values: TARGETS } }, fullOutput: true },
+  tarot: { description: 'Faz uma tiragem de tarô.', schema: { question: { type: 'string', max: 500 } }, fullOutput: true },
+  ship: { description: 'Calcula afinidade.', schema: { mode: { type: 'enum', values: ['auto', 'author_and_mentioned', 'author_and_quoted', 'mentioned_pair'] } }, fullOutput: true },
+  cancel: { description: 'Faz um cancelamento de brincadeira.', schema: { target: { type: 'enum', values: TARGETS } }, fullOutput: true },
+  reaction: { description: 'Envia GIF de ação anime/meme (hug, kiss, slap, pat, wave, etc.) direcionada a um membro, ou reage com emoji.', schema: { action: { type: 'string', max: 40 }, target: { type: 'enum', values: TARGETS }, emoji: { type: 'string', max: 10 } }, sideEffect: true, fullOutput: false },
+  send_sticker: { description: 'Envia figurinha exclusiva.', schema: { slug: { type: 'enum', values: STICKER_SLUGS } }, sideEffect: true, claimTokens: ['sticker'], fullOutput: false },
+  send_voice: { description: 'Grava e envia um áudio real de WhatsApp com a sua voz falando ou cantando o texto fornecido (suporta falas, raps e músicas completas de vários minutos). Use quando pedirem áudio, música ou para respostas expressivas faladas.', schema: { text: { type: 'string', max: 3000 } }, sideEffect: true, claimTokens: ['audio'], fullOutput: false },
 });
 
 export const PERSONA_TOOL_NAMES = Object.freeze(Object.keys(PERSONA_TOOL_DEFINITIONS));
 
 export function isPersonaSideEffectTool(name) {
   return Boolean(PERSONA_TOOL_DEFINITIONS[String(name || '')]?.sideEffect);
+}
+
+export function shouldDisplayPersonaToolOutput(name) {
+  const toolName = String(name || '').trim().toLowerCase();
+  const def = PERSONA_TOOL_DEFINITIONS[toolName];
+  if (!def) return false;
+  return Boolean(def.fullOutput);
 }
 
 export function hasPersonaToolInvitation(name, text) {
@@ -207,7 +217,7 @@ export function buildPersonaToolManifest({ audioEnabled = false } = {}) {
     'Responda SOMENTE JSON.',
     `Resposta: {"type":"reply","text":"..."} ou {"type":"actions","actions":[${actionExamples}]}`,
     audioEnabled
-      ? 'ÁUDIO DE VOZ (PTT): Você pode responder por áudio usando {"type":"audio","text":"fala narrada"} ou dentro de "actions". Use áudio preferencialmente quando: (1) o usuário falou com você por áudio/voz; (2) pedirem expressamente ("manda áudio", "grava aí", "fala no zap"); (3) você quiser dar uma resposta mais expressiva, fofoca dramática, desabafo cômico ou zoação em tom de voz. O texto do áudio será convertido em fala real no WhatsApp.'
+      ? 'ÁUDIO DE VOZ (PTT): Você pode responder por áudio usando a tool send_voice ou via {"type":"audio","text":"fala narrada"} dentro de "actions". Use áudio preferencialmente quando: (1) o usuário falou com você por áudio/voz; (2) pedirem expressamente ("manda áudio", "grava aí", "canta uma música", "faz um rap em áudio", "fala no zap"); (3) você quiser dar uma resposta mais expressiva, zoeira cantada ou desabafo em tom de voz. O sistema suporta áudios longos de vários minutos (músicas, raps e falas completas).'
       : '',
     'Reações com EMOJI: Você pode reagir à mensagem usando QUALQUER emoji disponível (ex: 🔥, 😂, ❤️, 👍, 💀, 👀, 😮, 🎉, 👏, etc.) através de {"type":"actions","actions":[{"type":"react","emoji":"🔥"}]}. Pode enviar só a reação de emoji ou combiná-la com texto.',
     'Tool: {"type":"tool_call","name":"...","arguments":{},"callId":"opcional"}. Você pode encadear tools quando o resultado de uma for necessário para decidir a próxima. Não repita a mesma tool com os mesmos argumentos e não use mais de uma tool com efeito externo no mesmo turno.',
@@ -230,6 +240,7 @@ export function buildPersonaToolManifest({ audioEnabled = false } = {}) {
     'Tools disponíveis:',
   ].filter(Boolean);
   for (const [name, definition] of Object.entries(PERSONA_TOOL_DEFINITIONS)) {
+    if (name === 'send_voice' && !audioEnabled) continue;
     const args = Object.entries(definition.schema || {}).map(([key, rule]) => `${key}:${rule.type === 'enum' ? rule.values.join('|') : 'texto'}`).join(', ');
     lines.push(`- ${name} {${args}}: ${definition.description}`);
   }

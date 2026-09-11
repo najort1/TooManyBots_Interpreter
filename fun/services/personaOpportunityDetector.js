@@ -41,12 +41,22 @@ function cleanShortText(value, maxChars) {
 }
 
 function isEmptyOptional(value) {
-  return value === null || value === undefined || value === '';
+  if (value === null || value === undefined) return true;
+  const str = String(value).trim().toLowerCase();
+  return str === '' || str === 'null' || str === 'none' || str === 'undefined';
 }
 
-/** Faz parse estrito da decisão, sem deixar o modelo impor a política de envio. */
+function extractFirstEmoji(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return '';
+  if (EMOJI_RE.test(text)) return text;
+  const match = text.match(/\p{Extended_Pictographic}(?:️|‍\p{Extended_Pictographic})*/u);
+  return match ? match[0] : '';
+}
+
+/** Faz parse resiliente da decisão da persona autônoma. */
 export function parsePersonaOpportunityEnvelope(raw, {
-  minScore = 75,
+  minScore = 60,
   allowed = ALLOWED_ACTIONS,
   commentMaxChars = 140,
   contextCount = 0,
@@ -55,20 +65,19 @@ export function parsePersonaOpportunityEnvelope(raw, {
   const value = jsonObject(raw);
   if (!value) return { ok: false, reason: 'invalid-json' };
 
-  const validKeys = new Set([
-    'action', 'score', 'reason', 'emoji', 'stickerSlug', 'commentText',
-    'target_message_index', 'targetMessageIndex',
-  ]);
-  const keys = Object.keys(value);
-  if (keys.some((key) => !validKeys.has(key))) {
-    return { ok: false, reason: 'invalid-shape' };
-  }
   if (!('action' in value) || !('score' in value) || !('reason' in value)) {
     return { ok: false, reason: 'invalid-shape' };
   }
 
   const action = String(value.action || '').trim().toLowerCase();
-  if (!ACTIONS.has(action) || !Number.isInteger(value.score) || value.score < 0 || value.score > 100) {
+  const rawScore = value.score;
+  const numericScore = typeof rawScore === 'number' && Number.isFinite(rawScore)
+    ? Math.round(rawScore)
+    : typeof rawScore === 'string' && /^\d+$/.test(rawScore.trim())
+      ? Number.parseInt(rawScore.trim(), 10)
+      : null;
+
+  if (!ACTIONS.has(action) || numericScore === null || numericScore < 0 || numericScore > 100) {
     return { ok: false, reason: 'invalid-decision' };
   }
 
@@ -77,43 +86,47 @@ export function parsePersonaOpportunityEnvelope(raw, {
 
   const rawIndex = value.target_message_index ?? value.targetMessageIndex;
   let targetIndex = null;
-  if (Number.isInteger(rawIndex)) {
-    if (rawIndex >= contextCount && rawIndex < batchLength) {
-      targetIndex = rawIndex;
+  const parsedIndex = typeof rawIndex === 'number' && Number.isInteger(rawIndex)
+    ? rawIndex
+    : typeof rawIndex === 'string' && /^\d+$/.test(rawIndex.trim())
+      ? Number.parseInt(rawIndex.trim(), 10)
+      : null;
+
+  if (parsedIndex !== null) {
+    if (parsedIndex >= contextCount && parsedIndex < batchLength) {
+      targetIndex = parsedIndex;
     }
   }
 
   if (action === 'pass') {
-    if (!isEmptyOptional(value.emoji) || !isEmptyOptional(value.stickerSlug) || !isEmptyOptional(value.commentText)) {
-      return { ok: false, reason: 'invalid-pass-payload' };
-    }
-    return { ok: true, decision: { action, score: value.score, reason, targetMessageIndex: null, outputAction: null } };
+    return { ok: true, decision: { action, score: numericScore, reason, targetMessageIndex: null, outputAction: null } };
   }
 
   if (!allowed.has(action)) return { ok: false, reason: 'action-disabled' };
-  if (value.score < minScore) return { ok: false, reason: 'low-score', score: value.score };
+  if (numericScore < minScore) return { ok: false, reason: 'low-score', score: numericScore };
 
   if (action === 'react') {
-    const emoji = String(value.emoji || '').trim();
-    if (!EMOJI_RE.test(emoji) || !isEmptyOptional(value.stickerSlug) || !isEmptyOptional(value.commentText)) {
+    const rawEmoji = String(value.emoji || '').trim();
+    const emoji = extractFirstEmoji(rawEmoji);
+    if (!emoji) {
       return { ok: false, reason: 'invalid-react' };
     }
-    return { ok: true, decision: { action, score: value.score, reason, targetMessageIndex: targetIndex, outputAction: { type: 'react', emoji } } };
+    return { ok: true, decision: { action, score: numericScore, reason, targetMessageIndex: targetIndex, outputAction: { type: 'react', emoji } } };
   }
 
   if (action === 'sticker') {
     const slug = String(value.stickerSlug || '').trim();
-    if (!STICKER_SLUGS.includes(slug) || !isEmptyOptional(value.emoji) || !isEmptyOptional(value.commentText)) {
+    if (!STICKER_SLUGS.includes(slug)) {
       return { ok: false, reason: 'invalid-sticker' };
     }
-    return { ok: true, decision: { action, score: value.score, reason, targetMessageIndex: targetIndex, outputAction: { type: 'sticker', slug } } };
+    return { ok: true, decision: { action, score: numericScore, reason, targetMessageIndex: targetIndex, outputAction: { type: 'sticker', slug } } };
   }
 
   const text = cleanShortText(value.commentText, commentMaxChars);
-  if (!text || !isEmptyOptional(value.emoji) || !isEmptyOptional(value.stickerSlug)) {
+  if (!text) {
     return { ok: false, reason: 'invalid-comment' };
   }
-  return { ok: true, decision: { action, score: value.score, reason, targetMessageIndex: targetIndex, outputAction: { type: 'text', text } } };
+  return { ok: true, decision: { action, score: numericScore, reason, targetMessageIndex: targetIndex, outputAction: { type: 'text', text } } };
 }
 
 function isCandidate({ text, messageType, immediateContext, minMessages }) {
@@ -138,7 +151,84 @@ function factText(fact, maxChars) {
   return text && isUsablePromptFact(text) && !SENSITIVE_TEXT.test(text) ? text : '';
 }
 
-function buildPromptContext({ text, authorLabel, responseContextPack, funConfig }) {
+function extractGroupFacts(responseContextPack) {
+  const seenFacts = new Set();
+  const allRawFacts = [
+    ...(responseContextPack?.confirmedFacts || []),
+    ...(responseContextPack?.loreFacts || []),
+  ];
+  const facts = [];
+  for (const fact of allRawFacts) {
+    const text = factText(fact, 280);
+    if (!text || seenFacts.has(text)) continue;
+    seenFacts.add(text);
+    facts.push(text);
+  }
+  return facts;
+}
+
+function extractSocialHints({ responseContextPack, personaSocialHintService, scopeKey, minConfidence = 45 } = {}) {
+  const candidateHints = [];
+
+  if (scopeKey && typeof personaSocialHintService?.getHints === 'function') {
+    try {
+      const fromService = personaSocialHintService.getHints(scopeKey, { limit: 90 });
+      if (Array.isArray(fromService)) candidateHints.push(...fromService);
+    } catch {
+      // observacional
+    }
+  }
+
+  if (Array.isArray(responseContextPack?.socialHints)) {
+    candidateHints.push(...responseContextPack.socialHints);
+  }
+
+  if (Array.isArray(responseContextPack?.socialSignals)) {
+    candidateHints.push(...responseContextPack.socialSignals);
+  }
+
+  const hintsBySignal = new Map([
+    ['positive', []],
+    ['neutral', []],
+    ['negative', []],
+  ]);
+
+  const seenTexts = new Set();
+  for (const item of candidateHints) {
+    if (!item) continue;
+    const rawSignal = String(item.socialSignal || item.signal || 'neutral').toLowerCase().trim();
+    if (!hintsBySignal.has(rawSignal)) continue;
+
+    const confidence = Number(item.confidence);
+    const hasConfidence = Number.isFinite(confidence);
+    if (hasConfidence && confidence < minConfidence) continue;
+
+    const hintText = cleanPromptText(
+      item.hintText || item.text || item.summary || memorySignalText(item),
+      180
+    );
+    if (!hintText || seenTexts.has(`${rawSignal}:${hintText}`)) continue;
+    seenTexts.add(`${rawSignal}:${hintText}`);
+
+    hintsBySignal.get(rawSignal).push({
+      socialSignal: rawSignal,
+      confidence: hasConfidence ? confidence : 75,
+      updatedAt: Number(item.updatedAt || item.at || 0),
+      hintText,
+    });
+  }
+
+  // Igual à persona: 10 de cada tipo (positive, neutral, negative), ordenados por confiança desc e updatedAt desc
+  const selectedHints = [...hintsBySignal.entries()].flatMap(([socialSignal, hints]) =>
+    hints
+      .sort((a, b) => b.confidence - a.confidence || b.updatedAt - a.updatedAt)
+      .slice(0, 10)
+  );
+
+  return selectedHints.map((hint) => `- [${hint.socialSignal} · confiança ${Math.round(hint.confidence)}] ${hint.hintText}`);
+}
+
+function buildPromptContext({ text, authorLabel, responseContextPack, funConfig, scopeKey = '', personaSocialHintService = null }) {
   const maxContextMessages = Math.max(1, Math.min(12, Number(funConfig.personaAutonomyContextMessages) || 6));
   const maxContextChars = Math.max(500, Math.min(8_000, Number(funConfig.personaAutonomyContextMaxChars) || 2_400));
   const immediate = Array.isArray(responseContextPack?.immediateContext)
@@ -154,14 +244,13 @@ function buildPromptContext({ text, authorLabel, responseContextPack, funConfig 
   }
 
   const identity = responseContextPack?.groupIdentity || {};
-  const facts = [...(responseContextPack?.confirmedFacts || []), ...(responseContextPack?.loreFacts || [])]
-    .map((fact) => factText(fact, 180))
-    .filter(Boolean)
-    .slice(0, 5);
-  const signals = (responseContextPack?.socialSignals || [])
-    .map((signal) => cleanPromptText(memorySignalText(signal), 180))
-    .filter(Boolean)
-    .slice(0, 4);
+  const facts = extractGroupFacts(responseContextPack);
+  const signals = extractSocialHints({
+    responseContextPack,
+    personaSocialHintService,
+    scopeKey,
+    minConfidence: funConfig?.personaSocialHintsMinConfidence ?? 45,
+  });
 
   return [
     '<persona>',
@@ -176,7 +265,7 @@ function buildPromptContext({ text, authorLabel, responseContextPack, funConfig 
     '</conversa_recente>',
     responseContextPack?.threadContext?.topicSummary ? `<tópico>${cleanPromptText(responseContextPack.threadContext.topicSummary, 280)}</tópico>` : '',
     facts.length ? `<fatos_confirmados>\n${facts.map((fact) => `- ${fact}`).join('\n')}\n</fatos_confirmados>` : '',
-    signals.length ? `<sinais_sociais>\n${signals.map((signal) => `- ${signal}`).join('\n')}\n</sinais_sociais>` : '',
+    signals.length ? `<sinais_sociais>\n${signals.join('\n')}\n</sinais_sociais>` : '',
     '<mensagem_atual>',
     `${cleanPromptText(authorLabel || 'membro', 60) || 'membro'}: ${cleanPromptText(text, 700)}`,
     '</mensagem_atual>',
@@ -184,7 +273,7 @@ function buildPromptContext({ text, authorLabel, responseContextPack, funConfig 
   ].filter(Boolean).join('\n');
 }
 
-function buildBatchPromptContext({ batch, contextCount, responseContextPack, funConfig }) {
+function buildBatchPromptContext({ batch, contextCount, responseContextPack, funConfig, scopeKey = '', personaSocialHintService = null }) {
   const maxContextChars = Math.max(2_000, Math.min(32_000, Number(funConfig.personaAutonomyContextMaxChars) || 16_000));
   const formattedMessages = [];
   let usedChars = 0;
@@ -201,14 +290,13 @@ function buildBatchPromptContext({ batch, contextCount, responseContextPack, fun
   }
 
   const identity = responseContextPack?.groupIdentity || {};
-  const facts = [...(responseContextPack?.confirmedFacts || []), ...(responseContextPack?.loreFacts || [])]
-    .map((fact) => factText(fact, 180))
-    .filter(Boolean)
-    .slice(0, 5);
-  const signals = (responseContextPack?.socialSignals || [])
-    .map((signal) => cleanPromptText(memorySignalText(signal), 180))
-    .filter(Boolean)
-    .slice(0, 4);
+  const facts = extractGroupFacts(responseContextPack);
+  const signals = extractSocialHints({
+    responseContextPack,
+    personaSocialHintService,
+    scopeKey,
+    minConfidence: funConfig?.personaSocialHintsMinConfidence ?? 45,
+  });
 
   return [
     '<persona>',
@@ -223,7 +311,7 @@ function buildBatchPromptContext({ batch, contextCount, responseContextPack, fun
     '</lote_mensagens>',
     responseContextPack?.threadContext?.topicSummary ? `<tópico>${cleanPromptText(responseContextPack.threadContext.topicSummary, 280)}</tópico>` : '',
     facts.length ? `<fatos_confirmados>\n${facts.map((fact) => `- ${fact}`).join('\n')}\n</fatos_confirmados>` : '',
-    signals.length ? `<sinais_sociais>\n${signals.map((signal) => `- ${signal}`).join('\n')}\n</sinais_sociais>` : '',
+    signals.length ? `<sinais_sociais>\n${signals.join('\n')}\n</sinais_sociais>` : '',
     `<stickers_autorizados>${STICKER_SLUGS.join(', ')}</stickers_autorizados>`,
   ].filter(Boolean).join('\n');
 }
@@ -231,22 +319,30 @@ function buildBatchPromptContext({ batch, contextCount, responseContextPack, fun
 function buildSystemPrompt(commentMaxChars, isBatch = false, contextCount = 0) {
   const batchGuidelines = isBatch
     ? [
-        `As mensagens estão numeradas [0..N]. As primeiras ${contextCount} mensagens são CONTEXTO prévio e NUNCA devem receber reação.`,
+        `As mensagens estão numeradas [0..N]. As primeiras ${contextCount} mensagens são CONTEXTO prévio e NUNCA devem receber ação.`,
         `Se escolher agir (react, sticker, comment), indique "target_message_index" com o índice da mensagem marcada como NOVA que motivou a ação (>= ${contextCount}).`,
         'Se passar ("action": "pass"), "target_message_index" deve ser null.',
       ]
     : [];
 
   return [
-    'Você decide se uma persona deve participar espontaneamente de uma conversa de grupo no WhatsApp.',
-    'O padrão correto é PASSAR: ficar em silêncio é melhor do que parecer spam. Em dúvida, use pass.',
-    'Use pass em conversa séria, técnica, privada entre duas pessoas, conflito, assunto sensível, pedido de silêncio, assunto sem gancho ou quando a persona não acrescentaria algo marcante.',
-    'Só considere agir numa piada claramente coletiva, celebração coletiva, meme/choque compartilhado, callback de lore realmente pertinente ou pergunta dirigida ao grupo que a persona possa enriquecer.',
-    'Use a ação menos invasiva: react antes de sticker, sticker antes de comment. Comentário só se for uma frase realmente boa e curta.',
+    'Você decide se a persona do grupo deve participar espontaneamente de uma conversa de grupo no WhatsApp.',
+    'Você é um membro vivo e autêntico do grupo, descontraído e participante.',
+    'Quando agir (oportunidades reais de interação):',
+    '- O assunto em discussão tem a ver com seus gostos, traços, lore ou opiniões conhecidas do grupo (ex.: games, GTA, piadas internas, zoeiras entre membros, temas recorrentes).',
+    '- Há uma pergunta aberta, dúvida ou curiosidade dirigida ao grupo que você possa responder, opinar ou enriquecer.',
+    '- Há um meme, piada, momento engraçado, comemoração, choque ou provocação bem-humorada onde um react ou comentário cabe perfeitamente.',
+    '- Use "react" livremente para mensagens engraçadas, chocantes, absurdas ou comemorativas (é rápido, natural e simpático).',
+    '- Use "comment" para dar uma resposta rápida, espirituosa, zoeira amigável ou opinião autêntica de membro.',
+    'Quando passar ("action": "pass"):',
+    '- O padrão correto é PASSAR quando a conversa for séria, técnica, privada entre duas pessoas resolvendo algo pessoal, conflito/briga real, assunto sensível ou sem qualquer gancho para você.',
     ...batchGuidelines,
-    `Comment deve ter no máximo ${commentMaxChars} caracteres. Não invente fatos, não faça ataques pessoais, não chame ferramentas e não alegue que executou uma ação.`,
-    'React aceita exatamente um emoji. Sticker só pode usar um slug listado. Todas as propriedades do JSON são obrigatórias.',
-    'Exemplo oportuno: a galera comemora uma vitória e um react 🎉 pode caber. Exemplo inoportuno: duas pessoas resolvendo um problema sério; use pass.',
+    `Comment deve ter no máximo ${commentMaxChars} caracteres, escrito de forma descontraída como mensagem real de WhatsApp. Não invente fatos, não faça ataques pessoais e não chame ferramentas.`,
+    'React aceita um emoji direto. Sticker só pode usar um slug listado. Todas as propriedades do JSON são obrigatórias.',
+    'Escala de score (0 a 100):',
+    '- 0 a 49: conversa desinteressante, privada ou séria -> escolha action "pass".',
+    '- 60 a 74: boa oportunidade para reagir com emoji (react) ou mandar sticker.',
+    '- 75 a 100: excelente oportunidade, conexão forte com o assunto/lore/fatos para comentário marcante (comment) ou reação de destaque.',
     'Responda SOMENTE um objeto JSON válido no schema solicitado.',
   ].join('\n');
 }
@@ -259,6 +355,7 @@ function buildUserPrompt(context, isBatch = false) {
 export function createPersonaOpportunityDetector({
   autonomyPolicy,
   generateZen,
+  personaSocialHintService = null,
   getLogger = () => null,
   clock = () => Date.now(),
 } = {}) {
@@ -369,6 +466,7 @@ export function createPersonaOpportunityDetector({
     });
 
     if (!preflight?.eligible) {
+      console.log(`[fun/autonomy] Preflight bloqueou lote em ${scope}: motivo=${preflight?.reason} (score=${preflight?.score || 0})`);
       buffer.contextTail = buffer.messages.slice(-contextMessages);
       buffer.messages = [];
       buffer.lastFlushAt = currentNow;
@@ -392,7 +490,9 @@ export function createPersonaOpportunityDetector({
     const commentMaxChars = Math.max(40, Math.min(280, Number(funConfig.personaAutonomyCommentMaxChars) || 140));
     const zen = resolveZenTaskParams('persona_opportunity', funConfig);
     const endpoint = resolveZenEndpoint(funConfig);
-    const prompt = buildUserPrompt(buildBatchPromptContext({ batch, contextCount, responseContextPack, funConfig }), true);
+    const prompt = buildUserPrompt(buildBatchPromptContext({ batch, contextCount, responseContextPack, funConfig, scopeKey: scope, personaSocialHintService }), true);
+
+    console.log(`[fun/autonomy] Avaliando lote no LLM para ${scope}: ${batch.length} msgs (${contextCount} contexto, ${snapshot.length} novas)...`);
 
     try {
       const raw = await generateZen({
@@ -409,8 +509,11 @@ export function createPersonaOpportunityDetector({
         jsonOnly: true,
       });
 
+      console.log(`[fun/autonomy] Resposta bruta da LLM para ${scope}: ${String(raw || '').trim()}`);
+
+      const effectiveMinScore = Math.max(0, Math.min(100, Number(funConfig.personaAutonomyMinScore) || 60));
       const parsed = parsePersonaOpportunityEnvelope(raw, {
-        minScore: Math.max(0, Math.min(100, Number(funConfig.personaAutonomyMinScore) || 75)),
+        minScore: effectiveMinScore,
         allowed: allowedActions(funConfig),
         commentMaxChars,
         contextCount,
@@ -419,6 +522,34 @@ export function createPersonaOpportunityDetector({
 
       buffer.contextTail = snapshot.slice(-contextMessages);
       buffer.lastFlushAt = currentNow;
+
+      if (!parsed.ok) {
+        console.warn(`[fun/autonomy] ⚠️ Envelope rejeitado pelo parser em ${scope}: motivo=${parsed.reason} (score=${parsed.score ?? 'N/A'})`);
+      } else if (!parsed.decision.outputAction) {
+        console.log(`[fun/autonomy] 💤 LLM decidiu PASSAR em ${scope}: score=${parsed.decision.score} motivo="${parsed.decision.reason}"`);
+      } else {
+        console.log(`[fun/autonomy] 🎯 OPORTUNIDADE APROVADA em ${scope}! Ação: ${parsed.decision.action.toUpperCase()} | Score: ${parsed.decision.score} (mínimo: ${effectiveMinScore}) | Motivo: "${parsed.decision.reason}" | Msg index: ${parsed.decision.targetMessageIndex}`);
+      }
+
+      logger?.info?.(
+        '[personaOpportunityDetector] Avaliação lote scope=%s msgs=%d: action=%s score=%d reason="%s" targetIndex=%s ok=%s',
+        scope,
+        snapshot.length,
+        parsed.ok ? parsed.decision?.action : (parsed.reason || 'invalid'),
+        parsed.decision?.score ?? parsed.score ?? 0,
+        parsed.decision?.reason || parsed.reason,
+        parsed.decision?.targetMessageIndex ?? 'N/A',
+        Boolean(parsed.ok && parsed.decision?.outputAction)
+      );
+
+      if (!parsed.ok) {
+        logger?.warn?.(
+          '[personaOpportunityDetector] Rejeição envelope lote scope=%s motivo=%s raw=%j',
+          scope,
+          parsed.reason,
+          String(raw || '').slice(0, 200)
+        );
+      }
 
       if (!parsed.ok || !parsed.decision.outputAction) {
         return {
@@ -448,6 +579,8 @@ export function createPersonaOpportunityDetector({
       };
     } catch (error) {
       buffer.messages.unshift(...snapshot);
+      buffer.lastFlushAt = currentNow;
+      console.error(`[fun/autonomy] Erro na chamada ao LLM no lote para ${scope}: ${String(error?.message || error)} (reencadeadas ${snapshot.length} msgs)`);
       logger?.debug?.('[personaOpportunityDetector] Zen lote falhou scope=%s: %s (reencadeadas %d)', scope, String(error?.message || error), snapshot.length);
       return { eligible: false, reason: 'llm-error', score: 0, action: null, requeued: snapshot.length };
     } finally {
@@ -476,7 +609,10 @@ export function createPersonaOpportunityDetector({
       funConfig,
       currentNow,
     });
-    if (!preflight?.eligible) return { eligible: false, reason: preflight?.reason || 'blocked', score: preflight?.score || 0, action: null };
+    if (!preflight?.eligible) {
+      console.log(`[fun/autonomy] Preflight bloqueou mensagem em ${scopeKey}: motivo=${preflight?.reason}`);
+      return { eligible: false, reason: preflight?.reason || 'blocked', score: preflight?.score || 0, action: null };
+    }
 
     const minMessages = Math.max(0, Math.min(20, Number(funConfig.personaAutonomyCandidateMinMessages) || 2));
     if (!isCandidate({ text, messageType, immediateContext, minMessages })) {
@@ -490,7 +626,9 @@ export function createPersonaOpportunityDetector({
     const commentMaxChars = Math.max(40, Math.min(280, Number(funConfig.personaAutonomyCommentMaxChars) || 140));
     const zen = resolveZenTaskParams('persona_opportunity', funConfig);
     const endpoint = resolveZenEndpoint(funConfig);
-    const prompt = buildUserPrompt(buildPromptContext({ text, authorLabel, responseContextPack, funConfig }));
+    const prompt = buildUserPrompt(buildPromptContext({ text, authorLabel, responseContextPack, funConfig, scopeKey, personaSocialHintService }));
+
+    console.log(`[fun/autonomy] Avaliando mensagem única no LLM para ${scopeKey}: "${String(text || '').slice(0, 50)}"...`);
 
     try {
       const raw = await generateZen({
@@ -506,11 +644,42 @@ export function createPersonaOpportunityDetector({
         jsonMode: true,
         jsonOnly: true,
       });
+
+      console.log(`[fun/autonomy] Resposta bruta da LLM para ${scopeKey}: ${String(raw || '').trim()}`);
+
+      const effectiveMinScore = Math.max(0, Math.min(100, Number(funConfig.personaAutonomyMinScore) || 60));
       const parsed = parsePersonaOpportunityEnvelope(raw, {
-        minScore: Math.max(0, Math.min(100, Number(funConfig.personaAutonomyMinScore) || 75)),
+        minScore: effectiveMinScore,
         allowed: allowedActions(funConfig),
         commentMaxChars,
       });
+
+      if (!parsed.ok) {
+        console.warn(`[fun/autonomy] ⚠️ Envelope rejeitado pelo parser em ${scopeKey}: motivo=${parsed.reason}`);
+      } else if (!parsed.decision.outputAction) {
+        console.log(`[fun/autonomy] 💤 LLM decidiu PASSAR em ${scopeKey}: score=${parsed.decision.score} motivo="${parsed.decision.reason}"`);
+      } else {
+        console.log(`[fun/autonomy] 🎯 OPORTUNIDADE APROVADA em ${scopeKey}! Ação: ${parsed.decision.action.toUpperCase()} | Score: ${parsed.decision.score}`);
+      }
+
+      logger?.info?.(
+        '[personaOpportunityDetector] Avaliação scope=%s: action=%s score=%d reason="%s" ok=%s',
+        scopeKey,
+        parsed.ok ? parsed.decision?.action : (parsed.reason || 'invalid'),
+        parsed.decision?.score ?? parsed.score ?? 0,
+        parsed.decision?.reason || parsed.reason,
+        Boolean(parsed.ok && parsed.decision?.outputAction)
+      );
+
+      if (!parsed.ok) {
+        logger?.warn?.(
+          '[personaOpportunityDetector] Rejeição envelope scope=%s motivo=%s raw=%j',
+          scopeKey,
+          parsed.reason,
+          String(raw || '').slice(0, 200)
+        );
+      }
+
       if (!parsed.ok || !parsed.decision.outputAction) {
         return {
           eligible: false,
@@ -528,6 +697,7 @@ export function createPersonaOpportunityDetector({
         llmReason: parsed.decision.reason,
       };
     } catch (error) {
+      console.error(`[fun/autonomy] Erro na chamada ao LLM para ${scopeKey}: ${String(error?.message || error)}`);
       logger?.debug?.('[personaOpportunityDetector] Zen falhou scope=%s: %s', scopeKey, String(error?.message || error));
       return { eligible: false, reason: 'llm-error', score: 0, action: null };
     }

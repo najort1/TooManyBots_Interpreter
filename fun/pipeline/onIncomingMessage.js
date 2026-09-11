@@ -13,6 +13,12 @@ import {
 } from '../utils/userLabel.js';
 import { tryPassiveQmpVote } from '../commands/handlers/qmp.js';
 import { listCanonicalGroupParticipantJids } from '../utils/identity.js';
+import {
+  collectBotJids,
+  detectTrigger,
+  normalizeJid,
+  resolveJid,
+} from '../services/personaTriggerDetector.js';
 
 const reportDebug = (hypothesisId, location, msg, data = {}) => { void Promise.resolve().then(() => fetch(process.env.DEBUG_SERVER_URL || 'http://127.0.0.1:7777/event', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId: process.env.DEBUG_SESSION_ID || 'persona-runtime-signals', runId: 'pre-fix', hypothesisId, location, msg: `[DEBUG] ${msg}`, data, ts: Date.now() }) })).catch(() => {}); };
 const jidDomain = (jid) => String(jid || '').includes('@') ? `@${String(jid).split('@').pop()}` : '';
@@ -531,6 +537,29 @@ export async function handleFunIncomingMessage(deps, ctx) {
 
   const worldEventsOn = effectiveRates?.worldEventsEnabled !== false;
 
+  const isDirectBotMessage = () => {
+    try {
+      const botJids = collectBotJids(sock, identityMap);
+      if (!botJids.size) return false;
+      const { mention, atMention } = detectTrigger({
+        text,
+        mentionedJids,
+        botJids: [...botJids],
+        identityMap,
+        customAliases: funConfig?.customAliases,
+        allowNaturalMentions: funConfig?.allowNaturalMentions,
+      });
+      if (mention || atMention) return true;
+      const quotedRaw = normalizeJid(quotedParticipant);
+      if (quotedRaw && (botJids.has(quotedRaw) || botJids.has(resolveJid(quotedRaw, identityMap)))) {
+        return true;
+      }
+    } catch {
+      // fallback gracioso
+    }
+    return false;
+  };
+
   /** Sorteio de evento pelo bot — anúncio sempre no grupo.
    *  world events off → só happy hour (trégua e mercado auto ficam off).
    *  happyHourAutoEnabled=false no grupo → happy hour nunca dispara
@@ -539,6 +568,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
   async function maybeAutoEvent(now = Date.now()) {
     if (!isGroup || !eventService?.tryAutoSpawn) return null;
     if (isWorldQuietHours(funConfig, now)) return null;
+    if (isDirectBotMessage()) return null;
     if (
       typeof groupRepository?.isGranularEventEnabled === 'function' &&
       groupRepository.isGranularEventEnabled(scope.scopeKey, 'happyHour', funConfig) === false
@@ -573,6 +603,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     if (!isGroup || !marketService?.tryAutoMarketEvent) return null;
     if (!worldEventsOn) return null;
     if (isWorldQuietHours(funConfig, now)) return null;
+    if (isDirectBotMessage()) return null;
     if (
       typeof groupRepository?.isGranularEventEnabled === 'function' &&
       groupRepository.isGranularEventEnabled(scope.scopeKey, 'market', funConfig) === false
@@ -619,6 +650,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     if (!isGroup || !qmpService?.tryAutoTrigger) return null;
     if (funConfig.qmpEnabled === false) return null;
     if (isWorldQuietHours(funConfig, now)) return null;
+    if (isDirectBotMessage()) return null;
     try {
       const hit = await qmpService.tryAutoTrigger({
         scopeKey: scope.scopeKey,
@@ -850,17 +882,20 @@ export async function handleFunIncomingMessage(deps, ctx) {
           replyImageUrl,
           replySticker,
           dispatchAutonomousAction: dispatchPersonaAutonomousAction
-            ? (action) => dispatchPersonaAutonomousAction({
+            ? (action, targetMeta) => dispatchPersonaAutonomousAction({
                 sock,
                 scopeKey: scope.scopeKey,
                 action,
-                quoteSource,
-                messageKey: rawMessage?.key || null,
+                quoteSource: targetMeta?.targetQuoteSource || action?.targetQuoteSource || quoteSource,
+                messageKey: targetMeta?.targetKey || targetMeta?.targetMessageKey || action?.targetKey || action?.targetMessageKey || rawMessage?.key || null,
               })
             : null,
           now: Date.now(),
         }).then((r) => {
           if (r?.responded) {
+            if (r?.trigger === 'autonomous') {
+              console.log(`[fun/autonomy] 🎉 Resposta autônoma concluída no grupo ${scope.scopeKey}! MsgIds: ${JSON.stringify(r.responseMessageIds)}`);
+            }
             personaFollowupService?.observePersonaResponse?.({
               scopeKey: scope.scopeKey,
               responseMessageIds: r.responseMessageIds,
