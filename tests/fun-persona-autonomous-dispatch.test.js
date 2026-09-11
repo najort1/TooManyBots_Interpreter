@@ -214,3 +214,56 @@ test('persona autonomous dispatch: menção direta continua respondendo imediata
   assert.equal(res.trigger, 'mention');
 });
 
+test('persona autonomous dispatch: entrega targetMeta com targetKey da mensagem alvo no lote', async () => {
+  const personaRepository = createFunPersonaRepository({ getDatabase: getDb });
+  const groupRepository = createFunGroupRepository({ getDatabase: getDb });
+  const policy = { recordSent: () => {}, observeHumanMessage: () => {} };
+  const targetKey = { remoteJid: group, id: 'TARGET_GTA_MSG_ID', fromMe: false };
+  const detector = {
+    evaluate: async () => ({
+      eligible: true,
+      action: { type: 'react', emoji: '🔥' },
+      score: 85,
+      reason: 'zoar gta',
+      targetMessage: {
+        messageKey: targetKey,
+        quoteSource: { key: targetKey },
+        text: 'GTA 6 vai ser absurdo',
+      },
+    }),
+  };
+
+  const service = createPersonaService({
+    personaRepository,
+    groupRepository,
+    personaAutonomyPolicy: policy,
+    personaOpportunityDetector: detector,
+    getLogger: () => null,
+  });
+
+  let dispatchedAction = null;
+  let dispatchedMeta = null;
+  const res = await service.tryRespond({
+    scopeKey: group,
+    text: 'mensagem 40 aleatória',
+    messageType: 'text',
+    authorJid: author,
+    sock: { user: { id: bot } },
+    identityMap: createIdentityMap(),
+    funConfig: { personaEnabled: true, personaAutonomyEnabled: true },
+    dispatchAutonomousAction: async (action, targetMeta) => {
+      dispatchedAction = action;
+      dispatchedMeta = targetMeta;
+      return { key: { id: 'sent-react' } };
+    },
+    responseContextPack: { immediateContext: [] },
+    now: 1_700_000_000_000,
+  });
+
+  assert.equal(res.responded, true);
+  assert.equal(dispatchedAction.type, 'react');
+  assert.equal(dispatchedAction.emoji, '🔥');
+  assert.deepEqual(dispatchedMeta.targetKey, targetKey);
+  assert.deepEqual(dispatchedMeta.targetQuoteSource.key, targetKey);
+});
+

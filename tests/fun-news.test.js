@@ -193,6 +193,16 @@ test('news: renderEdition remove limite de caracteres (preserva > 4000 chars) e 
 
   // Garante que não há bullets robóticos na intro nem nos detalhes
   assert.doesNotMatch(rendered.split('PARECER')[0], /^•/m);
+
+  // Quando maxChars é informado (como o limite de 2500 chars para leitura em 2 min), limita com segurança
+  const capped = renderEdition(conversation, llmBits, {
+    dayLabel: '2026-09-08 · terça-feira',
+    commentator: { name: 'Cachorro Chupetinha', title: 'fiscal de vergonha alheia' },
+    maxChars: 2500,
+  });
+  assert.ok(capped.length <= 2500, `Deveria limitar a 2500 caracteres, mas teve ${capped.length}`);
+  assert.match(capped, /O Grande Debate Que Parou a Cidade/);
+  assert.match(capped, /PARECER DO ESPECIALISTA/);
 });
 
 test('news: parseConversationEdition suporta blocos INTRO, COMENTARISTA e FORESHADOW com comentários opinativos', async () => {
@@ -386,7 +396,7 @@ test('news: fallback determinístico gera narrativa opinativa e parecer do comen
   assert.doesNotMatch(text.split('*FRASES PARA O ARQUIVO*')[0], /\n•\s+\*16:00\*/);
 });
 
-test('news: sanitizeGroupTimes tolera textos longos de crônica (>5000 chars) sem truncar', async () => {
+test('news: sanitizeGroupTimes limita crônica por padrão para leitura em até 2 minutos e respeita maxLen customizado', async () => {
   const { sanitizeGroupTimes } = await import('../fun/llm/flavorService.js');
 
   const longChronicle = [
@@ -399,9 +409,275 @@ test('news: sanitizeGroupTimes tolera textos longos de crônica (>5000 chars) se
 
   assert.ok(longChronicle.length > 5000);
   const sanitized = sanitizeGroupTimes(longChronicle);
-  assert.ok(sanitized.length > 5000, `Deveria ter preservado mais de 5000 caracteres, mas teve ${sanitized.length}`);
+  assert.ok(sanitized.length <= 3500, `Deveria ter limitado a no máximo 3500 caracteres, mas teve ${sanitized.length}`);
   assert.match(sanitized, /CAPA: Escândalo do Zap Sem Fim/);
-  assert.match(sanitized, /FORESHADOW: Amanhã saberemos/);
+
+  // Quando passado maxLen explicitamente maior, respeita
+  const sanitizedCustom = sanitizeGroupTimes(longChronicle, 64000);
+  assert.ok(sanitizedCustom.length > 5000);
+  assert.match(sanitizedCustom, /FORESHADOW: Amanhã saberemos/);
 });
+
+test('news: fallbackDetails com 3 samples produz narrativa variada sem repetições de abertura de frase', async () => {
+  const { renderEdition } = await import('../fun/services/news/newsRender.js');
+  const { createNewsCommentatorService } = await import('../fun/services/news/newsCommentatorService.js');
+
+  const conversation = {
+    mood: 'zoeiro',
+    totalMessageCount: 30,
+    timeline: [
+      {
+        hour: '10:00',
+        messageCount: 10,
+        participants: ['Lucas'],
+        sample: [{ name: 'Lucas', text: 'A santíssima trindade autista KKKKKKKKKKKKK' }],
+      },
+      {
+        hour: '14:00',
+        messageCount: 10,
+        participants: ['Maximus'],
+        sample: [{ name: 'Maximus', text: 'KKKKKKKKKKKKKKKKKKKKKKK eu avisei' }],
+      },
+      {
+        hour: '18:00',
+        messageCount: 10,
+        participants: ['Digo'],
+        sample: [{ name: 'Digo', text: 'Vcs costumam rebolar pra andar em hyrule?' }],
+      },
+    ],
+    quotes: [],
+  };
+
+  const commentatorService = createNewsCommentatorService();
+  const text = renderEdition(conversation, null, {
+    dayLabel: '2026-09-08 · terça-feira',
+    commentator: { name: 'Doutor Fuxico', title: 'psicanalista de boteco' },
+    commentatorService,
+  });
+
+  // NÃO deve conter a repetição da frase fixa do fallback legado
+  const matches = [...text.matchAll(/Em dado momento da apuração/gi)];
+  assert.equal(matches.length, 0, 'Não deve conter a frase mecânica repetida "Em dado momento da apuração"');
+
+  // Deve conter conectivos variados encadeados
+  assert.match(text, /Durante a movimentação da apuração, Lucas/);
+  assert.match(text, /Mais tarde, na apuração dos bastidores, Maximus/);
+  assert.match(text, /Para fechar o apanhado das investigações, Digo/);
+});
+
+test('news: renderEdition insere gancho de transição jornalística antes do parecer do especialista', async () => {
+  const { renderEdition } = await import('../fun/services/news/newsRender.js');
+
+  const conversation = {
+    mood: 'zoeiro',
+    timeline: [{ participants: ['Eduardo'] }],
+    quotes: [],
+  };
+
+  const text = renderEdition(conversation, null, {
+    dayLabel: '2026-09-08 · terça-feira',
+    commentator: { name: 'Doutor Fuxico', title: 'psicanalista de boteco' },
+  });
+
+  // Gancho editorial antes do parecer
+  assert.match(text, /Para colocar uma lupa sobre esse espetáculo de zoeira/);
+  assert.match(text, /🗣️ \*PARECER DO ESPECIALISTA/);
+});
+
+test('news: FRASES PARA O ARQUIVO deduplica e limita a no máximo 3 citações literais', async () => {
+  const { renderEdition } = await import('../fun/services/news/newsRender.js');
+
+  const conversation = {
+    mood: 'conversado',
+    timeline: [],
+    quotes: [
+      { name: 'Ana', text: 'Frase repetida número um.' },
+      { name: 'Ana', text: 'Frase repetida número um.' }, // duplicata
+      { name: 'Bia', text: 'Frase única número dois.' },
+      { name: 'Carlos', text: 'Frase única número três.' },
+      { name: 'Daniel', text: 'Frase excedente número quatro.' }, // além de 3
+    ],
+  };
+
+  const text = renderEdition(conversation, null, {
+    dayLabel: '2026-09-08 · terça-feira',
+  });
+
+  assert.match(text, /\*FRASES PARA O ARQUIVO\*/);
+  const quotesSection = text.split('*FRASES PARA O ARQUIVO*')[1] || '';
+  const lines = quotesSection.split('\n').filter((l) => l.startsWith('• '));
+
+  assert.equal(lines.length, 3, 'Deve conter no máximo 3 citações únicas');
+  assert.match(lines[0], /Frase repetida número um/);
+  assert.match(lines[1], /Frase única número dois/);
+  assert.match(lines[2], /Frase única número três/);
+  assert.doesNotMatch(quotesSection, /Frase excedente número quatro/);
+});
+
+test('news config: resolveFunConfig normaliza groupNewsConcurrency, groupNewsTimeoutMs e groupNewsMaxAttempts', async () => {
+  const { resolveFunConfig } = await import('../fun/config.js');
+
+  // Defaults
+  const def = resolveFunConfig({});
+  assert.equal(def.groupNewsConcurrency, 2);
+  assert.equal(def.groupNewsTimeoutMs, 75_000);
+  assert.equal(def.groupNewsMaxAttempts, 3);
+
+  // Valores customizados válidos
+  const custom = resolveFunConfig({
+    groupNewsConcurrency: 4,
+    groupNewsTimeoutMs: 90_000,
+    groupNewsMaxAttempts: 2,
+  });
+  assert.equal(custom.groupNewsConcurrency, 4);
+  assert.equal(custom.groupNewsTimeoutMs, 90_000);
+  assert.equal(custom.groupNewsMaxAttempts, 2);
+
+  // Clamps
+  const clamped = resolveFunConfig({
+    groupNewsConcurrency: 99,
+    groupNewsTimeoutMs: 5_000,
+    groupNewsMaxAttempts: 10,
+  });
+  assert.equal(clamped.groupNewsConcurrency, 10);
+  assert.equal(clamped.groupNewsTimeoutMs, 15_000);
+  assert.equal(clamped.groupNewsMaxAttempts, 5);
+});
+
+test('news LLM: flavorService.line(group_times) tenta até 3x e recupera na 3ª tentativa', async () => {
+  const { createFlavorService } = await import('../fun/llm/flavorService.js');
+  const { resolveFunConfig } = await import('../fun/config.js');
+
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+
+  try {
+    let attempts = 0;
+    const flavor = createFlavorService({
+      getConfig: () =>
+        resolveFunConfig({
+          zenEnabled: true,
+          groupNewsMaxAttempts: 3,
+          groupNewsTimeoutMs: 20_000,
+        }),
+      zenGenerate: async () => {
+        attempts += 1;
+        if (attempts < 3) {
+          throw new Error(`Timeout/erro temporário na tentativa ${attempts}`);
+        }
+        return [
+          'CAPA: Vitória na Terceira Tentativa',
+          'INTRO: O grupo finalmente conseguiu a matéria completa após instabilidade.',
+          'COMENTARISTA: Eu avisei que no final tudo dava certo!',
+          'DETALHES: O repórter investigou e confirmou os acontecimentos.',
+          'FORESHADOW: Amanhã tem mais.',
+        ].join('\n');
+      },
+      allowLiveLlm: true,
+    });
+
+    const result = await flavor.line('group_times', {
+      scopeKey: '120363test@g.us',
+      conversation: 'Conversa de teste',
+    });
+
+    assert.equal(attempts, 3, 'Deve ter tentado exatamente 3 vezes');
+    assert.match(result, /CAPA: Vitória na Terceira Tentativa/);
+    assert.equal(flavor.lastProvider('120363test@g.us'), 'zen');
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});
+
+test('news LLM: flavorService.line(group_times) esgota 3 tentativas e cai em fallback gracioso', async () => {
+  const { createFlavorService } = await import('../fun/llm/flavorService.js');
+  const { resolveFunConfig } = await import('../fun/config.js');
+
+  const prev = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+
+  try {
+    let attempts = 0;
+    const flavor = createFlavorService({
+      getConfig: () =>
+        resolveFunConfig({
+          zenEnabled: true,
+          groupNewsMaxAttempts: 3,
+          groupNewsTimeoutMs: 20_000,
+        }),
+      zenGenerate: async () => {
+        attempts += 1;
+        throw new Error(`Falha persistente na tentativa ${attempts}`);
+      },
+      allowLiveLlm: true,
+    });
+
+    const result = await flavor.line('group_times', {
+      scopeKey: '120363fail@g.us',
+      conversation: 'Conversa que falhará',
+    });
+
+    assert.equal(attempts, 3, 'Deve ter esgotado as 3 tentativas');
+    assert.equal(flavor.lastProvider('120363fail@g.us'), 'template');
+    assert.match(result, /CAPA:/);
+  } finally {
+    if (prev !== undefined) process.env.FUN_DISABLE_LIVE_LLM = prev;
+    else process.env.FUN_DISABLE_LIVE_LLM = '1';
+  }
+});
+
+test('news: composeEdition gera texto conciso para leitura em até 2 minutos (<= 2500 chars)', async () => {
+  const scope = uniqueGroup();
+  const newsRepository = createFunNewsRepository({ getDatabase: getDb });
+  const journalMessageRepository = createFunJournalMessageRepository({ getDatabase: getDb });
+  const snapshotRepository = createFunSnapshotRepository({ getDatabase: getDb });
+  const now = Date.UTC(2026, 8, 8, 23, 59, 30);
+
+  for (let i = 1; i <= 5; i++) {
+    journalMessageRepository.recordMessage({
+      scopeKey: scope,
+      messageId: `m${i}`,
+      authorJid: `autor${i % 2 + 1}@s.whatsapp.net`,
+      text: `Mensagem ${i} do dia com assunto animado para debate`,
+      now: now - (10 - i) * 1000,
+    });
+  }
+
+  const newsService = createNewsService({
+    newsRepository,
+    journalMessageRepository,
+    snapshotRepository,
+    getContactDisplayName: () => 'Autor',
+    flavorService: {
+      async line() {
+        return [
+          'CAPA: Título Curto e Provocativo',
+          'INTRO: Abertura concisa com comentário afiado sobre as trapalhadas do grupo.',
+          'COMENTARISTA: Parecer irônico e bem-humorado do especialista residente.',
+          'DETALHES: ' + 'Fofoca detalhada porém sem enrolação. '.repeat(5),
+          'FORESHADOW: Fecho cômico pro dia seguinte.',
+        ].join('\n');
+      },
+      lastProvider: () => 'zen',
+    },
+  });
+
+  const edition = await newsService.composeEdition(scope, {
+    groupNewsEnabled: true,
+    groupNewsMaxChars: 2500,
+  }, now);
+
+  assert.ok(edition);
+  assert.ok(edition.text);
+  assert.ok(
+    edition.text.length <= 2500,
+    `Edição deve ter no máximo 2500 caracteres para leitura em até 2 minutos, teve ${edition.text.length}`
+  );
+  assert.match(edition.text, /📰 \*THE GROUP TIMES\*/);
+  assert.match(edition.text, /Título Curto e Provocativo/);
+  assert.match(edition.text, /PARECER DO ESPECIALISTA/);
+});
+
 
 

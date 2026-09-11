@@ -13,7 +13,7 @@ import { createChaosService } from '../fun/services/chaosService.js';
 import { createLoreReconciliationService } from '../fun/services/loreReconciliationService.js';
 import { createPersonaService } from '../fun/services/personaService.js';
 import { createPersonaToolExecutor } from '../fun/services/personaToolExecutor.js';
-import { buildPersonaToolManifest, parsePersonaEnvelope } from '../fun/services/personaToolProtocol.js';
+import { buildPersonaToolManifest, parsePersonaEnvelope, shouldDisplayPersonaToolOutput } from '../fun/services/personaToolProtocol.js';
 import { createIdentityMap } from '../fun/utils/identity.js';
 
 await initDb();
@@ -36,6 +36,33 @@ test('persona agent: protocolo aceita só reply ou tool_call da allowlist', () =
   assert.match(manifest, /Nunca diga que vai usar, tentar ou chamar uma tool/i);
   assert.match(manifest, /chame group_status/i);
   assert.match(manifest, /encadear tools/i);
+});
+
+test('persona agent: classificação de tools que exibem ou omitem output completo', () => {
+  // Tools de contexto/leitura/RAG omitem output completo para evitar dumps brutos
+  assert.equal(shouldDisplayPersonaToolOutput('lore'), false);
+  assert.equal(shouldDisplayPersonaToolOutput('recent_conversation'), false);
+  assert.equal(shouldDisplayPersonaToolOutput('group_identity'), false);
+  assert.equal(shouldDisplayPersonaToolOutput('daily_challenge_status'), false);
+  assert.equal(shouldDisplayPersonaToolOutput('reaction'), false);
+  assert.equal(shouldDisplayPersonaToolOutput('send_sticker'), false);
+
+  // Tools de entretenimento/geração/ajuda exibem output completo
+  assert.equal(shouldDisplayPersonaToolOutput('oracle'), true);
+  assert.equal(shouldDisplayPersonaToolOutput('tarot'), true);
+  assert.equal(shouldDisplayPersonaToolOutput('ship'), true);
+  assert.equal(shouldDisplayPersonaToolOutput('cancel'), true);
+  assert.equal(shouldDisplayPersonaToolOutput('illuminati'), true);
+  assert.equal(shouldDisplayPersonaToolOutput('gossip'), true);
+  assert.equal(shouldDisplayPersonaToolOutput('start_russian'), true);
+  assert.equal(shouldDisplayPersonaToolOutput('pull_russian'), true);
+  assert.equal(shouldDisplayPersonaToolOutput('daily_challenge_hint'), true);
+  assert.equal(shouldDisplayPersonaToolOutput('group_status'), true);
+  assert.equal(shouldDisplayPersonaToolOutput('help'), true);
+
+  // Inexistente ou inválida
+  assert.equal(shouldDisplayPersonaToolOutput(''), false);
+  assert.equal(shouldDisplayPersonaToolOutput('desconhecida'), false);
 });
 
 test('persona agent: áudio é aceito no protocolo e só aparece no manifesto quando TTS está disponível', () => {

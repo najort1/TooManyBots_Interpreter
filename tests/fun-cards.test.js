@@ -343,3 +343,51 @@ test('cards: recusar troca limpa pending', () => {
   assert.equal(dec.ok, true);
   assert.equal(cardService.peekTrade(b, scope), null);
 });
+
+test('cards: pesos de drop padrão tornam T4 e T5 raras e respeitam proporções', () => {
+  assert.equal(TIER_DROP_WEIGHTS[1], 700);
+  assert.equal(TIER_DROP_WEIGHTS[2], 230);
+  assert.equal(TIER_DROP_WEIGHTS[3], 58);
+  assert.equal(TIER_DROP_WEIGHTS[4], 10);
+  assert.equal(TIER_DROP_WEIGHTS[5], 2);
+
+  const total = Object.values(TIER_DROP_WEIGHTS).reduce((a, b) => a + b, 0);
+  assert.equal(total, 1000);
+
+  // Proporções: T1 (70%), T2 (23%), T3 (5.8%), T4 (1.0%), T5 (0.2%)
+  assert.equal(TIER_DROP_WEIGHTS[4] / total, 0.01);
+  assert.equal(TIER_DROP_WEIGHTS[5] / total, 0.002);
+});
+
+test('cards: rollRandomCard aceita pesos customizados', () => {
+  const customWeights = { 1: 0, 2: 0, 3: 0, 4: 100, 5: 0 };
+  const card = rollRandomCard(Math.random, customWeights);
+  assert.ok(card);
+  assert.equal(card.tier, 4);
+
+  const t5Weights = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 100 };
+  const t5Card = rollRandomCard(Math.random, t5Weights);
+  assert.ok(t5Card);
+  assert.equal(t5Card.tier, 5);
+});
+
+test('cards: openPacks respeita funConfig.cardTierWeights', () => {
+  const { repository, cardService } = setup(() => 0.5);
+  const scope = uniqueGroup();
+  const user = uniqueJid('5519');
+  repository.addCoins({ userJid: user, scopeKey: scope, amount: 200, reason: 'seed' });
+
+  const res = cardService.openPacks({
+    userJid: user,
+    scopeKey: scope,
+    quantity: 1,
+    funConfig: {
+      cardTierWeights: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 100 },
+    },
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.cards.length, 1);
+  assert.equal(res.cards[0].tier, 5);
+});
+

@@ -265,3 +265,125 @@ test('persona opportunity detector: falha no lote reencadeia mensagens no buffer
   assert.equal(buf.messages[39].text, 'msg 40');
 });
 
+test('parsePersonaOpportunityEnvelope: resiliente a campos extras, múltiplos emojis, emoji com comentário e coerção de tipos', () => {
+  // Campo extra 'thought' / 'target_user' não deve quebrar
+  const r1 = parsePersonaOpportunityEnvelope(JSON.stringify({
+    action: 'comment',
+    score: 85,
+    reason: 'zoar sobre gta',
+    thought: 'o membro falou de gta 6, momento perfeito',
+    target_user: 'User1',
+    commentText: 'gta 6 só quando sair ps6 kkkk',
+  }));
+  assert.equal(r1.ok, true);
+  assert.equal(r1.decision.action, 'comment');
+  assert.equal(r1.decision.outputAction.text, 'gta 6 só quando sair ps6 kkkk');
+
+  // Comentário com emoji preenchido não deve ser descartado
+  const r2 = parsePersonaOpportunityEnvelope(JSON.stringify({
+    action: 'comment',
+    score: '80',
+    reason: 'zoar gta',
+    emoji: '😂',
+    stickerSlug: null,
+    commentText: 'já perdi as esperanças desse jogo',
+  }));
+  assert.equal(r2.ok, true);
+  assert.equal(r2.decision.action, 'comment');
+  assert.equal(r2.decision.score, 80);
+  assert.equal(r2.decision.outputAction.text, 'já perdi as esperanças desse jogo');
+
+  // React com múltiplos emojis extrai o primeiro pictograma Unicode
+  const r3 = parsePersonaOpportunityEnvelope(JSON.stringify({
+    action: 'react',
+    score: 90,
+    reason: 'rindo muito',
+    emoji: '😂😂',
+    target_message_index: '15',
+    stickerSlug: null,
+    commentText: null,
+  }), { contextCount: 0, batchLength: 30 });
+  assert.equal(r3.ok, true);
+  assert.equal(r3.decision.action, 'react');
+  assert.equal(r3.decision.targetMessageIndex, 15);
+  assert.equal(r3.decision.outputAction.emoji, '😂');
+
+  // Pass com strings nulas ou texto tolerado
+  const r4 = parsePersonaOpportunityEnvelope(JSON.stringify({
+    action: 'pass',
+    score: 15,
+    reason: 'conversa séria',
+    emoji: 'null',
+    stickerSlug: null,
+    commentText: 'nenhum',
+  }));
+  assert.equal(r4.ok, true);
+  assert.equal(r4.decision.action, 'pass');
+  assert.equal(r4.decision.outputAction, null);
+});
+
+test('persona opportunity detector: envia todos os fatos do grupo e até 10 sinais sociais por tipo', async () => {
+  let receivedParams = null;
+  const manyFacts = Array.from({ length: 25 }, (_, i) => ({
+    factText: `Fato sobre GTA e membros número ${i + 1}`,
+    sensitivityLevel: 'safe',
+  }));
+
+  const manyHints = [
+    ...Array.from({ length: 12 }, (_, i) => ({
+      hintText: `positive-${i}`,
+      confidence: 100 - i,
+      socialSignal: 'positive',
+      updatedAt: i,
+    })),
+    ...Array.from({ length: 12 }, (_, i) => ({
+      hintText: `neutral-${i}`,
+      confidence: 90 - i,
+      socialSignal: 'neutral',
+      updatedAt: i,
+    })),
+    ...Array.from({ length: 12 }, (_, i) => ({
+      hintText: `negative-${i}`,
+      confidence: 80 - i,
+      socialSignal: 'negative',
+      updatedAt: i,
+    })),
+    { hintText: 'low-conf', confidence: 30, socialSignal: 'negative', updatedAt: 999 },
+  ];
+
+  const detector = createPersonaOpportunityDetector({
+    autonomyPolicy: policy(),
+    personaSocialHintService: { getHints: () => manyHints },
+    generateZen: async (params) => {
+      receivedParams = params;
+      return JSON.stringify({ action: 'pass', score: 20, reason: 'nada a declarar' });
+    },
+  });
+
+  await detector.evaluate({
+    scopeKey: group,
+    text: 'alguém jogou gta?',
+    authorLabel: 'Lia',
+    messageType: 'text',
+    responseContextPack: {
+      immediateContext: [],
+      groupIdentity: { botName: 'Puck' },
+      confirmedFacts: manyFacts.slice(0, 15),
+      loreFacts: manyFacts.slice(15),
+    },
+    funConfig: baseConfig,
+  });
+
+  // Todos os 25 fatos devem estar no prompt
+  for (let i = 1; i <= 25; i += 1) {
+    assert.match(receivedParams.prompt, new RegExp(`Fato sobre GTA e membros número ${i}`));
+  }
+
+  // Exatamente 10 de cada tipo de sinal social, e low-confidence ignorado
+  assert.equal((receivedParams.prompt.match(/\[positive · confiança/g) || []).length, 10);
+  assert.equal((receivedParams.prompt.match(/\[neutral · confiança/g) || []).length, 10);
+  assert.equal((receivedParams.prompt.match(/\[negative · confiança/g) || []).length, 10);
+  assert.ok(!receivedParams.prompt.includes('low-conf'));
+});
+
+

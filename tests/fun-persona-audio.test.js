@@ -6,6 +6,7 @@ import { getDb } from '../db/context.js';
 import { createFunGroupRepository } from '../fun/db/funGroupRepository.js';
 import { createFunPersonaRepository } from '../fun/db/funPersonaRepository.js';
 import { createPersonaService } from '../fun/services/personaService.js';
+import { createPersonaToolExecutor } from '../fun/services/personaToolExecutor.js';
 import { createGeminiTtsService } from '../fun/services/geminiTtsService.js';
 import { createIdentityMap } from '../fun/utils/identity.js';
 
@@ -17,13 +18,13 @@ function uniqueGroup() {
   return `1203639999${String(sequence).padStart(8, '0')}@g.us`;
 }
 
-function createService({ generateZen, personaTtsService, audioTranscoder, downloadMedia } = {}) {
+function createService({ generateZen, personaTtsService, audioTranscoder, downloadMedia, personaToolExecutor } = {}) {
   return {
     repository: createFunPersonaRepository({ getDatabase: getDb }),
     service: createPersonaService({
       personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
       groupRepository: createFunGroupRepository({ getDatabase: getDb }),
-      personaToolExecutor: { execute: async () => ({ ok: false }) },
+      personaToolExecutor: personaToolExecutor || createPersonaToolExecutor({ chaosService: {} }),
       generateZen,
       personaTtsService,
       audioTranscoder,
@@ -160,7 +161,7 @@ test('persona audio: a ação narrada longa chega inteira à síntese', async ()
   });
 });
 
-test('persona audio: falha de TTS envia a mesma fala como texto', async () => {
+test('persona audio: falha de TTS envia a mesma fala como texto com aviso no topo', async () => {
   await withLiveLlm(async () => {
     const messages = [];
     const { service } = createService({
@@ -180,8 +181,8 @@ test('persona audio: falha de TTS envia a mesma fala como texto', async () => {
     });
 
     assert.equal(result.responded, true);
-    assert.equal(result.response, 'Não vou ficar em silêncio.');
-    assert.deepEqual(messages, [{ text: 'Não vou ficar em silêncio.' }]);
+    assert.equal(result.response, 'Tentou usar (audio) mas falhou\n\nNão vou ficar em silêncio.');
+    assert.deepEqual(messages, [{ text: 'Tentou usar (audio) mas falhou\n\nNão vou ficar em silêncio.' }]);
   });
 });
 
@@ -248,5 +249,125 @@ test('persona audio input: exige mídia real, converte para WAV e usa prompt exp
     assert.match(request.prompt, /bot/);
     assert.equal(request.audios.length, 1);
     assert.match(request.audios[0], /^data:audio\/wav;base64,/);
+  });
+});
+
+test('persona audio: converte reply de texto para áudio quando usuário pede expressamente em áudio', async () => {
+  await withLiveLlm(async () => {
+    const messages = [];
+    let synthesizedText = '';
+    const { service } = createService({
+      generateZen: async () => '{"type":"reply","text":"Cantei uma rima pra você agora."}',
+      personaTtsService: {
+        isAvailable: () => true,
+        synthesize: async (text) => {
+          synthesizedText = text;
+          return { ok: true, buffer: Buffer.from('ogg'), mimeType: 'audio/ogg; codecs=opus' };
+        },
+      },
+    });
+
+    const result = await service.tryRespond({
+      scopeKey: uniqueGroup(),
+      authorJid: '551199999999@s.whatsapp.net',
+      text: 'bot canta a música em áudio',
+      messageType: 'text',
+      funConfig: {},
+      sock: socket(messages),
+      identityMap: createIdentityMap(),
+      now: 1_200_000,
+    });
+
+    assert.equal(result.responded, true);
+    assert.equal(synthesizedText, 'Cantei uma rima pra você agora.');
+    assert.equal(messages[0].ptt, true);
+  });
+});
+
+test('persona audio: rejeita alegação falsa de envio de áudio quando áudio não foi despachado', async () => {
+  await withLiveLlm(async () => {
+    const messages = [];
+    const { service } = createService({
+      generateZen: async () => '{"type":"reply","text":"Pronto, mandei o áudio de verdade dessa vez!"}',
+      personaTtsService: { isAvailable: () => false },
+    });
+
+    const result = await service.tryRespond({
+      scopeKey: uniqueGroup(),
+      authorJid: '551199999999@s.whatsapp.net',
+      text: 'bot você tá vivo?',
+      messageType: 'text',
+      funConfig: {},
+      sock: socket(messages),
+      identityMap: createIdentityMap(),
+      now: 1_300_000,
+    });
+
+    assert.equal(result.responded, true);
+    // Como a persona alegou que mandou áudio em texto puro e sem TTS disponível, a claim é barrada
+    assert.equal(result.response, 'Não consegui confirmar essa ação agora.');
+    assert.deepEqual(messages, [{ text: 'Não consegui confirmar essa ação agora.' }]);
+  });
+});
+
+test('persona audio: tool send_voice envia áudio quando bem-sucedida', async () => {
+  await withLiveLlm(async () => {
+    const messages = [];
+    let generations = 0;
+    const { service } = createService({
+      generateZen: async () => (++generations === 1)
+        ? '{"type":"tool_call","name":"send_voice","arguments":{"text":"Soltando o rap do grupo!"}}'
+        : '{"type":"reply","text":"mandei a braba no áudio"}',
+      personaTtsService: {
+        isAvailable: () => true,
+        synthesize: async (text) => ({ ok: true, buffer: Buffer.from('ogg'), mimeType: 'audio/ogg; codecs=opus' }),
+      },
+    });
+
+    const result = await service.tryRespond({
+      scopeKey: uniqueGroup(),
+      authorJid: '551199999999@s.whatsapp.net',
+      text: 'bot use sua tool de enviar audio e mande o rap',
+      messageType: 'text',
+      funConfig: {},
+      sock: socket(messages),
+      identityMap: createIdentityMap(),
+      now: 1_400_000,
+    });
+
+    assert.equal(result.responded, true);
+    const audioMsg = messages.find((m) => m.ptt === true);
+    assert.ok(audioMsg, 'deve ter enviado mensagem com ptt: true');
+  });
+});
+
+test('persona audio: tool send_voice com falha de TTS avisa no topo que tentou usar mas falhou', async () => {
+  await withLiveLlm(async () => {
+    const messages = [];
+    let generations = 0;
+    const { service } = createService({
+      generateZen: async () => (++generations === 1)
+        ? '{"type":"tool_call","name":"send_voice","arguments":{"text":"Tentativa de cantar."}}'
+        : '{"type":"reply","text":"mandei aí"}',
+      personaTtsService: {
+        isAvailable: () => true,
+        synthesize: async () => ({ ok: false, reason: 'generation-error' }),
+      },
+    });
+
+    const result = await service.tryRespond({
+      scopeKey: uniqueGroup(),
+      authorJid: '551199999999@s.whatsapp.net',
+      text: 'bot manda o áudio',
+      messageType: 'text',
+      funConfig: {},
+      sock: socket(messages),
+      identityMap: createIdentityMap(),
+      now: 1_500_000,
+    });
+
+    assert.equal(result.responded, true);
+    const textMsg = messages.find((m) => typeof m.text === 'string' && m.text.includes('Tentou usar (audio) mas falhou'));
+    assert.ok(textMsg, 'deve conter o indicativo no topo de que a tool de áudio falhou');
   });
 });

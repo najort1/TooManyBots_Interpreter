@@ -1063,3 +1063,264 @@ test('dailyChallenge news integration: getTodayStats null omite seção', async 
   const edition = await newsService.composeEdition(uniqueGroup(), {}, Date.now());
   assert.ok(!/DESAFIO DO DIA/i.test(edition.text));
 });
+
+test('dailyChallenge service: launch who_am_i via LLM faz retry se colidir com recentes', async () => {
+  let callCount = 0;
+  const duplicatePerson = 'Ayrton Senna';
+  const newPerson = 'Marie Curie';
+  const { service, repository } = createServiceHarness({
+    generateZen: async () => {
+      callCount++;
+      if (callCount === 1) {
+        return JSON.stringify({
+          name: duplicatePerson,
+          aliases: ['senna'],
+          intro: 'Eu fui piloto...',
+          hints: ['h1', 'h2', 'h3'],
+        });
+      }
+      return JSON.stringify({
+        name: newPerson,
+        aliases: ['curie'],
+        intro: 'Pesquisei átomos...',
+        hints: ['h1', 'h2', 'h3'],
+      });
+    },
+  });
+  const scope = uniqueGroup();
+  repository.recordContent(scope, 'person', duplicatePerson);
+
+  const out = await service.launchChallenge({
+    scopeKey: scope,
+    type: 'who_am_i',
+    now: Date.now(),
+    sendText: async () => {},
+    sendImage: null,
+    sharp: null,
+  });
+
+  assert.equal(out.ok, true);
+  assert.equal(callCount, 2, 'deveria ter feito uma segunda chamada de retry ao LLM');
+  const active = repository.getActiveChallenge(scope);
+  assert.equal(active.challengeType, 'who_am_i');
+  assert.equal(active.answer, 'marie curie');
+  assert.equal(active.challengeData.name, newPerson);
+});
+
+test('dailyChallenge service: fallback de who_am_i não repete em dias consecutivos no mesmo escopo', async () => {
+  const { service, repository } = createServiceHarness({
+    generateZen: async () => 'sem-json-valido',
+    random: () => 0,
+  });
+  const scope = uniqueGroup();
+  const selectedPeople = new Set();
+
+  for (let day = 1; day <= 4; day++) {
+    const now = new Date(`2099-04-0${day}T12:00:00.000Z`).getTime();
+    const out = await service.launchChallenge({
+      scopeKey: scope,
+      type: 'who_am_i',
+      now,
+      sendText: async () => {},
+      sendImage: null,
+      sharp: null,
+    });
+    assert.equal(out.ok, true);
+    const active = repository.getActiveChallenge(scope);
+    const personName = active.challengeData.name;
+
+    assert.ok(!selectedPeople.has(personName), `Dia ${day} repetiu a personalidade: "${personName}"`);
+    selectedPeople.add(personName);
+
+    repository.expireChallenge(active.id, now + 5 * 3600_000);
+  }
+
+  assert.equal(selectedPeople.size, 4, 'quatro dias consecutivos devem gerar 4 personalidades diferentes');
+});
+
+test('dailyChallenge service: launch word_scramble via LLM gera anagrama com tema e faz retry em colisão', async () => {
+  let callCount = 0;
+  const duplicateWord = 'Capoeira';
+  const newWord = 'Astronomia';
+  const { service, repository } = createServiceHarness({
+    generateZen: async () => {
+      callCount++;
+      if (callCount === 1) {
+        return JSON.stringify({
+          word: duplicateWord,
+          theme: '🇧🇷 Cultura Brasileira',
+          aliases: ['capoeira'],
+          hints: ['Arte marcial e dança', 'Começa com C', 'C A P _ _ _ R A'],
+        });
+      }
+      return JSON.stringify({
+        word: newWord,
+        theme: '🪐 Astronomia',
+        aliases: ['astronomia'],
+        hints: ['Ciência dos astros', 'Começa com A', 'A S T _ _ _ _ M I A'],
+      });
+    },
+  });
+  const scope = uniqueGroup();
+  repository.recordContent(scope, 'word', duplicateWord);
+
+  const out = await service.launchChallenge({
+    scopeKey: scope,
+    type: 'word_scramble',
+    now: Date.now(),
+    sendText: async () => {},
+    sendImage: null,
+    sharp: null,
+  });
+
+  assert.equal(out.ok, true);
+  assert.equal(callCount, 2, 'deveria ter feito retry no LLM ao encontrar palavra recente');
+  const active = repository.getActiveChallenge(scope);
+  assert.equal(active.challengeType, 'word_scramble');
+  assert.equal(active.answer, 'astronomia');
+  assert.equal(active.challengeData.word, newWord);
+  assert.ok(active.challengeData.scrambled, 'palavra deve vir embaralhada');
+});
+
+test('dailyChallenge service: fallback de word_scramble não repete em dias consecutivos no mesmo escopo', async () => {
+  const { service, repository } = createServiceHarness({
+    generateZen: async () => 'sem-json-valido',
+    random: () => 0,
+  });
+  const scope = uniqueGroup();
+  const selectedWords = new Set();
+
+  for (let day = 1; day <= 4; day++) {
+    const now = new Date(`2099-05-0${day}T12:00:00.000Z`).getTime();
+    const out = await service.launchChallenge({
+      scopeKey: scope,
+      type: 'word_scramble',
+      now,
+      sendText: async () => {},
+      sendImage: null,
+      sharp: null,
+    });
+    assert.equal(out.ok, true);
+    const active = repository.getActiveChallenge(scope);
+    const word = active.challengeData.word;
+
+    assert.ok(!selectedWords.has(word), `Dia ${day} repetiu a palavra: "${word}"`);
+    selectedWords.add(word);
+
+    repository.expireChallenge(active.id, now + 5 * 3600_000);
+  }
+
+  assert.equal(selectedWords.size, 4, 'quatro dias consecutivos devem gerar 4 palavras diferentes');
+});
+
+test('dailyChallenge repository: getRecentContentGlobal e includeGlobal agregam memória entre grupos', async () => {
+  const { repository } = createServiceHarness();
+  const scope1 = uniqueGroup();
+  const scope2 = uniqueGroup();
+
+  repository.recordContent(scope1, 'person', 'pele', 1000);
+  repository.recordContent(scope2, 'person', 'senna', 2000);
+
+  const local1 = repository.getRecentContent(scope1, 'person', 10);
+  assert.deepEqual(local1, ['pele'], 'busca local de scope1 só deve trazer conteúdo de scope1');
+
+  const global1 = repository.getRecentContentGlobal('person', 10);
+  assert.ok(global1.includes('pele') && global1.includes('senna'), 'busca global deve incluir ambos');
+
+  const crossScope = repository.getRecentContent(scope1, 'person', 10, { includeGlobal: true });
+  assert.ok(crossScope.includes('pele') && crossScope.includes('senna'), 'includeGlobal deve incluir conteúdos cross-scope');
+});
+
+test('dailyChallenge service: retryPendingLaunch registra conteúdo na memória para evitar repetição', async () => {
+  const { service, repository } = createServiceHarness({
+    random: () => 0,
+  });
+  const scope = uniqueGroup();
+  const now = Date.now();
+
+  const id = repository.createChallenge({
+    scopeKey: scope,
+    type: 'word_scramble',
+    data: { word: 'Parmegiana', theme: '🍕 Culinária', hints: [] },
+    answer: 'parmegiana',
+    launchedAt: now,
+    expiresAt: now + 3600_000,
+    dateStr: '2099-06-01',
+  });
+
+  const challenge = repository.getActiveChallenge(scope);
+  assert.equal(challenge.launchPublishedAt, 0, 'inicialmente pendente de publicação');
+
+  const out = await service.tryLaunchToday({
+    scopeKey: scope,
+    now,
+    sendText: async () => ({ ok: true }),
+    sendImage: null,
+    sharp: null,
+  });
+
+  assert.equal(out.ok, true);
+  const recent = repository.getRecentContent(scope, 'word', 10);
+  assert.ok(recent.includes('parmegiana'), 'desafio publicado via retry deve ser registrado na memória');
+});
+
+test('dailyChallenge service: prompt da LLM recebe histórico massivo e diretivas anti-clichê', async () => {
+  let capturedWhoAmISystem = '';
+  let capturedWordScrambleSystem = '';
+
+  const { service, repository } = createServiceHarness({
+    generateZen: async (params) => {
+      if (/Quem Sou Eu/i.test(params.system)) {
+        capturedWhoAmISystem = params.system;
+        return JSON.stringify({
+          name: 'Hypatia de Alexandria',
+          aliases: ['hypatia'],
+          intro: 'Fui matemática e astrônoma...',
+          hints: ['Século IV', 'Biblioteca de Alexandria', 'H.A.'],
+        });
+      }
+      if (/Anagrama/i.test(params.system)) {
+        capturedWordScrambleSystem = params.system;
+        return JSON.stringify({
+          word: 'Caleidoscopio',
+          theme: '🔬 Ciência & Natureza',
+          aliases: ['caleidoscopio'],
+          hints: ['Aparelho óptico com espelhos', 'Começa com C (13 letras)', 'C A L _ _ _ _ _ C O P I O'],
+        });
+      }
+      return 'sem-json';
+    },
+  });
+
+  const scope = uniqueGroup();
+  // Registra 60 personalidades e 60 palavras no repositório para testar que o histórico massivo entra no prompt
+  for (let i = 1; i <= 60; i++) {
+    repository.recordContent(scope, 'person', `personalidade-${i}`, 1000 + i);
+    repository.recordContent(scope, 'word', `palavra-${i}`, 1000 + i);
+  }
+
+  const outPerson = await service.launchChallenge({
+    scopeKey: scope,
+    type: 'who_am_i',
+    now: Date.now(),
+    sendText: async () => {},
+  });
+  assert.equal(outPerson.ok, true);
+  assert.ok(capturedWhoAmISystem.includes('personalidade-60'), 'deve conter o histórico amplo no prompt');
+  assert.ok(capturedWhoAmISystem.includes('ANTI-CLICHÊ'), 'deve conter a diretiva anti-clichê no prompt');
+  assert.ok(capturedWhoAmISystem.includes('32k'), 'deve citar o amplo teto de contexto');
+
+  // Expira para lançar o anagrama
+  const active = repository.getActiveChallenge(scope);
+  repository.expireChallenge(active.id, Date.now() + 1000);
+
+  const outWord = await service.launchChallenge({
+    scopeKey: scope,
+    type: 'word_scramble',
+    now: Date.now() + 2000,
+    sendText: async () => {},
+  });
+  assert.equal(outWord.ok, true);
+  assert.ok(capturedWordScrambleSystem.includes('palavra-60'), 'deve conter o histórico amplo de palavras no prompt');
+  assert.ok(capturedWordScrambleSystem.includes('ENTROPIA'), 'deve conter diretivas de qualidade e entropia');
+});

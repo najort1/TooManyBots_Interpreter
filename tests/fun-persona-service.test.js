@@ -51,6 +51,7 @@ function setup(cfg = baseConfig, botJid, threadContextService = null, deps = {})
     personaSocialHintService: deps.personaSocialHintService,
     profileService: deps.profileService,
     generateZen: deps.generateZen,
+    personaAutonomyPolicy: deps.personaAutonomyPolicy,
     getLogger: () => null,
     random: () => 0.5,
   });
@@ -1606,4 +1607,229 @@ test('persona: resposta cita a mensagem que disparou a persona', async () => {
     { text: response.response },
     { quoted: quoteSource },
   ]);
+});
+
+test('REGRESSAO persona: menção ao próprio bot por LID/número resolve para o nome da persona e NÃO vira terceiro em <mentioned_users> nem <user_identity>', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const botLid = '174994885714120@lid';
+    const botPn = uniqueJid('5511');
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, botPn, null, {
+      profileService: {
+        displayName: (jid) => String(jid).split('@')[0],
+        buildIdentityBlock: (scopeKey, participants) => {
+          if (!participants?.length) return '';
+          return `<user_identity>\n${participants.map((p) => `- ${p.split('@')[0]}`).join('\n')}\n</user_identity>`;
+        },
+      },
+      generateZen: async (input) => {
+        request = input;
+        return 'fala edu, to aqui pô!';
+      },
+    });
+    sock.user.lid = botLid;
+    sock.user.name = 'Dudu Bot';
+    identityMap.remember(botLid, botPn);
+    sock.sendMessage = async () => ({ key: { id: 'persona-self-mention-1' } });
+
+    const r = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: '@174994885714120 diz alguma coisa bebe',
+      authorJid: uniqueJid('5519'),
+      mentionedJids: [botLid],
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_900_000,
+    });
+
+    assert.equal(r.responded, true);
+    assert.ok(request, 'generateZen deve ter sido chamado');
+
+    // Prompt deve resolver para o nome do bot em vez de número opaco
+    assert.match(request.prompt, /@Dudu Bot diz alguma coisa bebe/);
+    assert.doesNotMatch(request.prompt, /@174994885714120/);
+
+    // O bot NUNCA deve ser listado como terceiro em <mentioned_users>
+    assert.doesNotMatch(request.system, /<mentioned_users>[\s\S]*174994885714120[\s\S]*<\/mentioned_users>/);
+    assert.doesNotMatch(request.system, /<mentioned_users>[\s\S]*Dudu Bot[\s\S]*<\/mentioned_users>/);
+
+    // O bot NUNCA deve ser listado em <user_identity> como membro do grupo sem perfil
+    const userIdentityBlock = request.system.match(/\n<user_identity>\n([\s\S]*?)\n<\/user_identity>/)?.[1] || '';
+    assert.doesNotMatch(userIdentityBlock, /174994885714120/);
+
+    // Bloco de identidade deve ensinar o nome e o LID do próprio bot
+    assert.match(request.system, /Meu nome no grupo: Dudu Bot/);
+    assert.match(request.system, /174994885714120/);
+    assert.match(request.system, /DIRETAMENTE COM VOCÊ/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('REGRESSAO persona: menção combinada (@bot + @terceiro) mantém apenas o terceiro em <mentioned_users>', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const botLid = '174994885714120@lid';
+    const botPn = uniqueJid('5511');
+    const memberPn = uniqueJid('5521');
+    const memberLid = '281350775005409@lid';
+    const names = new Map([[memberPn, 'Carla'], [memberLid, 'Carla']]);
+
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, botPn, null, {
+      profileService: {
+        displayName: (jid) => names.get(String(jid)) || String(jid).split('@')[0],
+        getProfile: (jid) => ({ empty: false, nickname: names.get(String(jid)) || '' }),
+        buildIdentityBlock: () => '',
+      },
+      generateZen: async (input) => {
+        request = input;
+        return 'a carla é massa!';
+      },
+    });
+    sock.user.lid = botLid;
+    sock.user.name = 'Dudu Bot';
+    identityMap.remember(botLid, botPn);
+    identityMap.remember(memberLid, memberPn);
+    sock.sendMessage = async () => ({ key: { id: 'persona-combined-mention-1' } });
+
+    const r = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: '@174994885714120 o que acha da @281350775005409?',
+      authorJid: uniqueJid('5519'),
+      mentionedJids: [botLid, memberLid],
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 9_910_000,
+    });
+
+    assert.equal(r.responded, true);
+    assert.match(request.prompt, /@Dudu Bot o que acha da @Carla\?/);
+    assert.match(request.system, /<mentioned_users>/);
+    assert.match(request.system, /Carla/);
+    assert.doesNotMatch(request.system, /Membro mencionado: Dudu Bot/);
+    assert.doesNotMatch(request.system, /Membro mencionado: 174994885714120/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('REGRESSAO persona: histórico imediato (immediateContext) com menção ao bot substitui o número do bot pelo nome', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let request = null;
+    const botLid = '174994885714120@lid';
+    const botPn = uniqueJid('5511');
+
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, botPn, null, {
+      profileService: {
+        displayName: (jid) => String(jid).split('@')[0],
+        buildIdentityBlock: () => '',
+      },
+      generateZen: async (input) => {
+        request = input;
+        return 'to ligado!';
+      },
+    });
+    sock.user.lid = botLid;
+    sock.user.name = 'Dudu Bot';
+    identityMap.remember(botLid, botPn);
+    sock.sendMessage = async () => ({ key: { id: 'persona-immediate-ctx-1' } });
+
+    const r = await svc.tryRespond({
+      scopeKey: uniqueGroup(),
+      text: 'bot, eae',
+      authorJid: uniqueJid('5519'),
+      sock,
+      identityMap,
+      funConfig: cfg,
+      responseContextPack: {
+        immediateContext: [
+          { messageId: 'm1', authorLabel: 'Eduardo', text: '@174994885714120 eae', source: 'human' },
+          { messageId: 'm2', authorLabel: 'Eduardo', text: '@174994885714120 diz alguma coisa bebe', source: 'human' },
+        ],
+      },
+      now: 9_920_000,
+    });
+
+    assert.equal(r.responded, true);
+    assert.match(request.system, /Eduardo: "@Dudu Bot eae"/);
+    assert.match(request.system, /Eduardo: "@Dudu Bot diz alguma coisa bebe"/);
+    assert.doesNotMatch(request.system, /@174994885714120/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona: reply ao bot com pedido de parada encerra imediatamente sem responder', async () => {
+  let observed = null;
+  const policy = {
+    observeHumanMessage: (scope, data) => { observed = { scope, data }; },
+  };
+  const { svc, sock, botJ, identityMap, cfg } = setup(baseConfig, undefined, null, {
+    personaAutonomyPolicy: policy,
+  });
+
+  const scope = uniqueGroup();
+  const stopReply = await svc.tryRespond({
+    scopeKey: scope,
+    text: 'para de falar bot',
+    quotedParticipant: botJ,
+    quotedMessageId: 'msg-bot-123',
+    messageType: 'extended-text',
+    authorJid: uniqueJid(),
+    sock,
+    identityMap,
+    funConfig: cfg,
+    now: 10_000_000,
+  });
+
+  assert.equal(stopReply.responded, false);
+  assert.equal(stopReply.reason, 'stop-request');
+  assert.ok(observed, 'observeHumanMessage deve ter sido chamado');
+  assert.equal(observed.scope, scope);
+  assert.equal(observed.data.quotedIsBot, true);
+  assert.equal(observed.data.text, 'para de falar bot');
+});
+
+test('persona: reply ao bot com falso positivo ("parar de sumir") não é bloqueado como pedido de parada', async () => {
+  const { svc, sock, botJ, identityMap, cfg } = setup();
+  const scope = uniqueGroup();
+  sock.sendMessage = async () => ({ key: { id: 'persona-praise-reply' } });
+
+  // Cria primeira interação para abrir thread
+  await svc.tryRespond({
+    scopeKey: scope,
+    text: 'bot eai',
+    authorJid: uniqueJid(),
+    sock,
+    identityMap,
+    funConfig: cfg,
+    now: 10_000_000,
+  });
+
+  // Reply com elogio que contém "parar de sumir"
+  const reply = await svc.tryRespond({
+    scopeKey: scope,
+    text: 'nossa mano vc tem que parar de sumir vc é muito legal',
+    quotedParticipant: botJ,
+    messageType: 'extended-text',
+    authorJid: uniqueJid(),
+    sock,
+    identityMap,
+    funConfig: cfg,
+    now: 10_000_001,
+  });
+
+  assert.equal(reply.responded, true);
+  assert.notEqual(reply.reason, 'stop-request');
 });

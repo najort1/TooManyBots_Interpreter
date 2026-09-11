@@ -12,6 +12,8 @@ import {
 import {
   buildNewsAudioTranscript,
   synthesizeNewsAudio,
+  sendNewsAudioWithRetry,
+  enforceAudioScriptCap,
 } from '../fun/services/news/newsAudio.js';
 import { createFunNewsRepository } from '../fun/db/funNewsRepository.js';
 import { createFunJournalMessageRepository } from '../fun/db/funJournalMessageRepository.js';
@@ -316,4 +318,168 @@ test('newsService: tryPublish sintetiza e retorna áudio multi-voz com a ediçã
   assert.ok(Array.isArray(receivedVoices) && receivedVoices.length === 2);
   assert.equal(receivedVoices[0].speaker, 'Speaker 1');
   assert.equal(receivedVoices[1].speaker, 'Speaker 2');
+});
+
+test('sendNewsAudioWithRetry: recupera com sucesso na 3ª tentativa após 2 falhas de rede', async () => {
+  let callCount = 0;
+  const mockSock = {
+    sendMessage: async (jid, payload) => {
+      callCount += 1;
+      if (callCount < 3) {
+        throw new Error(`Socket timeout temporário na tentativa ${callCount}`);
+      }
+      return { status: 'sent', jid, payload };
+    },
+  };
+
+  const delaysLogged = [];
+  const fakeSleep = async (ms) => {
+    delaysLogged.push(ms);
+  };
+
+  const result = await sendNewsAudioWithRetry(
+    mockSock,
+    '120363test@g.us',
+    { audioBuffer: Buffer.from('audio-bytes'), audioMimeType: 'audio/ogg; codecs=opus' },
+    { maxAttempts: 3, delays: [10, 20], sleepFn: fakeSleep, logger: { warn: () => {} } }
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.attempts, 3);
+  assert.equal(callCount, 3);
+  assert.deepEqual(delaysLogged, [10, 20]);
+});
+
+test('sendNewsAudioWithRetry: desiste e retorna falha controlada após esgotar 3 tentativas', async () => {
+  let callCount = 0;
+  const mockSock = {
+    sendMessage: async () => {
+      callCount += 1;
+      throw new Error('Falha permanente de conexão');
+    },
+  };
+
+  const result = await sendNewsAudioWithRetry(
+    mockSock,
+    '120363test@g.us',
+    { audioBuffer: Buffer.from('audio-bytes'), audioMimeType: 'audio/ogg; codecs=opus' },
+    { maxAttempts: 3, delays: [0, 0], sleepFn: async () => {}, logger: { warn: () => {} } }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(callCount, 3);
+  assert.match(result.reason, /Falha permanente de conexão/);
+});
+
+test('synthesizeNewsAudio: realiza retentativa automática com sucesso se a 1ª chamada ao TTS falhar', async () => {
+  let callCount = 0;
+  const mockTtsService = {
+    isAvailable: () => true,
+    synthesize: async () => {
+      callCount += 1;
+      if (callCount === 1) {
+        return { ok: false, reason: 'rate-limit-exceeded' };
+      }
+      return {
+        ok: true,
+        buffer: Buffer.from('audio-succeeded-on-retry'),
+        mimeType: 'audio/ogg; codecs=opus',
+      };
+    },
+  };
+
+  const delaysLogged = [];
+  const fakeSleep = async (ms) => {
+    delaysLogged.push(ms);
+  };
+
+  const result = await synthesizeNewsAudio({
+    edition: { capa: 'Teste', intro: 'Intro' },
+    commentator: { name: 'Doutor Fuxico', voiceName: 'Kore' },
+    ttsService: mockTtsService,
+    maxAttempts: 3,
+    delays: [15, 30],
+    sleepFn: fakeSleep,
+    logger: { warn: () => {} },
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.attempts, 2);
+  assert.equal(callCount, 2);
+  assert.equal(result.buffer.toString(), 'audio-succeeded-on-retry');
+  assert.deepEqual(delaysLogged, [15]);
+});
+
+test('buildNewsAudioTranscript: âncora introduz nominalmente o comentarista com gancho fluido', () => {
+  const commentator = {
+    name: 'Doutor Fuxico',
+    title: 'psicanalista de boteco',
+    voiceName: 'Kore',
+    catchphrase: 'O quadro clínico é grave.',
+  };
+
+  const transcriptData = buildNewsAudioTranscript({
+    edition: {
+      capa: 'Plantão do Deboche',
+      intro: 'O grupo passou a tarde rindo de memes.',
+      comentarista: 'Isso é pura falta de lote pra capinar.',
+    },
+    commentator,
+    conversation: { mood: 'zoeiro' },
+  });
+
+  const anchorTurn = transcriptData.turns.find((t) => t.speaker === 'Speaker 1');
+  const commentatorTurn = transcriptData.turns.find((t) => t.speaker === 'Speaker 2');
+
+  assert.ok(anchorTurn);
+  assert.ok(commentatorTurn);
+  // O âncora deve convocar nominalmente o comentarista
+  assert.match(anchorTurn.text, /Doutor Fuxico/);
+  assert.match(anchorTurn.text, /chamo nosso comentarista residente, Doutor Fuxico/);
+  // O comentarista deve responder com actingTone zoeiro
+  assert.equal(commentatorTurn.tone, 'debochado e gargalhando');
+  assert.match(commentatorTurn.text, /Olha, ouvindo tudo isso eu só digo uma coisa/);
+});
+
+test('newsAudio: buildNewsAudioTranscript limita texto total a no máximo 680 caracteres para garantir áudio < 1m20s', () => {
+  const commentator = {
+    name: 'Fiscal do Rolo',
+    title: 'auditor de confusões',
+    voiceName: 'Fenrir',
+    catchphrase: 'Aqui tem esquema, eu sinto o cheiro de longe!',
+  };
+
+  const edition = {
+    capa: 'O Escândalo dos Empréstimos Sem Volta no Grupo do WhatsApp Que Parou a Cidade Inteira',
+    intro: 'A apuração jornalística revelou detalhes impressionantes sobre as transações financeiras suspeitas.',
+    comentarista: 'Eu analisei os números e digo com toda certeza: a conta nunca vai fechar desse jeito!',
+    detalhes: 'Vários membros foram confrontados nos bastidores e ninguém soube explicar o sumiço dos comprovantes.',
+    foreshadow: 'Amanhã os cobradores baterão na porta do grupo exigindo explicações.',
+  };
+
+  const transcriptData = buildNewsAudioTranscript({
+    edition,
+    commentator,
+    conversation: { mood: 'movimentado' },
+    funConfig: { groupNewsAudioMaxChars: 680 },
+  });
+
+  const totalChars = transcriptData.turns.reduce((acc, t) => acc + (t?.text?.length || 0), 0);
+  assert.ok(
+    totalChars <= 680,
+    `Total de caracteres falados (${totalChars}) deve ser <= 680 para garantir áudio < 1m20s`
+  );
+  // Garante que é um podcast enxuto com 3 a 5 turnos
+  assert.ok(transcriptData.turns.length >= 3 && transcriptData.turns.length <= 5);
+});
+
+test('newsAudio: enforceAudioScriptCap reduz turnos excedentes mantendo coerência', () => {
+  const turns = [
+    { speaker: 'Speaker 1', text: 'Texto longo do âncora '.repeat(20) },
+    { speaker: 'Speaker 2', text: 'Texto longo do comentarista '.repeat(20) },
+  ];
+
+  const capped = enforceAudioScriptCap(turns, 400);
+  const total = capped.reduce((acc, t) => acc + t.text.length, 0);
+  assert.ok(total <= 400, `Deveria limitar a 400 caracteres, mas teve ${total}`);
 });

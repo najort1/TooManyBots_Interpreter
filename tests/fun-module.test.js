@@ -65,6 +65,7 @@ test('normalizeFunConfig: defaults standalone', () => {
   assert.equal(defaults.rankCardImage, true);
   assert.equal(defaults.dashboardEnabled, true);
   assert.equal(defaults.dashboardPort, 8790);
+  assert.deepEqual(defaults.cardTierWeights, { 1: 700, 2: 230, 3: 58, 4: 10, 5: 2 });
 });
 
 test('parseFunCommand: pay/marry/ship aliases', () => {

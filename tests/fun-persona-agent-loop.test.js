@@ -552,3 +552,191 @@ test('persona agent loop does not prefix raw tool error message when llm comment
   }
 });
 
+test('persona agent: tool lore exibe apenas "Usou (lore) 1 vez" em vez de despejar o texto bruto da lore', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let generations = 0;
+    const rawLoreOutput = [
+      '🧠 *Lore lembrada*',
+      '• [data_do_fato=2026-08-16] Max teve que pedir perdão publicamente por dizer que HxH era ruim.',
+      '• [data_do_fato=2026-07-24] Jonas resolveu que Lucas é o maior raparigueiro de São Lourenço.',
+    ].join('\n');
+
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async () => ({
+          ok: true,
+          text: rawLoreOutput,
+          summary: '2 fatos lembrados da lore.',
+        }),
+      },
+      generateZen: async () => (++generations === 1)
+        ? '{"type":"tool_call","name":"lore","arguments":{"query":"Jonas"}}'
+        : '{"type":"reply","text":"mano tu literalmente acabou de falar que vai de Graves KKKKKK"}'
+    });
+    const { sent, ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({
+      ...ctx,
+      text: 'bot quem é o mais louco do grupo?',
+      funConfig: { ...DEFAULT_FUN_CONFIG },
+    });
+
+    assert.equal(result.responded, true);
+    assert.equal(sent.length, 1);
+    // NÃO deve conter o texto bruto de lore
+    assert.doesNotMatch(sent[0].text, /🧠 \*Lore lembrada\*/);
+    assert.doesNotMatch(sent[0].text, /Max teve que pedir perdão/);
+    // DEVE começar com "Usou (lore) 1 vez"
+    assert.match(sent[0].text, /^Usou \(lore\) 1 vez/);
+    // DEVE conter a resposta real da persona
+    assert.match(sent[0].text, /mano tu literalmente acabou de falar que vai de Graves KKKKKK/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent: múltiplas tools de contexto silenciosas exibem "Usou (lore) 1 vez, (recent_conversation) 1 vez"', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let generations = 0;
+    const executions = [];
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async (call) => {
+          executions.push(call.name);
+          return {
+            ok: true,
+            text: `resultado bruto da tool ${call.name}`,
+            summary: `resumo ${call.name}`,
+          };
+        },
+      },
+      generateZen: async () => {
+        generations += 1;
+        if (generations === 1) return '{"type":"tool_call","name":"lore","arguments":{"query":"fatos"}}';
+        if (generations === 2) return '{"type":"tool_call","name":"recent_conversation","arguments":{"query":"conversa"}}';
+        return '{"type":"reply","text":"agora sim entendi o contexto todo"}';
+      },
+    });
+    const { sent, ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({
+      ...ctx,
+      text: 'bot me explica isso aí',
+      funConfig: { ...DEFAULT_FUN_CONFIG, personaAgentMaxToolCalls: 3 },
+    });
+
+    assert.equal(result.responded, true);
+    assert.deepEqual(executions, ['lore', 'recent_conversation']);
+    assert.equal(sent.length, 1);
+    // Deve exibir "Usou (lore) 1 vez, (recent_conversation) 1 vez"
+    assert.match(sent[0].text, /^Usou \(lore\) 1 vez, \(recent_conversation\) 1 vez/);
+    assert.doesNotMatch(sent[0].text, /resultado bruto/);
+    assert.match(sent[0].text, /agora sim entendi o contexto todo/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent: tool com full output (oracle) continua exibindo o output completo sem prefixo silencioso', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let generations = 0;
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async () => ({
+          ok: true,
+          text: '🔮 *Oráculo maluco*\nVocê vai encontrar um pastel na esquina.',
+          summary: 'Resposta do oráculo.',
+        }),
+      },
+      generateZen: async () => (++generations === 1)
+        ? '{"type":"tool_call","name":"oracle","arguments":{"question":"o que vai acontecer?"}}'
+        : '{"type":"reply","text":"o oráculo nunca erra kk"}'
+    });
+    const { sent, ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({
+      ...ctx,
+      text: 'bot consulta o oraculo',
+      funConfig: { ...DEFAULT_FUN_CONFIG },
+    });
+
+    assert.equal(result.responded, true);
+    assert.equal(sent.length, 1);
+    // DEVE exibir o output completo do oráculo
+    assert.match(sent[0].text, /🔮 \*Oráculo maluco\*/);
+    assert.match(sent[0].text, /Você vai encontrar um pastel na esquina\./);
+    // NÃO deve ter "Usou" pois oracle já é de exibição completa
+    assert.doesNotMatch(sent[0].text, /Usou/);
+    assert.match(sent[0].text, /o oráculo nunca erra kk/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent: combina tool silenciosa e tool com full output', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let generations = 0;
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async (call) => {
+          if (call.name === 'lore') {
+            return {
+              ok: true,
+              text: '🧠 *Lore lembrada*\n• fato confidencial da lore',
+              summary: '1 fato de lore.',
+            };
+          }
+          return {
+            ok: true,
+            text: '🔮 *Tiragem*\nCarta: O Mago\n✨ *Leitura*\nCaminhos abertos.',
+            summary: 'Tiragem de tarô.',
+          };
+        },
+      },
+      generateZen: async () => {
+        generations += 1;
+        if (generations === 1) return '{"type":"tool_call","name":"lore","arguments":{"query":"sorte"}}';
+        if (generations === 2) return '{"type":"tool_call","name":"tarot","arguments":{"question":"como vai meu dia?"}}';
+        return '{"type":"reply","text":"as cartas não mentem jamais kk"}';
+      },
+    });
+    const { sent, ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({
+      ...ctx,
+      text: 'bot tira uma carta lembrando do meu histórico',
+      funConfig: { ...DEFAULT_FUN_CONFIG, personaAgentMaxToolCalls: 3 },
+    });
+
+    assert.equal(result.responded, true);
+    assert.equal(sent.length, 1);
+    // Contém o aviso da tool silenciosa com nome
+    assert.match(sent[0].text, /Usou \(lore\) 1 vez/);
+    // Contém o output completo do tarô
+    assert.match(sent[0].text, /🔮 \*Tiragem\*/);
+    assert.match(sent[0].text, /Caminhos abertos\./);
+    // NÃO vaza o texto bruto da lore
+    assert.doesNotMatch(sent[0].text, /fato confidencial da lore/);
+    // Contém a fala da persona
+    assert.match(sent[0].text, /as cartas não mentem jamais kk/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+

@@ -14,7 +14,7 @@ import { renderEdition } from '../fun/services/news/newsRender.js';
 await initDb();
 
 function scope(suffix) {
-  return `120363journal${suffix}@g.us`;
+  return `120363${String(Date.now()).slice(-8)}${Math.floor(Math.random() * 900 + 100)}${suffix}@g.us`;
 }
 
 const base = Date.UTC(2026, 8, 2, 12, 0, 0);
@@ -97,13 +97,13 @@ test('journal edition: só aceita citações literais autorizadas e fallback nã
   assert.match(parsed.citacoes, /Eu avisei/);
   assert.doesNotMatch(parsed.citacoes, /inventada/);
   const output = renderEdition(conversation, null, { dayLabel: '2026-09-02' });
-  assert.match(output, /MANCHETES/);
+  assert.match(output, /Crônica da Fofoca/);
   assert.match(output, /FRASES PARA O ARQUIVO/);
   assert.doesNotMatch(output, /RANKINGS|coins|cassino|ECONOMIA/i);
 });
 
 test('journal edition: dia quieto publica edição mínima honesta', () => {
   const output = renderEdition({ quiet: true }, null, { dayLabel: '2026-09-02' });
-  assert.match(output, /Plantão do silêncio/);
-  assert.match(output, /ninguém tinha fofoca suficiente/i);
+  assert.match(output, /Plantão do Silêncio/i);
+  assert.match(output, /fofoca com densidade suficiente/i);
 });
