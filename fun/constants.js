@@ -551,6 +551,15 @@ export const ACTION_TYPE = Object.freeze({
   CARD_TRADE: 'card_trade',
 });
 
+/** Pesos padrão de drop por tier (escala gacha: T1 comum, T4 épica, T5 lendária). */
+export const DEFAULT_CARD_TIER_WEIGHTS = Object.freeze({
+  1: 700,
+  2: 230,
+  3: 58,
+  4: 10,
+  5: 2,
+});
+
 export const DAY_MS = 24 * 60 * 60 * 1000;
 export const PROPOSAL_TTL_MS = 5 * 60 * 1000;
 export const BET_TTL_MS = 5 * 60 * 1000;
@@ -631,6 +640,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   cardPackCost: 30,
   cardMaxPacksPerOpen: 4,
   cardTradeTtlMs: 5 * 60_000,
+  cardTierWeights: DEFAULT_CARD_TIER_WEIGHTS,
   dashboardEnabled: true,
   dashboardHost: '127.0.0.1',
   dashboardPort: 8790,
@@ -962,11 +972,19 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   groupNewsEnabled: true,
   groupNewsHour: 23,
   groupNewsMinute: 59,
+  /** Teto de caracteres da edição formatada em texto (leitura em até 2 minutos). */
+  groupNewsMaxChars: 2500,
   /** Se true, o jornal gera narração em áudio (podcast multi-voz) às 23:59. */
   groupNewsAudioEnabled: true,
+  /** Teto de caracteres falados no roteiro de áudio para garantir duração < 1m20s. */
+  groupNewsAudioMaxChars: 680,
   groupNewsAnchorVoice: 'Puck',
   groupNewsAudioModel: 'gemini-3.1-flash-tts-preview',
   groupNewsAudioTemperature: 1.0,
+  /** Tokens de geração da crônica do jornal (conciso para leitura rápida). */
+  zenNewsMaxTokens: 800,
+  /** Teto de caracteres gerados pelo LLM para o jornal. */
+  zenNewsMaxChars: 3500,
   /** Guarda mensagens elegíveis para o jornal conversacional. */
   groupNewsMessageHistoryEnabled: true,
   /** Retenção curta de texto bruto; snapshots diários nunca guardam citações. */
@@ -975,6 +993,12 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   groupNewsMessageReadLimit: 1200,
   /** Teto de caracteres de conversa enviado à pauta do jornal. */
   groupNewsConversationMaxChars: 28_000,
+  /** Concorrência máxima de grupos processados simultaneamente às 23:59. */
+  groupNewsConcurrency: 2,
+  /** Timeout por tentativa de geração da crônica via LLM (ms). */
+  groupNewsTimeoutMs: 75_000,
+  /** Número máximo de tentativas de geração da crônica via LLM antes de desistir. */
+  groupNewsMaxAttempts: 3,
   // Conquistas
   achievementsEnabled: true,
   // Memória persistente por grupo (lore seletiva)
@@ -1049,12 +1073,13 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   personaAutonomyEnabled: true,
   personaAutonomyMode: 'llm',
   personaAutonomyLlmEnabled: true,
-  personaAutonomyMinScore: 75,
+  personaAutonomyMinScore: 60,
   personaAutonomyCooldownMs: 15 * 60_000,
   personaAutonomyMaxPerHour: 2,
   personaAutonomyMaxPerDay: 8,
   personaAutonomyMaxConsecutive: 1,
-  personaAutonomyNegativeBlockMs: 60 * 60_000,
+  personaAutonomyNegativeBlockMs: 20 * 60_000,
+  personaAutonomyCausalityWindowMs: 15 * 60_000,
   personaAutonomyAllowedActions: ['react', 'sticker', 'comment'],
   personaAutonomyCommentMaxChars: 140,
   personaAutonomyCandidateMinMessages: 2,
@@ -1063,6 +1088,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   personaAutonomyBatchSize: 40,
   personaAutonomyBatchContextMessages: 10,
   personaAutonomyFlushIntervalMs: 30 * 60_000,
+  personaAutonomyTimeoutMs: 45_000,
   // Continuação pós-silêncio: só após uma resposta acionada explicitamente.
   personaFollowupEnabled: true,
   personaFollowupSilenceMs: 60_000,
@@ -1145,7 +1171,14 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   },
   dailyChallengeNewsEnabled: true,
   dailyChallengePokemonMaxGen: 386,
-  dailyChallengeContentMemory: { pokemon: 30, game: 30, riddle: 50 },
+  dailyChallengeContentMemory: {
+    pokemon: 100,
+    game: 150,
+    riddle: 150,
+    person: 200,
+    word: 200,
+    movie: 150,
+  },
   // API Key centralizada do Google Gemini (usada por TTS da persona e geração de imagens)
   geminiApiKey: '',
   // Geração de imagens (/gerar e /imaginar) — Zen/9Router via OpenAI-compat.

@@ -17,6 +17,17 @@
     "120363000000000000@g.us"
   ],
   "rankCardImage": true,
+  "cardsEnabled": true,
+  "cardPackCost": 30,
+  "cardMaxPacksPerOpen": 4,
+  "cardTradeTtlMs": 300000,
+  "cardTierWeights": {
+    "1": 700,
+    "2": 230,
+    "3": 58,
+    "4": 10,
+    "5": 2
+  },
   "dashboardEnabled": true,
   "dashboardHost": "127.0.0.1",
   "dashboardPort": 8790,

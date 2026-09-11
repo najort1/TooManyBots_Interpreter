@@ -15,6 +15,19 @@ function toStringArray(value) {
   return value.map(item => String(item ?? '').trim()).filter(Boolean);
 }
 
+function normalizeCardTierWeights(input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { ...DEFAULT_FUN_CONFIG.cardTierWeights };
+  }
+  const result = {};
+  for (const tier of [1, 2, 3, 4, 5]) {
+    const rawVal = input[tier] ?? input[String(tier)];
+    const val = Number(rawVal);
+    result[tier] = Number.isFinite(val) && val > 0 ? val : DEFAULT_FUN_CONFIG.cardTierWeights[tier];
+  }
+  return result;
+}
+
 /**
  * Normaliza regras de jogo do bot Fun (config flat, própria).
  */
@@ -107,6 +120,7 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    cardTierWeights: normalizeCardTierWeights(raw.cardTierWeights),
     dashboardEnabled: normalizeBoolean(raw.dashboardEnabled, DEFAULT_FUN_CONFIG.dashboardEnabled),
     dashboardHost: toText(raw.dashboardHost, DEFAULT_FUN_CONFIG.dashboardHost) || DEFAULT_FUN_CONFIG.dashboardHost,
     dashboardPort: normalizeInt(raw.dashboardPort, DEFAULT_FUN_CONFIG.dashboardPort, {
@@ -334,6 +348,16 @@ export function normalizeFunConfig(input) {
       raw.zenAssaultMaxTokens,
       DEFAULT_FUN_CONFIG.zenAssaultMaxTokens,
       { min: 200, max: 1200, rounding: 'floor', clamp: true }
+    ),
+    zenNewsMaxTokens: normalizeInt(
+      raw.zenNewsMaxTokens,
+      DEFAULT_FUN_CONFIG.zenNewsMaxTokens,
+      { min: 200, max: 2000, rounding: 'floor', clamp: true }
+    ),
+    zenNewsMaxChars: normalizeInt(
+      raw.zenNewsMaxChars,
+      DEFAULT_FUN_CONFIG.zenNewsMaxChars,
+      { min: 500, max: 8000, rounding: 'floor', clamp: true }
     ),
     assaultStoryMaxChars: normalizeInt(
       raw.assaultStoryMaxChars,
@@ -985,10 +1009,22 @@ export function normalizeFunConfig(input) {
       rounding: 'floor',
       clamp: true,
     }),
+    groupNewsMaxChars: normalizeInt(raw.groupNewsMaxChars, DEFAULT_FUN_CONFIG.groupNewsMaxChars, {
+      min: 500,
+      max: 6000,
+      rounding: 'floor',
+      clamp: true,
+    }),
     groupNewsAudioEnabled: normalizeBoolean(
       raw.groupNewsAudioEnabled,
       DEFAULT_FUN_CONFIG.groupNewsAudioEnabled
     ),
+    groupNewsAudioMaxChars: normalizeInt(raw.groupNewsAudioMaxChars, DEFAULT_FUN_CONFIG.groupNewsAudioMaxChars, {
+      min: 200,
+      max: 1200,
+      rounding: 'floor',
+      clamp: true,
+    }),
     groupNewsAnchorVoice:
       toText(raw.groupNewsAnchorVoice, DEFAULT_FUN_CONFIG.groupNewsAnchorVoice) ||
       DEFAULT_FUN_CONFIG.groupNewsAnchorVoice,
@@ -1016,6 +1052,21 @@ export function normalizeFunConfig(input) {
       raw.groupNewsConversationMaxChars,
       DEFAULT_FUN_CONFIG.groupNewsConversationMaxChars,
       { min: 4_000, max: 80_000, rounding: 'floor', clamp: true }
+    ),
+    groupNewsConcurrency: normalizeInt(
+      raw.groupNewsConcurrency,
+      DEFAULT_FUN_CONFIG.groupNewsConcurrency,
+      { min: 1, max: 10, rounding: 'floor', clamp: true }
+    ),
+    groupNewsTimeoutMs: normalizeInt(
+      raw.groupNewsTimeoutMs,
+      DEFAULT_FUN_CONFIG.groupNewsTimeoutMs,
+      { min: 15_000, max: 240_000, rounding: 'floor', clamp: true }
+    ),
+    groupNewsMaxAttempts: normalizeInt(
+      raw.groupNewsMaxAttempts,
+      DEFAULT_FUN_CONFIG.groupNewsMaxAttempts,
+      { min: 1, max: 5, rounding: 'floor', clamp: true }
     ),
     achievementsEnabled: normalizeBoolean(
       raw.achievementsEnabled,
@@ -1166,6 +1217,9 @@ export function normalizeFunConfig(input) {
     personaAutonomyNegativeBlockMs: normalizeInt(raw.personaAutonomyNegativeBlockMs, DEFAULT_FUN_CONFIG.personaAutonomyNegativeBlockMs, {
       min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true,
     }),
+    personaAutonomyCausalityWindowMs: normalizeInt(raw.personaAutonomyCausalityWindowMs, DEFAULT_FUN_CONFIG.personaAutonomyCausalityWindowMs, {
+      min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true,
+    }),
     personaAutonomyAllowedActions: Array.isArray(raw.personaAutonomyAllowedActions)
       ? raw.personaAutonomyAllowedActions.map((value) => String(value || '').trim().toLowerCase())
         .filter((value) => ['react', 'sticker', 'comment'].includes(value))
@@ -1190,6 +1244,9 @@ export function normalizeFunConfig(input) {
     }),
     personaAutonomyFlushIntervalMs: normalizeInt(raw.personaAutonomyFlushIntervalMs, DEFAULT_FUN_CONFIG.personaAutonomyFlushIntervalMs, {
       min: 60_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true,
+    }),
+    personaAutonomyTimeoutMs: normalizeInt(raw.personaAutonomyTimeoutMs, DEFAULT_FUN_CONFIG.personaAutonomyTimeoutMs, {
+      min: 5_000, max: 120_000, rounding: 'floor', clamp: true,
     }),
     personaFollowupEnabled: normalizeBoolean(raw.personaFollowupEnabled, DEFAULT_FUN_CONFIG.personaFollowupEnabled),
     personaFollowupSilenceMs: normalizeInt(raw.personaFollowupSilenceMs, DEFAULT_FUN_CONFIG.personaFollowupSilenceMs, {
