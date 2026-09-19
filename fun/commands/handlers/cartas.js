@@ -142,7 +142,14 @@ export async function handleCartasCommand({
         return { handled: true };
       }
       if (result.reason === 'no-catalog') {
-        await reply('Catálogo de cartas vazio no servidor.');
+        await reply(
+          '🃏 *Catálogo de cartas vazio no servidor*\n\n' +
+          'Nenhuma carta foi encontrada em `fun/assets/cards/`.\n' +
+          'Para adicionar cartas ao bot, coloque suas imagens (.png/.jpg) nessa pasta seguindo o padrão:\n\n' +
+          '📄 `NOME DA CARTA TIER X.png` (onde X é o tier de 1 a 5)\n' +
+          'Exemplo: `DRAGAO DOURADO TIER 5.png`\n\n' +
+          '💡 Se não quiser usar cartas, desative em `fun/config.user.json` (`"cardsEnabled": false`).'
+        );
         return { handled: true };
       }
       await reply(fmt.genericError({ command: 'cartas abrir' }));

@@ -41,6 +41,14 @@ const dataDir = resolveDataDir();
 process.env.TMB_DATA_DIR = dataDir;
 fs.mkdirSync(dataDir, { recursive: true });
 
+// Garante diretórios essenciais de assets
+try {
+  fs.mkdirSync(path.resolve(__dirname, 'assets', 'cards'), { recursive: true });
+  fs.mkdirSync(path.resolve(__dirname, 'assets', 'figurinhas'), { recursive: true });
+} catch {
+  // ignora
+}
+
 const { startFunBot } = await import('./runtime.js');
 
 startFunBot().catch(err => {
