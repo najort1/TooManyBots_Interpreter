@@ -15,10 +15,12 @@ export type ChatMessage = {
 
 type SpeechBubbleLayerProps = {
   messages: ChatMessage[];
+  disabled?: boolean;
+  placeholder?: string;
   onSendMessage: (text: string) => void;
 };
 
-export default function SpeechBubbleLayer({ messages, onSendMessage }: SpeechBubbleLayerProps) {
+export default function SpeechBubbleLayer({ messages, disabled, placeholder, onSendMessage }: SpeechBubbleLayerProps) {
   const [inputText, setInputText] = useState("");
   const [clock, setClock] = useState(() => Date.now());
 
@@ -66,11 +68,13 @@ export default function SpeechBubbleLayer({ messages, onSendMessage }: SpeechBub
             value={inputText}
             onChange={(e) => setInputText(e.target.value)}
             maxLength={120}
-            placeholder="Fale algo no quarto ou chame o @mordomo..."
+            disabled={disabled}
+            placeholder={placeholder || "Fale algo no quarto ou chame o @mordomo..."}
           />
           <button
             type="submit"
             aria-label="Enviar mensagem"
+            disabled={disabled}
           >
             <span>Falar</span><SendHorizontal size={16} strokeWidth={2.5} />
           </button>

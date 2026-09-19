@@ -201,6 +201,9 @@ if !RUN_RESULT! equ 0 goto :end_ok
 echo.
 echo Interpretador encerrou com codigo de erro: !RUN_RESULT!
 echo.
+echo DICA: Se voce deseja rodar o Bot de Divertimento do WhatsApp (RPG, Economia, etc.),
+echo       execute o arquivo: iniciar_fun.bat
+echo.
 echo Verifique o log acima para detalhes.
 echo Arquivo de log: %PROJECT_DIR%\fatal-error.log
 goto :end
