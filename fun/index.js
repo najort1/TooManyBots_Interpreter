@@ -815,7 +815,7 @@ export function createFunModule(deps = {}) {
     const results = [];
     const quiet = isWorldQuietHours(funConfig, now);
 
-    if (funConfig.selfHealEnabled && !quiet && now - lastSelfHealAt >= funConfig.selfHealIntervalMs) {
+    if (funConfig.selfHealEnabled && funConfig.zenEnabled !== false && !quiet && now - lastSelfHealAt >= funConfig.selfHealIntervalMs) {
       lastSelfHealAt = now;
       const maxCalls = Math.min(groups.length, funConfig.selfHealMaxCallsPerRun);
       for (const scopeKey of groups.slice(0, maxCalls)) {
@@ -1597,3 +1597,4 @@ export {
   resetLlmMetrics,
   inventTemplateAlert,
 } from './llm/llmMetrics.js';
+export * as firefighters from './firefighters/index.js';

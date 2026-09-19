@@ -90,6 +90,7 @@ import { renderGroupsPanel } from './tui/panels/groupsPanel.js';
 import { getFunCommandCountersByScope } from './commands/router.js';
 import { getLlmMetrics, inventTemplateAlert } from './llm/llmMetrics.js';
 import { resolveZenEndpoint } from './llm/zenEndpoint.js';
+import { checkZenConnectivity } from './llm/zenHealthCheck.js';
 
 function resolveDisconnectReasonName(statusCode) {
   const entry = Object.entries(DisconnectReason).find(([, code]) => Number(code) === Number(statusCode));
@@ -382,6 +383,25 @@ export async function startFunBot(options = {}) {
     .map(([k]) => k);
   if (activeAdapters.length > 0) {
     console.log(`[fun] Adaptadores de extração ativos: ${activeAdapters.join(', ')}`);
+  }
+
+  // Auto-probing do endpoint Zen / LLM no boot
+  if (config.zenEnabled === false || process.env.FUN_DISABLE_LIVE_LLM === '1') {
+    console.log('[fun] Modo de IA: MODO ECONÔMICO (100% templates estáticos em pt-BR, latência zero)');
+  } else {
+    try {
+      const zenCheck = await checkZenConnectivity(config, { timeoutMs: 1500 });
+      if (zenCheck.online) {
+        console.log(`[fun] Modo de IA: ONLINE via ${zenCheck.baseUrl} (modelo: ${zenCheck.model})`);
+      } else {
+        console.log(`[fun] AVISO: Endpoint Zen inacessível em ${zenCheck.baseUrl} (${zenCheck.reason || 'offline'}).`);
+        console.log('[fun] Chaveando para MODO ECONÔMICO automático (100% templates offline, latência zero).');
+        config = { ...config, zenEnabled: false };
+      }
+    } catch {
+      console.log('[fun] Chaveando para MODO ECONÔMICO automático (100% templates offline).');
+      config = { ...config, zenEnabled: false };
+    }
   }
 
   const getConfig = () => config;

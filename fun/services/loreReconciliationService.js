@@ -49,7 +49,7 @@ export function createLoreReconciliationService({
     inFlight.add(scope);
     cooldowns.set(scope, now + cooldownMs);
     try {
-      if (process.env.FUN_DISABLE_LIVE_LLM === '1') return { ok: false, reason: 'llm-disabled' };
+      if (process.env.FUN_DISABLE_LIVE_LLM === '1' || funConfig?.zenEnabled === false) return { ok: false, reason: 'llm-disabled' };
       const task = resolveZenTaskParams('lore_reconcile', funConfig);
       const endpoint = resolveZenEndpoint(funConfig);
       const timeZone = resolveFactTimeZone(funConfig.worldTimezone);

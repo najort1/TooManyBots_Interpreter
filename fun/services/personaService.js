@@ -659,7 +659,7 @@ export function createPersonaService({
       ...immediateContext.map((message) => message?.text),
     ].map((value) => cleanPromptText(value, 500)).filter(Boolean).join('\n');
 
-    if (process.env.FUN_DISABLE_LIVE_LLM === '1') return '';
+    if (process.env.FUN_DISABLE_LIVE_LLM === '1' || funConfig?.zenEnabled === false) return '';
 
     const zen = resolveZenTaskParams('persona', funConfig);
     const ep = resolveZenEndpoint(funConfig);

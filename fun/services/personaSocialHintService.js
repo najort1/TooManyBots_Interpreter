@@ -72,7 +72,7 @@ export function createPersonaSocialHintService({
 
   function opts(funConfig = {}) {
     return {
-      enabled: funConfig.personaSocialHintsEnabled !== false,
+      enabled: funConfig.personaSocialHintsEnabled !== false && funConfig.zenEnabled !== false,
       batchSize: Math.max(8, Math.min(200, Number(funConfig.personaSocialHintsBatchSize) || 50)),
       flushMs: Math.max(60_000, Number(funConfig.personaSocialHintsFlushIntervalMs) || 10 * 60_000),
       minMessages: Math.max(3, Math.min(100, Number(funConfig.personaSocialHintsMinMessages) || 8)),
@@ -148,7 +148,9 @@ export function createPersonaSocialHintService({
     const batch = buffer.messages.splice(0, buffer.messages.length);
     buffer.lastFlushAt = Number(now) || Date.now();
     try {
-      if (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete) return { ok: true, saved: 0, batchSize: batch.length, reason: 'llm-disabled' };
+      if (funConfig?.zenEnabled === false || (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete)) {
+        return { ok: true, saved: 0, batchSize: batch.length, reason: 'llm-disabled' };
+      }
       const task = resolveZenTaskParams('extract', funConfig);
       const ep = resolveZenEndpoint(funConfig);
       const prompt = batch

@@ -223,6 +223,10 @@ export function createEventAggregationService({
         now: timestamp,
       });
       if (!extracted?.ok) {
+        if (extracted?.reason === 'llm-disabled' || extracted?.reason === 'disabled') {
+          buffer.contextTail = snapshot.slice(-o.contextMessages);
+          return { ok: false, reason: extracted.reason, requeued: 0 };
+        }
         buffer.messages.unshift(...snapshot);
         return { ok: false, reason: extracted?.reason || 'extract-failed', requeued: snapshot.length };
       }
