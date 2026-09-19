@@ -180,6 +180,33 @@ export type GroupSettings = {
   chaosAutoEnabled?: boolean;
   /** Reposição semanal de estoque. Default true. */
   weeklyRestockAutoEnabled?: boolean;
+  /** Lista de IDs de comandos desabilitados para este grupo. */
+  disabledCommands?: string[];
+  /** Flag de liberação de comandos NSFW (via /force_nsfw ou dashboard). */
+  permitirNsfw?: boolean;
+};
+
+export type CommandCategory = {
+  id: string;
+  name: string;
+  emoji: string;
+  description: string;
+};
+
+export type CommandItem = {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  defaultEnabled: boolean;
+  isNsfw: boolean;
+  examples: string[];
+};
+
+export type CommandCatalogResponse = {
+  categories: CommandCategory[];
+  commands: CommandItem[];
+  defaultDisabled: string[];
 };
 
 export type CasinoPayload = {

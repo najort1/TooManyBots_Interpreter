@@ -12,6 +12,7 @@ import type {
   FunConfig,
   FunGroup,
   GroupSettings,
+  CommandCatalogResponse,
   Overview,
   RankEntry,
   HouseView,
@@ -103,6 +104,9 @@ export const funApi = {
       settings: GroupSettings | null;
       defaults: GroupSettings;
     }>(`/api/fun/groups/${encodeURIComponent(groupJid)}/settings`),
+
+  commandCatalog: () =>
+    request<CommandCatalogResponse>("/api/fun/commands/catalog"),
 
   saveGroupSettings: (groupJid: string, body: GroupSettings) =>
     request<{ ok: boolean; settings: GroupSettings }>(
