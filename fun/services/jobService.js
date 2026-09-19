@@ -11,6 +11,11 @@ import {
 } from '../jobs/catalog.js';
 import { signJobToken, verifyJobToken, randomCode } from '../jobs/token.js';
 import { getPublicBaseUrl } from '../utils/publicUrl.js';
+import {
+  validateFirefighterAttempt,
+  calculateFirefighterRewards,
+  applyFirefighterRewards,
+} from '../firefighters/index.js';
 
 const WEEK_MS = 7 * 24 * 60 * 60_000;
 const DEFAULT_LINK_TTL = 15 * 60_000;
@@ -372,9 +377,13 @@ export function createJobService({
     if (job.game === 'printer') {
       passed = sc >= (cfg.targetScore || 8) && (metrics.mistakes || 0) <= (cfg.maxMistakes || 3);
     } else if (job.game === 'fire') {
-      passed =
-        sc >= (cfg.targetScore || 20) &&
-        (metrics.lostHouses || 0) <= (cfg.maxLostHouses || 3);
+      const v = validateFirefighterAttempt({
+        score: sc,
+        durationMs: dur,
+        metrics,
+        config: cfg,
+      });
+      passed = v.passed;
     } else if (job.game === 'firewall' || job.game === 'sequence') {
       // sequence = legado; firewall = teclado + ameaças laterais
       const need = cfg.targetRounds || cfg.targetScore || 16;
@@ -450,11 +459,30 @@ export function createJobService({
         jobId: job.id,
         now,
       });
+
+      let firefighterRewards = null;
+      if (job.game === 'fire' || job.id === 'bombeiro') {
+        firefighterRewards = calculateFirefighterRewards({
+          score: check.score,
+          metrics,
+        });
+        applyFirefighterRewards({
+          repository,
+          userJid: attempt.userJid,
+          scopeKey: attempt.scopeKey,
+          rewards: firefighterRewards,
+        });
+      }
+
       const done = jobRepository.finishAttempt({
         id: attempt.id,
         status: 'passed',
         score: check.score,
-        metrics: { ...metrics, durationMs: check.durationMs },
+        metrics: {
+          ...metrics,
+          durationMs: check.durationMs,
+          ...(firefighterRewards ? { firefighterRewards } : {}),
+        },
         now,
       });
       const n = jobRepository.countInJob(attempt.scopeKey, job.id);
@@ -465,6 +493,7 @@ export function createJobService({
         job,
         salary: effectiveSalary(job, n),
         workers: n,
+        ...(firefighterRewards ? { rewards: firefighterRewards } : {}),
       };
     }
 

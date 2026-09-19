@@ -106,19 +106,21 @@ function howToFor(game?: string, config?: OpenResp["gameConfig"]): HowTo {
     const sec = Math.ceil((config?.durationMs ?? 90_000) / 1000);
     const maxLost = config?.maxLostHouses ?? 3;
     return {
-      title: "Bombeiro — apagar focos",
-      goal: `Apague ${target} focos em ${sec}s sem perder mais de ${maxLost} casas.`,
+      title: "Corpo de Bombeiros — Chamado Tático",
+      goal: `Atinja pelo menos ${target} pts em ${sec}s sem perder mais de ${maxLost} edifícios por colapso.`,
       steps: [
-        "O mapa tem casas 🏠. Quando aparecer fogo, toque nelas.",
-        "Cada toque baixa 1 de calor. Fogo forte (🔥/💥) precisa de vários toques.",
-        "Se o calor chegar no máximo, a casa vira cinzas e conta como perdida.",
-        "Fogo forte pode pular pro vizinho — apague antes de espalhar.",
+        "Identifique a Classe do Incêndio: toque no edifício para mirar a guarnição.",
+        "Classe A (Residencial/Madeira) → Use JATO D'ÁGUA 💧 para extinguir rápido.",
+        "Classe B (Depósito Químico) → Exige ESPUMA AFFF 🧼! (Água espalha combustível e quebra combo).",
+        "Classe C (Subestação Elétrica) → Use NEBLINA 🌫️! (Jato direto causa curto e choque elétrico).",
+        "Civis Presos 🆘 → Estenda a ESCADA MAGIRUS 🪜 no prédio afetado para resgatar vítimas a tempo.",
+        "Água Baixa → Toque no HIDRANTE 🚰 para recarregar o tanque de 1000L continuamente.",
       ],
       tips: [
-        "Priorize casas com número alto de calor.",
-        "Não perca tempo em casas já apagadas (🏠).",
+        "A dificuldade sobe em 3 fases: Fase 1 (Alerta), Fase 2 (Alarme Geral) e Fase 3 (Ponto Crítico / Flashover).",
+        "Mantenha o combo apagando focos e salvando vítimas para obter patentes militares mais altas e mais moedas!",
       ],
-      fail: `Acabou o tempo sem a meta, ou perdeu mais de ${maxLost} casas.`,
+      fail: `Pontuação abaixo de ${target} pontos, ou mais de ${maxLost} edifícios desabados.`,
     };
   }
   if (game === "firewall" || game === "sequence") {

@@ -26,7 +26,7 @@ export const JOB_CATALOG = Object.freeze([
     id: 'bombeiro',
     name: 'Bombeiro',
     emoji: '🚒',
-    description: 'Bairro em chamas. Apague 20 focos em 90s — a pressão sobe com o tempo.',
+    description: 'Bairro em chamas. Combata incêndios táticos em 90s — enfrente classes A, B e C, resgate vítimas e conecte hidrantes.',
     baseSalary: 50,
     salaryFloor: 25,
     retryFee: 40,
@@ -38,7 +38,7 @@ export const JOB_CATALOG = Object.freeze([
       durationMs: 90_000,
       targetScore: 20,
       maxLostHouses: 3,
-      maxScore: 50,
+      maxScore: 100,
     },
   },
   {
