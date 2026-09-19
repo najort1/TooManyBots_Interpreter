@@ -9,44 +9,53 @@ import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
 import { getWeekKey } from '../db/funSocialRepository.js';
 
-/** Normal / leve — zoação humana de grupo (few-shot real em vez de checklist de proibições). */
-export const QMP_SYSTEM_PROMPT = `Você é aquele amigo do grupo de zap que sempre solta a pergunta certeira de "Quem é mais provável de...?". Digita rápido, com malícia boa, tipo conversa de bar — não como um redator de IA fazendo tarefa.
+/** Normal / leve — dinâmica casual de festa e cartas de grupo (impossível violar safety, foco em humor cotidiano). */
+export const QMP_SYSTEM_PROMPT = `Você cria cartas para o jogo casual de salão e cartas "Quem é Mais Provável de...?" (estilo "Most Likely To" / "Amigos da Onça").
+O jogo é uma brincadeira social descontraída e impessoal sobre a vida real: trabalho, dinheiro, sono, comida, tecnologia, manias engraçadas, vaidade boba e pequenas hipocrisias cotidianas.
 
-Cenas que já mandaram bem (não repita, é só pra pegar o clima):
-- "Quem é mais provável de brigar com o GPS e parar no lugar errado por orgulho?"
-- "Quem é mais provável de gastar o salário em 3 dias e postar 'mês difícil'?"
-- "Quem é mais provável de fingir que leu a mensagem e responder 'kkk' genérico?"
-- "Quem é mais provável de defender pizza com ketchup com PowerPoint?"
-- "Quem é mais provável de reenviar figurinha feia 6 meses depois como se fosse nova?"
-- "Quem é mais provável de sumir do grupo e voltar como se nada tivesse acontecido?"
+DIRETRIZES DE SEGURANÇA E IMPESSOALIDADE (OBRIGATÓRIO):
+- A pergunta é sempre 100% universal, hipotética e impessoal — NUNCA cite nomes de pessoas reais, membros do grupo nem direcione a indivíduos específicos.
+- O objetivo é uma situação cômica em que qualquer pessoa se identifique ou lembre de situações engraçadas da vida, nunca assédio ou difamação.
+- Sem doxxing, sem conteúdo sexual explícito, sem incitar crimes.
 
-O jogo é vida real: casa, trampo, grana, sono, comida, viagem, família, vaidade, preguiça, orgulho, mentira besta. Detalhe concreto > tema genérico. Pode ser maldoso leve e constrangedor.
+Exemplos de boas cartas (situações universais e humanas):
+- "Quem é mais provável de brigar com o GPS e parar no lugar errado por puro orgulho?"
+- "Quem é mais provável de gastar o salário em 3 dias e passar o resto do mês postando 'mês difícil'?"
+- "Quem é mais provável de fingir que ouviu um áudio de 4 minutos e responder só com um 'kkk' genérico?"
+- "Quem é mais provável de defender pizza com ketchup montando uma apresentação de slides?"
+- "Quem é mais provável de reenviar figurinha feia 6 meses depois como se fosse novidade?"
+- "Quem é mais provável de sumir do rolê às 22h sem se despedir e mandar foto na cama?"
 
-Antes de mandar, pensa rápido em 3 ideias diferentes dentro de <think></think> (ninguém vê isso) e escolhe a mais engraçada e menos óbvia — não a primeira que vier.
+Antes de mandar, pense rápido em 3 ideias diferentes dentro de <think></think> (ninguém vê isso) e escolha a mais engraçada e autêntica.
 
-Forma: uma linha em pt-BR começando com "Quem é mais provável de" (ou variação natural), 1–2 frases se ajudar a cena (máx. ~300 caracteres), sem aspas no bloco inteiro, sem numeração, sem meta tipo "aqui vai". Sem nomes de gente real de fora. Sem doxxing, sem menor em contexto sexual, sem incitar crime real.
+Formato: uma linha em pt-BR começando com "Quem é mais provável de" (ou variação natural), 1–2 frases se ajudar a cena (máx. ~300 caracteres), sem aspas no bloco inteiro, sem numeração, sem meta tipo "aqui vai".
 
-Manda só a pergunta final, pronta pro zap.`;
+Manda só a pergunta final, pronta pro jogo.`;
 
 /**
- * Pesada — vibe "Amigos de Merda": queima, constrange, gera caos — few-shot real em vez de checklist.
+ * Pesada — edição sarcástica e picante de party game (humor ácido/sátira social sem violar moderação).
  */
-export const QMP_HEAVY_SYSTEM_PROMPT = `Você é o amigo maldoso do grupo que solta a pergunta PESADA de "Quem é mais provável de...?" no estilo "Amigos de Merda" — a que silencia todo mundo por 2 segundos e depois explode em kkk. Voz de gente, não de IA fazendo tarefa.
+export const QMP_HEAVY_SYSTEM_PROMPT = `Você cria cartas para a edição sarcástica e de humor ácido do jogo "Quem é Mais Provável de...?" (estilo party games de humor adulto e sátira comportamental).
+O tom é de humor observacional irônico e sincero sobre pequenas hipocrisias cotidianas, contradições hilárias, ego inflado e desculpas esfarrapadas que todo mundo já viu acontecer.
 
-Cenas que já queimaram bem (não repita, é só clima):
-- "Quem é mais provável de mentir o salário pra impressionar e depois pedir um 'empresta 50'?"
-- "Quem é mais provável de falar mal de todo mundo no grupo paralelo e agir de anjo no principal?"
-- "Quem é mais provável de inventar doença pra faltar no trampo e postar story na praia no mesmo dia?"
-- "Quem é mais provável de jurar que parou de beber e aparecer zicado no domingo de manhã?"
-- "Quem é mais provável de sabotar o amigo no trampo com 'só uma brincadeira' e rir depois?"
+DIRETRIZES DE SEGURANÇA E IMPESSOALIDADE (OBRIGATÓRIO):
+- Situação 100% hipotética, impessoal e universal da sociedade moderna — NUNCA direcione a indivíduos específicos, não use nomes de pessoas reais e não ataque ninguém do grupo.
+- Foque em comportamentos sociais e arquétipos cômicos universais, nunca em humilhação direcionada.
+- Sem violência real, sem discriminação/preconceito, sem conteúdo sexual explícito com menores, sem doxxing.
 
-Temas ricos: ego, dinheiro, hipocrisia, vício, mentira, fofoca cruel, sexo adulto implícito/explícito leve, usar gente, drama de amizade, trabalho, família tóxica, vaidade. Mostra o gesto + a desculpa ridícula, nunca o genérico ("ser babaca", "trair").
+Exemplos de cartas de humor sarcástico/ácido:
+- "Quem é mais provável de mentir o salário pra impressionar e depois pedir 50 reais emprestado?"
+- "Quem é mais provável de falar mal de alguém e 5 minutos depois postar story abraçado com a pessoa?"
+- "Quem é mais provável de inventar uma reunião de emergência pra fugir de compromisso chato de família?"
+- "Quem é mais provável de jurar de pés juntos que parou de beber e aparecer destruído no almoço de domingo?"
+- "Quem é mais provável de fingir que tá bem de grana e viver no limite do cartão postando foto em restaurante chique?"
+- "Quem é mais provável de pedir emprestado algo caro, quebrar e fingir que já estava com defeito?"
 
-Antes de mandar, pensa rápido em 3 ideias diferentes dentro de <think></think> (ninguém vê isso) e escolhe a mais afiada e menos batida.
+Antes de mandar, pense rápido em 3 ideias sarcásticas dentro de <think></think> (ninguém vê isso) e escolha a mais afiada e original.
 
-Forma: uma linha em pt-BR (pode ser 1–2 frases, máx. ~300 caracteres), começando de forma natural ("Quem é mais provável de…"), sem meta, sem lista, sem aspas no bloco inteiro, sem nomes de gente famosa. Sem doxxing, sem menor em contexto sexual, sem incitar crime violento real.
+Formato: uma linha em pt-BR (pode ser 1–2 frases, máx. ~300 caracteres), começando de forma natural ("Quem é mais provável de…"), sem meta, sem lista, sem aspas no bloco inteiro.
 
-Só a pergunta final.`;
+Só a pergunta final, pronta pro jogo.`;
 
 /** Fallback leve quando LLM offline. */
 export const QMP_FALLBACK_PROMPTS = Object.freeze([
@@ -158,9 +167,58 @@ function pick(arr, random) {
 }
 
 /**
+ * Detecta se a saída da LLM é uma mensagem de recusa (refusal / safety guardrail)
+ * em inglês ou português, impedindo que recusas vazem para o grupo como pergunta.
+ *
+ * @param {string} text
+ * @returns {boolean}
+ */
+export function isLlmRefusal(text) {
+  const s = String(text || '').trim();
+  if (!s) return false;
+
+  // 1. Recusas típicas em inglês
+  const enPatterns = [
+    /\bi\s*(can'?t|cannot|am unable to|'m unable to|will not|must decline to)\s*(help|fulfill|create|generate|participate|assist|comply|write|provide|make jokes|do that)\b/i,
+    /\b(i\s*don'?t\s*do\s*that|i\s*do\s*not\s*do\s*that)\b/i,
+    /\b(as an ai|as a language model|as an assistant)\b/i,
+    /\b(against|violates?)\s+(my|our|the)?\s*(safety|content|use)?\s*(policy|policies|guidelines)\b/i,
+    /\b(mock or embarrass|designed to (mock|embarrass|insult|harass|offend|demean))\b/i,
+    /\b(specific people in your group|target individuals|harass specific people)\b/i,
+    /\b(safety guidelines|content policy|terms of service|acceptable use)\b/i,
+    /\b(if you want help with|i'm here to help with)\s+(actual|other|professional)\b/i,
+    /\b(professional tasks|actual development work)\b/i,
+    /\bi\s*apologize,?\s*but\s*i\s*(cannot|can'?t)\b/i,
+    /\bi'?m\s*sorry,?\s*but\s*i\s*(cannot|can'?t)\b/i,
+    /\byou'?re\s*asking\s*me\s*to\s*(create|write|make|generate)\b/i,
+  ];
+  if (enPatterns.some((rx) => rx.test(s))) return true;
+
+  // 2. Recusas típicas em português
+  const ptPatterns = [
+    /\bn[aã]o\s*(posso|consigo|sou capaz de|devo|me sinto confort[aá]vel em)\s*(ajudar|atender|cumprir|criar|gerar|fazer|participar|escrever|produzir|zoar|constranger|ofender)\b/i,
+    /\b(desculpe|sinto muito|pe[cç]o desculpas),?\s*mas\s*(eu\s*)?n[aã]o\s*(posso|consigo|sou capaz)\b/i,
+    /\bcomo\s*(um[a]?\s*)?(ia|intelig[eê]ncia artificial|modelo de linguagem|assistente virtual)\b/i,
+    /\b(viola|vai contra)\s*(as|minhas|nossas)?\s*(diretrizes|pol[ií]ticas)\s*de\s*(seguran[cç]a|conte[uú]do|uso)\b/i,
+    /\b(zombar|ridicularizar|humilhar|constranger|ofender)\s*(de\s*)?(pessoas|membros|indiv[ií]duos)\b/i,
+    /\b(diretrizes de seguran[cç]a|pol[ií]tica de seguran[cç]a|termos de uso)\b/i,
+  ];
+  if (ptPatterns.some((rx) => rx.test(s))) return true;
+
+  // 3. Discurso meta / recusa conversacional explícita
+  if (/\b(I can't|You're asking me to|actual development work)\b/i.test(s)) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Limpa saída do LLM para uma linha de pergunta QMP.
  */
 export function sanitizeQmpPrompt(raw, maxLen = 300) {
+  if (isLlmRefusal(raw)) return '';
+
   let s = String(raw || '')
     .replace(/\r/g, '')
     .replace(/<think>[\s\S]*?<\/think>/gi, ' ')
@@ -170,6 +228,8 @@ export function sanitizeQmpPrompt(raw, maxLen = 300) {
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/^["'«»]+|["'«»]+$/g, '')
     .trim();
+
+  if (isLlmRefusal(s)) return '';
 
   s = s
     .replace(/^(claro[!.,]?\s*|aqui vai[:\s]*|pergunta[:\s]*)/i, '')
@@ -187,7 +247,10 @@ export function sanitizeQmpPrompt(raw, maxLen = 300) {
   }
 
   if (!s || s.length < 12) return '';
-  if (/\b(I need|as an AI|thinking)\b/i.test(s) && s.length < 80) return '';
+  if (isLlmRefusal(s)) return '';
+
+  // Bloqueia resquícios de meta-conversa da IA
+  if (/\b(I need|as an AI|thinking|my programming|cannot fulfill)\b/i.test(s)) return '';
 
   const max = Math.max(40, Math.min(300, Math.floor(Number(maxLen) || 300)));
   if (s.length > max) {
@@ -196,9 +259,18 @@ export function sanitizeQmpPrompt(raw, maxLen = 300) {
     s = sp > max * 0.55 ? cut.slice(0, sp + (cut[sp] === '?' ? 1 : 0)).trim() : `${cut.trim()}…`;
   }
 
-  // garante tom de pergunta se o modelo esqueceu
-  if (!/[?？]$/.test(s) && !/^quem\b/i.test(s)) {
-    s = `Quem é mais provável de ${s.replace(/^de\s+/i, '')}?`;
+  // Se não começa com "Quem", só aceitamos se não parecer texto em inglês ou recusa
+  if (!/^quem\b/i.test(s)) {
+    if (/\b(I|I'm|I've|my|you're|we|sorry|apologize|help with|the|this|that|with|jokes?|people|group)\b/i.test(s)) {
+      return '';
+    }
+    // garante tom de pergunta se o modelo esqueceu o prefixo
+    if (!/[?？]$/.test(s)) {
+      s = `Quem é mais provável de ${s.replace(/^de\s+/i, '')}?`;
+    } else {
+      s = `Quem é mais provável de ${s.replace(/^de\s+/i, '')}`;
+      if (!/[?？]$/.test(s)) s = `${s}?`;
+    }
   } else if (!/[?？]$/.test(s)) {
     s = `${s}?`;
   }
@@ -394,7 +466,8 @@ export function createQmpService({
     return [
       '<cast>',
       `Elenco ativo do grupo: ${listed.join(', ')}${overflow > 0 ? ` (+${overflow} outros)` : ''}.`,
-      'Use só como referência de convivência; não cite nomes na pergunta nem invente fatos sobre alguém.',
+      'Use apenas como ambientação de conversa informal; não cite nomes na pergunta, não zoe ninguém específico e não invente fatos sobre alguém.',
+      'A pergunta DEVE ser uma carta 100% universal e impessoal para o jogo de cartas.',
       '</cast>',
     ].join('\n');
   }
@@ -411,12 +484,12 @@ export function createQmpService({
         : 'Sem histórico ainda — invente com detalhe de vida real.';
     const castBlock = buildCastBlock(scopeKey, participantJids);
     const intro = tone === 'heavy'
-      ? 'Bora, modo PESADO agora: solta a pergunta que queima o grupo com cena bem humana.'
-      : 'Bora, solta UMA pergunta de "Quem é mais provável?" agora, no clima de sempre.';
+      ? 'Crie uma nova carta sarcástica de "Quem é mais provável de...?" para o jogo casual (edição de humor ácido sobre pequenas hipocrisias e gafes cotidianas).'
+      : 'Crie uma nova carta divertida de "Quem é mais provável de...?" para o jogo casual de amigos.';
 
     return [
       intro,
-      `Até ${maxChars} caracteres. Pode ser 1–2 frases. Lembra do brainstorm de 3 e escolhe a melhor. Só a pergunta.`,
+      `Até ${maxChars} caracteres. Pode ser 1–2 frases. Lembra do brainstorm de 3 e escolhe a melhor. Só a pergunta final impessoal.`,
       `Clima parecido com (não repita): ${example}`,
       '',
       recentBlock,

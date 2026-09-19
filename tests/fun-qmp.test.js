@@ -23,6 +23,7 @@ import {
   resolveQmpTone,
   extractQmpHooks,
   isMonotoneExTheme,
+  isLlmRefusal,
 } from '../fun/services/qmpService.js';
 import { parseFunCommand, resolveFunConfig } from '../fun/index.js';
 import { FUN_COMMANDS, DEFAULT_FUN_CONFIG } from '../fun/constants.js';
@@ -118,6 +119,67 @@ test('sanitizeQmpPrompt e buildCustomPrompt', () => {
   assert.match(buildCustomPrompt('Quem é mais provável de mentir'), /mentir/);
   assert.equal(buildCustomPrompt(''), '');
   assert.ok(sanitizeQmpPrompt('x').length === 0 || sanitizeQmpPrompt('x') === '');
+});
+
+test('isLlmRefusal e sanitizeQmpPrompt: bloqueia recusa de moderação da LLM', () => {
+  const realProductionRefusal = `I can't help with this. You're asking me to create jokes designed to mock or embarrass specific people in your group, and I don't do that—even with a relaxed tone or "malicious" framing. If you want help with actual development work, writing, analysis, or other professional t`;
+
+  assert.equal(isLlmRefusal(realProductionRefusal), true);
+  assert.equal(sanitizeQmpPrompt(realProductionRefusal), '');
+
+  const otherRefusals = [
+    'I cannot fulfill this request.',
+    'As an AI language model, I am unable to generate jokes that target individuals.',
+    'I cannot create content designed to mock or embarrass specific people.',
+    "I'm sorry, but I can't assist with creating jokes that humiliate others.",
+    'I do not do that.',
+    'Não posso ajudar com este pedido.',
+    'Desculpe, mas não posso criar piadas para zombar de pessoas específicas.',
+    'Como uma inteligência artificial, não posso gerar conteúdo difamatório.',
+    'Sinto muito, mas isso vai contra as diretrizes de segurança.',
+    'Não me sinto confortável em gerar piadas para constranger amigos do grupo.',
+  ];
+
+  for (const refusal of otherRefusals) {
+    assert.equal(isLlmRefusal(refusal), true, `Deveria detectar como recusa: "${refusal}"`);
+    assert.equal(sanitizeQmpPrompt(refusal), '', `Deveria sanitizar para vazio: "${refusal}"`);
+    assert.doesNotMatch(sanitizeQmpPrompt(refusal), /^Quem é mais provável de/i);
+  }
+
+  // Não deve dar falso positivo em perguntas legítimas
+  const validQuestions = [
+    'Quem é mais provável de não ajudar na limpeza da casa e ainda reclamar?',
+    'Quem é mais provável de pedir comida no iFood e não oferecer pra ninguém?',
+    'Quem é mais provável de sumir do grupo por 3 semanas sem avisar?',
+    'Quem é mais provável de gastar o dinheiro do aluguel em jogo do bicho?',
+  ];
+
+  for (const q of validQuestions) {
+    assert.equal(isLlmRefusal(q), false, `Falso positivo em: "${q}"`);
+    assert.ok(sanitizeQmpPrompt(q).length > 10, `Não deveria esvaziar: "${q}"`);
+  }
+});
+
+test('qmpService.inventPrompt: cai suavemente para fallback se a LLM recusar', async () => {
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  const realProductionRefusal = `I can't help with this. You're asking me to create jokes designed to mock or embarrass specific people in your group, and I don't do that—even with a relaxed tone or "malicious" framing. If you want help with actual development work, writing, analysis, or other professional t`;
+
+  const { qmpService } = makeService({
+    generateZen: async () => realProductionRefusal,
+  });
+
+  const cfg = resolveFunConfig({ zenEnabled: true });
+  const result = await qmpService.inventPrompt(cfg, {
+    scopeKey: 'grupo-teste@g.us',
+    participantJids: ['551199999999@s.whatsapp.net'],
+  });
+
+  // Não deve vazar a recusa nem conter o texto de recusa
+  assert.equal(result.provider, 'template');
+  assert.doesNotMatch(result.prompt, /I can't help with this/i);
+  assert.doesNotMatch(result.prompt, /mock or embarrass/i);
+  assert.doesNotMatch(result.prompt, /professional tasks/i);
+  assert.match(result.prompt, /^Quem é mais provável/i);
 });
 
 test('QMP fallback list não vazia', () => {
