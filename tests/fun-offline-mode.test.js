@@ -16,6 +16,7 @@ import { createPersonaService } from '../fun/services/personaService.js';
 import { createPersonaSocialHintService } from '../fun/services/personaSocialHintService.js';
 import { createFunModule } from '../fun/index.js';
 import { createEventAggregationService } from '../fun/events/eventAggregationService.js';
+import { buildFunUserConfig } from '../fun/scripts/setupWizard.js';
 
 await initDb();
 
@@ -184,4 +185,40 @@ test('eventAggregationService não re-enfileira mensagens em loop infinito quand
   assert.equal(result.ok, false);
   assert.equal(result.reason, 'llm-disabled');
   assert.equal(result.requeued, 0, 'Não deve re-enfileirar mensagens');
+});
+
+test('buildFunUserConfig restaura módulos de LLM ao alternar de modo econômico para modo IA', () => {
+  // 1. Simula configuração inicial gerada no Modo Econômico
+  const economicConfig = buildFunUserConfig({
+    currentConfig: {},
+    zenEnabled: false,
+    prefix: '/',
+    dashboardEnabled: true,
+  });
+
+  assert.equal(economicConfig.zenEnabled, false);
+  assert.equal(economicConfig.imageGenEnabled, false);
+  assert.equal(economicConfig.selfHealEnabled, false);
+  assert.equal(economicConfig.personaSocialHintsEnabled, false);
+  assert.equal(economicConfig.groupEventsEnabled, false);
+
+  // 2. Simula reconfiguração para Modo Inteligente com IA usando a config econômica como base
+  const aiConfig = buildFunUserConfig({
+    currentConfig: economicConfig,
+    zenEnabled: true,
+    zenBaseUrl: 'http://localhost:20128/v1',
+    zenModel: 'bot-zap',
+    zenApiKey: 'test-key',
+    prefix: '!',
+    dashboardEnabled: true,
+  });
+
+  assert.equal(aiConfig.zenEnabled, true);
+  assert.equal(aiConfig.prefix, '!');
+  assert.equal(aiConfig.zenApiKey, 'test-key');
+  // Os módulos desativados no modo econômico DEVEM ser reativados
+  assert.equal(aiConfig.imageGenEnabled, true, 'imageGenEnabled deve ser reativado no modo IA');
+  assert.equal(aiConfig.selfHealEnabled, true, 'selfHealEnabled deve ser reativado no modo IA');
+  assert.equal(aiConfig.personaSocialHintsEnabled, true, 'personaSocialHintsEnabled deve ser reativado no modo IA');
+  assert.equal(aiConfig.groupEventsEnabled, true, 'groupEventsEnabled deve ser reativado no modo IA');
 });

@@ -208,7 +208,7 @@ if not exist "%DASH_DIR%\node_modules" (
 
 echo.
 echo Iniciando Dashboard Web em janela paralela (http://127.0.0.1:3001)...
-start "TooManyBots - Fun Dashboard Web" cmd /c "cd /d %DASH_DIR% && npm run dev -- -p 3001"
+start "TooManyBots - Fun Dashboard Web" cmd /c "cd /d "%DASH_DIR%" && npm run dev -- -p 3001"
 timeout /t 2 >nul 2>&1
 
 goto :start_bot_only

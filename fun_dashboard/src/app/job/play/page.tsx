@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { FirefighterGameOpenGL } from "@/components/firefighter/FirefighterGameOpenGL";
 import { FirewallGame } from "./FirewallGame";
@@ -655,122 +655,6 @@ function Shell({
       }`}
     >
       <div className={`w-full ${wide ? "max-w-4xl" : "max-w-md"}`}>{children}</div>
-    </div>
-  );
-}
-
-/* ——— Estagiário ——— */
-const TASKS = [
-  { id: "carimbo", label: "📄", good: true, name: "Documento" },
-  { id: "cafe", label: "☕", good: false, name: "Café" },
-  { id: "grampo", label: "📎", good: true, name: "Grampo" },
-  { id: "spam", label: "🗑️", good: false, name: "Lixo" },
-  { id: "email", label: "✉️", good: true, name: "E-mail" },
-  { id: "meme", label: "🐸", good: false, name: "Meme" },
-];
-
-function PrinterGame({
-  config,
-  onDone,
-}: {
-  config?: OpenResp["gameConfig"];
-  onDone: (score: number, metrics: Record<string, number>) => void;
-}) {
-  const target = config?.targetScore ?? 8;
-  const maxMistakes = config?.maxMistakes ?? 3;
-  const durationMs = config?.durationMs ?? 60_000;
-  const [score, setScore] = useState(0);
-  const [mistakes, setMistakes] = useState(0);
-  const [left, setLeft] = useState(Math.ceil(durationMs / 1000));
-  const [tile, setTile] = useState(TASKS[0]);
-  const done = useRef(false);
-  const scoreRef = useRef(0);
-  const mistakesRef = useRef(0);
-
-  useEffect(() => {
-    const t0 = Date.now();
-    const iv = setInterval(() => {
-      const rem = Math.max(0, Math.ceil((durationMs - (Date.now() - t0)) / 1000));
-      setLeft(rem);
-      if (rem <= 0 && !done.current) {
-        done.current = true;
-        onDone(scoreRef.current, { mistakes: mistakesRef.current });
-      }
-    }, 200);
-    return () => clearInterval(iv);
-  }, [durationMs, onDone]);
-
-  const hit = (good: boolean) => {
-    if (done.current) return;
-    if (good) {
-      scoreRef.current += 1;
-      setScore(scoreRef.current);
-      if (scoreRef.current >= target) {
-        done.current = true;
-        onDone(scoreRef.current, { mistakes: mistakesRef.current });
-        return;
-      }
-    } else {
-      mistakesRef.current += 1;
-      setMistakes(mistakesRef.current);
-      if (mistakesRef.current > maxMistakes) {
-        done.current = true;
-        onDone(scoreRef.current, { mistakes: mistakesRef.current });
-        return;
-      }
-    }
-    setTile(TASKS[Math.floor(Math.random() * TASKS.length)]);
-  };
-
-  return (
-    <div className="space-y-4">
-      <Hud
-        left={left}
-        line={`Meta ${target} · ok ${score} · erros ${mistakes}/${maxMistakes}`}
-      />
-      <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2 text-center text-sm text-zinc-600">
-        <p>
-          <strong className="text-zinc-900">Protocolar</strong> = 📄 📎 ✉️ ·{" "}
-          <strong className="text-zinc-900">Próximo</strong> = ☕ 🗑️ 🐸
-        </p>
-        <p className="mt-1 text-xs text-zinc-400">
-          Item atual: {tile.label} {tile.name}
-          {tile.good ? " → protocolar" : " → pular"}
-        </p>
-      </div>
-      <button
-        type="button"
-        className="min-h-[160px] w-full rounded-xl border border-zinc-200 bg-white text-6xl transition active:scale-[0.98]"
-        onClick={() => hit(Boolean(tile.good))}
-        aria-label={tile.good ? "Protocolar item útil" : "Item inútil — use Próximo"}
-      >
-        {tile.label}
-      </button>
-      <div className="grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          className="min-h-12 rounded-lg bg-zinc-900 text-sm font-medium text-white"
-          onClick={() => hit(Boolean(tile.good))}
-        >
-          Protocolar
-        </button>
-        <button
-          type="button"
-          className="min-h-12 rounded-lg bg-zinc-200 text-sm font-medium text-zinc-800"
-          onClick={() => setTile(TASKS[Math.floor(Math.random() * TASKS.length)])}
-        >
-          Próximo
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function Hud({ left, line }: { left: number; line: string }) {
-  return (
-    <div className="flex items-center justify-between gap-2 text-sm">
-      <span className="text-zinc-600">{line}</span>
-      <span className="font-mono font-semibold tabular-nums text-zinc-900">{left}s</span>
     </div>
   );
 }

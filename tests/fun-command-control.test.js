@@ -132,9 +132,9 @@ test('groupRepository: persiste e resolve disabledCommands', () => {
   const groupRepo = createFunGroupRepository({ getDatabase: getDb });
   const groupJid = uniqueGroup();
 
-  // Sem override: resolve defaults
+  // Sem override: resolve defaults (deve vir com comandos NSFW desabilitados por padrão)
   const def = groupRepo.resolveEffectiveRates(groupJid);
-  assert.deepEqual(def.disabledCommands, []);
+  assert.deepEqual(def.disabledCommands, getDefaultDisabledCommandIds());
   assert.equal(def.permitirNsfw, false);
 
   // Salva lista de comandos desabilitados
@@ -283,12 +283,62 @@ test('router: reação NSFW habilitada no dashboard mas sem force_nsfw orienta c
   assert.ok(replies[0].includes('/force_nsfw'));
 });
 
-test('router: comando /force_nsfw ativa e desativa NSFW no grupo', async () => {
+test('router: comando /force_nsfw rejeita usuário que não é administrador', async () => {
   const nsfwVoteRepo = createFunNsfwVoteRepository({ getDatabase: getDb });
   const groupJid = uniqueGroup();
   const replies = [];
   const fakeReply = async (msg) => {
     replies.push(String(msg || ''));
+  };
+
+  const userJid = '5511999990005@s.whatsapp.net';
+  const mockSock = {
+    groupMetadata: async () => ({
+      participants: [
+        { id: userJid, admin: null }, // Membro comum, não admin
+      ],
+    }),
+  };
+
+  const ctx = {
+    text: '/force_nsfw',
+    chatJid: groupJid,
+    scopeKey: groupJid,
+    userJid,
+    isGroup: true,
+    sock: mockSock,
+    funConfig: { prefix: '/' },
+    effectiveRates: {
+      enabled: true,
+      disabledCommands: [],
+      permitirNsfw: false,
+    },
+    reply: fakeReply,
+    nsfwVoteRepository: nsfwVoteRepo,
+  };
+
+  const res = await routeFunCommand(ctx);
+  assert.equal(res.handled, true);
+  assert.equal(res.reason, 'user-not-admin');
+  assert.equal(nsfwVoteRepo.getPermitirNsfw(groupJid), false);
+  assert.ok(replies[0].includes('administradores'));
+});
+
+test('router: comando /force_nsfw ativa e desativa NSFW no grupo quando usuário é admin', async () => {
+  const nsfwVoteRepo = createFunNsfwVoteRepository({ getDatabase: getDb });
+  const groupJid = uniqueGroup();
+  const replies = [];
+  const fakeReply = async (msg) => {
+    replies.push(String(msg || ''));
+  };
+
+  const adminJid = '5511999990005@s.whatsapp.net';
+  const mockSock = {
+    groupMetadata: async () => ({
+      participants: [
+        { id: adminJid, admin: 'admin' },
+      ],
+    }),
   };
 
   assert.equal(nsfwVoteRepo.getPermitirNsfw(groupJid), false);
@@ -297,8 +347,9 @@ test('router: comando /force_nsfw ativa e desativa NSFW no grupo', async () => {
     text: '/force_nsfw',
     chatJid: groupJid,
     scopeKey: groupJid,
-    userJid: '5511999990005@s.whatsapp.net',
+    userJid: adminJid,
     isGroup: true,
+    sock: mockSock,
     funConfig: { prefix: '/' },
     effectiveRates: {
       enabled: true,

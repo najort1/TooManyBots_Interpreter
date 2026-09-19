@@ -1,4 +1,7 @@
+import { isGroupAdmin } from '../../utils/groupMembership.js';
+
 export async function handleNsfwForceCommand({
+  sock,
   userJid,
   chatJid,
   isGroup,
@@ -8,10 +11,16 @@ export async function handleNsfwForceCommand({
 }) {
   if (!isGroup || !chatJid) {
     await reply('Comando disponível apenas em grupos.');
-    return { handled: true };
+    return { handled: true, success: false, reason: 'not-group' };
   }
 
   const groupJid = chatJid;
+
+  const isAdmin = await isGroupAdmin(sock, groupJid, userJid);
+  if (!isAdmin) {
+    await reply('⚠️ Apenas administradores do grupo podem forçar a ativação ou desativação de comandos NSFW.');
+    return { handled: true, success: false, reason: 'user-not-admin' };
+  }
 
   const alreadyEnabled = nsfwVoteRepository.getPermitirNsfw(groupJid);
 

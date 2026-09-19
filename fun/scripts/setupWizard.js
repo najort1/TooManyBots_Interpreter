@@ -24,7 +24,67 @@ function printBanner() {
   console.log('Este assistente vai preparar o bot de entretenimento para o WhatsApp.\n');
 }
 
+/**
+ * Monta e resolve a configuração resultante com base nas escolhas do assistente.
+ * Garante que a transição entre Modo Econômico e Modo IA reative módulos dependentes de LLM.
+ *
+ * @param {object} params
+ * @param {object} [params.currentConfig]
+ * @param {boolean} [params.zenEnabled]
+ * @param {string} [params.zenBaseUrl]
+ * @param {string} [params.zenModel]
+ * @param {string} [params.zenApiKey]
+ * @param {string} [params.prefix]
+ * @param {boolean} [params.dashboardEnabled]
+ * @returns {object}
+ */
+export function buildFunUserConfig({
+  currentConfig = {},
+  zenEnabled = false,
+  zenBaseUrl = DEFAULT_FUN_CONFIG.zenBaseUrl || 'http://localhost:20128/v1',
+  zenModel = DEFAULT_FUN_CONFIG.zenModel || 'bot-zap',
+  zenApiKey = '',
+  prefix = '/',
+  dashboardEnabled = true,
+} = {}) {
+  const isZen = Boolean(zenEnabled);
+  return {
+    ...currentConfig,
+    prefix: String(prefix || '/').trim(),
+    dashboardEnabled: Boolean(dashboardEnabled),
+    zenEnabled: isZen,
+    zenBaseUrl: String(zenBaseUrl || '').trim() || 'http://localhost:20128/v1',
+    zenModel: String(zenModel || '').trim() || 'bot-zap',
+    zenApiKey: String(zenApiKey || '').trim(),
+    // Se ativado IA: reativa os módulos de LLM desativados no modo econômico
+    ...(isZen
+      ? {
+          imageGenEnabled: true,
+          ollamaEnabled: false,
+          selfHealEnabled: true,
+          personaSocialHintsEnabled: true,
+          groupEventsEnabled: true,
+        }
+      : {
+          imageGenEnabled: false,
+          ollamaEnabled: false,
+          selfHealEnabled: false,
+          personaSocialHintsEnabled: false,
+          groupEventsEnabled: false,
+        }),
+    groupWhitelistJids:
+      Array.isArray(currentConfig.groupWhitelistJids) && currentConfig.groupWhitelistJids.length
+        ? currentConfig.groupWhitelistJids
+        : [],
+  };
+}
+
 export async function runSetupWizard(options = {}) {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    console.warn('[setup] Terminal sem TTY interativo. Mantendo configurações padrão.');
+    return { cancelled: true, reason: 'non-interactive-tty' };
+  }
+
   const force = Boolean(options.force || process.argv.includes('--force'));
   const configExists = fs.existsSync(FUN_USER_CONFIG_PATH);
 
@@ -128,29 +188,15 @@ export async function runSetupWizard(options = {}) {
 
   // Monta a configuração resultante
   const currentConfig = loadFunUserConfig();
-  const newConfig = {
-    ...currentConfig,
-    prefix: prefix.trim(),
-    dashboardEnabled: Boolean(dashboardEnabled),
+  const newConfig = buildFunUserConfig({
+    currentConfig,
     zenEnabled,
     zenBaseUrl,
     zenModel,
     zenApiKey,
-    // Se econômico, desativa módulos que dependem de LLM para evitar chamadas vazias
-    ...(zenEnabled
-      ? {}
-      : {
-          imageGenEnabled: false,
-          ollamaEnabled: false,
-          selfHealEnabled: false,
-          personaSocialHintsEnabled: false,
-          groupEventsEnabled: false,
-        }),
-    // Garante groupWhitelistJids vazio para acionar o wizard pós-conexão do Baileys
-    groupWhitelistJids: Array.isArray(currentConfig.groupWhitelistJids) && currentConfig.groupWhitelistJids.length
-      ? currentConfig.groupWhitelistJids
-      : [],
-  };
+    prefix,
+    dashboardEnabled,
+  });
 
   saveFunUserConfig(newConfig);
 

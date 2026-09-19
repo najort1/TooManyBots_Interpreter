@@ -1,5 +1,6 @@
 import { getDb } from '../../db/context.js';
 import { ensureFunSchema as applyFunSchema } from '../schema.js';
+import { getDefaultDisabledCommandIds } from '../commands/catalog.js';
 
 const ANALYTICS_SCHEMA = 'analytics';
 
@@ -22,8 +23,8 @@ function mapGroupRow(row) {
       ? true
       : Number(row.world_events_enabled) !== 0;
 
-  let disabledCommands = [];
-  if (row.disabled_commands) {
+  let disabledCommands = null;
+  if (row.disabled_commands !== null && row.disabled_commands !== undefined) {
     try {
       const parsed = typeof row.disabled_commands === 'string'
         ? JSON.parse(row.disabled_commands)
@@ -32,7 +33,7 @@ function mapGroupRow(row) {
         disabledCommands = parsed.map((c) => String(c || '').trim()).filter(Boolean);
       }
     } catch {
-      disabledCommands = [];
+      disabledCommands = null;
     }
   }
 
@@ -52,7 +53,7 @@ function mapGroupRow(row) {
         ? true
         : Number(row.persona_enabled) !== 0,
     permitirNsfw: Number(row.permitir_nsfw ?? 0) !== 0,
-    disabledCommands,
+    disabledCommands: Array.isArray(disabledCommands) ? disabledCommands : null,
     updatedAt: Number(row.updated_at) || 0,
   };
   for (const col of GRANULAR_EVENTS) {
@@ -276,7 +277,9 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
         worldEventsEnabled: true,
         personaEnabled: true,
         permitirNsfw: false,
-        disabledCommands: Array.isArray(funConfig.disabledCommands) ? funConfig.disabledCommands : [],
+        disabledCommands: Array.isArray(funConfig.disabledCommands)
+          ? funConfig.disabledCommands
+          : getDefaultDisabledCommandIds(),
         journalAutoEnabled: true,
         marketAutoEnabled: true,
         happyHourAutoEnabled: true,
@@ -297,7 +300,11 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       worldEventsEnabled: saved.worldEventsEnabled !== false,
       personaEnabled: saved.personaEnabled !== false,
       permitirNsfw: saved.permitirNsfw === true,
-      disabledCommands: Array.isArray(saved.disabledCommands) ? saved.disabledCommands : [],
+      disabledCommands: Array.isArray(saved.disabledCommands)
+        ? saved.disabledCommands
+        : Array.isArray(funConfig.disabledCommands)
+          ? funConfig.disabledCommands
+          : getDefaultDisabledCommandIds(),
       journalAutoEnabled: saved.journalAutoEnabled !== false,
       marketAutoEnabled: saved.marketAutoEnabled !== false,
       happyHourAutoEnabled: saved.happyHourAutoEnabled !== false,
