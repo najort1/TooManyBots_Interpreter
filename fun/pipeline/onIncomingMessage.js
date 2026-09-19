@@ -387,6 +387,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
           dailyCoins: funConfig.dailyCoins,
           rankLimit: funConfig.rankLimit,
           worldEventsEnabled: true,
+          permitirNsfw: false,
+          disabledCommands: Array.isArray(funConfig.disabledCommands) ? funConfig.disabledCommands : [],
           source: 'global',
         };
 

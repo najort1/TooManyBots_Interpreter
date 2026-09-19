@@ -101,7 +101,7 @@ export async function handleReactionCommand({
     if (!permitido) {
       await reply(
         'Comandos NSFW estão desabilitados neste grupo.\n' +
-        'Inicie uma votação com `/nsfw_enable` para liberar.'
+        'Use `/force_nsfw` para liberar o conteúdo adulto.'
       );
       return { handled: true, reason: 'nsfw-disabled' };
     }

@@ -21,6 +21,21 @@ function mapGroupRow(row) {
     row.world_events_enabled === undefined || row.world_events_enabled === null
       ? true
       : Number(row.world_events_enabled) !== 0;
+
+  let disabledCommands = [];
+  if (row.disabled_commands) {
+    try {
+      const parsed = typeof row.disabled_commands === 'string'
+        ? JSON.parse(row.disabled_commands)
+        : row.disabled_commands;
+      if (Array.isArray(parsed)) {
+        disabledCommands = parsed.map((c) => String(c || '').trim()).filter(Boolean);
+      }
+    } catch {
+      disabledCommands = [];
+    }
+  }
+
   const base = {
     groupJid: String(row.group_jid || ''),
     enabled: Number(row.enabled) !== 0,
@@ -37,6 +52,7 @@ function mapGroupRow(row) {
         ? true
         : Number(row.persona_enabled) !== 0,
     permitirNsfw: Number(row.permitir_nsfw ?? 0) !== 0,
+    disabledCommands,
     updatedAt: Number(row.updated_at) || 0,
   };
   for (const col of GRANULAR_EVENTS) {
@@ -156,6 +172,29 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       permitirNsfw = existing.permitirNsfw ? 1 : 0;
     }
 
+    let disabledCommandsJson = '[]';
+    if (input.disabledCommands !== undefined) {
+      if (Array.isArray(input.disabledCommands)) {
+        const cleaned = input.disabledCommands
+          .map((c) => String(c || '').trim())
+          .filter(Boolean);
+        disabledCommandsJson = JSON.stringify(cleaned);
+      } else if (typeof input.disabledCommands === 'string') {
+        try {
+          const parsed = JSON.parse(input.disabledCommands);
+          disabledCommandsJson = JSON.stringify(
+            Array.isArray(parsed)
+              ? parsed.map((c) => String(c || '').trim()).filter(Boolean)
+              : []
+          );
+        } catch {
+          disabledCommandsJson = '[]';
+        }
+      }
+    } else if (existing && Array.isArray(existing.disabledCommands)) {
+      disabledCommandsJson = JSON.stringify(existing.disabledCommands);
+    }
+
     const granularCols = {};
     for (const col of GRANULAR_EVENTS) {
       const key = col.replace(/_([a-z])/g, (_, c) => c.toUpperCase());
@@ -177,7 +216,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
     const columns = [
       'group_jid', 'enabled', 'xp_min', 'xp_max', 'cooldown_ms', 'level_up_announce',
       'daily_xp', 'daily_coins', 'rank_limit', 'world_events_enabled', 'persona_enabled',
-      'permitir_nsfw',
+      'permitir_nsfw', 'disabled_commands',
       ...GRANULAR_EVENTS,
       'updated_at',
     ];
@@ -203,6 +242,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       worldEventsEnabled,
       personaEnabled,
       permitirNsfw,
+      disabledCommandsJson,
       ...GRANULAR_EVENTS.map((col) => granularCols[col]),
       updatedAt
     );
@@ -236,6 +276,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
         worldEventsEnabled: true,
         personaEnabled: true,
         permitirNsfw: false,
+        disabledCommands: Array.isArray(funConfig.disabledCommands) ? funConfig.disabledCommands : [],
         journalAutoEnabled: true,
         marketAutoEnabled: true,
         happyHourAutoEnabled: true,
@@ -256,6 +297,7 @@ export function createFunGroupRepository({ getDatabase = getDb } = {}) {
       worldEventsEnabled: saved.worldEventsEnabled !== false,
       personaEnabled: saved.personaEnabled !== false,
       permitirNsfw: saved.permitirNsfw === true,
+      disabledCommands: Array.isArray(saved.disabledCommands) ? saved.disabledCommands : [],
       journalAutoEnabled: saved.journalAutoEnabled !== false,
       marketAutoEnabled: saved.marketAutoEnabled !== false,
       happyHourAutoEnabled: saved.happyHourAutoEnabled !== false,

@@ -128,6 +128,8 @@ export function buildFunSchemaSql() {
       rank_limit             INTEGER NOT NULL DEFAULT 10,
       world_events_enabled   INTEGER NOT NULL DEFAULT 1,
       persona_enabled        INTEGER NOT NULL DEFAULT 1,
+      permitir_nsfw          INTEGER NOT NULL DEFAULT 0,
+      disabled_commands      TEXT NOT NULL DEFAULT '[]',
       updated_at             INTEGER NOT NULL
     );
 
@@ -1627,13 +1629,18 @@ export function ensureFunSchema(db) {
     // ignore
   }
 
-  // Migra coluna permitir_nsfw (votação NSFW)
+  // Migra coluna permitir_nsfw (votação NSFW) e disabled_commands (controle granular de comandos)
   try {
     const gsCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_group_settings)`).all();
     const gsNames = new Set(gsCols.map(c => String(c.name || '')));
     if (!gsNames.has('permitir_nsfw')) {
       db.exec(
         `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_settings ADD COLUMN permitir_nsfw INTEGER NOT NULL DEFAULT 0`
+      );
+    }
+    if (!gsNames.has('disabled_commands')) {
+      db.exec(
+        `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_group_settings ADD COLUMN disabled_commands TEXT NOT NULL DEFAULT '[]'`
       );
     }
   } catch {

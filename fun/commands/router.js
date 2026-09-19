@@ -1,4 +1,6 @@
 import { FUN_COMMAND_ALIASES, FUN_COMMANDS } from '../constants.js';
+import { checkCommandAccess, COMMAND_DISABLED_MESSAGE } from './catalog.js';
+import { getReactionKind, normalizeReactionAction } from '../services/reactionMediaService.js';
 import { handleXpCommand } from './handlers/xp.js';
 import { handleRankCommand } from './handlers/rank.js';
 import { handleRankCoinsCommand } from './handlers/rankCoins.js';
@@ -242,6 +244,48 @@ export async function routeFunCommand(ctx) {
 
   const parsed = parseFunCommand(text, funConfig.prefix);
   if (!parsed) return { handled: false };
+
+  // Verifica permissões de comandos habilitados/desabilitados por grupo e regras NSFW
+  const disabledCommands = effectiveRates?.disabledCommands || funConfig?.disabledCommands || [];
+  const permitirNsfw = Boolean(
+    effectiveRates?.permitirNsfw ?? nsfwVoteRepository?.getPermitirNsfw?.(scopeKey)
+  );
+
+  let isNsfwAction = false;
+  let reactionAction = '';
+  if (parsed.command === FUN_COMMANDS.REACTION) {
+    const rawHead = String(text || '').trim();
+    const p = String(funConfig?.prefix || '/');
+    if (rawHead.startsWith(p)) {
+      const head = String(rawHead.slice(p.length).trim().split(/\s+/)[0] || '');
+      reactionAction = normalizeReactionAction(head);
+      isNsfwAction = getReactionKind(reactionAction) === 'nsfw';
+    }
+  }
+
+  const access = checkCommandAccess({
+    command: parsed.command,
+    action: reactionAction,
+    isNsfwAction,
+    disabledCommands,
+    permitirNsfw,
+  });
+
+  if (access.disabled) {
+    if (access.reason === 'nsfw-not-forced') {
+      await reply(
+        'Comandos NSFW estão desabilitados neste grupo.\n' +
+        'Use `/force_nsfw` para liberar o conteúdo adulto.'
+      );
+    } else {
+      await reply(COMMAND_DISABLED_MESSAGE);
+    }
+    return {
+      handled: true,
+      reason: access.reason || 'command-disabled',
+      command: parsed.command,
+    };
+  }
 
   // Contador por (scope, command) — Observabilidade p/ painel Grupos (FR-017 US5)
   try {

@@ -481,6 +481,8 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   nsfw_reject: FUN_COMMANDS.NSFW_REJECT,
   rejeitarnsfw: FUN_COMMANDS.NSFW_REJECT,
   // Forçar NSFW (qualquer usuário)
+  force_nsfw: FUN_COMMANDS.NSFW_FORCE,
+  forcensfw: FUN_COMMANDS.NSFW_FORCE,
   nsfw_force: FUN_COMMANDS.NSFW_FORCE,
   forcarnsfw: FUN_COMMANDS.NSFW_FORCE,
   forcar_nsfw: FUN_COMMANDS.NSFW_FORCE,
@@ -976,8 +978,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   groupNewsMaxChars: 2500,
   /** Se true, o jornal gera narração em áudio (podcast multi-voz) às 23:59. */
   groupNewsAudioEnabled: true,
-  /** Teto de caracteres falados no roteiro de áudio para garantir duração < 1m20s. */
-  groupNewsAudioMaxChars: 680,
+  /** Teto de caracteres falados no roteiro de áudio para garantir duração fluida < 1m20s. */
+  groupNewsAudioMaxChars: 850,
   groupNewsAnchorVoice: 'Puck',
   groupNewsAudioModel: 'gemini-3.1-flash-tts-preview',
   groupNewsAudioTemperature: 1.0,

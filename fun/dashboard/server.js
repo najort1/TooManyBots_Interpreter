@@ -10,6 +10,11 @@ import { normalizeFunConfig, saveFunUserConfig } from '../config.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { createHouseRealtimeHub } from '../services/houseRealtimeService.js';
 import { getPublicBaseUrl } from '../utils/publicUrl.js';
+import {
+  COMMAND_CATEGORIES,
+  COMMAND_CATALOG,
+  getDefaultDisabledCommandIds,
+} from '../commands/catalog.js';
 
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
@@ -776,6 +781,15 @@ export function startFunDashboardServer(deps = {}) {
           casinoMax: cfg.casinoMax,
           dashboardHost: cfg.dashboardHost,
           dashboardPort: cfg.dashboardPort,
+        });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/commands/catalog') {
+        sendJson(res, 200, {
+          categories: COMMAND_CATEGORIES,
+          commands: COMMAND_CATALOG,
+          defaultDisabled: getDefaultDisabledCommandIds(),
         });
         return;
       }
