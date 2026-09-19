@@ -19,46 +19,198 @@ function stripWhatsAppFormatting(text) {
     .trim();
 }
 
-function truncateForSpeech(text, maxChars = 120) {
+/**
+ * Garante que a frase termine com pontuação final adequada (. ! ?),
+ * respeitando dois-pontos (:) em transições de fala sem criar "..", ":." ou duplicações.
+ */
+export function ensureSentencePunctuation(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return '';
+  return /[:.!?]$/.test(trimmed) ? trimmed : `${trimmed}.`;
+}
+
+/**
+ * Junta múltiplas frases/partes em um parágrafo falado limpo,
+ * garantindo pontuação gramatical fechada e impedindo duplicações como "..", ":.", "...", "?." etc.
+ */
+export function joinSentences(...parts) {
+  return parts
+    .map((p) => ensureSentencePunctuation(stripWhatsAppFormatting(p)))
+    .filter(Boolean)
+    .join(' ')
+    .replace(/\s+/g, ' ')
+    .replace(/:\./g, ':')
+    .replace(/:\s*\./g, ':')
+    .replace(/\.{2,}/g, '.')
+    .replace(/([?!])\./g, '$1')
+    .trim();
+}
+
+/**
+ * Limpa o texto da fala do comentarista vindo do LLM,
+ * removendo prefixos de diálogo (ex: "Fiscal do Rolo: ") e aspas envolventes,
+ * garantindo que a fala soe natural em primeira pessoa no rádio.
+ */
+export function cleanCommentatorSpeech(text) {
+  let cleaned = stripWhatsAppFormatting(text);
+  if (!cleaned) return '';
+
+  // Se o LLM gerou formato narrativo "Fulano disparou: \"...\"", extrai a citação
+  const quoteMatch = cleaned.match(/(?:disparou|afirmou|declarou|disse|soltou|opinou):\s*["“](.+?)["”]/i);
+  if (quoteMatch) {
+    cleaned = quoteMatch[1].trim();
+  } else {
+    // Remove prefixo de diálogo no início (ex: "Nome: " ou "Comentarista: " ou "Âncora: ")
+    cleaned = cleaned.replace(/^[^:\n]{1,45}:\s*/i, '');
+    // Remove aspas envolventes
+    cleaned = cleaned.replace(/^["“'«](.+)["”'»]$/s, '$1').trim();
+  }
+
+  return ensureSentencePunctuation(cleaned);
+}
+
+/**
+ * Trunca texto para fala respeitando estritamente o fechamento de sentenças completas.
+ * NUNCA insere reticências no meio de falas e NUNCA corta palavras ao meio,
+ * prevenindo engasgos, estalos e picotamento no Gemini TTS.
+ */
+export function truncateForSpeech(text, maxChars = 140) {
   const clean = stripWhatsAppFormatting(text);
-  if (clean.length <= maxChars) return clean;
-  const sliced = clean.slice(0, maxChars);
-  const lastDot = Math.max(sliced.lastIndexOf('.'), sliced.lastIndexOf('!'), sliced.lastIndexOf('?'));
-  if (lastDot > Math.floor(maxChars * 0.45)) return sliced.slice(0, lastDot + 1).trim();
-  const lastComma = sliced.lastIndexOf(',');
-  if (lastComma > Math.floor(maxChars * 0.45)) return `${sliced.slice(0, lastComma).trim()}...`;
+  if (!clean) return '';
+  if (clean.length <= maxChars) {
+    return ensureSentencePunctuation(clean);
+  }
+
+  // Divide por limites de frase (. ! ?)
+  const sentences = clean.match(/[^.!?]+(?:[.!?]+|$)/g) || [clean];
+  const selected = [];
+  let currentLen = 0;
+
+  for (const rawSentence of sentences) {
+    const sentence = rawSentence.trim();
+    if (!sentence) continue;
+    const punctSentence = ensureSentencePunctuation(sentence);
+    const addedLen = selected.length ? 1 + punctSentence.length : punctSentence.length;
+    if (currentLen + addedLen <= maxChars) {
+      selected.push(punctSentence);
+      currentLen += addedLen;
+    } else {
+      break;
+    }
+  }
+
+  // Se conseguimos selecionar pelo menos 1 frase completa, retorna!
+  if (selected.length > 0) {
+    return selected.join(' ');
+  }
+
+  // Se a primeira frase é só um pouco maior que maxChars (tolerância de até 25% ou 25 caracteres),
+  // mantém a frase inteira para não mutilar o sentido nem deixar palavras soltas pelo meio!
+  const first = ensureSentencePunctuation(sentences[0].trim());
+  if (first.length <= maxChars * 1.25 || first.length - maxChars <= 25) {
+    return first;
+  }
+
+  // Se for uma frase realmente longa, quebra em uma oração coordenada/subordinada natural com sentido
+  const sliced = first.slice(0, maxChars);
+  const lastClause = Math.max(
+    sliced.lastIndexOf(', '),
+    sliced.lastIndexOf('; '),
+    sliced.lastIndexOf(' - ')
+  );
+  if (lastClause > Math.floor(maxChars * 0.45)) {
+    return `${sliced.slice(0, lastClause).trim()}.`;
+  }
+
   const lastSpace = sliced.lastIndexOf(' ');
-  return `${(lastSpace > 20 ? sliced.slice(0, lastSpace) : sliced).trim()}...`;
+  if (lastSpace > Math.floor(maxChars * 0.35)) {
+    return `${sliced.slice(0, lastSpace).trim()}.`;
+  }
+
+  return `${sliced.trim()}.`;
+}
+
+/**
+ * Apara a introdução do âncora preservando SEMPRE a saudação, a manchete e o gancho do comentarista.
+ */
+function trimAnchorIntro(text, targetLen) {
+  const hookMatch = text.match(/(Para (?:analisar|avaliar)[^?!]+[?!].*)$/i);
+  if (!hookMatch) {
+    return truncateForSpeech(text, targetLen);
+  }
+
+  const hook = hookMatch[1].trim();
+  const intro = text.slice(0, hookMatch.index).trim();
+  const availableForIntro = Math.max(60, targetLen - hook.length - 1);
+
+  // Se tem "Na manchete de hoje:", preserva o prefixo e apara a manchete
+  const mancheteMatch = intro.match(/^(.*?(?:Na manchete de hoje:\s*))(.+)$/i);
+  if (mancheteMatch) {
+    const prefix = mancheteMatch[1].trim();
+    const rawHeadline = mancheteMatch[2].trim();
+    const headlineBudget = Math.max(30, availableForIntro - prefix.length - 1);
+    const trimmedHeadline = truncateForSpeech(rawHeadline, headlineBudget);
+    return joinSentences(prefix, trimmedHeadline, hook);
+  }
+
+  const trimmedIntro = truncateForSpeech(intro, availableForIntro);
+  return joinSentences(trimmedIntro, hook);
 }
 
 /**
  * Garante que o total de caracteres falados de todos os turnos não ultrapasse o teto de segurança.
- * Isso impede que a geração de áudio no Gemini TTS estoure o limite de 1m20s.
+ * Aplica redução priorizando partes secundárias (detalhes/bastidores),
+ * protegendo rigorosamente a convocação do comentarista pelo âncora e a despedida final.
  */
-export function enforceAudioScriptCap(turns, maxChars = 680) {
+export function enforceAudioScriptCap(turns, maxChars = 850) {
   if (!Array.isArray(turns) || !turns.length) return turns;
-  const limit = Math.max(250, Number(maxChars) || 680);
+  const limit = Math.max(250, Number(maxChars) || 850);
   let total = turns.reduce((acc, t) => acc + (t?.text?.length || 0), 0);
   if (total <= limit) return turns;
 
-  for (const turn of turns) {
+  // Prioridade de redução jornalística:
+  // 1. Turno 2 (detalhes e bastidores secundários — parte mais descartável)
+  // 2. Turno 1 (declaração longa do comentarista — reduz a frases centrais)
+  // 3. Turno 0 (intro/manchete do âncora — preserva gancho e manchete essenciais)
+  // 4. Demais turnos existentes
+  const priorityOrder = [2, 1, 0];
+  const allIndices = [
+    ...priorityOrder.filter((i) => i < turns.length),
+    ...turns.map((_, i) => i).filter((i) => !priorityOrder.includes(i)),
+  ];
+
+  for (const index of allIndices) {
     if (total <= limit) break;
-    if (turn?.text && turn.text.length > 140) {
-      const excess = total - limit;
-      const targetLen = Math.max(90, turn.text.length - excess);
-      const prevLen = turn.text.length;
-      turn.text = truncateForSpeech(turn.text, targetLen);
-      total -= (prevLen - turn.text.length);
+    const turn = turns[index];
+    if (!turn?.text) continue;
+
+    const excess = total - limit;
+    if (index === 0 && /(Para (?:analisar|avaliar)[^?!]+[?!].*)$/i.test(turn.text)) {
+      if (turn.text.length <= 140) continue;
+      const targetLen = Math.max(130, turn.text.length - excess);
+      if (targetLen < turn.text.length) {
+        const prevLen = turn.text.length;
+        turn.text = trimAnchorIntro(turn.text, targetLen);
+        total -= (prevLen - turn.text.length);
+      }
+    } else {
+      if (turn.text.length <= 80) continue;
+      const targetLen = Math.max(70, turn.text.length - excess);
+      if (targetLen < turn.text.length) {
+        const prevLen = turn.text.length;
+        turn.text = truncateForSpeech(turn.text, targetLen);
+        total -= (prevLen - turn.text.length);
+      }
     }
   }
 
-  // Se ainda assim estiver acima do teto, apara o turno mais longo restante
+  // Passagem de segurança estrita caso ainda ultrapasse o limite
   if (total > limit) {
     for (const turn of turns) {
       if (total <= limit) break;
-      if (turn?.text && turn.text.length > 80) {
+      if (turn?.text && turn.text.length > 50) {
         const excess = total - limit;
-        const targetLen = Math.max(50, turn.text.length - excess);
+        const targetLen = Math.max(40, turn.text.length - excess);
         const prevLen = turn.text.length;
         turn.text = truncateForSpeech(turn.text, targetLen);
         total -= (prevLen - turn.text.length);
@@ -118,7 +270,10 @@ export function buildNewsAudioTranscript({
     turns.push({
       speaker: 'Speaker 2',
       tone: commentatorActingTone,
-      text: `Mas que decadência! Até eu cochilei na redação hoje! Ninguém brigou, ninguém passou vergonha... que dia patético!${catchphrase}`,
+      text: joinSentences(
+        'Mas que decadência! Até eu cochilei na redação hoje! Ninguém brigou, ninguém passou vergonha... que dia patético!',
+        catchphrase
+      ),
     });
     turns.push({
       speaker: 'Speaker 1',
@@ -126,47 +281,54 @@ export function buildNewsAudioTranscript({
       text: 'Pois é. Amanhã a gente volta torcendo por menos paz e mais vontade de tumultuar. Boa noite a todos e até amanhã!',
     });
   } else {
-    const capa = truncateForSpeech(edition.capa || 'As confusões do dia pararam a redação', 90);
-    const parecer = truncateForSpeech(
-      edition.comentarista || cMod.catchphrase || 'Eu acompanhei tudo de perto e digo: a vergonha alheia passou do limite.',
-      120
+    const rawCapa = edition.capa || 'As confusões do dia pararam a redação';
+    const capa = truncateForSpeech(rawCapa, 160);
+
+    const rawParecer = cleanCommentatorSpeech(
+      edition.comentarista || cMod.catchphrase || 'Eu acompanhei tudo de perto e digo: a vergonha alheia passou do limite.'
     );
-    const detalhes = truncateForSpeech(
-      edition.detalhes || 'Nos bastidores, as conversas cruzadas não chegaram a consenso nenhum.',
-      110
-    );
-    const fecho = truncateForSpeech(
-      edition.foreshadow || edition.fecho || 'Amanhã tem mais capítulo e a conta dessa zoeira deve chegar.',
-      70
-    );
+    const parecer = truncateForSpeech(rawParecer, 240);
+
+    const rawDetalhes = edition.detalhes || 'Nos bastidores, as conversas cruzadas não chegaram a consenso nenhum.';
+    const detalhes = truncateForSpeech(rawDetalhes, 220);
+
+    const rawFecho = edition.foreshadow || edition.fecho || 'Amanhã tem mais capítulo e a conta dessa zoeira deve chegar.';
+    const fecho = truncateForSpeech(rawFecho, 130);
 
     const commentatorLead = commentatorName
-      ? ` Para analisar o tamanho dessa loucura, chamo nosso comentarista residente, ${commentatorName}! Fala pra gente, o que você achou dessa história?`
-      : ' Para avaliar a situação, acionamos nossa bancada de comentários!';
+      ? `Para analisar o tamanho dessa loucura, chamo nosso comentarista residente, ${commentatorName}! Fala pra gente, o que você achou dessa história?`
+      : 'Para avaliar a situação, acionamos nossa bancada de comentários! Fala pra gente, o que você achou dessa história?';
 
     turns.push({
       speaker: 'Speaker 1',
       tone: 'entusiasmado e jornalístico',
-      text: `Atenção, ouvintes! No ar a edição rápida do The Group Times! Na manchete de hoje: ${capa}.${commentatorLead}`,
+      text: joinSentences(
+        'Atenção, ouvintes! No ar a edição rápida do The Group Times!',
+        `Na manchete de hoje: ${capa}`,
+        commentatorLead
+      ),
     });
 
     turns.push({
       speaker: 'Speaker 2',
       tone: commentatorActingTone,
-      text: `Olha, ouvindo tudo isso eu só digo uma coisa: ${parecer}`,
+      text: joinSentences('Olha, ouvindo tudo isso eu só digo uma coisa:', parecer),
     });
 
     turns.push({
       speaker: 'Speaker 1',
       tone: 'investigativo e irônico',
-      text: `E tem mais apuração nos bastidores: ${detalhes}. ${fecho}.`,
+      text: joinSentences('E tem mais apuração nos bastidores:', detalhes, fecho),
     });
 
     if (cMod.catchphrase) {
       turns.push({
         speaker: 'Speaker 2',
         tone: 'enfático com bordão',
-        text: `É exatamente por isso que eu sempre afirmo: ${stripWhatsAppFormatting(truncateForSpeech(cMod.catchphrase, 60))}`,
+        text: joinSentences(
+          'É exatamente por isso que eu sempre afirmo:',
+          cleanCommentatorSpeech(cMod.catchphrase)
+        ),
       });
     }
 
@@ -179,7 +341,7 @@ export function buildNewsAudioTranscript({
 
   const cappedTurns = enforceAudioScriptCap(
     turns,
-    funConfig?.groupNewsAudioMaxChars || 680
+    funConfig?.groupNewsAudioMaxChars || 850
   );
 
   const prompt = formatMultiSpeakerPrompt({

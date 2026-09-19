@@ -152,7 +152,7 @@ REGRA DE OURO — CONCISÃO E FLUIDEZ:
 ESTRUTURA OBRIGATÓRIA (use cada rótulo exato no início da respectiva seção):
 CAPA: 1 manchete curta, provocativa e chamativa sobre a principal pauta ou absurdo do dia (sem aspas, máx 1 frase).
 INTRO: 1 parágrafo curto e afiado contextualizando o clima do dia com humor ácido e ironia (máx 2 a 3 frases).
-COMENTARISTA: Transição rápida do repórter convocando o comentarista residente (informado nos dados), seguida da declaração hilária dele com suas gírias e bordão (máx 2 a 3 frases).
+COMENTARISTA: A declaração hilária e direta do comentarista residente (informado nos dados) em primeira pessoa, soltando o verbo com suas gírias e bordão sobre os acontecimentos (máx 2 a 3 frases).
 DETALHES: 1 parágrafo enxuto narrando o melhor das fofocas, discussões e reviravoltas dos bastidores, sem enrolação (máx 3 a 4 frases).
 FORESHADOW: 1 frase final cômica alertando sobre as consequências ou o que esperar para o dia seguinte.
 CITACOES: (Opcional) No máximo 2 citações literais autorizadas no formato Nome: “citação literal”.
@@ -1388,7 +1388,7 @@ ${banHint}`.trim();
       assault,
       chaos,
     });
-    const jsonLineMode = assault;
+    const jsonLineMode = assault || key === 'group_times';
     const jsonSystem = jsonLineMode
       ? `${system}\n\nResponda SOMENTE JSON válido no formato {"line":"texto final"}. Não use markdown nem campos extras.`
       : system;

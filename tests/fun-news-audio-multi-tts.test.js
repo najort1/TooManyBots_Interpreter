@@ -471,6 +471,18 @@ test('newsAudio: buildNewsAudioTranscript limita texto total a no máximo 680 ca
   );
   // Garante que é um podcast enxuto com 3 a 5 turnos
   assert.ok(transcriptData.turns.length >= 3 && transcriptData.turns.length <= 5);
+  // Garante que a convocação do comentarista foi 100% preservada e não mutilada
+  assert.match(transcriptData.turns[0].text, /Fiscal do Rolo/);
+  assert.match(transcriptData.turns[0].text, /chamo nosso comentarista residente, Fiscal do Rolo/);
+  // Garante que o áudio não possui reticências destrutivas nem pontuação duplicada
+  assert.ok(
+    !transcriptData.turns.some((t) => t.text.includes('...')),
+    'Nenhum turno deve terminar picotado com reticências'
+  );
+  assert.ok(
+    !transcriptData.turns.some((t) => t.text.includes('..')),
+    'Nenhum turno deve conter pontuação duplicada (..)'
+  );
 });
 
 test('newsAudio: enforceAudioScriptCap reduz turnos excedentes mantendo coerência', () => {
