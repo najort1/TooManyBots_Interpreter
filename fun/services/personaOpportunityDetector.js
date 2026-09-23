@@ -355,6 +355,7 @@ function buildUserPrompt(context, isBatch = false) {
 export function createPersonaOpportunityDetector({
   autonomyPolicy,
   generateZen,
+  predictLaya = null,
   personaSocialHintService = null,
   getLogger = () => null,
   clock = () => Date.now(),
@@ -486,6 +487,57 @@ export function createPersonaOpportunityDetector({
     const context = buffer.contextTail.slice(-contextMessages);
     const batch = [...context, ...snapshot];
     const contextCount = context.length;
+
+    // Fast-path Laya Decision Service
+    if (funConfig.layaEnabled && funConfig.layaOpportunityEnabled && typeof predictLaya === 'function') {
+      try {
+        const layaBatchText = batch.map((m, i) => `[${i}] ${m.authorLabel || 'membro'}: ${m.text || ''}`).join('\n');
+        const layaRes = await predictLaya({
+          task: 'opportunity',
+          state: layaBatchText,
+          questions: {
+            action: {
+              type: 'choice',
+              instructions: 'O bot deve responder, reagir, mandar figurinha ou passar?',
+              criteria: ['pass', 'react', 'sticker', 'comment'],
+            },
+            score: {
+              type: 'score',
+              instructions: 'Quão boa é a oportunidade de interação?',
+              criteria: ['irrelevante', 'baixa', 'moderada', 'boa', 'excelente'],
+            },
+          },
+          timeoutMs: funConfig.layaTimeoutMs,
+        });
+
+        if (layaRes.ok && layaRes.answers) {
+          console.log(`[fun/autonomy] Resposta bruta do Laya para ${scope}: ${JSON.stringify(layaRes.answers)}`);
+          const layaAction = String(layaRes.answers.action?.choice || 'pass').toLowerCase();
+          const rawScore = Number(layaRes.answers.score?.score);
+          const layaScore = Number.isFinite(rawScore) ? Math.round(rawScore * 25) : 0;
+          const effectiveMinScore = Math.max(0, Math.min(100, Number(funConfig.personaAutonomyMinScore) || 60));
+
+          if (layaAction === 'pass' || layaScore < effectiveMinScore) {
+            console.log(`[fun/autonomy] 💤 Laya decidiu PASSAR em ${scope}: score=${layaScore} (ação=${layaAction})`);
+            buffer.contextTail = snapshot.slice(-contextMessages);
+            buffer.lastFlushAt = currentNow;
+            buffer.flushing = false;
+            return {
+              eligible: false,
+              reason: 'laya-pass',
+              score: layaScore,
+              action: null,
+              targetMessage: null,
+              llmReason: `Laya fast-path: ${layaAction}`,
+              count: snapshot.length,
+            };
+          }
+          console.log(`[fun/autonomy] 🚀 Laya indicou OPORTUNIDADE (${layaAction.toUpperCase()}, score=${layaScore}) — acionando gerador para envelope...`);
+        }
+      } catch (layaErr) {
+        console.warn(`[fun/autonomy] ⚠️ Laya fast-path falhou em ${scope} (caindo para Zen): ${String(layaErr?.message || layaErr)}`);
+      }
+    }
 
     const commentMaxChars = Math.max(40, Math.min(280, Number(funConfig.personaAutonomyCommentMaxChars) || 140));
     const zen = resolveZenTaskParams('persona_opportunity', funConfig);
@@ -624,6 +676,52 @@ export function createPersonaOpportunityDetector({
     }
 
     const commentMaxChars = Math.max(40, Math.min(280, Number(funConfig.personaAutonomyCommentMaxChars) || 140));
+
+    // Fast-path Laya Decision Service
+    if (funConfig.layaEnabled && funConfig.layaOpportunityEnabled && typeof predictLaya === 'function') {
+      try {
+        const layaRes = await predictLaya({
+          task: 'opportunity',
+          state: `${authorLabel || 'membro'}: ${text}`,
+          questions: {
+            action: {
+              type: 'choice',
+              instructions: 'O bot deve responder, reagir, mandar figurinha ou passar?',
+              criteria: ['pass', 'react', 'sticker', 'comment'],
+            },
+            score: {
+              type: 'score',
+              instructions: 'Quão boa é a oportunidade de interação?',
+              criteria: ['irrelevante', 'baixa', 'moderada', 'boa', 'excelente'],
+            },
+          },
+          timeoutMs: funConfig.layaTimeoutMs,
+        });
+
+        if (layaRes.ok && layaRes.answers) {
+          console.log(`[fun/autonomy] Resposta bruta do Laya para ${scopeKey}: ${JSON.stringify(layaRes.answers)}`);
+          const layaAction = String(layaRes.answers.action?.choice || 'pass').toLowerCase();
+          const rawScore = Number(layaRes.answers.score?.score);
+          const layaScore = Number.isFinite(rawScore) ? Math.round(rawScore * 25) : 0;
+          const effectiveMinScore = Math.max(0, Math.min(100, Number(funConfig.personaAutonomyMinScore) || 60));
+
+          if (layaAction === 'pass' || layaScore < effectiveMinScore) {
+            console.log(`[fun/autonomy] 💤 Laya decidiu PASSAR em ${scopeKey}: score=${layaScore} (ação=${layaAction})`);
+            return {
+              eligible: false,
+              reason: 'laya-pass',
+              score: layaScore,
+              action: null,
+              llmReason: `Laya fast-path: ${layaAction}`,
+            };
+          }
+          console.log(`[fun/autonomy] 🚀 Laya indicou OPORTUNIDADE (${layaAction.toUpperCase()}, score=${layaScore}) — acionando gerador para envelope...`);
+        }
+      } catch (layaErr) {
+        console.warn(`[fun/autonomy] ⚠️ Laya fast-path falhou em ${scopeKey} (caindo para Zen): ${String(layaErr?.message || layaErr)}`);
+      }
+    }
+
     const zen = resolveZenTaskParams('persona_opportunity', funConfig);
     const endpoint = resolveZenEndpoint(funConfig);
     const prompt = buildUserPrompt(buildPromptContext({ text, authorLabel, responseContextPack, funConfig, scopeKey, personaSocialHintService }));
