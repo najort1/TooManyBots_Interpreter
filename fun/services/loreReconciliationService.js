@@ -27,7 +27,6 @@ export function createLoreReconciliationService({
   memoryRepository,
   groupMemoryService = null,
   generateZen = openaiChatComplete,
-  predictLaya = null,
   getLogger = () => null,
 } = {}) {
   if (!memoryRepository) throw new Error('[fun/loreReconciliationService] memoryRepository required');
@@ -51,32 +50,6 @@ export function createLoreReconciliationService({
     cooldowns.set(scope, now + cooldownMs);
     try {
       if (process.env.FUN_DISABLE_LIVE_LLM === '1' || funConfig?.zenEnabled === false) return { ok: false, reason: 'llm-disabled' };
-
-      // Fast-path Laya Decision Service
-      if (funConfig.layaEnabled && funConfig.layaLoreReconciliationEnabled && typeof predictLaya === 'function') {
-        try {
-          const layaRes = await predictLaya({
-            task: 'lore_reconcile',
-            state: `Mensagem: ${message.slice(0, 600)}\n\nFatos candidatos:\n${facts.map((f) => `- id=${f.id} | ${f.summary}`).join('\n')}`,
-            questions: {
-              has_retraction: {
-                type: 'noul',
-                instructions: 'A mensagem pede explicitamente para apagar ou desmentir algum fato?',
-              },
-            },
-            timeoutMs: funConfig.layaTimeoutMs,
-          });
-
-          if (layaRes.ok && layaRes.answers?.has_retraction) {
-            const hasRetraction = Number(layaRes.answers.has_retraction.noul) >= 0.6;
-            if (!hasRetraction) {
-              return { ok: true, removed: 0, reason: 'laya-no-retraction' };
-            }
-          }
-        } catch (layaErr) {
-          getLogger?.()?.debug?.('[lore-reconciliation] Laya fast-path falhou: %s', layaErr?.message || layaErr);
-        }
-      }
 
       const task = resolveZenTaskParams('lore_reconcile', funConfig);
       const endpoint = resolveZenEndpoint(funConfig);

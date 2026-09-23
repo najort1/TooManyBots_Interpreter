@@ -14,6 +14,13 @@ import { fileURLToPath } from 'url';
 import inquirer from 'inquirer';
 import { loadFunUserConfig, saveFunUserConfig, FUN_USER_CONFIG_PATH } from '../config.js';
 import { DEFAULT_FUN_CONFIG } from '../constants.js';
+import {
+  FUN_PRESET_IDS,
+  FUN_PRESETS,
+  getFunPreset,
+  getPresetInquirerChoices,
+  applyFunPreset,
+} from '../presets.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -21,7 +28,8 @@ function printBanner() {
   console.log('\n============================================================');
   console.log('       🎮 TooManyBots Fun - Assistente de Configuração      ');
   console.log('============================================================\n');
-  console.log('Este assistente vai preparar o bot de entretenimento para o WhatsApp.\n');
+  console.log('Configure o seu bot de entretenimento com presets pré-calibrados');
+  console.log('para o seu tipo de grupo no WhatsApp.\n');
 }
 
 /**
@@ -29,6 +37,7 @@ function printBanner() {
  * Garante que a transição entre Modo Econômico e Modo IA reative módulos dependentes de LLM.
  *
  * @param {object} params
+ * @param {string} [params.presetId]
  * @param {object} [params.currentConfig]
  * @param {boolean} [params.zenEnabled]
  * @param {string} [params.zenBaseUrl]
@@ -36,9 +45,11 @@ function printBanner() {
  * @param {string} [params.zenApiKey]
  * @param {string} [params.prefix]
  * @param {boolean} [params.dashboardEnabled]
+ * @param {object} [params.extraOverrides]
  * @returns {object}
  */
 export function buildFunUserConfig({
+  presetId = null,
   currentConfig = {},
   zenEnabled = false,
   zenBaseUrl = DEFAULT_FUN_CONFIG.zenBaseUrl || 'http://localhost:20128/v1',
@@ -46,7 +57,24 @@ export function buildFunUserConfig({
   zenApiKey = '',
   prefix = '/',
   dashboardEnabled = true,
+  extraOverrides = {},
 } = {}) {
+  // Se for especificado um preset temático concreto, delega para applyFunPreset
+  if (presetId && presetId !== FUN_PRESET_IDS.CUSTOM) {
+    return applyFunPreset({
+      presetId,
+      currentConfig,
+      zenEnabled,
+      zenBaseUrl,
+      zenModel,
+      zenApiKey,
+      prefix,
+      dashboardEnabled,
+      extraOverrides,
+    });
+  }
+
+  // Modo Customizado ou chamadas legadas sem presetId
   const isZen = Boolean(zenEnabled);
   return {
     ...currentConfig,
@@ -72,6 +100,8 @@ export function buildFunUserConfig({
           personaSocialHintsEnabled: false,
           groupEventsEnabled: false,
         }),
+    ...(presetId ? { preset: presetId } : {}),
+    ...extraOverrides,
     groupWhitelistJids:
       Array.isArray(currentConfig.groupWhitelistJids) && currentConfig.groupWhitelistJids.length
         ? currentConfig.groupWhitelistJids
@@ -107,27 +137,59 @@ export async function runSetupWizard(options = {}) {
     }
   }
 
-  // Pergunta 1: Modo de Inteligência Artificial
-  const { aiMode } = await inquirer.prompt([
+  // Pergunta 1: Escolha do Perfil (Preset)
+  const { presetId } = await inquirer.prompt([
     {
       type: 'list',
-      name: 'aiMode',
-      message: 'Qual modo de inteligência artificial deseja utilizar?',
-      choices: [
-        {
-          name: '1) Modo Econômico (100% Gratuito / Offline - Recomendado)',
-          value: 'economic',
-          short: 'Econômico',
-        },
-        {
-          name: '2) Modo Inteligente com IA (OpenCode Zen / OpenAI compatível)',
-          value: 'ai',
-          short: 'IA (Zen/OpenAI)',
-        },
-      ],
-      default: 'economic',
+      name: 'presetId',
+      message: 'Qual perfil (preset) melhor descreve o seu bot no WhatsApp?',
+      choices: getPresetInquirerChoices(),
+      default: FUN_PRESET_IDS.FRIENDS_CHAOS,
     },
   ]);
+
+  const selectedPreset = getFunPreset(presetId);
+  console.log(`\n📌 Perfil selecionado: ${selectedPreset.name}`);
+  console.log(`ℹ️  ${selectedPreset.description}`);
+  if (Array.isArray(selectedPreset.highlights) && selectedPreset.highlights.length > 0) {
+    console.log('   Destaques:');
+    for (const h of selectedPreset.highlights) {
+      console.log(`   • ${h}`);
+    }
+  }
+  console.log('');
+
+  // Pergunta 2: Modo de Inteligência Artificial
+  let aiMode = selectedPreset.defaultAiMode;
+  if (presetId === FUN_PRESET_IDS.OFFLINE_ESSENTIAL) {
+    console.log('⚡ Modo Offline pré-definido: IA e chamadas externas desativadas para zero custo.\n');
+    aiMode = 'economic';
+  } else if (presetId === FUN_PRESET_IDS.FULL_AI_LIVING_MEMBER) {
+    console.log('🤖 Modo Membro Vivo IA: Recursos completos de LLM, memória e TTS ativados.\n');
+    aiMode = 'ai';
+  } else {
+    const aiPrompt = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'aiMode',
+        message: 'Deseja utilizar este perfil com Inteligência Artificial ou Modo Econômico?',
+        choices: [
+          {
+            name: '1) Modo Inteligente com IA (OpenCode Zen / OpenAI compatível - Recomendado)',
+            value: 'ai',
+            short: 'IA (Zen/OpenAI)',
+          },
+          {
+            name: '2) Modo Econômico (100% Gratuito / Offline - Sem necessidade de IA)',
+            value: 'economic',
+            short: 'Econômico',
+          },
+        ],
+        default: selectedPreset.defaultAiMode || 'economic',
+      },
+    ]);
+    aiMode = aiPrompt.aiMode;
+  }
 
   let zenEnabled = false;
   let zenBaseUrl = DEFAULT_FUN_CONFIG.zenBaseUrl || 'http://localhost:20128/v1';
@@ -162,7 +224,7 @@ export async function runSetupWizard(options = {}) {
     zenApiKey = String(aiAnswers.zenApiKey || '').trim();
   }
 
-  // Pergunta 2: Prefixo dos comandos
+  // Pergunta 3: Prefixo dos comandos
   const { prefix } = await inquirer.prompt([
     {
       type: 'input',
@@ -176,7 +238,7 @@ export async function runSetupWizard(options = {}) {
     },
   ]);
 
-  // Pergunta 3: Dashboard Web 3D (Next.js)
+  // Pergunta 4: Dashboard Web 3D (Next.js)
   const { dashboardEnabled } = await inquirer.prompt([
     {
       type: 'confirm',
@@ -186,9 +248,10 @@ export async function runSetupWizard(options = {}) {
     },
   ]);
 
-  // Monta a configuração resultante
+  // Monta a configuração resultante a partir do preset selecionado
   const currentConfig = loadFunUserConfig();
   const newConfig = buildFunUserConfig({
+    presetId,
     currentConfig,
     zenEnabled,
     zenBaseUrl,
@@ -204,6 +267,7 @@ export async function runSetupWizard(options = {}) {
   console.log('       ✅ Configuração concluída e salva com sucesso!       ');
   console.log('============================================================');
   console.log(`📁 Arquivo: fun/config.user.json`);
+  console.log(`🏷️  Perfil: ${selectedPreset.name} (${selectedPreset.shortName})`);
   console.log(`🤖 Modo: ${zenEnabled ? `IA Ativa (${zenModel})` : 'Modo Econômico (100% Mockado / Offline)'}`);
   console.log(`⚡ Prefixo: ${prefix.trim()}`);
   console.log(`🌐 Dashboard: ${dashboardEnabled ? 'Ativado (porta 3001 / 8790)' : 'Desativado'}`);

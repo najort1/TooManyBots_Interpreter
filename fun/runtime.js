@@ -14,6 +14,9 @@ import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcode from 'qrcode-terminal';
 import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 import { initDb, getContactDisplayName, upsertContactDisplayName } from '../db/index.js';
 import { useSqliteAuthState } from '../db/authState.js';

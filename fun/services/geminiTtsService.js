@@ -281,11 +281,17 @@ export function createGeminiTtsService({
             contents: [{ role: 'user', parts: [{ text: cleanText }] }],
           });
 
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('tts-timeout')), timeoutMs)
-        );
+        let timer = null;
+        const timeoutPromise = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('tts-timeout')), timeoutMs);
+        });
 
-        const response = await Promise.race([generatePromise, timeoutPromise]);
+        let response;
+        try {
+          response = await Promise.race([generatePromise, timeoutPromise]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
 
         const parts = response?.candidates?.[0]?.content?.parts || [];
         const audioParts = parts.filter((part) => part?.inlineData?.data);

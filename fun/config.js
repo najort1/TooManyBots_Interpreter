@@ -54,8 +54,11 @@ export function normalizeFunConfig(input) {
 
   const prefixRaw = toText(raw.prefix, DEFAULT_FUN_CONFIG.prefix);
   const prefix = prefixRaw.slice(0, 3) || DEFAULT_FUN_CONFIG.prefix;
+  const presetRaw = toText(raw.preset, '').trim();
+  const preset = presetRaw ? presetRaw.slice(0, 40) : undefined;
 
   return {
+    ...(preset ? { preset } : {}),
     enabled: normalizeBoolean(raw.enabled, DEFAULT_FUN_CONFIG.enabled),
     prefix,
     cooldownMs: normalizeInt(raw.cooldownMs, DEFAULT_FUN_CONFIG.cooldownMs, {
@@ -274,32 +277,6 @@ export function normalizeFunConfig(input) {
     eventCrossWeight: Number.isFinite(Number(raw.eventCrossWeight))
       ? Math.max(0, Number(raw.eventCrossWeight))
       : DEFAULT_FUN_CONFIG.eventCrossWeight,
-    layaEnabled: normalizeBoolean(raw.layaEnabled, DEFAULT_FUN_CONFIG.layaEnabled),
-    layaBaseUrl: toText(raw.layaBaseUrl, DEFAULT_FUN_CONFIG.layaBaseUrl) || DEFAULT_FUN_CONFIG.layaBaseUrl,
-    layaModel: toText(raw.layaModel, DEFAULT_FUN_CONFIG.layaModel) || DEFAULT_FUN_CONFIG.layaModel,
-    layaTimeoutMs: normalizeInt(raw.layaTimeoutMs, DEFAULT_FUN_CONFIG.layaTimeoutMs, {
-      min: 50,
-      max: 30_000,
-      rounding: 'floor',
-      clamp: true,
-    }),
-    layaCircuitFailureThreshold: normalizeInt(raw.layaCircuitFailureThreshold, DEFAULT_FUN_CONFIG.layaCircuitFailureThreshold, {
-      min: 1,
-      max: 20,
-      rounding: 'floor',
-      clamp: true,
-    }),
-    layaCircuitCooldownMs: normalizeInt(raw.layaCircuitCooldownMs, DEFAULT_FUN_CONFIG.layaCircuitCooldownMs, {
-      min: 500,
-      max: 300_000,
-      rounding: 'floor',
-      clamp: true,
-    }),
-    layaOpportunityEnabled: normalizeBoolean(raw.layaOpportunityEnabled, DEFAULT_FUN_CONFIG.layaOpportunityEnabled),
-    layaSocialHintsEnabled: normalizeBoolean(raw.layaSocialHintsEnabled, DEFAULT_FUN_CONFIG.layaSocialHintsEnabled),
-    layaLoreReconciliationEnabled: normalizeBoolean(raw.layaLoreReconciliationEnabled, DEFAULT_FUN_CONFIG.layaLoreReconciliationEnabled),
-    layaEventExtractionEnabled: normalizeBoolean(raw.layaEventExtractionEnabled, DEFAULT_FUN_CONFIG.layaEventExtractionEnabled),
-    layaSelfHealingEnabled: normalizeBoolean(raw.layaSelfHealingEnabled, DEFAULT_FUN_CONFIG.layaSelfHealingEnabled),
     zenEnabled: normalizeBoolean(raw.zenEnabled, DEFAULT_FUN_CONFIG.zenEnabled),
     zenBaseUrl: toText(raw.zenBaseUrl, DEFAULT_FUN_CONFIG.zenBaseUrl) || DEFAULT_FUN_CONFIG.zenBaseUrl,
     zenModel: toText(raw.zenModel, DEFAULT_FUN_CONFIG.zenModel) || DEFAULT_FUN_CONFIG.zenModel,
@@ -1047,8 +1024,8 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.groupNewsAudioEnabled
     ),
     groupNewsAudioMaxChars: normalizeInt(raw.groupNewsAudioMaxChars, DEFAULT_FUN_CONFIG.groupNewsAudioMaxChars, {
-      min: 200,
-      max: 1200,
+      min: 0,
+      max: 100_000,
       rounding: 'floor',
       clamp: true,
     }),
@@ -1671,6 +1648,7 @@ export function loadFunUserConfig() {
 export function saveFunUserConfig(input) {
   const normalized = normalizeFunConfig(input);
   const payload = {
+    ...(normalized.preset ? { preset: normalized.preset } : {}),
     prefix: normalized.prefix,
     cooldownMs: normalized.cooldownMs,
     xpMin: normalized.xpMin,
@@ -1743,18 +1721,6 @@ export function saveFunUserConfig(input) {
     selfHealEvidenceRetentionDays: normalized.selfHealEvidenceRetentionDays,
     selfHealMaxItemsPerRun: normalized.selfHealMaxItemsPerRun,
     selfHealMaxCallsPerRun: normalized.selfHealMaxCallsPerRun,
-    // Laya Decision Service
-    layaEnabled: normalized.layaEnabled,
-    layaBaseUrl: normalized.layaBaseUrl,
-    layaModel: normalized.layaModel,
-    layaTimeoutMs: normalized.layaTimeoutMs,
-    layaCircuitFailureThreshold: normalized.layaCircuitFailureThreshold,
-    layaCircuitCooldownMs: normalized.layaCircuitCooldownMs,
-    layaOpportunityEnabled: normalized.layaOpportunityEnabled,
-    layaSocialHintsEnabled: normalized.layaSocialHintsEnabled,
-    layaLoreReconciliationEnabled: normalized.layaLoreReconciliationEnabled,
-    layaEventExtractionEnabled: normalized.layaEventExtractionEnabled,
-    layaSelfHealingEnabled: normalized.layaSelfHealingEnabled,
     // TUI (painel full-screen de auditoria)
     tuiEnabled: normalized.tuiEnabled,
     tuiRefreshMs: normalized.tuiRefreshMs,

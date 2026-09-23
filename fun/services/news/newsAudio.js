@@ -73,11 +73,12 @@ export function cleanCommentatorSpeech(text) {
  * Trunca texto para fala respeitando estritamente o fechamento de sentenças completas.
  * NUNCA insere reticências no meio de falas e NUNCA corta palavras ao meio,
  * prevenindo engasgos, estalos e picotamento no Gemini TTS.
+ * Quando maxChars não é fornecido ou é infinito/nulo, preserva o texto integral sem truncamento.
  */
-export function truncateForSpeech(text, maxChars = 140) {
+export function truncateForSpeech(text, maxChars = Infinity) {
   const clean = stripWhatsAppFormatting(text);
   if (!clean) return '';
-  if (clean.length <= maxChars) {
+  if (!Number.isFinite(maxChars) || maxChars <= 0 || clean.length <= maxChars) {
     return ensureSentencePunctuation(clean);
   }
 
@@ -158,13 +159,15 @@ function trimAnchorIntro(text, targetLen) {
 }
 
 /**
- * Garante que o total de caracteres falados de todos os turnos não ultrapasse o teto de segurança.
+ * Garante que o total de caracteres falados de todos os turnos não ultrapasse um teto opcional.
+ * Quando maxChars <= 0 ou não informado, não impõe nenhum limite de caracteres.
  * Aplica redução priorizando partes secundárias (detalhes/bastidores),
  * protegendo rigorosamente a convocação do comentarista pelo âncora e a despedida final.
  */
-export function enforceAudioScriptCap(turns, maxChars = 850) {
+export function enforceAudioScriptCap(turns, maxChars = 0) {
   if (!Array.isArray(turns) || !turns.length) return turns;
-  const limit = Math.max(250, Number(maxChars) || 850);
+  const limit = Number(maxChars) || 0;
+  if (limit <= 0 || !Number.isFinite(limit)) return turns;
   let total = turns.reduce((acc, t) => acc + (t?.text?.length || 0), 0);
   if (total <= limit) return turns;
 
@@ -282,18 +285,32 @@ export function buildNewsAudioTranscript({
     });
   } else {
     const rawCapa = edition.capa || 'As confusões do dia pararam a redação';
-    const capa = truncateForSpeech(rawCapa, 160);
+    const capa = ensureSentencePunctuation(stripWhatsAppFormatting(rawCapa));
+
+    const rawIntro = edition.intro || edition.manchetes || '';
+    const intro = rawIntro ? ensureSentencePunctuation(stripWhatsAppFormatting(rawIntro)) : '';
 
     const rawParecer = cleanCommentatorSpeech(
       edition.comentarista || cMod.catchphrase || 'Eu acompanhei tudo de perto e digo: a vergonha alheia passou do limite.'
     );
-    const parecer = truncateForSpeech(rawParecer, 240);
+    const parecer = ensureSentencePunctuation(rawParecer);
 
     const rawDetalhes = edition.detalhes || 'Nos bastidores, as conversas cruzadas não chegaram a consenso nenhum.';
-    const detalhes = truncateForSpeech(rawDetalhes, 220);
+    const detalhes = ensureSentencePunctuation(stripWhatsAppFormatting(rawDetalhes));
+
+    let citacaoAudio = '';
+    if (edition.citacoes) {
+      const quotes = String(edition.citacoes)
+        .split('\n')
+        .map((l) => stripWhatsAppFormatting(l))
+        .filter(Boolean);
+      if (quotes.length) {
+        citacaoAudio = `E pra registrar no arquivo da redação: ${quotes.join('. ')}`;
+      }
+    }
 
     const rawFecho = edition.foreshadow || edition.fecho || 'Amanhã tem mais capítulo e a conta dessa zoeira deve chegar.';
-    const fecho = truncateForSpeech(rawFecho, 130);
+    const fecho = ensureSentencePunctuation(stripWhatsAppFormatting(rawFecho));
 
     const commentatorLead = commentatorName
       ? `Para analisar o tamanho dessa loucura, chamo nosso comentarista residente, ${commentatorName}! Fala pra gente, o que você achou dessa história?`
@@ -303,8 +320,9 @@ export function buildNewsAudioTranscript({
       speaker: 'Speaker 1',
       tone: 'entusiasmado e jornalístico',
       text: joinSentences(
-        'Atenção, ouvintes! No ar a edição rápida do The Group Times!',
+        'Atenção, ouvintes! No ar a edição do The Group Times!',
         `Na manchete de hoje: ${capa}`,
+        intro,
         commentatorLead
       ),
     });
@@ -318,7 +336,7 @@ export function buildNewsAudioTranscript({
     turns.push({
       speaker: 'Speaker 1',
       tone: 'investigativo e irônico',
-      text: joinSentences('E tem mais apuração nos bastidores:', detalhes, fecho),
+      text: joinSentences('E tem mais apuração nos bastidores:', detalhes, citacaoAudio, fecho),
     });
 
     if (cMod.catchphrase) {
@@ -339,10 +357,9 @@ export function buildNewsAudioTranscript({
     });
   }
 
-  const cappedTurns = enforceAudioScriptCap(
-    turns,
-    funConfig?.groupNewsAudioMaxChars || 850
-  );
+  const cappedTurns = funConfig?.groupNewsAudioMaxChars > 0
+    ? enforceAudioScriptCap(turns, funConfig.groupNewsAudioMaxChars)
+    : turns;
 
   const prompt = formatMultiSpeakerPrompt({
     audioProfile,
@@ -415,7 +432,7 @@ export async function synthesizeNewsAudio({
     : 1;
   const timeoutMs = Number.isFinite(Number(funConfig.groupNewsAudioTimeoutMs)) && Number(funConfig.groupNewsAudioTimeoutMs) > 0
     ? Number(funConfig.groupNewsAudioTimeoutMs)
-    : 45_000;
+    : 90_000;
 
   const attemptsTotal = Math.max(1, Math.floor(Number(maxAttempts) || 3));
   let lastFailure = null;

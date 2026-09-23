@@ -729,18 +729,6 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   selfHealEvidenceRetentionDays: 60,
   selfHealMaxItemsPerRun: 50,
   selfHealMaxCallsPerRun: 10,
-  // Laya Decision Service (Runtime local de decisão rápida e calibrada)
-  layaEnabled: false,
-  layaBaseUrl: 'http://127.0.0.1:20129',
-  layaModel: 'aac6fef/laya-mlx',
-  layaTimeoutMs: 250,
-  layaCircuitFailureThreshold: 3,
-  layaCircuitCooldownMs: 10_000,
-  layaOpportunityEnabled: false,
-  layaSocialHintsEnabled: false,
-  layaLoreReconciliationEnabled: false,
-  layaEventExtractionEnabled: false,
-  layaSelfHealingEnabled: false,
   // Flavor LLM — OpenCode Zen (principal) → Ollama (fallback) → template
   // OpenCode Zen Proxy (OpenAI-compatible)
   zenEnabled: true,
@@ -1001,8 +989,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   groupNewsMaxChars: 2500,
   /** Se true, o jornal gera narração em áudio (podcast multi-voz) às 23:59. */
   groupNewsAudioEnabled: true,
-  /** Teto de caracteres falados no roteiro de áudio para garantir duração fluida < 1m20s. */
-  groupNewsAudioMaxChars: 850,
+  /** Teto de caracteres falados no roteiro de áudio para o Gemini TTS (0 = sem limite de caracteres). */
+  groupNewsAudioMaxChars: 0,
   groupNewsAnchorVoice: 'Puck',
   groupNewsAudioModel: 'gemini-3.1-flash-tts-preview',
   groupNewsAudioTemperature: 1.0,

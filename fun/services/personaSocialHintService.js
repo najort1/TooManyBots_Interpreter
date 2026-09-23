@@ -63,7 +63,6 @@ export function createPersonaSocialHintService({
   getContactDisplayName = null,
   getLogger = () => null,
   generateZen = openaiChatComplete,
-  predictLaya = null,
 } = {}) {
   if (!repository) throw new Error('[fun/personaSocialHintService] repository required');
 
@@ -159,57 +158,9 @@ export function createPersonaSocialHintService({
         .join('\n');
 
       let hints = [];
-
-      // Fast-path Laya Decision Service
-      if (funConfig.layaEnabled && funConfig.layaSocialHintsEnabled && typeof predictLaya === 'function') {
-        try {
-          const layaRes = await predictLaya({
-            task: 'social_hints',
-            state: prompt,
-            questions: {
-              social_signal: {
-                type: 'choice',
-                instructions: 'Qual é o sinal predominante nas interações deste lote?',
-                criteria: ['positive', 'neutral', 'negative'],
-              },
-              confidence: {
-                type: 'score',
-                instructions: 'Nível de confiança na pista social?',
-                criteria: ['baixa', 'media', 'alta'],
-              },
-            },
-            timeoutMs: funConfig.layaTimeoutMs,
-          });
-
-          if (layaRes.ok && layaRes.answers?.social_signal) {
-            const signal = String(layaRes.answers.social_signal.choice || 'neutral');
-            const confRaw = Number(layaRes.answers.confidence?.score);
-            const conf = Number.isFinite(confRaw) ? Math.round(confRaw * 50) : 50;
-
-            if (signal !== 'neutral') {
-              const candidate = batch[batch.length - 1];
-              if (candidate?.userJid) {
-                hints = [{
-                  participantJid: candidate.userJid,
-                  hintText: `Interação ${signal} no grupo`,
-                  confidence: Math.max(30, Math.min(100, conf)),
-                  socialSignal: signal,
-                }];
-              }
-            }
-          }
-        } catch (layaErr) {
-          getLogger?.()?.debug?.(
-            { err: { message: layaErr?.message || 'laya-social-hints' }, scopeKey },
-            'Fun persona social hints Laya fail'
-          );
-        }
-      }
-
       const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
       let lastError = null;
-      if (!hints.length) {
-        for (let attempt = 1; attempt <= totalTries; attempt += 1) {
+      for (let attempt = 1; attempt <= totalTries; attempt += 1) {
         try {
           const raw = await generateZen({
             baseUrl: ep.baseUrl, model: ep.model,
@@ -226,7 +177,6 @@ export function createPersonaSocialHintService({
             'Fun persona social hints zen fail'
           );
         }
-      }
       }
       if (!hints.length && lastError) throw lastError;
       const freshHints = filterRecentHints(scopeKey, hints);

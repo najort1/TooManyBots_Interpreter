@@ -47,7 +47,6 @@ import { createGroupMembershipService } from './utils/groupMembership.js';
 import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
 import { openaiChatComplete } from './llm/openaiClient.js';
-import { createLayaClient } from './llm/layaClient.js';
 import { createReactionMediaService } from './services/reactionMediaService.js';
 import { createChaosService } from './services/chaosService.js';
 import { createChaosEventService } from './services/chaosEventService.js';
@@ -412,19 +411,12 @@ export function createFunModule(deps = {}) {
       evidenceRepository,
       adapters: extractionAdapters,
     });
-  const layaClient =
-    deps.layaClient ||
-    createLayaClient({
-      getConfig: () => resolveFunConfig(getConfig() || {}),
-      getLogger,
-    });
   const personaSocialHintRepository = deps.personaSocialHintRepository || createFunPersonaSocialHintRepository({ getDatabase });
   const personaSocialHintService = deps.personaSocialHintService || createPersonaSocialHintService({
     repository: personaSocialHintRepository,
     getContactDisplayName: resolveContactName,
     getLogger,
     generateZen: deps.openaiChatComplete || deps.zenGenerate,
-    predictLaya: deps.predictLaya || layaClient.predict,
   });
   const conversationMemoryRepository = deps.conversationMemoryRepository || createFunConversationMemoryRepository({ getDatabase });
   const personaRecentMessageRepository = deps.personaRecentMessageRepository || createFunPersonaRecentMessageRepository({ getDatabase });
@@ -441,7 +433,6 @@ export function createFunModule(deps = {}) {
   const personaOpportunityDetector = deps.personaOpportunityDetector || createPersonaOpportunityDetector({
     autonomyPolicy: personaAutonomyPolicy,
     generateZen: deps.openaiChatComplete || deps.zenGenerate || openaiChatComplete,
-    predictLaya: deps.predictLaya || layaClient.predict,
     personaSocialHintService,
     getLogger,
   });
@@ -619,7 +610,6 @@ export function createFunModule(deps = {}) {
       groupMemoryService,
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
-      predictLaya: deps.predictLaya || layaClient.predict,
     });
 
   const farewellRepository =

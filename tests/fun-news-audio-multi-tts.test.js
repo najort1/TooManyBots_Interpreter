@@ -495,3 +495,50 @@ test('newsAudio: enforceAudioScriptCap reduz turnos excedentes mantendo coerênc
   const total = capped.reduce((acc, t) => acc + t.text.length, 0);
   assert.ok(total <= 400, `Deveria limitar a 400 caracteres, mas teve ${total}`);
 });
+
+test('newsAudio: buildNewsAudioTranscript por padrão não limita caracteres e envia o texto completo da notícia', () => {
+  const commentator = {
+    name: 'Analista Sincero',
+    title: 'crítico de plantão',
+    voiceName: 'Charon',
+    catchphrase: 'Eu avisei antes e ninguém quis escutar!',
+  };
+
+  const longIntro = 'Esta é uma introdução longa e detalhada que antes seria descartada ou truncada. '.repeat(10);
+  const longParecer = 'O parecer do comentarista é extenso e aprofunda cada aspecto do bate-boca de hoje. '.repeat(10);
+  const longDetalhes = 'Os detalhes minuciosos apurados na redação trazem todos os acontecimentos na íntegra. '.repeat(10);
+  const longQuotes = 'Ana: “Nunca vi tanta confusão em um só dia.”\nCarlos: “Amanhã eu trago a resposta definitiva.”';
+  const longFecho = 'O desfecho promete consequências imprevisíveis para todos os envolvidos nessa história. '.repeat(5);
+
+  const edition = {
+    capa: 'Manchete Completa Sem Cortes Arbitrários de Caracteres',
+    intro: longIntro,
+    comentarista: longParecer,
+    detalhes: longDetalhes,
+    citacoes: longQuotes,
+    foreshadow: longFecho,
+  };
+
+  const transcriptData = buildNewsAudioTranscript({
+    edition,
+    commentator,
+    conversation: { mood: 'zoeiro' },
+  });
+
+  const totalChars = transcriptData.turns.reduce((acc, t) => acc + (t?.text?.length || 0), 0);
+  // O texto completo deve ultrapassar com folga os limites antigos (ex: 850 ou 1200 caracteres)
+  assert.ok(
+    totalChars > 2000,
+    `Total de caracteres falados (${totalChars}) deve preservar o texto longo (> 2000 chars)`
+  );
+
+  // Verifica que todos os blocos foram incluídos na íntegra no prompt
+  assert.match(transcriptData.prompt, /Manchete Completa Sem Cortes Arbitrários de Caracteres/);
+  assert.match(transcriptData.prompt, /Esta é uma introdução longa e detalhada que antes seria descartada/);
+  assert.match(transcriptData.prompt, /O parecer do comentarista é extenso e aprofunda cada aspecto/);
+  assert.match(transcriptData.prompt, /Os detalhes minuciosos apurados na redação trazem todos os acontecimentos/);
+  assert.match(transcriptData.prompt, /Nunca vi tanta confusão em um só dia/);
+  assert.match(transcriptData.prompt, /O desfecho promete consequências imprevisíveis/);
+  assert.match(transcriptData.prompt, /Eu avisei antes e ninguém quis escutar/);
+});
+
