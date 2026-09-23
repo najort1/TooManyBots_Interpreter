@@ -21,7 +21,7 @@ function sendJson(res, status, body) {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Length', Buffer.byteLength(payload));
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-House-Token');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-House-Token, X-Car-Token, X-Idempotency-Key');
   res.writeHead(status);
   res.end(payload);
 }
@@ -110,6 +110,9 @@ export function startFunDashboardServer(deps = {}) {
     houseService = null,
     houseLinkService = null,
     avatarService = null,
+    carRepository = null,
+    carService = null,
+    carLinkService = null,
     visitService = null,
     giftService = null,
     robberyService = null,
@@ -161,6 +164,10 @@ export function startFunDashboardServer(deps = {}) {
 
   async function resolveHouseToken(token) {
     return houseLinkService?.resolve?.(String(token || '').trim()) || null;
+  }
+
+  async function resolveCarToken(token) {
+    return carLinkService?.resolve?.(String(token || '').trim()) || houseLinkService?.resolve?.(String(token || '').trim()) || null;
   }
 
   function publicHouseItem(item) {
@@ -749,6 +756,102 @@ export function startFunDashboardServer(deps = {}) {
           return;
         }
         sendJson(res, 404, { error: 'house-route-not-found' });
+        return;
+      }
+
+      if (path.startsWith('/api/fun/cars/')) {
+        if (!carService || !carLinkService) {
+          sendJson(res, 503, { error: 'cars-indisponivel' });
+          return;
+        }
+        const match = path.match(/^\/api\/fun\/cars\/([^/]+)(?:\/(.*))?$/);
+        const targetToken = match?.[1] ? decodeURIComponent(match[1]) : '';
+        const action = String(match?.[2] || '');
+        const target = await resolveCarToken(targetToken);
+        if (!target) {
+          sendJson(res, 404, { error: 'carro-nao-encontrado' });
+          return;
+        }
+
+        const cfg = getConfig();
+        const authToken = String(req.headers['x-car-token'] || req.headers['x-house-token'] || '').trim();
+        const caller = authToken ? await resolveCarToken(authToken) : target;
+        const owns = Boolean(
+          caller &&
+          caller.scopeKey === target.scopeKey &&
+          caller.userJid === target.userJid
+        );
+
+        if (!owns) {
+          sendJson(res, 403, { error: 'acesso-nao-autorizado' });
+          return;
+        }
+
+        // Endpoint de renderização da imagem / screenshot via sharp
+        if (req.method === 'GET' && (action === 'image' || action === 'render')) {
+          const ownerName = getContactDisplayName(target.userJid) || 'Piloto';
+          const renderResult = await carService.renderCarScreenshot({
+            scopeKey: target.scopeKey,
+            userJid: target.userJid,
+            ownerName,
+          });
+          if (!renderResult?.ok || !renderResult.buffer) {
+            sendJson(res, 400, { error: renderResult?.reason || 'render-failed' });
+            return;
+          }
+          res.setHeader('Content-Type', 'image/png');
+          res.setHeader('Content-Length', renderResult.buffer.length);
+          res.setHeader('Cache-Control', 'public, max-age=60');
+          res.writeHead(200);
+          res.end(renderResult.buffer);
+          return;
+        }
+
+        // GET /api/fun/cars/:token
+        if (req.method === 'GET' && !action) {
+          const carInfo = carService.getCarState({ scopeKey: target.scopeKey, userJid: target.userJid });
+          sendJson(res, 200, {
+            ok: true,
+            owns: true,
+            ownsCar: carInfo.ownsCar,
+            state: carInfo.state,
+            catalog: carInfo.catalog,
+            coins: carInfo.coins,
+            level: carInfo.level,
+            owner: {
+              nickname: getContactDisplayName(target.userJid) || 'Piloto',
+            },
+          });
+          return;
+        }
+
+        // PUT /api/fun/cars/:token (aplicar customizações)
+        if (req.method === 'PUT' && !action) {
+          const body = await readBody(req);
+          const result = carService.applyCustomization({
+            scopeKey: target.scopeKey,
+            userJid: target.userJid,
+            customizations: body.customizations || body,
+            idempotencyKey: body.idempotencyKey || req.headers['x-idempotency-key'] || '',
+            funConfig: cfg,
+          });
+          if (!result.ok) {
+            const status = result.reason === 'insufficient-coins' ? 402 : result.reason === 'car-not-owned' ? 403 : 400;
+            sendJson(res, status, { error: result.reason, need: result.need, coins: result.coins, errors: result.errors });
+            return;
+          }
+          sendJson(res, 200, {
+            ok: true,
+            state: result.state,
+            coins: result.coins,
+            debited: result.debited,
+            purchased: result.purchased,
+            replayed: result.replayed,
+          });
+          return;
+        }
+
+        sendJson(res, 404, { error: 'car-route-not-found' });
         return;
       }
 

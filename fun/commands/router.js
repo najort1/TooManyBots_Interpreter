@@ -87,6 +87,7 @@ import {
 } from './handlers/property.js';
 import { handleHouseCommand } from './handlers/house.js';
 import { handleAvatarCommand } from './handlers/avatar.js';
+import { handleCarCommand, handleMyCarCommand } from './handlers/car.js';
 import { handleAchievementsCommand } from './handlers/achievements.js';
 import { handleCartasCommand } from './handlers/cartas.js';
 import { handleQmpCommand } from './handlers/qmp.js';
@@ -119,9 +120,24 @@ import {
 export function parseFunCommand(text, prefix = '/') {
   const raw = String(text ?? '').trim();
   const p = String(prefix || '/');
-  if (!raw || !raw.startsWith(p)) return null;
 
-  const body = raw.slice(p.length).trim();
+  let body = '';
+  if (raw.startsWith(p)) {
+    body = raw.slice(p.length).trim();
+  } else {
+    const lower = raw.toLowerCase().trim();
+    if (
+      lower === 'meu_carro' ||
+      lower === 'meucarro' ||
+      lower.startsWith('meu_carro ') ||
+      lower.startsWith('meucarro ')
+    ) {
+      body = raw;
+    } else {
+      return null;
+    }
+  }
+
   if (!body) return null;
 
   const parts = body.split(/\s+/);
@@ -195,6 +211,8 @@ export async function routeFunCommand(ctx) {
     houseService,
     houseLinkService,
     avatarService,
+    carService,
+    carLinkService,
     visitService,
     giftService,
     robberyService,
@@ -326,6 +344,8 @@ export async function routeFunCommand(ctx) {
     houseService,
     houseLinkService,
     avatarService,
+    carService,
+    carLinkService,
     visitService,
     giftService,
     robberyService,
@@ -513,6 +533,10 @@ export async function routeFunCommand(ctx) {
       return handleHouseCommand(base);
     case FUN_COMMANDS.AVATAR:
       return handleAvatarCommand(base);
+    case FUN_COMMANDS.CAR:
+      return handleCarCommand(base);
+    case FUN_COMMANDS.MY_CAR:
+      return handleMyCarCommand(base);
     case FUN_COMMANDS.ACHIEVEMENTS:
       return handleAchievementsCommand(base);
     case FUN_COMMANDS.CARTAS:

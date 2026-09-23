@@ -47,6 +47,7 @@ import { createGroupMembershipService } from './utils/groupMembership.js';
 import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
 import { openaiChatComplete } from './llm/openaiClient.js';
+import { createLayaClient } from './llm/layaClient.js';
 import { createReactionMediaService } from './services/reactionMediaService.js';
 import { createChaosService } from './services/chaosService.js';
 import { createChaosEventService } from './services/chaosEventService.js';
@@ -54,6 +55,9 @@ import { createPropertyService } from './services/propertyService.js';
 import { createHouseService } from './services/houseService.js';
 import { createHouseLinkService } from './services/houseLinkService.js';
 import { createAvatarService } from './services/avatarService.js';
+import { createFunCarRepository } from './db/funCarRepository.js';
+import { createCarService } from './services/carService.js';
+import { createCarLinkService } from './services/carLinkService.js';
 import { createVisitService } from './services/visitService.js';
 import { createGiftService } from './services/giftService.js';
 import { createRobberyService } from './services/robberyService.js';
@@ -295,6 +299,14 @@ export function createFunModule(deps = {}) {
     avatarV2Repository,
     getDatabase,
   });
+  const carRepository = deps.carRepository || createFunCarRepository({ getDatabase });
+  const carLinkService = deps.carLinkService || createCarLinkService({ carRepository });
+  const carService = deps.carService || createCarService({
+    repository,
+    carRepository,
+    marketRepository,
+    getDatabase,
+  });
   const visitService = deps.visitService || createVisitService({ houseRepository });
   const giftService = deps.giftService || createGiftService({ repository, houseRepository });
   const robberyService = deps.robberyService || createRobberyService({ repository, houseRepository, policeService });
@@ -400,12 +412,19 @@ export function createFunModule(deps = {}) {
       evidenceRepository,
       adapters: extractionAdapters,
     });
+  const layaClient =
+    deps.layaClient ||
+    createLayaClient({
+      getConfig: () => resolveFunConfig(getConfig() || {}),
+      getLogger,
+    });
   const personaSocialHintRepository = deps.personaSocialHintRepository || createFunPersonaSocialHintRepository({ getDatabase });
   const personaSocialHintService = deps.personaSocialHintService || createPersonaSocialHintService({
     repository: personaSocialHintRepository,
     getContactDisplayName: resolveContactName,
     getLogger,
     generateZen: deps.openaiChatComplete || deps.zenGenerate,
+    predictLaya: deps.predictLaya || layaClient.predict,
   });
   const conversationMemoryRepository = deps.conversationMemoryRepository || createFunConversationMemoryRepository({ getDatabase });
   const personaRecentMessageRepository = deps.personaRecentMessageRepository || createFunPersonaRecentMessageRepository({ getDatabase });
@@ -422,6 +441,7 @@ export function createFunModule(deps = {}) {
   const personaOpportunityDetector = deps.personaOpportunityDetector || createPersonaOpportunityDetector({
     autonomyPolicy: personaAutonomyPolicy,
     generateZen: deps.openaiChatComplete || deps.zenGenerate || openaiChatComplete,
+    predictLaya: deps.predictLaya || layaClient.predict,
     personaSocialHintService,
     getLogger,
   });
@@ -599,6 +619,7 @@ export function createFunModule(deps = {}) {
       groupMemoryService,
       getLogger,
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      predictLaya: deps.predictLaya || layaClient.predict,
     });
 
   const farewellRepository =
@@ -680,6 +701,8 @@ export function createFunModule(deps = {}) {
         houseService,
         houseLinkService,
         avatarService,
+        carService,
+        carLinkService,
         visitService,
         giftService,
         robberyService,
@@ -1509,6 +1532,9 @@ export function createFunModule(deps = {}) {
       houseService,
       houseLinkService,
       avatarService,
+      carRepository,
+      carService,
+      carLinkService,
       visitService,
       giftService,
       robberyService,

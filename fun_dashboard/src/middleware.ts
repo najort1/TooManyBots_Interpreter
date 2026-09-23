@@ -73,7 +73,10 @@ export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
   const publicHouseRoute = pathname === "/casas" || pathname.startsWith("/casas/") || pathname === "/api/fun/houses" || pathname.startsWith("/api/fun/houses/");
-  if (!isProtectedPath(pathname) && !publicHouseRoute) {
+  const publicCarRoute = pathname === "/carros" || pathname.startsWith("/carros/") || pathname === "/api/fun/cars" || pathname.startsWith("/api/fun/cars/");
+  const publicTokenRoute = publicHouseRoute || publicCarRoute;
+
+  if (!isProtectedPath(pathname) && !publicTokenRoute) {
     return NextResponse.next();
   }
 
@@ -111,7 +114,7 @@ export function middleware(req: NextRequest) {
     });
   }
 
-  if (publicHouseRoute) {
+  if (publicTokenRoute) {
     const res = NextResponse.next();
     res.headers.set("X-RateLimit-Limit", String(rl.limit));
     res.headers.set("X-RateLimit-Remaining", String(rl.remaining));

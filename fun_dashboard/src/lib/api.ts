@@ -22,6 +22,9 @@ import type {
   AvatarPurchaseQuote,
   AvatarSlots,
   AvatarState,
+  CarApplyResult,
+  CarState,
+  CarView,
   NeighborhoodHouse,
   SoundSystemState,
   YouTubeSearchResult,
@@ -252,5 +255,26 @@ export const funApi = {
     giftNeighbor: (token: string, houseId: string, coins: number) => request<{ ok: boolean }>(`/api/fun/houses/${encodeURIComponent(token)}/neighbors/${encodeURIComponent(houseId)}/gifts`, { method: "POST", headers: { "x-house-token": token }, body: JSON.stringify({ coins }) }),
     robNeighbor: (token: string, houseId: string) => request<{ ok: boolean; result: string; fine?: number }>(`/api/fun/houses/${encodeURIComponent(token)}/neighbors/${encodeURIComponent(houseId)}/rob`, { method: "POST", headers: { "x-house-token": token } }),
     upgradeSecurity: (token: string) => request<{ ok: boolean; coins: number }>(`/api/fun/houses/${encodeURIComponent(token)}/security`, { method: "POST", headers: { "x-house-token": token } }),
-  }
+  },
+
+  cars: {
+    get: (token: string) =>
+      request<CarView>(`/api/fun/cars/${encodeURIComponent(token)}`, {
+        headers: { "x-car-token": token },
+      }),
+    applyCustomization: (
+      token: string,
+      customizations: Partial<CarState>,
+      idempotencyKey?: string
+    ) =>
+      request<CarApplyResult>(`/api/fun/cars/${encodeURIComponent(token)}`, {
+        method: "PUT",
+        headers: {
+          "x-car-token": token,
+          ...(idempotencyKey ? { "x-idempotency-key": idempotencyKey } : {}),
+        },
+        body: JSON.stringify({ customizations, idempotencyKey }),
+      }),
+    imageUrl: (token: string) => `/api/fun/cars/${encodeURIComponent(token)}/image`,
+  },
 };

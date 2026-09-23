@@ -1205,6 +1205,46 @@ export function buildFunSchemaSql() {
       PRIMARY KEY (scope_key, user_jid, idempotency_key)
     );
 
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_car_state (
+      scope_key TEXT NOT NULL,
+      user_jid TEXT NOT NULL,
+      color TEXT NOT NULL DEFAULT '#e63946',
+      secondary_color TEXT NOT NULL DEFAULT '#1d3557',
+      wheels TEXT NOT NULL DEFAULT 'sport',
+      spoiler TEXT NOT NULL DEFAULT 'none',
+      suspension TEXT NOT NULL DEFAULT 'normal',
+      neon TEXT NOT NULL DEFAULT 'none',
+      decal TEXT NOT NULL DEFAULT 'none',
+      window_tint TEXT NOT NULL DEFAULT 'light',
+      plate_text TEXT NOT NULL DEFAULT '',
+      customizations_json TEXT NOT NULL DEFAULT '{}',
+      revision INTEGER NOT NULL DEFAULT 1,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, user_jid)
+    );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_car_tokens (
+      id TEXT PRIMARY KEY,
+      scope_key TEXT NOT NULL,
+      user_jid TEXT NOT NULL,
+      token_hash TEXT NOT NULL,
+      salt TEXT NOT NULL,
+      revoked_at INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_car_tokens_active
+      ON fun_car_tokens(revoked_at, created_at DESC);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_car_operations (
+      scope_key TEXT NOT NULL,
+      user_jid TEXT NOT NULL,
+      idempotency_key TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      result_json TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, user_jid, idempotency_key)
+    );
+
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_house_robberies (
       id TEXT PRIMARY KEY,
       scope_key TEXT NOT NULL,

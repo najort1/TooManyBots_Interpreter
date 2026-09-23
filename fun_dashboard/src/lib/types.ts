@@ -477,6 +477,93 @@ export type AvatarApplyResult = {
   replayed?: boolean;
 };
 
+export type CarState = {
+  scopeKey?: string;
+  userJid?: string;
+  color: string;
+  secondaryColor: string;
+  finish?: string;
+  bodykit?: string;
+  headlight?: string;
+  interior?: string;
+  rollCage?: string;
+  camber?: string;
+  caliperColor?: string;
+  wheelColor?: string;
+  exhaust?: string;
+  wheels: string;
+  spoiler: string;
+  suspension: string;
+  neon: string;
+  decal: string;
+  windowTint: string;
+  plateText: string;
+  customizations?: Record<string, unknown>;
+  revision?: number;
+  updatedAt?: number;
+};
+
+export type CarCatalogItem = {
+  id: string;
+  name: string;
+  cost: number;
+  hex?: string | null;
+  heightOffset?: number;
+  opacity?: number;
+  hpBonus?: number;
+  downforce?: number;
+  angle?: number;
+};
+
+export type CarCatalog = {
+  colors: CarCatalogItem[];
+  secondaryColors: CarCatalogItem[];
+  finishes: CarCatalogItem[];
+  bodykits: CarCatalogItem[];
+  headlights: CarCatalogItem[];
+  interiors: CarCatalogItem[];
+  rollCages: CarCatalogItem[];
+  cambers: CarCatalogItem[];
+  caliperColors?: CarCatalogItem[];
+  wheelColors?: CarCatalogItem[];
+  exhaustStyles?: CarCatalogItem[];
+  wheels: CarCatalogItem[];
+  spoilers: CarCatalogItem[];
+  suspensions: CarCatalogItem[];
+  neon: CarCatalogItem[];
+  decals: CarCatalogItem[];
+  windowTints: CarCatalogItem[];
+};
+
+export type DynoPoint = {
+  rpm: number;
+  torque: number;
+  hp: number;
+};
+
+export type CarView = {
+  ok: boolean;
+  owns: boolean;
+  ownsCar: boolean;
+  state: CarState;
+  catalog: CarCatalog;
+  coins: number;
+  level: number;
+  owner: {
+    nickname: string;
+  };
+};
+
+export type CarApplyResult = {
+  ok: boolean;
+  state: CarState;
+  coins: number;
+  debited: number;
+  purchased: Array<{ category: string; id: string; name: string; cost: number }>;
+  replayed?: boolean;
+};
+
+
 export type AvatarApplyError = Error & {
   code?: string;
   quote?: AvatarPurchaseQuote;

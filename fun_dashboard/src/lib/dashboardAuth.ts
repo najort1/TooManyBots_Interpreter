@@ -25,6 +25,9 @@ export function isProtectedPath(pathname: string): boolean {
   if (pathname === "/casas" || pathname.startsWith("/casas/")) {
     return false;
   }
+  if (pathname === "/carros" || pathname.startsWith("/carros/")) {
+    return false;
+  }
   if (
     pathname === "/api/fun/bolsa" ||
     pathname.startsWith("/api/fun/bolsa/")
@@ -32,6 +35,9 @@ export function isProtectedPath(pathname: string): boolean {
     return false;
   }
   if (pathname === "/api/fun/houses" || pathname.startsWith("/api/fun/houses/")) {
+    return false;
+  }
+  if (pathname === "/api/fun/cars" || pathname.startsWith("/api/fun/cars/")) {
     return false;
   }
   // job mini-games

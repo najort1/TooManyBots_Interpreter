@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '35';
+export const FUN_SCHEMA_VERSION = '36';
 
 export const PERSONA_MEMORY_TYPES = Object.freeze(['thread', 'episodic', 'semantic', 'social']);
 export const PERSONA_MEMORY_EVIDENCE = Object.freeze(['explicit', 'corroborated', 'inferred']);
@@ -87,6 +87,8 @@ export const FUN_COMMANDS = Object.freeze({
   COLLECT: 'collect',
   HOUSE: 'house',
   AVATAR: 'avatar',
+  CAR: 'car',
+  MY_CAR: 'my_car',
   // Conquistas
   ACHIEVEMENTS: 'achievements',
   // Bolsa de valores (ações das empresas)
@@ -184,6 +186,8 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     FUN_COMMANDS.IMAGINAR,
     FUN_COMMANDS.ROLES,
     FUN_COMMANDS.REMOVE_ROLE,
+    // Garagem / Carro customizado: foto exibida no grupo
+    FUN_COMMANDS.MY_CAR,
   ])
 );
 
@@ -433,6 +437,12 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   house: FUN_COMMANDS.HOUSE,
   avatar: FUN_COMMANDS.AVATAR,
   boneco: FUN_COMMANDS.AVATAR,
+  carro: FUN_COMMANDS.CAR,
+  carros: FUN_COMMANDS.CAR,
+  garagem: FUN_COMMANDS.CAR,
+  car: FUN_COMMANDS.CAR,
+  meu_carro: FUN_COMMANDS.MY_CAR,
+  meucarro: FUN_COMMANDS.MY_CAR,
   conquistas: FUN_COMMANDS.ACHIEVEMENTS,
   conquista: FUN_COMMANDS.ACHIEVEMENTS,
   achievements: FUN_COMMANDS.ACHIEVEMENTS,
@@ -719,6 +729,18 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   selfHealEvidenceRetentionDays: 60,
   selfHealMaxItemsPerRun: 50,
   selfHealMaxCallsPerRun: 10,
+  // Laya Decision Service (Runtime local de decisão rápida e calibrada)
+  layaEnabled: false,
+  layaBaseUrl: 'http://127.0.0.1:20129',
+  layaModel: 'aac6fef/laya-mlx',
+  layaTimeoutMs: 250,
+  layaCircuitFailureThreshold: 3,
+  layaCircuitCooldownMs: 10_000,
+  layaOpportunityEnabled: false,
+  layaSocialHintsEnabled: false,
+  layaLoreReconciliationEnabled: false,
+  layaEventExtractionEnabled: false,
+  layaSelfHealingEnabled: false,
   // Flavor LLM — OpenCode Zen (principal) → Ollama (fallback) → template
   // OpenCode Zen Proxy (OpenAI-compatible)
   zenEnabled: true,
@@ -951,9 +973,10 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   propertyMaxOwned: 2,
   propertyTickMs: 15 * 60_000,
   propertyMinHealthToEarn: 15,
-  // Casas e avatares — economia social por grupo.
+  // Casas, avatares e carros — economia social por grupo.
   housesEnabled: true,
   avatarEnabled: true,
+  carEnabled: true,
   visitsEnabled: true,
   giftsEnabled: true,
   robberyEnabled: true,

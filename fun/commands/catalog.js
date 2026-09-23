@@ -690,6 +690,24 @@ export const COMMAND_CATALOG = Object.freeze([
     isNsfw: false,
     examples: ['/avatar', '/boneco'],
   },
+  {
+    id: FUN_COMMANDS.CAR,
+    name: 'Garagem de Carro 3D',
+    description: 'Acessa a oficina 3D para customizar seu carro comprado na loja',
+    category: 'mercado',
+    defaultEnabled: true,
+    isNsfw: false,
+    examples: ['/carro', '/carros', '/garagem', '/car'],
+  },
+  {
+    id: FUN_COMMANDS.MY_CAR,
+    name: 'Meu Carro Customizado',
+    description: 'Envia a foto do seu carro customizado no WhatsApp',
+    category: 'mercado',
+    defaultEnabled: true,
+    isNsfw: false,
+    examples: ['meu_carro', '/meu_carro', '/meucarro'],
+  },
 
   // Caos & Zoeira
   {
