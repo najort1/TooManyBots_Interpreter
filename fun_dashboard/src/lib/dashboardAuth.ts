@@ -16,52 +16,34 @@ export const DASHBOARD_KEY_COOKIE = "fun_dash_key";
 export const DASHBOARD_KEY_HEADER = "x-api-key";
 export const DASHBOARD_KEY_QUERY = "apiKey";
 
-/** Rotas da UI e APIs protegidas (job play + corretora pública ficam abertos). */
+/** Rotas da UI e APIs protegidas (superfícies públicas ficam abertas; todo o resto exige autenticação). */
 export function isProtectedPath(pathname: string): boolean {
-  // Corretora: 100% pública e isolada do admin — sem API key, sem lista de grupos
-  if (pathname === "/bolsa" || pathname.startsWith("/bolsa/")) {
-    return false;
-  }
-  if (pathname === "/casas" || pathname.startsWith("/casas/")) {
-    return false;
-  }
-  if (pathname === "/carros" || pathname.startsWith("/carros/")) {
-    return false;
-  }
+  // Rotas públicas explícitas (corretora, casas, carros, jogos, mini-games)
   if (
+    pathname === "/bolsa" ||
+    pathname.startsWith("/bolsa/") ||
+    pathname === "/casas" ||
+    pathname.startsWith("/casas/") ||
+    pathname === "/carros" ||
+    pathname.startsWith("/carros/") ||
+    pathname === "/jogos" ||
+    pathname.startsWith("/jogos/") ||
+    pathname.startsWith("/job/") ||
+    pathname === "/api/fun/games" ||
+    pathname.startsWith("/api/fun/games/") ||
     pathname === "/api/fun/bolsa" ||
-    pathname.startsWith("/api/fun/bolsa/")
+    pathname.startsWith("/api/fun/bolsa/") ||
+    pathname === "/api/fun/houses" ||
+    pathname.startsWith("/api/fun/houses/") ||
+    pathname === "/api/fun/cars" ||
+    pathname.startsWith("/api/fun/cars/") ||
+    pathname.startsWith("/api/fun/job/")
   ) {
     return false;
   }
-  if (pathname === "/api/fun/houses" || pathname.startsWith("/api/fun/houses/")) {
-    return false;
-  }
-  if (pathname === "/api/fun/cars" || pathname.startsWith("/api/fun/cars/")) {
-    return false;
-  }
-  // job mini-games
-  if (pathname.startsWith("/api/fun/job/")) {
-    return false;
-  }
-  if (pathname.startsWith("/job/")) {
-    return false;
-  }
-  if (pathname === "/overview" || pathname.startsWith("/overview/")) return true;
-  if (pathname === "/api/fun/overview") return true;
-  if (
-    pathname === "/" ||
-    pathname.startsWith("/ranking") ||
-    pathname.startsWith("/casino") ||
-    pathname.startsWith("/groups") ||
-    pathname.startsWith("/settings")
-  ) {
-    return true;
-  }
-  if (pathname.startsWith("/api/fun/")) {
-    return true;
-  }
-  return false;
+
+  // Abordagem fail-secure: qualquer outra rota do dashboard (/llm, /settings, /selfheal, /desafios, /, /groups, etc.) é protegida
+  return true;
 }
 
 /**
