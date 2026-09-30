@@ -188,6 +188,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
     dailyChallengeService,
     imageGenerationService,
     farewellService,
+    registrationService,
+    gameManager = null,
   } = deps;
 
   const {
@@ -274,6 +276,28 @@ export async function handleFunIncomingMessage(deps, ctx) {
     }
   }
 
+  // Intercepta mensagens de cadastro em andamento no privado (usuário, senha, PIN, etc.)
+  const nowMs = Date.now();
+  if (isDm && registrationService?.hasActiveSession?.(userJid, nowMs)) {
+    const sessionRes = await registrationService.handleIncomingMessage({
+      userJid,
+      text,
+      isGroup: false,
+      now: nowMs,
+    });
+    if (sessionRes?.handled) {
+      if (sessionRes.message && typeof sendText === 'function') {
+        await sendText(sock, userJid, sessionRes.message);
+      }
+      return {
+        handled: true,
+        skipFlows: true,
+        reason: 'dm-registration-session',
+        isDm: true,
+      };
+    }
+  }
+
   // DM: só comandos (jogos com continuidade, saldo, etc.) — sem XP passivo
   if (isDm && funConfig.dmCommandsOnly !== false && !isCommand) {
     return { handled: false, skipFlows: false, reason: 'dm-commands-only' };
@@ -288,11 +312,10 @@ export async function handleFunIncomingMessage(deps, ctx) {
       await sendText(sock, userJid, content);
     };
 
-    if (parsedCommand?.command === 'group_scope') {
-      // /grupo funciona mesmo sem preferred (lista memberships)
-      // scope placeholder; handler resolve membership
+    if (parsedCommand?.command === 'group_scope' || parsedCommand?.command === 'cadastrar') {
+      // /grupo e /cadastrar funcionam sem exigir preferred scope antecipado
       scope.scopeKey = '';
-      scope.reason = 'dm-group-pick';
+      scope.reason = `dm-${parsedCommand.command}`;
     } else if (membershipService?.resolveDmScope && prefsRepository) {
       const prefs = prefsRepository.get(userJid);
       const dm = await membershipService.resolveDmScope({
@@ -352,7 +375,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     }
   }
 
-  if (!scope.scopeKey && parsedCommand?.command !== 'group_scope') {
+  if (!scope.scopeKey && parsedCommand?.command !== 'group_scope' && parsedCommand?.command !== 'cadastrar') {
     return { handled: false, skipFlows: false, reason: 'no-scope' };
   }
 
@@ -1057,6 +1080,8 @@ export async function handleFunIncomingMessage(deps, ctx) {
           dailyChallengeService,
           imageGenerationService,
           farewellService,
+          registrationService,
+          gameManager: deps.gameManager || gameManager,
           dmGroups: scope.dmGroups || null,
           rawMessage,
           messageType,

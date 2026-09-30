@@ -136,6 +136,15 @@ export const COMMAND_CATALOG = Object.freeze([
     isNsfw: false,
     examples: ['/conquistas', '/achievements'],
   },
+  {
+    id: FUN_COMMANDS.CADASTRAR,
+    name: 'Cadastrar Conta',
+    description: 'Cadastra ou gerencia usuário, senha e PIN no privado do bot para jogos online',
+    category: 'perfil',
+    defaultEnabled: true,
+    isNsfw: false,
+    examples: ['/cadastrar', '/cadastro'],
+  },
 
   // Economia & Emprego
   {

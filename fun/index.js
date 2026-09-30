@@ -1,4 +1,4 @@
-import { resolveFunConfig, getFunGroupWhitelistSet } from './config.js';
+import { resolveFunConfig, getFunGroupWhitelistSet, isLlmFeatureEnabled } from './config.js';
 import { resolveZenEndpoint } from './llm/zenEndpoint.js';
 import { createFunStatsRepository } from './db/funStatsRepository.js';
 import { createFunGroupRepository } from './db/funGroupRepository.js';
@@ -55,6 +55,9 @@ import { createHouseService } from './services/houseService.js';
 import { createHouseLinkService } from './services/houseLinkService.js';
 import { createAvatarService } from './services/avatarService.js';
 import { createFunCarRepository } from './db/funCarRepository.js';
+import { createFunAccountRepository } from './db/funAccountRepository.js';
+import { createRegistrationService } from './services/registrationService.js';
+import { createGameManager, createGameAuthService } from './games/index.js';
 import { createCarService } from './services/carService.js';
 import { createCarLinkService } from './services/carLinkService.js';
 import { createVisitService } from './services/visitService.js';
@@ -369,7 +372,7 @@ export function createFunModule(deps = {}) {
     deps.zenGenerate ||
     (async (params) => {
       const config = resolveFunConfig(getConfig() || {});
-      if (config.zenEnabled === false || process.env.FUN_DISABLE_LIVE_LLM === '1') {
+      if (!isLlmFeatureEnabled(config, 'selfHeal') || process.env.FUN_DISABLE_LIVE_LLM === '1') {
         throw new Error('llm-disabled');
       }
       const endpoint = resolveZenEndpoint(config);
@@ -499,6 +502,32 @@ export function createFunModule(deps = {}) {
       generateZen: deps.openaiChatComplete || deps.zenGenerate,
       getConfig: () => resolveFunConfig(getConfig() || {}),
       getLogger,
+    });
+
+  const accountRepository =
+    deps.accountRepository || createFunAccountRepository({ getDatabase });
+  const registrationService =
+    deps.registrationService ||
+    createRegistrationService({ accountRepository });
+  const gameAuthService =
+    deps.gameAuthService ||
+    createGameAuthService({
+      accountRepository,
+      factionRepository,
+    });
+  const gameManager =
+    deps.gameManager ||
+    createGameManager({
+      factionRepository,
+      accountRepository,
+      funConfig: resolveFunConfig(getConfig() || {}),
+      sendGroupMessage: async (toJid, msg) => {
+        const s = getSock?.();
+        if (s && typeof sendText === 'function') {
+          return sendText(s, toJid, msg);
+        }
+      },
+      now: Date.now,
     });
 
   const imageGenerationRepository =
@@ -737,6 +766,8 @@ export function createFunModule(deps = {}) {
         dailyChallengeService,
         imageGenerationService,
         farewellService,
+        registrationService,
+        gameManager,
       },
       {
         sock: ctx.sock,
@@ -1563,6 +1594,10 @@ export function createFunModule(deps = {}) {
       identityMap,
       membershipService,
       prefsRepository,
+      accountRepository,
+      registrationService,
+      gameManager,
+      gameAuthService,
       nsfwVoteRepository,
       nsfwService,
       dailyChallengeService,

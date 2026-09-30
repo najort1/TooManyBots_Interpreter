@@ -688,6 +688,9 @@ export async function startFunBot(options = {}) {
     try {
       await startFunDashboardServer({
         getConfig,
+        updateConfig: (next) => {
+          config = next;
+        },
         funModule,
         getContactDisplayName,
         getLogger: () => logger,

@@ -113,6 +113,8 @@ import {
   handleGroupLockCommand,
   handleGroupUnlockCommand,
 } from './handlers/groupAdmin.js';
+import { handleCadastrarCommand } from './handlers/cadastrar.js';
+import { handleGameEventCommand } from './handlers/gameEvent.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -256,6 +258,7 @@ export async function routeFunCommand(ctx) {
     imageGenerationService,
     msgTimeMs,
     farewellService,
+    registrationService,
     messageId,
     messageKey,
   } = ctx;
@@ -387,6 +390,8 @@ export async function routeFunCommand(ctx) {
     dailyChallengeService,
     imageGenerationService,
     farewellService,
+    registrationService,
+    gameManager: ctx.gameManager,
     msgTimeMs,
     messageId,
     messageKey,
@@ -585,6 +590,10 @@ export async function routeFunCommand(ctx) {
       return handleGroupLockCommand(base);
     case FUN_COMMANDS.GROUP_UNLOCK:
       return handleGroupUnlockCommand(base);
+    case FUN_COMMANDS.CADASTRAR:
+      return handleCadastrarCommand(base);
+    case FUN_COMMANDS.JOGO_DIARIO:
+      return handleGameEventCommand(base);
     default:
       return { handled: false };
   }
