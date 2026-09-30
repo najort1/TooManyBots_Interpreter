@@ -19,18 +19,18 @@ export const GAME_METADATA = Object.freeze({
     description: 'Batalha de perguntas e respostas com temas dinâmicos gerados por IA!',
   },
   [GAME_TYPES.GRID_CTF]: {
-    name: 'Capture a Bandeira Tático (Grid CTF)',
+    name: 'Grande Golpe das Panelinhas (Assalto ao Cofre)',
     emoji: '🚩',
-    minPlayers: 2,
-    maxPlayers: 8,
-    description: 'Capture a bandeira inimiga e traga para a sua base em uma arena tática!',
+    minPlayers: 4,
+    maxPlayers: 6,
+    description: 'Batalha tática de invasão e emboscadas em 3 rotas com relíquias valiosas!',
   },
   [GAME_TYPES.KING_OF_THE_HILL]: {
-    name: 'King of the Hill (Domínio do Território)',
+    name: 'Rei das Três Colinas (Guerra das Panelinhas)',
     emoji: '👑',
     minPlayers: 4,
-    maxPlayers: 8,
-    description: 'Conquiste e defenda as 3 zonas estratégicas para somar pontos para sua panelinha!',
+    maxPlayers: 6,
+    description: 'Disputa tática pelas colinas Alfa, Bravo e Charlie com bombas secretas e potes acumulados!',
   },
 });
 
@@ -539,7 +539,7 @@ export function createGameManager({
   /**
    * Representação pública e segura do estado da sala.
    */
-  function publicRoomState(room) {
+  function publicRoomState(room, forPlayerSession = null) {
     if (!room) return null;
     return {
       id: room.id,
@@ -571,7 +571,7 @@ export function createGameManager({
         score: f.score,
         playerCount: f.members.length,
       })),
-      engineState: room.engine?.getPublicState ? room.engine.getPublicState() : null,
+      engineState: room.engine?.getPublicState ? room.engine.getPublicState(forPlayerSession) : null,
     };
   }
 

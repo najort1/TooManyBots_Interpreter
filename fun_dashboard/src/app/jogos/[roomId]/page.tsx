@@ -10,10 +10,6 @@ import {
   Flame,
   Sword,
   Sparkles,
-  ArrowUp,
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
   AlertCircle,
   CheckCircle2,
   XCircle,
@@ -21,9 +17,12 @@ import {
   Users,
   HelpCircle,
   Info,
-  Zap,
   Target,
   BookOpen,
+  Crown,
+  Bomb,
+  Castle,
+  Send,
 } from "lucide-react";
 
 type Props = { params: Promise<{ roomId: string }> };
@@ -85,56 +84,57 @@ type QuizStats = {
   >;
 };
 
-type GridCtfFlag = {
-  x: number;
-  y: number;
-  carrierId: string | null;
-  carrierName?: string | null;
-  status: "home" | "carried" | "dropped";
-};
-
-type GridCtfPlayer = {
-  userJid: string;
-  username: string;
-  team: "blue" | "red";
-  x: number;
-  y: number;
-  facing?: string;
-  hasFlag?: boolean;
-  isRespawning?: boolean;
-  score?: number;
-};
-
-type KothZone = {
-  id: string;
-  name?: string;
-  status?: string;
-  contested?: boolean;
-  controllingFactionId?: string | null;
-  controllingFactionName?: string | null;
-  playersCount?: number;
-};
-
-type KothFactionProgress = {
+type TacticalScore = {
+  teamId: string;
   name: string;
-  score?: number;
-  percent: number;
+  emoji: string;
+  score: number;
+  playerCount: number;
 };
 
-type KothPlayer = {
+type TacticalVote = {
   userJid: string;
   username: string;
-  factionId?: string | null;
-  isAlive?: boolean;
-  currentZoneId?: string | null;
-  isShielded?: boolean;
-  respawnRemainingMs?: number;
-  kills?: number;
-  deaths?: number;
+  teamId: string;
+  choice: string;
+  useBomb?: boolean;
+  isAfk?: boolean;
+};
+
+type TacticalRoundReport = {
+  round: number;
+  totalRounds: number;
+  gameType: string;
+  roundResult: {
+    roundScores?: Record<string, number>;
+    newPots?: Record<string, number>;
+    reports?: Array<{
+      hill?: string;
+      winnerTeamId?: string | null;
+      pointsAwarded?: number;
+      reason?: string;
+      bombers?: string[];
+      message?: string;
+    }>;
+    attackingTeamId?: string;
+    defendingTeamId?: string;
+    totalPoints?: number;
+    routes?: Array<{
+      route: string;
+      invaders?: string[];
+      guardians?: string[];
+      blockedCount?: number;
+      passedCount?: number;
+      pointsEarned?: number;
+      message?: string;
+    }>;
+  };
+  votes: TacticalVote[];
+  scores: TacticalScore[];
 };
 
 type EngineState = {
-  phase?: "idle" | "loading" | "question" | "reveal" | "ended";
+  phase?: "idle" | "loading" | "question" | "reveal" | "round" | "ended";
   round?: number;
   currentRound?: number;
   totalRounds?: number;
@@ -147,29 +147,18 @@ type EngineState = {
   stats?: QuizStats;
   factionsRanking?: Array<{ id: string; name: string; emoji: string; score: number }>;
   playersRanking?: Array<{ userJid: string; username: string; score: number }>;
-  width?: number;
-  height?: number;
-  grid?: {
-    width: number;
-    height: number;
-    obstacles?: string[];
-    territorySplitX?: number;
-  };
-  flags?: {
-    blue?: GridCtfFlag;
-    red?: GridCtfFlag;
-  };
-  scores?: {
-    blue: number;
-    red: number;
-  };
-  timing?: {
-    remainingSeconds: number;
-  };
-  zones?: Record<string, KothZone>;
-  factionProgress?: Record<string, KothFactionProgress>;
-  players?: Array<GridCtfPlayer & KothPlayer>;
-  currentZone?: string | null;
+  // Colinas e Golpe
+  pots?: { alfa: number; bravo: number; charlie: number };
+  scores?: TacticalScore[];
+  attackingTeamId?: string | null;
+  defendingTeamId?: string | null;
+  viewerTeamId?: string | null;
+  myCurrentVote?: { choice: string; useBomb?: boolean } | null;
+  myBombAvailable?: boolean;
+  myTeamSuggestions?: Record<string, number>;
+  myTeamChat?: Array<{ userJid: string; username: string; text: string; timestamp: number }>;
+  lastRoundReport?: TacticalRoundReport | null;
+  roundHistory?: TacticalRoundReport[];
 };
 
 type RoomState = {
@@ -228,10 +217,13 @@ export default function GameRoomPage({ params }: Props) {
     }
   }, [roomId]);
 
-  // Busca inicial do estado da sala
+  // Busca do estado da sala (passando Bearer token para obter estado privado da equipe)
   const fetchRoomState = useCallback(async () => {
     try {
-      const res = await fetch(`/api/fun/games/room/${roomId}`, { cache: "no-store" });
+      const headers: Record<string, string> = {};
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+
+      const res = await fetch(`/api/fun/games/room/${roomId}`, { headers, cache: "no-store" });
       const data = await res.json();
       if (res.ok && data.ok) {
         setRoom(data.room);
@@ -244,7 +236,7 @@ export default function GameRoomPage({ params }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [roomId]);
+  }, [roomId, token]);
 
   useEffect(() => {
     void fetchRoomState();
@@ -255,7 +247,7 @@ export default function GameRoomPage({ params }: Props) {
     async (actionData: Record<string, unknown>) => {
       if (!token || actionCooldown) return;
       setActionCooldown(true);
-      setTimeout(() => setActionCooldown(false), 150);
+      setTimeout(() => setActionCooldown(false), 200);
 
       try {
         const res = await fetch(`/api/fun/games/action/${roomId}`, {
@@ -270,47 +262,36 @@ export default function GameRoomPage({ params }: Props) {
         if (data.ok) {
           if (data.room) {
             setRoom(data.room);
-          } else if (data.delta) {
-            setRoom((prev) => {
-              if (!prev) return prev;
-              const prevEngine = prev.engineState || {};
-              let mergedPlayers = prevEngine.players || [];
-              if (Array.isArray(data.delta.players)) {
-                mergedPlayers = data.delta.players;
-              } else if (data.delta.player) {
-                const p = data.delta.player;
-                const idx = mergedPlayers.findIndex(
-                  (x) => x.userJid === p.userJid || (p.username && x.username === p.username)
-                );
-                if (idx >= 0) {
-                  mergedPlayers = [...mergedPlayers];
-                  mergedPlayers[idx] = { ...mergedPlayers[idx], ...p };
-                }
-              }
-              return {
-                ...prev,
-                engineState: {
-                  ...prevEngine,
-                  ...data.delta,
-                  players: mergedPlayers,
-                  flags: data.delta.flags || prevEngine.flags,
-                  scores: data.delta.scores || prevEngine.scores,
-                },
-              };
-            });
-          }
-          if (data.delta?.events && data.delta.events.length > 0) {
-            const ev = data.delta.events[0];
-            if (ev?.message) {
-              setActionFeedback(ev.message);
-              setTimeout(() => setActionFeedback(null), 3000);
+          } else {
+            // Atualiza estado local se retornado
+            if (data.choice) {
+              setRoom((prev) => {
+                if (!prev) return prev;
+                return {
+                  ...prev,
+                  engineState: {
+                    ...(prev.engineState || {}),
+                    myCurrentVote: {
+                      choice: data.choice,
+                      useBomb: Boolean(data.useBomb),
+                    },
+                    myBombAvailable: data.hasRemainingBomb ?? prev.engineState?.myBombAvailable,
+                  },
+                };
+              });
             }
+          }
+          if (data.message) {
+            setActionFeedback(data.message);
+            setTimeout(() => setActionFeedback(null), 3000);
           }
         } else if (data.message) {
           setActionFeedback(data.message);
           setTimeout(() => setActionFeedback(null), 2500);
         }
-      } catch {}
+      } catch {
+        // ignore network error
+      }
     },
     [token, actionCooldown, roomId]
   );
@@ -354,22 +335,7 @@ export default function GameRoomPage({ params }: Props) {
         }
       });
 
-      eventSource.addEventListener("game_update", (e) => {
-        try {
-          const payload = JSON.parse(e.data);
-          setRoom((prev) => {
-            if (!prev) return prev;
-            return {
-              ...prev,
-              engineState: payload.engineState || payload,
-              factions: payload.factions || prev.factions,
-              players: payload.players || prev.players,
-            };
-          });
-        } catch {}
-      });
-
-      // Quiz Royale: Nova pergunta (reseta escolha anterior do usuário)
+      // Quiz Royale: Nova pergunta
       eventSource.addEventListener("round_question", (e) => {
         try {
           const payload = JSON.parse(e.data);
@@ -395,7 +361,34 @@ export default function GameRoomPage({ params }: Props) {
         } catch {}
       });
 
-      // Quiz Royale: Revelação da resposta
+      // Jogos Táticos (Colinas & Golpe): Início de nova rodada
+      eventSource.addEventListener("round_started", (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          setRoom((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              engineState: {
+                ...(prev.engineState || {}),
+                phase: "round",
+                currentRound: payload.round ? payload.round - 1 : 0,
+                totalRounds: payload.totalRounds || 6,
+                remainingSeconds: payload.remainingSeconds ?? 15,
+                timeRemainingSeconds: payload.remainingSeconds ?? 15,
+                attackingTeamId: payload.attackingTeamId,
+                defendingTeamId: payload.defendingTeamId,
+                pots: payload.pots || prev.engineState?.pots,
+                scores: payload.scores || prev.engineState?.scores,
+                myCurrentVote: null,
+                myTeamSuggestions: {},
+              },
+            };
+          });
+        } catch {}
+      });
+
+      // Revelação da rodada (Quiz, Colinas ou Golpe)
       eventSource.addEventListener("round_reveal", (e) => {
         try {
           const payload = JSON.parse(e.data);
@@ -408,99 +401,17 @@ export default function GameRoomPage({ params }: Props) {
               engineState: {
                 ...(prev.engineState || {}),
                 phase: "reveal",
-                question: payload.question,
-                currentQuestion: payload.question,
+                currentRound: payload.round ? payload.round - 1 : prev.engineState?.currentRound ?? 0,
                 remainingSeconds: payload.remainingSeconds ?? 4,
                 timeRemainingSeconds: payload.remainingSeconds ?? 4,
-                roundStats: payload.stats,
-                factionsRanking: payload.factionsRanking,
-                playersRanking: payload.playersRanking,
+                roundStats: payload.stats || prev.engineState?.roundStats,
+                lastRoundReport: payload,
+                scores: payload.scores || prev.engineState?.scores,
               },
             };
           });
         } catch {}
       });
-
-      // Grid CTF: Updates da grade
-      const handleCtfUpdate = (e: MessageEvent) => {
-        try {
-          const payload = JSON.parse(e.data);
-          setRoom((prev) => {
-            if (!prev) return prev;
-            const prevEngine = prev.engineState || {};
-            let mergedPlayers = prevEngine.players || [];
-
-            if (Array.isArray(payload.players)) {
-              mergedPlayers = payload.players;
-            } else if (payload.player) {
-              const p = payload.player;
-              const idx = mergedPlayers.findIndex(
-                (x) => x.userJid === p.userJid || (p.username && x.username === p.username)
-              );
-              if (idx >= 0) {
-                mergedPlayers = [...mergedPlayers];
-                mergedPlayers[idx] = { ...mergedPlayers[idx], ...p };
-              } else {
-                mergedPlayers = [...mergedPlayers, p];
-              }
-            }
-
-            if (payload.target) {
-              const t = payload.target;
-              const idx = mergedPlayers.findIndex((x) => x.userJid === t.userJid);
-              if (idx >= 0) {
-                mergedPlayers = [...mergedPlayers];
-                mergedPlayers[idx] = { ...mergedPlayers[idx], ...t };
-              }
-            }
-
-            return {
-              ...prev,
-              engineState: {
-                ...prevEngine,
-                ...payload,
-                flags: payload.flags || prevEngine.flags,
-                players: mergedPlayers,
-                scores: payload.scores || prevEngine.scores,
-                grid: payload.grid || prevEngine.grid,
-              },
-            };
-          });
-
-          if (payload.events && Array.isArray(payload.events) && payload.events.length > 0) {
-            const ev = payload.events[0];
-            if (ev?.message) {
-              setActionFeedback(ev.message);
-              setTimeout(() => setActionFeedback(null), 3000);
-            }
-          }
-        } catch {}
-      };
-      eventSource.addEventListener("ctf_start", handleCtfUpdate);
-      eventSource.addEventListener("ctf_update", handleCtfUpdate);
-
-      // King of the Hill: Updates de zonas e progresso
-      const handleKothUpdate = (e: MessageEvent) => {
-        try {
-          const payload = JSON.parse(e.data);
-          setRoom((prev) => {
-            if (!prev) return prev;
-            const prevEngine = prev.engineState || {};
-            return {
-              ...prev,
-              engineState: {
-                ...prevEngine,
-                ...payload,
-                zones: payload.zones || prevEngine.zones,
-                factionProgress: payload.factionProgress || prevEngine.factionProgress,
-                players: payload.players || prevEngine.players,
-              },
-            };
-          });
-        } catch {}
-      };
-      eventSource.addEventListener("koth_started", handleKothUpdate);
-      eventSource.addEventListener("koth_tick", handleKothUpdate);
 
       eventSource.addEventListener("game_finished", (e) => {
         try {
@@ -517,6 +428,7 @@ export default function GameRoomPage({ params }: Props) {
                 ...(prev.engineState || {}),
                 phase: "ended",
                 winnerFaction: payload.winnerFaction,
+                scores: payload.scores || prev.engineState?.scores,
               },
             };
           });
@@ -525,6 +437,7 @@ export default function GameRoomPage({ params }: Props) {
         }
       });
 
+      // Fallback seguro de polling a cada 2s
       eventSource.onerror = () => {
         if (!fallbackInterval) {
           fallbackInterval = setInterval(fetchRoomState, 2000);
@@ -579,38 +492,6 @@ export default function GameRoomPage({ params }: Props) {
     }
   };
 
-  // Suporte a teclado no Grid CTF
-  useEffect(() => {
-    if (room?.gameType !== "grid_ctf" || room?.status !== "in_progress") return;
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement | null;
-      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) {
-        return;
-      }
-
-      if (["ArrowUp", "KeyW"].includes(e.code)) {
-        e.preventDefault();
-        void sendAction({ action: "move", direction: "up" });
-      } else if (["ArrowDown", "KeyS"].includes(e.code)) {
-        e.preventDefault();
-        void sendAction({ action: "move", direction: "down" });
-      } else if (["ArrowLeft", "KeyA"].includes(e.code)) {
-        e.preventDefault();
-        void sendAction({ action: "move", direction: "left" });
-      } else if (["ArrowRight", "KeyD"].includes(e.code)) {
-        e.preventDefault();
-        void sendAction({ action: "move", direction: "right" });
-      } else if (["Space", "KeyF"].includes(e.code)) {
-        e.preventDefault();
-        void sendAction({ action: "tackle" });
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [room?.gameType, room?.status, sendAction]);
-
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100 p-4">
@@ -660,8 +541,11 @@ export default function GameRoomPage({ params }: Props) {
         <div className="w-full max-w-md bg-slate-900/60 border border-slate-800/80 rounded-2xl p-4 mb-6 text-left">
           <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Placar Final</h3>
           <div className="space-y-2">
-            {room.factions.map((f, i) => (
-              <div key={f.id} className="flex items-center justify-between text-sm py-1 border-b border-slate-800/50 last:border-0">
+            {(room.engineState?.scores || room.factions).map((f, i) => (
+              <div
+                key={f.name + i}
+                className="flex items-center justify-between text-sm py-1 border-b border-slate-800/50 last:border-0"
+              >
                 <span className="flex items-center gap-2">
                   <span className="font-bold text-slate-500">{i + 1}º</span>
                   <span>{f.emoji}</span>
@@ -830,8 +714,8 @@ export default function GameRoomPage({ params }: Props) {
             </div>
 
             <div className="overflow-y-auto space-y-4 text-xs text-slate-300 pr-1">
-              {room.gameType === "grid_ctf" && <GridCtfRulesSection />}
-              {room.gameType === "king_of_the_hill" && <KingOfTheHillRulesSection />}
+              {room.gameType === "grid_ctf" && <GrandeGolpeRulesSection />}
+              {room.gameType === "king_of_the_hill" && <ColinasRulesSection />}
               {room.gameType === "quiz_royale" && <QuizRoyaleRulesSection />}
             </div>
 
@@ -864,30 +748,37 @@ export default function GameRoomPage({ params }: Props) {
           />
         )}
 
-        {/* JOGO 2: GRID CTF */}
+        {/* JOGO 2: GRANDE GOLPE (Capture a Bandeira / Assalto) */}
         {room.gameType === "grid_ctf" && (
-          <GridCtfView
+          <GrandeGolpeView
             engineState={room.engineState}
             currentUser={currentUser}
-            onMove={(direction: string) => void sendAction({ action: "move", direction })}
-            onTackle={() => void sendAction({ action: "tackle" })}
-            actionFeedback={actionFeedback}
-            onOpenRules={() => setShowRulesModal(true)}
-            onActionFeedback={(msg: string) => {
-              setActionFeedback(msg);
-              setTimeout(() => setActionFeedback(null), 2500);
+            onVoteRoute={(route: string) => {
+              void sendAction({ action: "vote_route", route });
+            }}
+            onSuggestRoute={(route: string) => {
+              void sendAction({ action: "suggest", choice: route });
+            }}
+            onSendTeamMessage={(message: string) => {
+              void sendAction({ action: "team_message", message });
             }}
           />
         )}
 
-        {/* JOGO 3: KING OF THE HILL */}
+        {/* JOGO 3: REI DAS TRÊS COLINAS */}
         {room.gameType === "king_of_the_hill" && (
-          <KingOfTheHillView
+          <ColinasView
             engineState={room.engineState}
             currentUser={currentUser}
-            onEnterZone={(zoneId: string) => void sendAction({ action: "entered_zone", zoneId })}
-            onLeaveZone={(zoneId: string) => void sendAction({ action: "left_zone", zoneId })}
-            onUseAbility={(ability: string) => void sendAction({ action: "use_ability", ability })}
+            onVoteHill={(hill: string, useBomb: boolean) => {
+              void sendAction({ action: "vote_hill", hill, useBomb });
+            }}
+            onSuggestHill={(hill: string) => {
+              void sendAction({ action: "suggest", choice: hill });
+            }}
+            onSendTeamMessage={(message: string) => {
+              void sendAction({ action: "team_message", message });
+            }}
           />
         )}
       </main>
@@ -896,7 +787,7 @@ export default function GameRoomPage({ params }: Props) {
 }
 
 // ---------------------------------------------------------------------------
-// VIEW DO QUIZ ROYALE
+// VIEW DO QUIZ ROYALE (100% Preservada)
 // ---------------------------------------------------------------------------
 type QuizRoyaleViewProps = {
   engineState: EngineState | null;
@@ -921,7 +812,6 @@ function QuizRoyaleView({ engineState, onAnswer, selectedChoice, factions }: Qui
 
   return (
     <div className="flex-1 flex flex-col justify-between">
-      {/* Topo: Rodada e Cronômetro */}
       <div>
         <div className="flex items-center justify-between text-xs mb-3 text-slate-400">
           <span>Rodada {(engineState?.currentRound || 0) + 1} de {engineState?.totalRounds || 8}</span>
@@ -935,13 +825,11 @@ function QuizRoyaleView({ engineState, onAnswer, selectedChoice, factions }: Qui
           />
         </div>
 
-        {/* Card da Pergunta */}
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5 mb-6 text-center shadow-lg">
           <h2 className="text-base sm:text-lg font-bold text-white leading-snug">{currentQ.prompt || currentQ.question}</h2>
         </div>
       </div>
 
-      {/* 4 Alternativas Grandes Touch */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
         {currentQ.options?.map((opt: string, idx: number) => {
           let btnClass = "bg-slate-900 border-slate-800 text-slate-200 hover:border-amber-500";
@@ -971,7 +859,6 @@ function QuizRoyaleView({ engineState, onAnswer, selectedChoice, factions }: Qui
         })}
       </div>
 
-      {/* Explicação da Resposta durante a Fase de Revelação */}
       {isReveal && currentQ.explanation && (
         <div className="bg-amber-950/30 border border-amber-500/30 rounded-2xl p-4 mb-5 text-xs text-amber-200 shadow-md">
           <span className="font-bold text-amber-400 block mb-1">💡 Curiosidade da Pergunta:</span>
@@ -979,7 +866,6 @@ function QuizRoyaleView({ engineState, onAnswer, selectedChoice, factions }: Qui
         </div>
       )}
 
-      {/* Placar em Tempo Real das Panelinhas */}
       <div className="bg-slate-900/60 border border-slate-800/80 rounded-xl p-3">
         <div className="flex items-center justify-between mb-2">
           <span className="text-[10px] uppercase font-bold text-slate-500 block">Placar das Panelinhas (Média Coletiva)</span>
@@ -1010,298 +896,636 @@ function QuizRoyaleView({ engineState, onAnswer, selectedChoice, factions }: Qui
 }
 
 // ---------------------------------------------------------------------------
-// VIEW DO GRID CTF (Capture a Bandeira Tático)
+// VIEW DO JOGO 2: 👑 COLINAS (REI DAS TRÊS COLINAS)
 // ---------------------------------------------------------------------------
-type GridCtfViewProps = {
+type ColinasViewProps = {
   engineState: EngineState | null;
   currentUser: CurrentUser | null;
-  onMove: (direction: string) => void;
-  onTackle: () => void;
-  actionFeedback?: string | null;
-  onOpenRules?: () => void;
-  onActionFeedback?: (msg: string) => void;
+  onVoteHill: (hill: string, useBomb: boolean) => void;
+  onSuggestHill: (hill: string) => void;
+  onSendTeamMessage: (message: string) => void;
 };
 
-function GridCtfView({
+function ColinasView({
   engineState,
-  currentUser,
-  onMove,
-  onTackle,
-  actionFeedback,
-  onOpenRules,
-  onActionFeedback,
-}: GridCtfViewProps) {
-  const width = engineState?.grid?.width || engineState?.width || 12;
-  const height = engineState?.grid?.height || engineState?.height || 8;
-  const players = engineState?.players || [];
-  const flags = engineState?.flags || {};
-  const scores = engineState?.scores || { blue: 0, red: 0 };
+  currentUser: _currentUser,
+  onVoteHill,
+  onSuggestHill,
+  onSendTeamMessage,
+}: ColinasViewProps) {
+  const isReveal = engineState?.phase === "reveal";
+  const timer = engineState?.remainingSeconds ?? 15;
+  const currentRound = (engineState?.currentRound ?? 0) + 1;
+  const totalRounds = engineState?.totalRounds ?? 6;
 
-  const defaultObstacles = ['3,1', '3,6', '5,2', '5,5', '6,2', '6,5', '8,1', '8,6'];
-  const rawObstacles = engineState?.grid?.obstacles || defaultObstacles;
-  const obstaclesSet = new Set(Array.isArray(rawObstacles) ? rawObstacles : Object.keys(rawObstacles));
+  const pots = engineState?.pots || { alfa: 5, bravo: 3, charlie: 2 };
+  const scores = engineState?.scores || [];
 
-  const myPlayer = players.find(
-    (p) =>
-      (currentUser?.userJid && p.userJid === currentUser.userJid) ||
-      (currentUser?.username && p.username === currentUser.username)
-  );
+  const [selectedHill, setSelectedHill] = useState<string>("alfa");
+  const [armBomb, setArmBomb] = useState(false);
+  const [chatText, setChatText] = useState("");
 
-  // Checa se há algum adversário numa das 4 células adjacentes (ao alcance do Tackle)
-  const hasAdjacentEnemy = Boolean(
-    myPlayer &&
-    players.some((other) => {
-      if (other.userJid === myPlayer.userJid || other.team === myPlayer.team || other.isRespawning) return false;
-      const dx = Math.abs(other.x - myPlayer.x);
-      const dy = Math.abs(other.y - myPlayer.y);
-      return (dx === 1 && dy === 0) || (dx === 0 && dy === 1);
-    })
-  );
+  const myVote = engineState?.myCurrentVote;
+  const canUseBomb = engineState?.myBombAvailable ?? true;
+  const mySuggestions = engineState?.myTeamSuggestions || {};
+  const myChat = engineState?.myTeamChat || [];
+  const lastReport = engineState?.lastRoundReport;
+
+  // Sincroniza estado com voto atual se existir
+  useEffect(() => {
+    if (myVote?.choice) {
+      setSelectedHill(myVote.choice);
+      setArmBomb(Boolean(myVote.useBomb));
+    }
+  }, [myVote]);
+
+  const handleSelectHill = (hill: string) => {
+    if (isReveal) return;
+    setSelectedHill(hill);
+    onVoteHill(hill, armBomb && canUseBomb);
+    onSuggestHill(hill);
+  };
+
+  const handleToggleBomb = () => {
+    if (isReveal || !canUseBomb) return;
+    const nextBomb = !armBomb;
+    setArmBomb(nextBomb);
+    onVoteHill(selectedHill, nextBomb);
+  };
+
+  const handleSendChat = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatText.trim()) return;
+    onSendTeamMessage(chatText.trim());
+    setChatText("");
+  };
 
   return (
     <div className="flex-1 flex flex-col justify-between">
-      {/* Placar de Bandeiras & Atalho de Regras */}
-      <div className="p-3 bg-slate-900 border border-slate-800 rounded-2xl mb-3 text-xs shadow-lg">
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2 text-blue-400 font-extrabold text-sm">
-            <span className="p-1 rounded-md bg-blue-500/20 border border-blue-500/40">🚩</span>
-            <span>Azul: {scores.blue} / 3</span>
+      {/* Topo: Rodada, Cronômetro e Placar */}
+      <div>
+        <div className="flex items-center justify-between text-xs mb-2 text-slate-400">
+          <div className="flex items-center gap-1.5 font-bold">
+            <Crown className="w-4 h-4 text-amber-400" />
+            <span>Rodada {currentRound} de {totalRounds}</span>
           </div>
-
-          <div className="flex items-center gap-2">
-            {myPlayer ? (
-              <span
-                className={`px-2 py-0.5 rounded-full text-[10px] font-black tracking-wider uppercase border ${
-                  myPlayer.team === "blue"
-                    ? "bg-blue-950/80 border-blue-500/60 text-blue-300"
-                    : "bg-red-950/80 border-red-500/60 text-red-300"
-                }`}
-              >
-                Time {myPlayer.team === "blue" ? "Azul" : "Vermelho"}
-              </span>
-            ) : (
-              <span className="text-slate-500 text-[10px] font-mono">Arena Tática</span>
-            )}
-
-            {onOpenRules && (
-              <button
-                onClick={onOpenRules}
-                className="flex items-center gap-1 px-2 py-0.5 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded-md text-[10px] font-bold border border-slate-700 transition"
-              >
-                <HelpCircle className="w-3 h-3" />
-                <span>Regras</span>
-              </button>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2 text-red-400 font-extrabold text-sm">
-            <span>Vermelho: {scores.red} / 3</span>
-            <span className="p-1 rounded-md bg-red-500/20 border border-red-500/40">🚩</span>
-          </div>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+            isReveal ? "bg-purple-950 border border-purple-500 text-purple-300 animate-pulse" : "bg-amber-950 border border-amber-500/50 text-amber-300"
+          }`}>
+            {isReveal ? "💥 Revelação dos Votos!" : "⏳ Escolha sua Colina"}
+          </span>
         </div>
 
-        {/* Guia Rápido de Território */}
-        <div className="flex items-center justify-between text-[10px] text-slate-400 px-1 pt-1 border-t border-slate-800/60">
-          <span className="text-blue-400">🛡️ Base e Território Azul</span>
-          <span className="text-slate-500">| Fronteira Central |</span>
-          <span className="text-red-400">Território e Base Vermelha 🛡️</span>
+        {/* Barra de Tempo Animada */}
+        <div className="w-full bg-slate-800 rounded-full h-2 mb-4 overflow-hidden">
+          <div
+            className={`h-full transition-all duration-1000 ${
+              isReveal ? "bg-purple-500" : timer <= 5 ? "bg-red-500" : "bg-amber-400"
+            }`}
+            style={{ width: `${(timer / (isReveal ? 4 : 15)) * 100}%` }}
+          />
+        </div>
+
+        {/* Placar dos Times */}
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          {scores.map((team, idx) => (
+            <div
+              key={team.teamId || idx}
+              className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
+                team.teamId === engineState?.viewerTeamId
+                  ? "bg-slate-900 border-amber-500/60 shadow-lg shadow-amber-500/5"
+                  : "bg-slate-950 border-slate-800"
+              }`}
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="text-base">{team.emoji}</span>
+                <div>
+                  <span className="font-bold text-white block leading-tight">{team.name}</span>
+                  {team.teamId === engineState?.viewerTeamId && (
+                    <span className="text-[9px] text-amber-400 font-semibold">Sua Equipe</span>
+                  )}
+                </div>
+              </div>
+              <span className="font-mono text-base font-black text-amber-400">{team.score} pts</span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Banner de Feedback de Combate / Ações */}
-      {actionFeedback && (
-        <div className="p-2.5 bg-amber-500/20 border border-amber-500/50 rounded-xl text-amber-200 text-xs font-bold text-center animate-pulse flex items-center justify-center gap-2 mb-2 shadow-md">
-          <Info className="w-4 h-4 text-amber-400 shrink-0" />
-          <span>{actionFeedback}</span>
+      {/* FASE 1: ESCOLHA DA COLINA */}
+      {!isReveal && (
+        <div className="space-y-3 mb-4">
+          <div className="text-center mb-1">
+            <h2 className="text-sm font-bold text-white">Onde sua panelinha vai concentrar forças?</h2>
+            <p className="text-[11px] text-slate-400">A panelinha com mais membros leva todos os pontos do pote!</p>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2.5">
+            {/* Colina Alfa */}
+            <button
+              onClick={() => handleSelectHill("alfa")}
+              className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
+                selectedHill === "alfa"
+                  ? "bg-amber-500/15 border-amber-500 ring-2 ring-amber-400/50 shadow-xl"
+                  : "bg-slate-900 border-slate-800 hover:border-slate-700"
+              }`}
+            >
+              <Castle className="w-6 h-6 text-amber-400 mb-1" />
+              <span className="text-xs font-black text-white block">Alfa 🏰</span>
+              <div className="my-1.5">
+                <span className="text-lg font-black text-amber-400 font-mono block leading-none">{pots.alfa} pts</span>
+                {pots.alfa > 5 && (
+                  <span className="text-[9px] bg-red-950 border border-red-500 text-red-300 px-1 py-0.2 rounded font-black mt-1 inline-block animate-pulse">
+                    POTE ALTO!
+                  </span>
+                )}
+              </div>
+              <span className="text-[9px] text-slate-400">
+                Sua equipe: <strong className="text-amber-300">{mySuggestions.alfa || 0}</strong>
+              </span>
+            </button>
+
+            {/* Colina Bravo */}
+            <button
+              onClick={() => handleSelectHill("bravo")}
+              className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
+                selectedHill === "bravo"
+                  ? "bg-amber-500/15 border-amber-500 ring-2 ring-amber-400/50 shadow-xl"
+                  : "bg-slate-900 border-slate-800 hover:border-slate-700"
+              }`}
+            >
+              <Sword className="w-6 h-6 text-purple-400 mb-1" />
+              <span className="text-xs font-black text-white block">Bravo ⚔️</span>
+              <div className="my-1.5">
+                <span className="text-lg font-black text-purple-400 font-mono block leading-none">{pots.bravo} pts</span>
+                {pots.bravo > 3 && (
+                  <span className="text-[9px] bg-red-950 border border-red-500 text-red-300 px-1 py-0.2 rounded font-black mt-1 inline-block animate-pulse">
+                    POTE ALTO!
+                  </span>
+                )}
+              </div>
+              <span className="text-[9px] text-slate-400">
+                Sua equipe: <strong className="text-purple-300">{mySuggestions.bravo || 0}</strong>
+              </span>
+            </button>
+
+            {/* Colina Charlie */}
+            <button
+              onClick={() => handleSelectHill("charlie")}
+              className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
+                selectedHill === "charlie"
+                  ? "bg-amber-500/15 border-amber-500 ring-2 ring-amber-400/50 shadow-xl"
+                  : "bg-slate-900 border-slate-800 hover:border-slate-700"
+              }`}
+            >
+              <Shield className="w-6 h-6 text-blue-400 mb-1" />
+              <span className="text-xs font-black text-white block">Charlie 💎</span>
+              <div className="my-1.5">
+                <span className="text-lg font-black text-blue-400 font-mono block leading-none">{pots.charlie} pts</span>
+                {pots.charlie > 2 && (
+                  <span className="text-[9px] bg-red-950 border border-red-500 text-red-300 px-1 py-0.2 rounded font-black mt-1 inline-block animate-pulse">
+                    ACUMULADO
+                  </span>
+                )}
+              </div>
+              <span className="text-[9px] text-slate-400">
+                Sua equipe: <strong className="text-blue-300">{mySuggestions.charlie || 0}</strong>
+              </span>
+            </button>
+          </div>
+
+          {/* Toggle de Bomba Secreta */}
+          <div className="p-3 bg-slate-900/80 border border-slate-800 rounded-2xl flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Bomb className={`w-5 h-5 ${canUseBomb ? (armBomb ? "text-red-500 animate-bounce" : "text-amber-400") : "text-slate-600"}`} />
+              <div>
+                <span className="text-xs font-bold text-white block">
+                  {canUseBomb ? (armBomb ? "💣 BOMBA ARMADA NESTA COLINA!" : "Armar Bomba Secreta") : "Bomba Esgotada (1 por partida)"}
+                </span>
+                <span className="text-[10px] text-slate-400 block">
+                  {canUseBomb
+                    ? "Zera os pontos de todos e destrói o pote acumulado!"
+                    : "Você já usou sua única bomba nesta partida."}
+                </span>
+              </div>
+            </div>
+
+            <button
+              onClick={handleToggleBomb}
+              disabled={!canUseBomb}
+              className={`px-3 py-1.5 rounded-xl text-xs font-black transition ${
+                !canUseBomb
+                  ? "bg-slate-800 text-slate-600 cursor-not-allowed"
+                  : armBomb
+                  ? "bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-600/30"
+                  : "bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
+              }`}
+            >
+              {armBomb ? "Desarmar" : "Armar"}
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Grade da Arena Tática */}
-      <div className="bg-slate-950 border border-slate-800 rounded-3xl p-3 flex flex-col items-center justify-center overflow-x-auto mb-3 shadow-2xl">
-        <div
-          className="grid gap-1 bg-slate-900/40 p-2 rounded-2xl border border-slate-800/80"
-          style={{ gridTemplateColumns: `repeat(${width}, minmax(24px, 1fr))` }}
-        >
-          {Array.from({ length: height }).map((_, y) =>
-            Array.from({ length: width }).map((_, x) => {
-              const isObstacle = obstaclesSet.has(`${x},${y}`);
-              const isBlueBase = x < 2 && y >= 2 && y <= 5;
-              const isRedBase = x >= width - 2 && y >= 2 && y <= 5;
-              const isMid = x === Math.floor(width / 2) - 1 || x === Math.floor(width / 2);
-              const isBlueTerritory = x < Math.floor(width / 2);
+      {/* FASE 2: REVELAÇÃO DOS VOTOS */}
+      {isReveal && lastReport && (
+        <div className="p-4 bg-slate-900 border border-purple-500/50 rounded-2xl mb-4 space-y-3 shadow-xl">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+            <span className="text-xs font-bold text-purple-400 uppercase tracking-wide flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-purple-400" />
+              Resultado da Rodada {lastReport.round}
+            </span>
+            <span className="text-[10px] text-slate-400">Próxima rodada em {timer}s</span>
+          </div>
 
-              // Jogadores nesta célula
-              const playerOnCell = players.find((p) => p.x === x && p.y === y && !p.isRespawning);
-              const isBlueFlagHere = flags.blue?.x === x && flags.blue?.y === y && !flags.blue?.carrierId;
-              const isRedFlagHere = flags.red?.x === x && flags.red?.y === y && !flags.red?.carrierId;
-              const isBlueFlagDropped = isBlueFlagHere && flags.blue?.status === "dropped";
-              const isRedFlagDropped = isRedFlagHere && flags.red?.status === "dropped";
-
-              let cellBg = isBlueTerritory ? "bg-blue-950/20 border-blue-900/30" : "bg-red-950/20 border-red-900/30";
-
-              if (isObstacle) {
-                cellBg = "bg-slate-800/95 border-slate-700 shadow-inner";
-              } else if (isBlueBase) {
-                cellBg = "bg-blue-950/60 border-blue-800/80 shadow-md";
-              } else if (isRedBase) {
-                cellBg = "bg-red-950/60 border-red-800/80 shadow-md";
-              } else if (isMid) {
-                cellBg = "bg-slate-900/80 border-slate-800";
-              }
-
-              const isMe = Boolean(
-                playerOnCell &&
-                myPlayer &&
-                (playerOnCell.userJid === myPlayer.userJid ||
-                  (playerOnCell.username && playerOnCell.username === myPlayer.username))
-              );
-
-              return (
-                <div
-                  key={`${x}-${y}`}
-                  className={`w-7 h-7 sm:w-9 sm:h-9 rounded-lg border flex items-center justify-center text-xs relative transition-all ${cellBg} ${
-                    isMe ? "ring-2 ring-emerald-400 bg-emerald-500/20 z-20 scale-105" : ""
-                  }`}
-                  title={isObstacle ? "Obstáculo intransponível" : isBlueBase ? "Base Azul" : isRedBase ? "Base Vermelha" : `(${x},${y})`}
-                >
-                  {/* Obstáculo */}
-                  {isObstacle && (
-                    <span className="text-[11px] opacity-80 select-none">🧱</span>
-                  )}
-
-                  {/* Bandeira Azul */}
-                  {isBlueFlagHere && (
-                    <div className={`flex flex-col items-center justify-center z-10 ${isBlueFlagDropped ? "animate-pulse" : "animate-bounce"}`}>
-                      <span className="text-xs sm:text-sm drop-shadow-md">🚩</span>
-                      {isBlueFlagDropped && (
-                        <span className="text-[7px] font-black text-amber-300 bg-slate-950/90 px-0.5 rounded leading-none">NO CHÃO</span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Bandeira Vermelha */}
-                  {isRedFlagHere && (
-                    <div className={`flex flex-col items-center justify-center z-10 ${isRedFlagDropped ? "animate-pulse" : "animate-bounce"}`}>
-                      <span className="text-xs sm:text-sm drop-shadow-md">🚩</span>
-                      {isRedFlagDropped && (
-                        <span className="text-[7px] font-black text-amber-300 bg-slate-950/90 px-0.5 rounded leading-none">NO CHÃO</span>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Jogador na célula */}
-                  {playerOnCell && (
-                    <div className="relative flex flex-col items-center justify-center z-20">
-                      {isMe && (
-                        <span className="absolute -top-3 px-1 py-0.2 bg-emerald-500 text-[7px] font-black text-slate-950 rounded-sm shadow-md whitespace-nowrap">
-                          VOCÊ
-                        </span>
-                      )}
-                      <div
-                        className={`w-5 h-5 sm:w-6 sm:h-6 rounded-full flex items-center justify-center text-[10px] font-black shadow-lg transition-transform ${
-                          playerOnCell.team === "blue"
-                            ? "bg-blue-500 text-white border border-blue-300"
-                            : "bg-red-500 text-white border border-red-300"
-                        } ${playerOnCell.hasFlag ? "ring-2 ring-amber-400 animate-pulse scale-110 shadow-amber-400/50" : ""}`}
-                      >
-                        {playerOnCell.username.slice(0, 1).toUpperCase()}
-                      </div>
-                      {playerOnCell.hasFlag && (
-                        <span className="absolute -bottom-1 -right-1 text-[9px] drop-shadow-md animate-bounce">🚩</span>
-                      )}
-                    </div>
-                  )}
+          <div className="space-y-2">
+            {lastReport.roundResult?.reports?.map((rep, i) => (
+              <div
+                key={rep.hill || i}
+                className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs flex items-center justify-between"
+              >
+                <div>
+                  <span className="font-bold text-white uppercase block">{rep.hill}:</span>
+                  <span className="text-[11px] text-slate-300">{rep.message}</span>
                 </div>
-              );
-            })
-          )}
+                {rep.pointsAwarded && rep.pointsAwarded > 0 ? (
+                  <span className="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-500 text-emerald-300 font-mono font-bold text-xs">
+                    +{rep.pointsAwarded} pts
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-500 font-mono">0 pts</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Canal Tático Privado da Panelinha */}
+      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3 text-xs">
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-bold text-amber-400 uppercase text-[10px] tracking-wider flex items-center gap-1">
+            <Shield className="w-3.5 h-3.5" />
+            Canal Secreto da Panelinha (Inimigo não vê)
+          </span>
+          <span className="text-[10px] text-slate-500">Distribuição da Equipe</span>
         </div>
 
-        {/* Legenda rápida da arena */}
-        <div className="flex items-center justify-center gap-4 text-[10px] text-slate-400 mt-2">
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded bg-slate-800 border border-slate-700 inline-block text-[8px] leading-none text-center">🧱</span>
-            <span>Obstáculo</span>
+        {/* Resumo de Sugestões dos Colegas */}
+        <div className="flex items-center gap-2 mb-2.5">
+          <button
+            onClick={() => onSuggestHill("alfa")}
+            className="flex-1 py-1 px-2 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[11px] font-semibold text-slate-200 flex items-center justify-between"
+          >
+            <span>🏰 Alfa</span>
+            <span className="font-mono text-amber-400 font-bold">{mySuggestions.alfa || 0}</span>
+          </button>
+          <button
+            onClick={() => onSuggestHill("bravo")}
+            className="flex-1 py-1 px-2 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[11px] font-semibold text-slate-200 flex items-center justify-between"
+          >
+            <span>⚔️ Bravo</span>
+            <span className="font-mono text-purple-400 font-bold">{mySuggestions.bravo || 0}</span>
+          </button>
+          <button
+            onClick={() => onSuggestHill("charlie")}
+            className="flex-1 py-1 px-2 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[11px] font-semibold text-slate-200 flex items-center justify-between"
+          >
+            <span>💎 Charlie</span>
+            <span className="font-mono text-blue-400 font-bold">{mySuggestions.charlie || 0}</span>
+          </button>
+        </div>
+
+        {/* Mensagens rápidas */}
+        {myChat.length > 0 && (
+          <div className="bg-slate-950/80 rounded-xl p-2 mb-2 max-h-16 overflow-y-auto space-y-1 text-[11px]">
+            {myChat.slice(-3).map((c, i) => (
+              <p key={i} className="leading-tight">
+                <strong className="text-amber-400">{c.username}:</strong>{" "}
+                <span className="text-slate-300">{c.text}</span>
+              </p>
+            ))}
+          </div>
+        )}
+
+        <form onSubmit={handleSendChat} className="flex gap-1.5">
+          <input
+            type="text"
+            value={chatText}
+            onChange={(e) => setChatText(e.target.value)}
+            placeholder="Mensagem rápida para a equipe..."
+            className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-amber-500"
+          />
+          <button
+            type="submit"
+            className="p-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg transition"
+            title="Enviar"
+          >
+            <Send className="w-3.5 h-3.5" />
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// VIEW DO JOGO 3: 🚩 GRANDE GOLPE (ASSALTO AO COFRE / ROTAS)
+// ---------------------------------------------------------------------------
+type GrandeGolpeViewProps = {
+  engineState: EngineState | null;
+  currentUser: CurrentUser | null;
+  onVoteRoute: (route: string) => void;
+  onSuggestRoute: (route: string) => void;
+  onSendTeamMessage: (message: string) => void;
+};
+
+function GrandeGolpeView({
+  engineState,
+  currentUser: _currentUser,
+  onVoteRoute,
+  onSuggestRoute,
+  onSendTeamMessage,
+}: GrandeGolpeViewProps) {
+  const isReveal = engineState?.phase === "reveal";
+  const timer = engineState?.remainingSeconds ?? 15;
+  const currentRound = (engineState?.currentRound ?? 0) + 1;
+  const totalRounds = engineState?.totalRounds ?? 6;
+
+  const viewerTeamId = engineState?.viewerTeamId;
+  const attackingTeamId = engineState?.attackingTeamId;
+  const isAttacking = viewerTeamId && attackingTeamId === viewerTeamId;
+
+  const scores = engineState?.scores || [];
+  const myVote = engineState?.myCurrentVote;
+  const mySuggestions = engineState?.myTeamSuggestions || {};
+  const myChat = engineState?.myTeamChat || [];
+  const lastReport = engineState?.lastRoundReport;
+
+  const [selectedRoute, setSelectedRoute] = useState<string>("floresta");
+  const [chatText, setChatText] = useState("");
+
+  useEffect(() => {
+    if (myVote?.choice) {
+      setSelectedRoute(myVote.choice);
+    }
+  }, [myVote]);
+
+  const handleSelectRoute = (route: string) => {
+    if (isReveal) return;
+    setSelectedRoute(route);
+    onVoteRoute(route);
+    onSuggestRoute(route);
+  };
+
+  const handleSendChat = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatText.trim()) return;
+    onSendTeamMessage(chatText.trim());
+    setChatText("");
+  };
+
+  return (
+    <div className="flex-1 flex flex-col justify-between">
+      {/* Topo: Rodada, Cronômetro e Papel */}
+      <div>
+        <div className="flex items-center justify-between text-xs mb-2 text-slate-400">
+          <div className="flex items-center gap-1.5 font-bold">
+            <Flag className="w-4 h-4 text-amber-400" />
+            <span>Rodada {currentRound} de {totalRounds}</span>
+          </div>
+          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
+            isReveal ? "bg-purple-950 border border-purple-500 text-purple-300 animate-pulse" : "bg-amber-950 border border-amber-500/50 text-amber-300"
+          }`}>
+            {isReveal ? "💥 Revelação do Golpe!" : isAttacking ? "⚔️ Invasão Ativa" : "🛡️ Defesa Ativa"}
           </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full ring-1 ring-emerald-400 bg-emerald-500/20 inline-block" />
-            <span className="text-emerald-400 font-semibold">Você</span>
-          </span>
-          <span className="flex items-center gap-1">
-            <span>🚩</span>
-            <span>Bandeira</span>
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-500 inline-block" />
-            <span>Azul</span>
-          </span>
-          <span className="flex items-center gap-1">
-            <span className="w-2.5 h-2.5 rounded-full bg-red-500 inline-block" />
-            <span>Vermelho</span>
-          </span>
+        </div>
+
+        {/* Banner de Papel da Rodada */}
+        <div
+          className={`p-3 rounded-2xl border text-center mb-3 transition shadow-lg ${
+            isAttacking
+              ? "bg-red-950/40 border-red-500/60 shadow-red-500/5"
+              : "bg-blue-950/40 border-blue-500/60 shadow-blue-500/5"
+          }`}
+        >
+          <div className="flex items-center justify-center gap-2 mb-0.5">
+            {isAttacking ? (
+              <Sword className="w-4 h-4 text-red-400" />
+            ) : (
+              <Shield className="w-4 h-4 text-blue-400" />
+            )}
+            <h2 className={`text-sm font-black uppercase tracking-wide ${isAttacking ? "text-red-300" : "text-blue-300"}`}>
+              {isAttacking ? "Sua Panelinha está Atacando!" : "Sua Panelinha está Defendendo!"}
+            </h2>
+          </div>
+          <p className="text-[11px] text-slate-300">
+            {isAttacking
+              ? "Escolha uma rota para invadir a base rival e roubar relíquias!"
+              : "Escolha uma rota para montar guarda e emboscar os invasores!"}
+          </p>
+        </div>
+
+        {/* Barra de Tempo Animada */}
+        <div className="w-full bg-slate-800 rounded-full h-2 mb-4 overflow-hidden">
+          <div
+            className={`h-full transition-all duration-1000 ${
+              isReveal ? "bg-purple-500" : timer <= 5 ? "bg-red-500" : "bg-amber-400"
+            }`}
+            style={{ width: `${(timer / (isReveal ? 4 : 15)) * 100}%` }}
+          />
+        </div>
+
+        {/* Placar de Relíquias */}
+        <div className="grid grid-cols-2 gap-2 mb-4">
+          {scores.map((team, idx) => (
+            <div
+              key={team.teamId || idx}
+              className={`p-2.5 rounded-xl border flex items-center justify-between text-xs ${
+                team.teamId === viewerTeamId
+                  ? "bg-slate-900 border-amber-500/60 shadow-lg shadow-amber-500/5"
+                  : "bg-slate-950 border-slate-800"
+              }`}
+            >
+              <div className="flex items-center gap-1.5">
+                <span className="text-base">{team.emoji}</span>
+                <div>
+                  <span className="font-bold text-white block leading-tight">{team.name}</span>
+                  {team.teamId === viewerTeamId && (
+                    <span className="text-[9px] text-amber-400 font-semibold">Sua Equipe</span>
+                  )}
+                </div>
+              </div>
+              <span className="font-mono text-base font-black text-amber-400">{team.score} 💎</span>
+            </div>
+          ))}
         </div>
       </div>
 
-      {/* Controles Táticos (D-Pad para Celular e Teclado para PC) */}
-      <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-3 flex flex-col sm:flex-row items-center justify-between gap-3">
-        {/* D-Pad de Movimentação */}
-        <div className="grid grid-cols-3 gap-1.5 w-36 shrink-0">
-          <div />
-          <button
-            onClick={() => onMove("up")}
-            className="p-3 bg-slate-800 hover:bg-slate-700 active:bg-amber-500 active:text-slate-950 border border-slate-700 rounded-xl flex items-center justify-center text-slate-200 transition shadow-md"
-            title="Mover para Cima (W ou Seta Cima)"
-          >
-            <ArrowUp className="w-5 h-5" />
-          </button>
-          <div />
-          <button
-            onClick={() => onMove("left")}
-            className="p-3 bg-slate-800 hover:bg-slate-700 active:bg-amber-500 active:text-slate-950 border border-slate-700 rounded-xl flex items-center justify-center text-slate-200 transition shadow-md"
-            title="Mover para Esquerda (A ou Seta Esquerda)"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <button
-            onClick={() => onMove("down")}
-            className="p-3 bg-slate-800 hover:bg-slate-700 active:bg-amber-500 active:text-slate-950 border border-slate-700 rounded-xl flex items-center justify-center text-slate-200 transition shadow-md"
-            title="Mover para Baixo (S ou Seta Baixo)"
-          >
-            <ArrowDown className="w-5 h-5" />
-          </button>
-          <button
-            onClick={() => onMove("right")}
-            className="p-3 bg-slate-800 hover:bg-slate-700 active:bg-amber-500 active:text-slate-950 border border-slate-700 rounded-xl flex items-center justify-center text-slate-200 transition shadow-md"
-            title="Mover para Direita (D ou Seta Direita)"
-          >
-            <ArrowRight className="w-5 h-5" />
-          </button>
+      {/* FASE 1: ESCOLHA DA ROTA */}
+      {!isReveal && (
+        <div className="space-y-3 mb-4">
+          <div className="grid grid-cols-3 gap-2.5">
+            {/* Rota 1: Floresta */}
+            <button
+              onClick={() => handleSelectRoute("floresta")}
+              className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
+                selectedRoute === "floresta"
+                  ? "bg-emerald-500/15 border-emerald-500 ring-2 ring-emerald-400/50 shadow-xl"
+                  : "bg-slate-900 border-slate-800 hover:border-slate-700"
+              }`}
+            >
+              <span className="text-2xl block mb-1">🌲</span>
+              <span className="text-xs font-black text-white block">Floresta</span>
+              <div className="my-1.5">
+                <span className="text-lg font-black text-emerald-400 font-mono block leading-none">1 💎</span>
+                <span className="text-[9px] text-slate-400 block mt-0.5">Rota Discreta</span>
+              </div>
+              <span className="text-[9px] text-slate-400">
+                Sua equipe: <strong className="text-emerald-300">{mySuggestions.floresta || 0}</strong>
+              </span>
+            </button>
+
+            {/* Rota 2: Túnel */}
+            <button
+              onClick={() => handleSelectRoute("tunel")}
+              className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
+                selectedRoute === "tunel"
+                  ? "bg-purple-500/15 border-purple-500 ring-2 ring-purple-400/50 shadow-xl"
+                  : "bg-slate-900 border-slate-800 hover:border-slate-700"
+              }`}
+            >
+              <span className="text-2xl block mb-1">🏰</span>
+              <span className="text-xs font-black text-white block">Túnel</span>
+              <div className="my-1.5">
+                <span className="text-lg font-black text-purple-400 font-mono block leading-none">2 💎</span>
+                <span className="text-[9px] text-slate-400 block mt-0.5">Equilibrada</span>
+              </div>
+              <span className="text-[9px] text-slate-400">
+                Sua equipe: <strong className="text-purple-300">{mySuggestions.tunel || 0}</strong>
+              </span>
+            </button>
+
+            {/* Rota 3: Ponte */}
+            <button
+              onClick={() => handleSelectRoute("ponte")}
+              className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
+                selectedRoute === "ponte"
+                  ? "bg-amber-500/15 border-amber-500 ring-2 ring-amber-400/50 shadow-xl"
+                  : "bg-slate-900 border-slate-800 hover:border-slate-700"
+              }`}
+            >
+              <span className="text-2xl block mb-1">🌉</span>
+              <span className="text-xs font-black text-white block">Ponte</span>
+              <div className="my-1.5">
+                <span className="text-lg font-black text-amber-400 font-mono block leading-none">3 💎</span>
+                <span className="text-[9px] text-red-400 font-bold block mt-0.5">Alto Risco!</span>
+              </div>
+              <span className="text-[9px] text-slate-400">
+                Sua equipe: <strong className="text-amber-300">{mySuggestions.ponte || 0}</strong>
+              </span>
+            </button>
+          </div>
         </div>
+      )}
 
-        {/* Botão de Ataque Tackle com Feedback Inteligente */}
-        <div className="flex-1 w-full flex flex-col items-center sm:items-end gap-1.5">
-          <button
-            onClick={() => {
-              if (!hasAdjacentEnemy && onActionFeedback) {
-                onActionFeedback("Aproxime-se de um oponente (ao lado) para usar o Tackle!");
-              }
-              onTackle();
-            }}
-            className={`w-full sm:w-auto px-6 py-4 font-black rounded-2xl flex items-center justify-center gap-2.5 text-sm transition-all shadow-xl ${
-              hasAdjacentEnemy
-                ? "bg-red-600 hover:bg-red-500 active:bg-red-700 text-white shadow-red-600/50 ring-2 ring-red-400 animate-pulse"
-                : "bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-300 border border-slate-700"
-            }`}
-            title="Derrubar inimigo adjacente (Espaço ou F)"
-          >
-            <Sword className={`w-5 h-5 ${hasAdjacentEnemy ? "text-white animate-bounce" : "text-slate-400"}`} />
-            <span>{hasAdjacentEnemy ? "TACKLE (INIMIGO PERTO!)" : "Tackle (Ataque)"}</span>
-          </button>
+      {/* FASE 2: REVELAÇÃO DO CONFRONTO */}
+      {isReveal && lastReport && (
+        <div className="p-4 bg-slate-900 border border-purple-500/50 rounded-2xl mb-4 space-y-3 shadow-xl">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+            <span className="text-xs font-bold text-purple-400 uppercase tracking-wide flex items-center gap-1.5">
+              <Sparkles className="w-4 h-4 text-purple-400" />
+              Resultado da Invasão (Rodada {lastReport.round})
+            </span>
+            <span className="text-[10px] text-slate-400">Próxima em {timer}s</span>
+          </div>
 
-          <span className="text-[10px] text-slate-400 font-mono text-center sm:text-right">
-            Teclado: <kbd className="bg-slate-950 px-1 py-0.5 rounded border border-slate-800 text-amber-400">WASD</kbd> / <kbd className="bg-slate-950 px-1 py-0.5 rounded border border-slate-800 text-amber-400">Setas</kbd> • Tackle: <kbd className="bg-slate-950 px-1 py-0.5 rounded border border-slate-800 text-red-400">Espaço</kbd>
+          <div className="space-y-2">
+            {lastReport.roundResult?.routes?.map((r, i) => (
+              <div
+                key={r.route || i}
+                className="p-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs flex items-center justify-between"
+              >
+                <div>
+                  <span className="font-bold text-white uppercase block">{r.route}:</span>
+                  <span className="text-[11px] text-slate-300">{r.message}</span>
+                </div>
+                {r.pointsEarned && r.pointsEarned > 0 ? (
+                  <span className="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-500 text-emerald-300 font-mono font-bold text-xs">
+                    +{r.pointsEarned} 💎
+                  </span>
+                ) : (
+                  <span className="text-[10px] text-slate-500 font-mono">0 💎</span>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Canal Tático Privado da Panelinha */}
+      <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3 text-xs">
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-bold text-amber-400 uppercase text-[10px] tracking-wider flex items-center gap-1">
+            <Shield className="w-3.5 h-3.5" />
+            Canal Secreto da Panelinha (Inimigo não vê)
           </span>
+          <span className="text-[10px] text-slate-500">Distribuição da Equipe</span>
         </div>
+
+        {/* Resumo de Sugestões dos Colegas */}
+        <div className="flex items-center gap-2 mb-2.5">
+          <button
+            onClick={() => onSuggestRoute("floresta")}
+            className="flex-1 py-1 px-2 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[11px] font-semibold text-slate-200 flex items-center justify-between"
+          >
+            <span>🌲 Floresta</span>
+            <span className="font-mono text-emerald-400 font-bold">{mySuggestions.floresta || 0}</span>
+          </button>
+          <button
+            onClick={() => onSuggestRoute("tunel")}
+            className="flex-1 py-1 px-2 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[11px] font-semibold text-slate-200 flex items-center justify-between"
+          >
+            <span>🏰 Túnel</span>
+            <span className="font-mono text-purple-400 font-bold">{mySuggestions.tunel || 0}</span>
+          </button>
+          <button
+            onClick={() => onSuggestRoute("ponte")}
+            className="flex-1 py-1 px-2 rounded-lg bg-slate-950 hover:bg-slate-800 border border-slate-800 text-[11px] font-semibold text-slate-200 flex items-center justify-between"
+          >
+            <span>🌉 Ponte</span>
+            <span className="font-mono text-amber-400 font-bold">{mySuggestions.ponte || 0}</span>
+          </button>
+        </div>
+
+        {/* Mensagens rápidas */}
+        {myChat.length > 0 && (
+          <div className="bg-slate-950/80 rounded-xl p-2 mb-2 max-h-16 overflow-y-auto space-y-1 text-[11px]">
+            {myChat.slice(-3).map((c, i) => (
+              <p key={i} className="leading-tight">
+                <strong className="text-amber-400">{c.username}:</strong>{" "}
+                <span className="text-slate-300">{c.text}</span>
+              </p>
+            ))}
+          </div>
+        )}
+
+        <form onSubmit={handleSendChat} className="flex gap-1.5">
+          <input
+            type="text"
+            value={chatText}
+            onChange={(e) => setChatText(e.target.value)}
+            placeholder="Mensagem rápida para a equipe..."
+            className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-amber-500"
+          />
+          <button
+            type="submit"
+            className="p-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg transition"
+            title="Enviar"
+          >
+            <Send className="w-3.5 h-3.5" />
+          </button>
+        </form>
       </div>
     </div>
   );
@@ -1311,77 +1535,78 @@ function GridCtfView({
 // COMPONENTES DE REGRAS E LOBBY PRÉ-JOGO
 // ---------------------------------------------------------------------------
 
-function GridCtfRulesSection() {
+function GrandeGolpeRulesSection() {
   return (
     <div className="space-y-4">
       <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1">
         <h3 className="font-bold text-amber-400 flex items-center gap-1.5 text-xs uppercase tracking-wide">
           <Target className="w-4 h-4 text-amber-400" />
-          <span>Objetivo do Grid CTF</span>
+          <span>Objetivo do Grande Golpe</span>
         </h3>
         <p className="text-slate-300 leading-relaxed text-xs">
-          Invada o território do time adversário, capture a bandeira inimiga (🚩) e leve-a de volta até a sua base. O primeiro time a fazer <strong className="text-white">3 pontos</strong> vence a partida!
+          Uma batalha tática assimétrica entre 2 panelinhas dividida em <strong className="text-white">6 rodadas de 15 segundos</strong>. Cada time ataca 3 vezes e defende 3 vezes!
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <h4 className="font-bold text-amber-400 flex items-center gap-1.5 text-xs">
+          <span>🌉 As 3 Rotas de Invasão</span>
+        </h4>
+        <p className="text-slate-300 leading-relaxed text-xs">
+          • <strong className="text-emerald-400">🌲 Floresta:</strong> Rota discreta e segura. Rende <strong className="text-white">1 Relíquia</strong> por invasor não barrado.<br />
+          • <strong className="text-purple-400">🏰 Túnel:</strong> Rota subterrânea equilibrada. Rende <strong className="text-white">2 Relíquias</strong> por invasor não barrado.<br />
+          • <strong className="text-amber-400">🌉 Ponte:</strong> Rota aberta de alto risco. Rende <strong className="text-white">3 Relíquias</strong> por invasor não barrado!
         </p>
       </div>
 
       <div className="space-y-1.5">
         <h4 className="font-bold text-blue-400 flex items-center gap-1.5 text-xs">
-          <Flag className="w-3.5 h-3.5" />
-          <span>A Arena e as Bases</span>
+          <Shield className="w-3.5 h-3.5" />
+          <span>Emboscadas e Bloqueios</span>
         </h4>
         <p className="text-slate-300 leading-relaxed text-xs">
-          • <strong className="text-blue-400">Lado Esquerdo</strong>: Base e território do Time Azul.<br />
-          • <strong className="text-red-400">Lado Direito</strong>: Base e território do Time Vermelho.<br />
-          • <strong className="text-slate-300">Blocos com Tijolo (🧱)</strong>: Paredes táticas intransponíveis.
-        </p>
-      </div>
-
-      <div className="space-y-1.5">
-        <h4 className="font-bold text-red-400 flex items-center gap-1.5 text-xs">
-          <Sword className="w-3.5 h-3.5" />
-          <span>Combate & Tackle</span>
-        </h4>
-        <p className="text-slate-300 leading-relaxed text-xs">
-          • <strong>Em território amigo</strong>: Você tem vantagem defensiva! Pode atropelar ou usar Tackle em qualquer invasor inimigo ao lado.<br />
-          • <strong>Em território inimigo</strong>: Você é invasor e só pode derrubar o adversário se ele estiver carregando a sua bandeira!<br />
-          • <strong>Ao sofrer Tackle</strong>: O jogador derrubado larga a bandeira no chão e volta para a base por 3 segundos.
-        </p>
-      </div>
-
-      <div className="space-y-1.5">
-        <h4 className="font-bold text-purple-400 flex items-center gap-1.5 text-xs">
-          <Zap className="w-3.5 h-3.5" />
-          <span>Controles</span>
-        </h4>
-        <p className="text-slate-300 leading-relaxed text-xs">
-          • <strong>Computador</strong>: <kbd className="bg-slate-950 px-1 py-0.5 rounded border border-slate-800 text-amber-400">W, A, S, D</kbd> ou <kbd className="bg-slate-950 px-1 py-0.5 rounded border border-slate-800 text-amber-400">Setas</kbd> para mover. <kbd className="bg-slate-950 px-1 py-0.5 rounded border border-slate-800 text-red-400">Espaço</kbd> ou <kbd className="bg-slate-950 px-1 py-0.5 rounded border border-slate-800 text-red-400">F</kbd> para Tackle.<br />
-          • <strong>Celular</strong>: Use os botões direcionais e o botão vermelho de Tackle.
+          • Cada guardião defensor na rota barra <strong className="text-white">1 invasor</strong>.<br />
+          • Invasores não barrados roubam as relíquias correspondentes à rota!<br />
+          • Quem tiver mais relíquias roubadas ao final das 6 rodadas vence a disputa!
         </p>
       </div>
     </div>
   );
 }
 
-function KingOfTheHillRulesSection() {
+function ColinasRulesSection() {
   return (
     <div className="space-y-4">
       <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1">
         <h3 className="font-bold text-amber-400 flex items-center gap-1.5 text-xs uppercase tracking-wide">
           <Target className="w-4 h-4 text-amber-400" />
-          <span>Objetivo do King of the Hill</span>
+          <span>Objetivo do Rei das Três Colinas</span>
         </h3>
         <p className="text-slate-300 leading-relaxed text-xs">
-          Conquiste e defenda as 3 zonas estratégicas (Alfa, Bravo e Charlie) para somar controle para sua panelinha. A primeira a atingir <strong className="text-white">100% de controle</strong> vence!
+          Disputa simultânea em <strong className="text-white">6 rodadas de 15 segundos</strong> pelas colinas Alfa, Bravo e Charlie. A panelinha com mais membros na colina leva todo o pote!
         </p>
       </div>
+
       <div className="space-y-1.5">
-        <h4 className="font-bold text-purple-400 flex items-center gap-1.5 text-xs">
-          <Flame className="w-3.5 h-3.5" />
-          <span>Habilidades</span>
+        <h4 className="font-bold text-amber-400 flex items-center gap-1.5 text-xs">
+          <span>🏰 As 3 Colinas & Potes Acumulados</span>
         </h4>
         <p className="text-slate-300 leading-relaxed text-xs">
-          • <strong>Empurrão</strong>: Afasta adversários para fora da zona de controle.<br />
-          • <strong>Escudo</strong>: Bloqueia empurrões por alguns segundos.
+          • <strong className="text-amber-400">🏰 Alfa:</strong> Base 5 pontos (Disputada por todos).<br />
+          • <strong className="text-purple-400">⚔️ Bravo:</strong> Base 3 pontos (Meio-termo tático).<br />
+          • <strong className="text-blue-400">💎 Charlie:</strong> Base 2 pontos (Refúgio seguro).<br />
+          • <strong className="text-white">Empates acumulam:</strong> Se a colina empatar, ninguém pontua e o valor dobra na rodada seguinte!
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <h4 className="font-bold text-red-400 flex items-center gap-1.5 text-xs">
+          <Bomb className="w-3.5 h-3.5" />
+          <span>A Bomba Secreta</span>
+        </h4>
+        <p className="text-slate-300 leading-relaxed text-xs">
+          • Cada jogador possui <strong className="text-white">1 Bomba secreta</strong> para toda a partida.<br />
+          • Uma colina com bomba explode: ninguém pontua e o pote acumulado é destruído!
         </p>
       </div>
     </div>
@@ -1422,7 +1647,6 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-4 sm:p-6 select-none max-w-2xl mx-auto w-full">
-      {/* Topo do Lobby */}
       <div className="text-center pt-2 pb-4 border-b border-slate-800/80">
         <div className="inline-flex items-center gap-2 px-3 py-1 bg-amber-500/10 border border-amber-500/30 rounded-full text-amber-400 text-xs font-bold uppercase tracking-wider mb-2">
           <Sparkles className="w-3.5 h-3.5 animate-spin" />
@@ -1434,7 +1658,6 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
         </h1>
         <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-md mx-auto">{room.description}</p>
 
-        {/* Premiação */}
         <div className="mt-3 inline-flex items-center gap-2 px-4 py-1.5 bg-slate-900 border border-amber-500/40 rounded-xl text-xs">
           <Trophy className="w-4 h-4 text-amber-400" />
           <span className="text-slate-300">Prêmio no cofre da panelinha campeã:</span>
@@ -1442,7 +1665,6 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
         </div>
       </div>
 
-      {/* CRONÔMETRO REGRESSIVO ANIMADO GIGANTE */}
       <div className="my-5">
         <div
           className={`p-6 rounded-3xl border text-center transition-all shadow-2xl relative overflow-hidden ${
@@ -1472,7 +1694,6 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
             </span>
           </div>
 
-          {/* Contador Gigante */}
           <div className="my-2">
             {isImminent ? (
               <div className="text-6xl sm:text-7xl font-black text-red-400 animate-bounce tracking-tight font-mono">
@@ -1491,7 +1712,6 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
               : "Todos os jogadores conectados iniciarão a partida automaticamente nesta tela."}
           </p>
 
-          {/* Barra de Progresso visual */}
           {countdown !== null && (
             <div className="w-full bg-slate-950 rounded-full h-2 mt-4 overflow-hidden border border-slate-800">
               <div
@@ -1509,7 +1729,6 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
         </div>
       </div>
 
-      {/* CARD DO JOGADOR LOGADO */}
       {currentUser && (
         <div className="bg-slate-900/70 border border-slate-800 rounded-2xl p-3.5 mb-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -1535,7 +1754,6 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
         </div>
       )}
 
-      {/* ABAS: COMO JOGAR (REGRAS) / JOGADORES NA SALA */}
       <div className="flex-1 flex flex-col">
         <div className="flex items-center gap-2 mb-3">
           <button
@@ -1562,12 +1780,11 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
           </button>
         </div>
 
-        {/* CONTEÚDO DA ABA */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 sm:p-5 overflow-y-auto max-h-72">
           {activeTab === "tutorial" && (
             <>
-              {room.gameType === "grid_ctf" && <GridCtfRulesSection />}
-              {room.gameType === "king_of_the_hill" && <KingOfTheHillRulesSection />}
+              {room.gameType === "grid_ctf" && <GrandeGolpeRulesSection />}
+              {room.gameType === "king_of_the_hill" && <ColinasRulesSection />}
               {room.gameType === "quiz_royale" && <QuizRoyaleRulesSection />}
             </>
           )}
@@ -1597,121 +1814,9 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
         </div>
       </div>
 
-      {/* Rodapé informativo */}
       <footer className="pt-3 text-center text-[11px] text-slate-500">
         Esta partida iniciará automaticamente assim que o cronômetro zerar. Não feche esta tela.
       </footer>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// VIEW DO KING OF THE HILL (Domínio das 3 Zonas)
-// ---------------------------------------------------------------------------
-type KingOfTheHillViewProps = {
-  engineState: EngineState | null;
-  currentUser: CurrentUser | null;
-  onEnterZone: (zoneId: string) => void;
-  onLeaveZone: (zoneId: string) => void;
-  onUseAbility: (ability: string) => void;
-};
-
-function KingOfTheHillView({
-  engineState,
-  currentUser,
-  onEnterZone,
-  onLeaveZone,
-  onUseAbility,
-}: KingOfTheHillViewProps) {
-  const zones = engineState?.zones || {};
-  const factionProgress = engineState?.factionProgress || {};
-  const myPlayer = engineState?.players?.find(
-    (p) =>
-      (currentUser?.userJid && p.userJid === currentUser.userJid) ||
-      (currentUser?.username && p.username === currentUser.username)
-  );
-  const currentZone = myPlayer?.currentZoneId || engineState?.currentZone || null;
-
-  return (
-    <div className="flex-1 flex flex-col justify-between">
-      {/* Barras de Progresso de Domínio */}
-      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 mb-4">
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Progresso de Domínio</h3>
-        <div className="space-y-2">
-          {Object.entries(factionProgress).map(([fId, data]) => (
-            <div key={fId} className="text-xs">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-bold text-slate-200">{data.name}</span>
-                <span className="font-mono text-amber-400 font-bold">{data.percent}%</span>
-              </div>
-              <div className="w-full bg-slate-950 rounded-full h-3 overflow-hidden border border-slate-800">
-                <div
-                  className="h-full bg-gradient-to-r from-purple-500 to-amber-500 transition-all duration-1000"
-                  style={{ width: `${data.percent}%` }}
-                />
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* As 3 Zonas Estratégicas (A, B, C) */}
-      <div className="grid grid-cols-3 gap-2.5 mb-6">
-        {["A", "B", "C"].map((zoneLetter) => {
-          const zInfo = zones[zoneLetter] || {};
-          const isUserHere = currentZone === zoneLetter;
-
-          return (
-            <div
-              key={zoneLetter}
-              className={`p-4 rounded-2xl border text-center transition ${
-                isUserHere
-                  ? "bg-amber-500/10 border-amber-500 shadow-lg shadow-amber-500/10"
-                  : "bg-slate-900 border-slate-800"
-              }`}
-            >
-              <span className="text-2xl font-black text-white block mb-1">Zona {zoneLetter}</span>
-              <span className="text-[10px] uppercase font-bold text-slate-400 block mb-3">
-                {zInfo.contested ? "⚠️ Em Disputa" : zInfo.controllingFactionName || "Neutra"}
-              </span>
-
-              {isUserHere ? (
-                <button
-                  onClick={() => onLeaveZone(zoneLetter)}
-                  className="w-full py-2 bg-red-950/60 border border-red-800/80 hover:bg-red-900 text-red-300 font-bold text-xs rounded-xl"
-                >
-                  Sair
-                </button>
-              ) : (
-                <button
-                  onClick={() => onEnterZone(zoneLetter)}
-                  className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs rounded-xl"
-                >
-                  Ocupar
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Habilidades Rápidas */}
-      <div className="flex items-center gap-3">
-        <button
-          onClick={() => onUseAbility("push")}
-          className="flex-1 py-3.5 bg-purple-600 hover:bg-purple-500 active:bg-purple-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-purple-600/20"
-        >
-          <Flame className="w-4 h-4" />
-          <span>Empurrão</span>
-        </button>
-        <button
-          onClick={() => onUseAbility("shield")}
-          className="flex-1 py-3.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20"
-        >
-          <Shield className="w-4 h-4" />
-          <span>Escudo</span>
-        </button>
-      </div>
     </div>
   );
 }

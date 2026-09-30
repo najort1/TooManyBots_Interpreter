@@ -165,9 +165,15 @@ export function createGameRoutes({
         sendJson(res, 404, { ok: false, error: 'room_not_found', message: 'Sala não encontrada.' });
         return true;
       }
+
+      const authHeader = String(req.headers?.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      const headerToken = String(req.headers?.['x-game-token'] || '').trim();
+      const token = authHeader || headerToken || null;
+      const playerSession = token ? authService.resolveToken(token) : null;
+
       sendJson(res, 200, {
         ok: true,
-        room: gameManager.publicRoomState(room),
+        room: gameManager.publicRoomState(room, playerSession),
       });
       return true;
     }
@@ -223,8 +229,8 @@ export function createGameRoutes({
         const body = await readBody(req);
 
         // Extrai token do header ou do body
-        const authHeader = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-        const headerToken = String(req.headers['x-game-token'] || '').trim();
+        const authHeader = String(req.headers?.authorization || '').replace(/^Bearer\s+/i, '').trim();
+        const headerToken = String(req.headers?.['x-game-token'] || '').trim();
         const token = authHeader || headerToken || body?.token;
 
         const playerSession = authService.resolveToken(token);
@@ -237,7 +243,7 @@ export function createGameRoutes({
         const activeRoom = gameManager.getRoom(roomId);
         sendJson(res, result.ok ? 200 : 400, {
           ...result,
-          room: activeRoom ? gameManager.publicRoomState(activeRoom) : null,
+          room: activeRoom ? gameManager.publicRoomState(activeRoom, playerSession) : null,
         });
         return true;
       } catch (err) {
