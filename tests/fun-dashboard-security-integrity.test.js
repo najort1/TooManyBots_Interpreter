@@ -219,6 +219,8 @@ test('dashboard security: bypass de ownership, rotas admin e mascaramento públi
       { method: 'POST', path: '/api/fun/chaos/trigger', body: { scope: scopeKey } },
       { method: 'PUT', path: `/api/fun/groups/${encodeURIComponent(scopeKey)}/settings`, body: { enabled: false } },
       { method: 'POST', path: `/api/fun/groups/${encodeURIComponent(scopeKey)}/settings`, body: { enabled: true } },
+      { method: 'POST', path: '/api/fun/llm/config', body: { zenEnabled: false } },
+      { method: 'POST', path: '/api/fun/config', body: { prefix: '!' } },
     ];
 
     for (const route of adminRoutes) {

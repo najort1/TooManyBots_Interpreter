@@ -231,6 +231,22 @@ export function createFunFactionRepository({ getDatabase = getDb } = {}) {
     return { ok: true, faction: getById(member.factionId), amount: value };
   }
 
+  function depositToVault({ factionId, amount, now = Date.now() }) {
+    ensureSchema();
+    const value = Math.floor(Number(amount) || 0);
+    if (!factionId || value <= 0) return { ok: false, reason: 'invalid-amount' };
+
+    const db = getDatabase();
+    const res = db.prepare(
+      `UPDATE ${ANALYTICS_SCHEMA}.fun_factions
+       SET vault_coins = vault_coins + ?, updated_at = ?
+       WHERE id = ?`
+    ).run(value, Number(now) || Date.now(), factionId);
+
+    if (res.changes === 0) return { ok: false, reason: 'faction-not-found' };
+    return { ok: true, faction: getById(factionId), amount: value };
+  }
+
   function getUserFaction(scopeKey, userJid) {
     const member = getMember(scopeKey, userJid);
     if (!member) return null;
@@ -250,6 +266,7 @@ export function createFunFactionRepository({ getDatabase = getDb } = {}) {
     joinFaction,
     leaveFaction,
     donateToVault,
+    depositToVault,
     getUserFaction,
     normalizeFactionNameKey,
   };
