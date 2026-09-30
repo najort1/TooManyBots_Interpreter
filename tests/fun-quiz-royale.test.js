@@ -9,6 +9,9 @@ import {
 } from '../fun/games/engines/quizRoyaleEngine.js';
 import { createGameManager, GAME_TYPES, ROOM_STATUS } from '../fun/games/gameManager.js';
 
+// Desativa chamadas reais externas de LLM para evitar timeout de rede nos testes
+process.env.FUN_DISABLE_LIVE_LLM = '1';
+
 describe('Quiz Royale das Panelinhas (Engine & Integration)', () => {
   // Mock utilitário de sala para os testes de unidade do motor
   function createMockRoom({ playerCount = 4, factionCount = 2 } = {}) {
@@ -218,13 +221,14 @@ describe('Quiz Royale das Panelinhas (Engine & Integration)', () => {
 
     assert.equal(res1.ok, true);
     assert.equal(res1.isCorrect, true);
-    // Pontos = 100 base + bônus velocidade (14/15 * 50 = 47)
+    // Pontos individuais = 100 base + bônus velocidade (14/15 * 50 = 47)
     assert.ok(res1.pointsEarned >= 140, `Pontos com bônus devem ser >= 140, recebido: ${res1.pointsEarned}`);
     assert.equal(player1.score, res1.pointsEarned);
 
-    // Verifica agregação na panelinha do jogador 1
+    // Na nova arquitetura, o score da panelinha NÃO sobe no meio da pergunta (evita vazamento em tempo real)
+    // Ele será computado no momento da revelação pela média dos membros elegíveis
     const fac1 = room.factions.get(player1.faction.id);
-    assert.equal(fac1.score, res1.pointsEarned);
+    assert.equal(fac1.score, 0, 'Score da facção deve permanecer 0 durante a pergunta para não vazar a resposta');
 
     // 4. Jogador 1 tenta responder de novo na mesma pergunta -> DEVE ser bloqueado
     const resDuplicate = await engine.handleAction(player1Session, {
@@ -414,5 +418,234 @@ describe('Quiz Royale das Panelinhas (Engine & Integration)', () => {
     assert.equal(room.status, ROOM_STATUS.FINISHED);
     assert.equal(room.winnerFaction.id, fac1.id);
     assert.equal(mockVaultCoins, 2000, 'Cofre da panelinha vencedora deve receber o prêmio de 2000');
+  });
+
+  test('Mecânica Coletiva: Pontuação da Panelinha = Média dos Membros Elegíveis Congelados', async () => {
+    let currentTime = 1000;
+    const now = () => currentTime;
+    // 2 Panelinhas:
+    // Panelinha 1 (fac-1) tem 4 jogadores (J1, J2, J3, J4)
+    // Panelinha 2 (fac-2) tem 1 jogador (J5)
+    const room = {
+      id: 'room-average-test',
+      scopeKey: 'test-group@g.us',
+      gameType: GAME_TYPES.QUIZ_ROYALE,
+      title: 'Quiz Royale Média',
+      prize: 1000,
+      status: ROOM_STATUS.IN_PROGRESS,
+      players: new Map(),
+      factions: new Map(),
+      clients: new Set(),
+      gameManager: {
+        broadcast() {},
+        async finishGame() {},
+      },
+    };
+
+    room.factions.set('fac-1', { id: 'fac-1', name: 'Esquadrão 4', emoji: '🦅', score: 0, members: [] });
+    room.factions.set('fac-2', { id: 'fac-2', name: 'Lobo Solitário', emoji: '🐺', score: 0, members: [] });
+
+    // 4 membros na fac-1
+    for (let i = 1; i <= 4; i++) {
+      const jid = `p${i}@s.whatsapp.net`;
+      room.factions.get('fac-1').members.push(jid);
+      room.players.set(jid, {
+        userJid: jid,
+        username: `Jogador_${i}`,
+        faction: { id: 'fac-1', name: 'Esquadrão 4', emoji: '🦅' },
+        score: 0,
+      });
+    }
+
+    // 1 membro na fac-2
+    const jid5 = 'p5@s.whatsapp.net';
+    room.factions.get('fac-2').members.push(jid5);
+    room.players.set(jid5, {
+      userJid: jid5,
+      username: 'Jogador_5',
+      faction: { id: 'fac-2', name: 'Lobo Solitário', emoji: '🐺' },
+      score: 0,
+    });
+
+    const engine = createQuizRoyaleEngine(room, {
+      now,
+      totalRounds: 7,
+      generateZen: async () => JSON.stringify({ questions: FALLBACK_QUESTIONS.slice(0, 7) }),
+    });
+
+    await engine.start();
+    const q0 = engine.getQuestions()[0];
+
+    // Cenário:
+    // Na fac-1 (4 membros elegíveis):
+    // Jogador 1 acerta rápido: 140 pts
+    // Jogador 2 acerta médio: 120 pts
+    // Jogador 3 erra: 0 pts
+    // Jogador 4 erra: 0 pts
+    // Soma = 140 + 120 + 0 + 0 = 260
+    // Média da Facção 1 = 260 / 4 = 65 pontos!
+    currentTime = 2000;
+    await engine.handleAction(room.players.get('p1@s.whatsapp.net'), { action: 'answer', questionIndex: 0, choiceIndex: q0.correctIndex });
+    currentTime = 5000;
+    await engine.handleAction(room.players.get('p2@s.whatsapp.net'), { action: 'answer', questionIndex: 0, choiceIndex: q0.correctIndex });
+    await engine.handleAction(room.players.get('p3@s.whatsapp.net'), { action: 'answer', questionIndex: 0, choiceIndex: (q0.correctIndex + 1) % 4 });
+    await engine.handleAction(room.players.get('p4@s.whatsapp.net'), { action: 'answer', questionIndex: 0, choiceIndex: (q0.correctIndex + 2) % 4 });
+
+    // Na fac-2 (1 membro elegível):
+    // Jogador 5 acerta com 140 pts
+    // Média da Facção 2 = 140 / 1 = 140 pontos!
+    currentTime = 2000;
+    await engine.handleAction(room.players.get('p5@s.whatsapp.net'), { action: 'answer', questionIndex: 0, choiceIndex: q0.correctIndex });
+
+    // Como todos os 5 jogadores responderam, transiciona para REVEAL
+    assert.equal(engine.getPhase(), QUIZ_PHASES.REVEAL);
+
+    const fac1 = room.factions.get('fac-1');
+    const fac2 = room.factions.get('fac-2');
+
+    // Asserções da nova lógica:
+    // Scores individuais preservados:
+    assert.ok(room.players.get('p1@s.whatsapp.net').score >= 135);
+    assert.ok(room.players.get('p2@s.whatsapp.net').score >= 115);
+    assert.equal(room.players.get('p3@s.whatsapp.net').score, 0);
+    assert.equal(room.players.get('p4@s.whatsapp.net').score, 0);
+    assert.ok(room.players.get('p5@s.whatsapp.net').score >= 135);
+
+    // Score coletivo pela média dos membros elegíveis:
+    const expectedFac1 = Math.round((room.players.get('p1@s.whatsapp.net').score + room.players.get('p2@s.whatsapp.net').score) / 4);
+    assert.equal(fac1.score, expectedFac1, `Facção 1 com 4 membros deve receber média exata: esperado ${expectedFac1}, obtido ${fac1.score}`);
+
+    const expectedFac2 = Math.round(room.players.get('p5@s.whatsapp.net').score / 1);
+    assert.equal(fac2.score, expectedFac2, `Facção 2 com 1 membro deve receber sua média integral: esperado ${expectedFac2}, obtido ${fac2.score}`);
+
+    // Verifica que o estado público do reveal expõe as estatísticas detalhadas de facção
+    const revealState = engine.getPublicState();
+    assert.ok(revealState.roundStats.factionStats, 'roundStats deve conter factionStats detalhado');
+    const f1Stats = revealState.roundStats.factionStats['fac-1'];
+    assert.equal(f1Stats.eligibleCount, 4);
+    assert.equal(f1Stats.correctCount, 2);
+    assert.equal(f1Stats.consensusPercent, 50, '2 de 4 acertaram = 50% de consenso');
+    assert.equal(f1Stats.roundScore, expectedFac1);
+
+    engine.cleanup();
+  });
+
+  test('Anti-Exploit: Cobertura de alternativas A/B/C/D por 4 jogadores resulta em pontuação normalizada baixa', async () => {
+    let currentTime = 1000;
+    const now = () => currentTime;
+    const room = {
+      id: 'room-exploit-test',
+      scopeKey: 'test-group@g.us',
+      gameType: GAME_TYPES.QUIZ_ROYALE,
+      title: 'Quiz Royale Anti-Exploit',
+      prize: 1000,
+      status: ROOM_STATUS.IN_PROGRESS,
+      players: new Map(),
+      factions: new Map(),
+      clients: new Set(),
+      gameManager: { broadcast() {}, async finishGame() {} },
+    };
+
+    room.factions.set('fac-exploit', { id: 'fac-exploit', name: 'Exploiters', emoji: '🎭', score: 0, members: [] });
+
+    // 4 jogadores combinam cobrir as 4 alternativas: A, B, C, D
+    for (let i = 0; i < 4; i++) {
+      const jid = `exploit_${i}@s.whatsapp.net`;
+      room.factions.get('fac-exploit').members.push(jid);
+      room.players.set(jid, {
+        userJid: jid,
+        username: `Exploiter_${i}`,
+        faction: { id: 'fac-exploit', name: 'Exploiters', emoji: '🎭' },
+        score: 0,
+      });
+    }
+
+    const engine = createQuizRoyaleEngine(room, {
+      now,
+      totalRounds: 7,
+      generateZen: async () => JSON.stringify({ questions: FALLBACK_QUESTIONS.slice(0, 7) }),
+    });
+
+    await engine.start();
+    const q0 = engine.getQuestions()[0];
+
+    // Jogadores cobrem: correta, e as 3 erradas
+    currentTime = 2000; // Resposta bem rápida (máx de pontos para quem acertou: ~147)
+    await engine.handleAction(room.players.get('exploit_0@s.whatsapp.net'), { action: 'answer', questionIndex: 0, choiceIndex: q0.correctIndex });
+    await engine.handleAction(room.players.get('exploit_1@s.whatsapp.net'), { action: 'answer', questionIndex: 0, choiceIndex: (q0.correctIndex + 1) % 4 });
+    await engine.handleAction(room.players.get('exploit_2@s.whatsapp.net'), { action: 'answer', questionIndex: 0, choiceIndex: (q0.correctIndex + 2) % 4 });
+    await engine.handleAction(room.players.get('exploit_3@s.whatsapp.net'), { action: 'answer', questionIndex: 0, choiceIndex: (q0.correctIndex + 3) % 4 });
+
+    const fac = room.factions.get('fac-exploit');
+    const singleWinnerScore = room.players.get('exploit_0@s.whatsapp.net').score;
+    const expectedAverage = Math.round(singleWinnerScore / 4);
+
+    // Em vez de ganhar 147 pontos inteiros (como na regra do melhor da rodada ou soma),
+    // a equipe ganha ~37 pontos porque o desempenho coletivo foi de apenas 25% de acertos!
+    assert.equal(fac.score, expectedAverage);
+    assert.ok(fac.score <= 40, `Pontuação da facção (${fac.score}) deve ser baixa por causa do exploit de cobertura`);
+
+    engine.cleanup();
+  });
+
+  test('Anti-Exploit: Membro que se abstém ou desconecta durante a rodada mantém o divisor congelado', async () => {
+    let currentTime = 1000;
+    const now = () => currentTime;
+    const room = {
+      id: 'room-abstain-test',
+      scopeKey: 'test-group@g.us',
+      gameType: GAME_TYPES.QUIZ_ROYALE,
+      title: 'Quiz Royale Anti-Abstain',
+      prize: 1000,
+      status: ROOM_STATUS.IN_PROGRESS,
+      players: new Map(),
+      factions: new Map(),
+      clients: new Set(),
+      gameManager: { broadcast() {}, async finishGame() {} },
+    };
+
+    room.factions.set('fac-abstain', { id: 'fac-abstain', name: 'Abstainers', emoji: '💤', score: 0, members: [] });
+
+    // 3 jogadores elegíveis no início
+    for (let i = 1; i <= 3; i++) {
+      const jid = `abstain_${i}@s.whatsapp.net`;
+      room.factions.get('fac-abstain').members.push(jid);
+      room.players.set(jid, {
+        userJid: jid,
+        username: `Abstainer_${i}`,
+        faction: { id: 'fac-abstain', name: 'Abstainers', emoji: '💤' },
+        score: 0,
+      });
+    }
+
+    const engine = createQuizRoyaleEngine(room, {
+      now,
+      totalRounds: 7,
+      questionDurationMs: 20,
+      revealDurationMs: 50,
+      generateZen: async () => JSON.stringify({ questions: FALLBACK_QUESTIONS.slice(0, 7) }),
+    });
+
+    await engine.start();
+    const q0 = engine.getQuestions()[0];
+
+    // Jogador 1 responde certo com ~140 pontos
+    currentTime = 1005;
+    await engine.handleAction(room.players.get('abstain_1@s.whatsapp.net'), { action: 'answer', questionIndex: 0, choiceIndex: q0.correctIndex });
+
+    // Jogadores 2 e 3 NÃO respondem (abstenção intencional ou queda)
+    // Aguarda os 20ms da pergunta expirarem para acionar endQuestionPhase
+    await new Promise(res => setTimeout(res, 30));
+
+    // Agora deve estar em REVEAL
+    assert.equal(engine.getPhase(), QUIZ_PHASES.REVEAL);
+
+    const fac = room.factions.get('fac-abstain');
+    const singleScore = room.players.get('abstain_1@s.whatsapp.net').score;
+    // Divisor é 3 (os 3 membros elegíveis congelados no início), e NÃO 1 (quem respondeu)
+    const expectedScore = Math.round(singleScore / 3);
+    assert.equal(fac.score, expectedScore, `A pontuação deve ser dividida por 3 membros elegíveis: esperado ${expectedScore}, obtido ${fac.score}`);
+
+    engine.cleanup();
   });
 });

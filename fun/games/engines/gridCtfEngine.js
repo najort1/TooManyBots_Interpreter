@@ -831,6 +831,7 @@ export function createGridCtfEngine(room, {
               target: { userJid: existingOccupant.userJid, x: existingOccupant.x, y: existingOccupant.y, isRespawning: true },
               flags,
               scores: { blue: teams.blue.score, red: teams.red.score },
+              players: getPublicPlayers(),
               events: actionEvents,
             };
 
@@ -865,6 +866,7 @@ export function createGridCtfEngine(room, {
         },
         flags,
         scores: { blue: teams.blue.score, red: teams.red.score },
+        players: getPublicPlayers(),
         events: actionEvents,
       };
 
@@ -932,6 +934,7 @@ export function createGridCtfEngine(room, {
         target: { userJid: targetOponent.userJid, x: targetOponent.x, y: targetOponent.y, isRespawning: true },
         flags,
         scores: { blue: teams.blue.score, red: teams.red.score },
+        players: getPublicPlayers(),
         events: actionEvents,
       };
 
@@ -1002,6 +1005,7 @@ export function createGridCtfEngine(room, {
         },
         flags,
         scores: { blue: teams.blue.score, red: teams.red.score },
+        players: getPublicPlayers(),
         events: actionEvents,
       };
 

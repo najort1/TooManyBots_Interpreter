@@ -49,6 +49,7 @@ const { ensureFunSchema } = await import('../schema.js');
 const { createFunAccountRepository } = await import('../db/funAccountRepository.js');
 const { createFunFactionRepository } = await import('../db/funFactionRepository.js');
 const { GAME_TYPES, GAME_METADATA } = await import('../games/gameManager.js');
+const { DEFAULT_GAME_TEST_KEY } = await import('../games/routes.js');
 const { resolveFunConfig, loadFunUserConfig } = await import('../config.js');
 const { getPublicBaseUrl } = await import('../utils/publicUrl.js');
 
@@ -73,9 +74,8 @@ if (['ctf', 'bandeira', 'grid', 'grid_ctf'].includes(argMode)) {
 
 const meta = GAME_METADATA[chosenGameType];
 
-// Grupo padrão (whitelist ou grupo de teste local)
-const whitelist = Array.isArray(userCfg.groupWhitelistJids) ? userCfg.groupWhitelistJids : [];
-const scopeKey = String(whitelist[0] || '120363020000000000@g.us');
+// Escopo isolado exclusivo para testes locais (NUNCA usa grupos reais da whitelist para nao poluir nem enviar mensagens)
+const scopeKey = '120363020000000000@g.us';
 
 const accountRepo = createFunAccountRepository({ getDatabase: getDb });
 const factionRepo = createFunFactionRepository({ getDatabase: getDb });
@@ -150,19 +150,17 @@ async function isServerRunning(port = 8790) {
 }
 
 const serverActive = await isServerRunning(8790);
-const gameTestKey = String(process.env.FUN_GAME_TEST_KEY || '').trim();
+const isUsingDefaultKey = !process.env.FUN_GAME_TEST_KEY;
+const gameTestKey = String(process.env.FUN_GAME_TEST_KEY || DEFAULT_GAME_TEST_KEY).trim() || DEFAULT_GAME_TEST_KEY;
 
 if (!serverActive) {
-  console.error('\n❌ A API Fun não está rodando na porta 8790.');
+  console.error('\n[ERRO] A API Fun nao esta rodando na porta 8790.');
   console.error('   Inicie o bot com `npm run fun` e execute este script novamente.\n');
   process.exit(1);
 }
 
-if (!gameTestKey) {
-  console.error('\n❌ FUN_GAME_TEST_KEY não está definido.');
-  console.error('   Defina uma chave no ambiente do processo Fun e no terminal deste script.');
-  console.error('   Exemplo PowerShell: $env:FUN_GAME_TEST_KEY = "uma-chave-local-secreta"\n');
-  process.exit(1);
+if (isUsingDefaultKey) {
+  console.log('[INFO] Usando chave mockada padrao para testes locais.');
 }
 
 let roomId = null;
@@ -181,14 +179,22 @@ try {
       gameType: chosenGameType,
       prize: 1000,
       startInMinutes: 5,
+      announce: false,
+      isTest: true,
+      force: true,
     }),
   });
   const data = await res.json().catch(() => ({}));
 
   if (!res.ok || !data.ok || !data.room?.id) {
     const cause = data.error || data.reason || `HTTP ${res.status}`;
-    console.error(`\n❌ A API Fun recusou criar a sala de teste (${cause}).`);
-    console.error('   Confirme que o processo Fun foi reiniciado após atualizar o código.\n');
+    console.error(`\n[ERRO] A API Fun recusou criar a sala de teste (${cause}).`);
+    if (cause === 'test_room_creation_forbidden') {
+      console.error('   Se a API Fun ja estava em execucao antes desta alteracao, reinicie o bot (`npm run fun`)');
+      console.error('   para carregar o suporte a chave mockada padrao de testes.\n');
+    } else {
+      console.error('   Confirme que o processo Fun foi reiniciado apos atualizar o codigo.\n');
+    }
     process.exit(1);
   }
 
@@ -210,6 +216,7 @@ try {
 // 4. Exibe banner com os links e credenciais prontas
 console.log('\n' + '═'.repeat(66));
 console.log(` 🎮 SALA DE TESTE PRONTA: ${meta.name.toUpperCase()} ${meta.emoji}`);
+console.log(' 🔇 Modo de teste isolado: mensagens para o WhatsApp desativadas.');
 console.log('═'.repeat(66));
 console.log(`\n🔗 LINK DO JOGO (Abra no navegador):`);
 console.log(`   👉 \x1b[36m${gameLink}\x1b[0m`);

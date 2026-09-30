@@ -6,7 +6,7 @@ import { createFunAccountRepository } from '../fun/db/funAccountRepository.js';
 import { createFunFactionRepository } from '../fun/db/funFactionRepository.js';
 import { createGameAuthService } from '../fun/games/auth.js';
 import { createGameManager, GAME_TYPES, ROOM_STATUS } from '../fun/games/gameManager.js';
-import { createGameRoutes } from '../fun/games/routes.js';
+import { createGameRoutes, DEFAULT_GAME_TEST_KEY } from '../fun/games/routes.js';
 import { handleGameEventCommand } from '../fun/commands/handlers/gameEvent.js';
 
 function createTestDatabase() {
@@ -213,6 +213,59 @@ test('Multiplayer Games - GameManager Lifecycle & Prize Payout', async (t) => {
 
     gameManager.cleanup();
   });
+
+  await t.test('não envia mensagens no grupo se announce for false ou isTest for true', async () => {
+    let testSentMessages = [];
+    const silentGameManager = createGameManager({
+      factionRepository: {
+        ...factionRepo,
+        getDatabase,
+      },
+      accountRepository: accountRepo,
+      funConfig: { publicBaseUrl: 'https://test-tunnel.trycloudflare.com' },
+      sendGroupMessage: async (s, msg) => {
+        testSentMessages.push({ scopeKey: s, text: msg });
+      },
+    });
+
+    try {
+      // 1. Cria sala com announce: false e isTest: true
+      const res = await silentGameManager.createRoom({
+        scopeKey,
+        gameType: GAME_TYPES.QUIZ_ROYALE,
+        prize: 1000,
+        startInMinutes: 3,
+        announce: false,
+        isTest: true,
+      });
+
+      assert.equal(res.ok, true);
+      assert.equal(res.room.isTest, true);
+      assert.equal(res.room.announce, false);
+      // Não deve ter enviado mensagem de anúncio
+      assert.equal(testSentMessages.length, 0);
+
+      // 2. Entra na sala e finaliza
+      silentGameManager.joinRoom(res.room.id, {
+        userJid: userJid1,
+        username: 'Jack',
+        faction: { id: fac1.faction.id, name: 'Piratas', emoji: '🏴‍☠️' },
+      });
+      silentGameManager.joinRoom(res.room.id, {
+        userJid: userJid2,
+        username: 'Ninja',
+        faction: { id: fac2.faction.id, name: 'Ninjas', emoji: '🥷' },
+      });
+
+      await silentGameManager.startGame(res.room.id);
+      await silentGameManager.finishGame(res.room.id, fac1.faction.id);
+
+      // Não deve ter enviado mensagem de vitória/encerramento
+      assert.equal(testSentMessages.length, 0);
+    } finally {
+      silentGameManager.cleanup();
+    }
+  });
 });
 
 test('Multiplayer Games - HTTP & SSE Routes', async () => {
@@ -325,6 +378,213 @@ test('Multiplayer Games - Bot Command /jogododia', async () => {
   assert.equal(resGroup.handled, true);
   assert.ok(resGroup.room);
   assert.equal(resGroup.room.gameType, GAME_TYPES.QUIZ_ROYALE);
+
+  gameManager.cleanup();
+});
+
+test('Multiplayer Games - Test Room Creation & Mock Test Key Authorization', async (t) => {
+  assert.ok(DEFAULT_GAME_TEST_KEY);
+  assert.equal(typeof DEFAULT_GAME_TEST_KEY, 'string');
+  assert.ok(DEFAULT_GAME_TEST_KEY.length > 5);
+
+  const db = createTestDatabase();
+  const getDatabase = () => db;
+  const accountRepo = createFunAccountRepository({ getDatabase });
+  const factionRepo = createFunFactionRepository({ getDatabase });
+  const authService = createGameAuthService({ accountRepository: accountRepo, factionRepository: factionRepo });
+  const gameManager = createGameManager({ factionRepository: factionRepo, accountRepository: accountRepo });
+  t.after(() => gameManager.cleanup());
+
+  const scopeKey = '120363020000000000@g.us';
+
+  function createMockResponse() {
+    const headers = {};
+    let statusCode = 200;
+    let body = '';
+    return {
+      setHeader: (k, v) => { headers[k.toLowerCase()] = v; },
+      writeHead: (code) => { statusCode = code; },
+      end: (data) => { body = data; },
+      write: (data) => { body += data; },
+      getStatus: () => statusCode,
+      getBody: () => body ? JSON.parse(body) : null,
+      getRawBody: () => body,
+      getHeader: (k) => headers[k.toLowerCase()],
+    };
+  }
+
+  function createAuthorizeFunction(customEnvKey) {
+    return (req) => {
+      const remoteAddress = String(req.socket?.remoteAddress || '');
+      const isLocalRequest = remoteAddress === '127.0.0.1' || remoteAddress === '::1' || remoteAddress === '::ffff:127.0.0.1';
+      const expectedKey = String(customEnvKey || DEFAULT_GAME_TEST_KEY).trim();
+      const providedKey = String(req.headers?.['x-game-test-key'] || '').trim();
+      return isLocalRequest && Boolean(expectedKey) && providedKey === expectedKey;
+    };
+  }
+
+  const routes = createGameRoutes({
+    gameManager,
+    authService,
+    authorizeCreateRoom: createAuthorizeFunction(),
+    readBody: async () => ({
+      gameType: GAME_TYPES.QUIZ_ROYALE,
+      scopeKey,
+      prize: 1000,
+      startInMinutes: 3,
+    }),
+  });
+
+  await t.test('permite criacao de sala com a chave mockada padrao a partir de localhost', async () => {
+    const req = {
+      method: 'POST',
+      url: '/api/fun/games/create',
+      headers: {
+        'x-game-test-key': DEFAULT_GAME_TEST_KEY,
+      },
+      socket: { remoteAddress: '127.0.0.1' },
+    };
+    const res = createMockResponse();
+    const handled = await routes.handleRequest(req, res, new URL(req.url, 'http://localhost'));
+    assert.equal(handled, true);
+    assert.equal(res.getStatus(), 200);
+    const body = res.getBody();
+    assert.equal(body.ok, true);
+    assert.ok(body.room?.id);
+    assert.equal(body.room?.isTest, true);
+    assert.equal(body.room?.announce, false);
+  });
+
+  await t.test('bloqueia criacao quando a chave enviada nao confere', async () => {
+    const req = {
+      method: 'POST',
+      url: '/api/fun/games/create',
+      headers: {
+        'x-game-test-key': 'chave-incorreta',
+      },
+      socket: { remoteAddress: '127.0.0.1' },
+    };
+    const res = createMockResponse();
+    const handled = await routes.handleRequest(req, res, new URL(req.url, 'http://localhost'));
+    assert.equal(handled, true);
+    assert.equal(res.getStatus(), 403);
+    assert.equal(res.getBody().error, 'test_room_creation_forbidden');
+  });
+
+  await t.test('bloqueia criacao quando nenhuma chave e fornecida', async () => {
+    const req = {
+      method: 'POST',
+      url: '/api/fun/games/create',
+      headers: {},
+      socket: { remoteAddress: '127.0.0.1' },
+    };
+    const res = createMockResponse();
+    const handled = await routes.handleRequest(req, res, new URL(req.url, 'http://localhost'));
+    assert.equal(handled, true);
+    assert.equal(res.getStatus(), 403);
+    assert.equal(res.getBody().error, 'test_room_creation_forbidden');
+  });
+
+  await t.test('bloqueia criacao quando a requisicao nao e de IP local', async () => {
+    const req = {
+      method: 'POST',
+      url: '/api/fun/games/create',
+      headers: {
+        'x-game-test-key': DEFAULT_GAME_TEST_KEY,
+      },
+      socket: { remoteAddress: '198.51.100.42' },
+    };
+    const res = createMockResponse();
+    const handled = await routes.handleRequest(req, res, new URL(req.url, 'http://localhost'));
+    assert.equal(handled, true);
+    assert.equal(res.getStatus(), 403);
+    assert.equal(res.getBody().error, 'test_room_creation_forbidden');
+  });
+
+  await t.test('permite customizacao de chave via variavel de ambiente', async () => {
+    const customKey = 'minha-chave-customizada-123';
+    const customScopeKey = '120363020000000002@g.us';
+    const customRoutes = createGameRoutes({
+      gameManager,
+      authService,
+      authorizeCreateRoom: createAuthorizeFunction(customKey),
+      readBody: async () => ({
+        gameType: GAME_TYPES.GRID_CTF,
+        scopeKey: customScopeKey,
+        prize: 500,
+        startInMinutes: 2,
+      }),
+    });
+
+    const reqValidCustom = {
+      method: 'POST',
+      url: '/api/fun/games/create',
+      headers: {
+        'x-game-test-key': customKey,
+      },
+      socket: { remoteAddress: '127.0.0.1' },
+    };
+    const resValidCustom = createMockResponse();
+    const handledValid = await customRoutes.handleRequest(reqValidCustom, resValidCustom, new URL(reqValidCustom.url, 'http://localhost'));
+    assert.equal(handledValid, true);
+    assert.equal(resValidCustom.getStatus(), 200);
+
+    const reqOldDefault = {
+      method: 'POST',
+      url: '/api/fun/games/create',
+      headers: {
+        'x-game-test-key': DEFAULT_GAME_TEST_KEY,
+      },
+      socket: { remoteAddress: '127.0.0.1' },
+    };
+    const resOldDefault = createMockResponse();
+    const handledInvalid = await customRoutes.handleRequest(reqOldDefault, resOldDefault, new URL(reqOldDefault.url, 'http://localhost'));
+    assert.equal(handledInvalid, true);
+    assert.equal(resOldDefault.getStatus(), 403);
+  });
+
+  await t.test('substitui sala de teste anterior ao alternar jogos de teste sem erro de circularidade', async () => {
+    // 1. Cria primeira sala (ex: quiz)
+    const req1 = {
+      method: 'POST',
+      url: '/api/fun/games/create',
+      headers: { 'x-game-test-key': DEFAULT_GAME_TEST_KEY },
+      socket: { remoteAddress: '127.0.0.1' },
+    };
+    const res1 = createMockResponse();
+    await routes.handleRequest(req1, res1, new URL(req1.url, 'http://localhost'));
+    assert.equal(res1.getStatus(), 200);
+    const room1 = res1.getBody().room;
+    assert.ok(room1.id);
+
+    // 2. Tenta criar segunda sala (ex: hill) para o mesmo escopo com isTest: true
+    const hillRoutes = createGameRoutes({
+      gameManager,
+      authService,
+      authorizeCreateRoom: createAuthorizeFunction(),
+      readBody: async () => ({
+        gameType: GAME_TYPES.KING_OF_THE_HILL,
+        scopeKey,
+        prize: 1000,
+        startInMinutes: 3,
+        isTest: true,
+      }),
+    });
+    const req2 = {
+      method: 'POST',
+      url: '/api/fun/games/create',
+      headers: { 'x-game-test-key': DEFAULT_GAME_TEST_KEY },
+      socket: { remoteAddress: '127.0.0.1' },
+    };
+    const res2 = createMockResponse();
+    // NÃO pode lançar erro de circularidade (Converting circular structure to JSON)
+    const handled2 = await hillRoutes.handleRequest(req2, res2, new URL(req2.url, 'http://localhost'));
+    assert.equal(handled2, true);
+    assert.equal(res2.getStatus(), 200);
+    const room2 = res2.getBody().room;
+    assert.ok(room2.id);
+    assert.equal(room2.gameType, GAME_TYPES.KING_OF_THE_HILL);
+  });
 
   gameManager.cleanup();
 });

@@ -141,15 +141,14 @@ describe('Quiz Royale - Bateria de Testes Intensivos e de Estresse', () => {
       for (const player of room.players.values()) {
         totalPlayerPoints += player.score;
       }
+      assert.ok(totalPlayerPoints > 0, 'Pontos totais dos jogadores devem ser maiores que zero');
 
-      let totalFactionPoints = 0;
-      for (const fac of room.factions.values()) {
-        totalFactionPoints += fac.score;
+      // Para cada panelinha de 5 membros, a pontuação coletiva deve ser a média exata dos seus membros
+      for (const [facId, fac] of room.factions.entries()) {
+        const facMembersSum = fac.members.reduce((acc, jid) => acc + (room.players.get(jid)?.score || 0), 0);
+        const expectedScore = Math.round(facMembersSum / fac.members.length);
+        assert.equal(fac.score, expectedScore, `Panelinha ${facId} deve ter pontuação calculada pela média dos membros`);
       }
-
-      // Pontos totais dos jogadores devem ser estritamente iguais à soma das panelinhas
-      assert.equal(totalPlayerPoints, totalFactionPoints);
-      assert.ok(totalPlayerPoints > 0, 'Pontos totais devem ser maiores que zero');
 
       engine.cleanup();
     });
@@ -385,9 +384,9 @@ describe('Quiz Royale - Bateria de Testes Intensivos e de Estresse', () => {
       // Pontuação do jogador deve ser estritamente referente a 1 acerto (>= 100 e <= 150)
       assert.ok(player.score >= 100 && player.score <= 150);
 
-      // Pontuação da panelinha deve ser estritamente igual à pontuação do jogador
+      // Pontuação da panelinha permanece 0 durante a fase de pergunta (não vaza a resposta antecipadamente)
       const faction = room.factions.get(player.faction.id);
-      assert.equal(faction.score, player.score);
+      assert.equal(faction.score, 0, 'Pontuação da panelinha não vaza durante a fase de pergunta');
 
       engine.cleanup();
     });
@@ -500,12 +499,16 @@ describe('Quiz Royale - Bateria de Testes Intensivos e de Estresse', () => {
       const allPlayers = Array.from(room.players.values());
       assert.equal(allPlayers.length, 20);
 
+      // Rastreador acumulado da pontuação esperada por panelinha (soma das médias de cada rodada)
+      const expectedFactionScores = { 'fac-1': 0, 'fac-2': 0, 'fac-3': 0, 'fac-4': 0 };
+
       // Executa as 10 rodadas completas
       for (let r = 0; r < 10; r++) {
         assert.equal(engine.getCurrentRoundIndex(), r);
         assert.equal(engine.getPhase(), QUIZ_PHASES.QUESTION);
 
         const currentQ = engine.getQuestions()[r];
+        const roundPointsByPlayer = new Map();
 
         // Todos os 20 jogadores respondem com comportamentos variados
         for (let pIdx = 0; pIdx < allPlayers.length; pIdx++) {
@@ -534,23 +537,26 @@ describe('Quiz Royale - Bateria de Testes Intensivos e de Estresse', () => {
           });
 
           assert.equal(res.ok, true);
+          roundPointsByPlayer.set(player.userJid, res.pointsEarned);
         }
 
         // Quando o 20º jogador respondeu, o motor transicionou imediatamente para REVEAL
         assert.equal(engine.getPhase(), QUIZ_PHASES.REVEAL);
 
-        // INVARIANTE MATEMÁTICO ABSOLUTO:
-        // A pontuação de cada panelinha DEVE ser estritamente idêntica à soma dos seus membros
+        // INVARIANTE MATEMÁTICO DA MÉDIA COLETIVA:
+        // A pontuação adicionada a cada panelinha na rodada DEVE ser a média dos pontos dos seus membros elegíveis
         for (const [facId, faction] of room.factions.entries()) {
-          const membersSum = faction.members.reduce((acc, jid) => {
-            const memberPlayer = room.players.get(jid);
-            return acc + (memberPlayer ? memberPlayer.score : 0);
+          const roundMembersSum = faction.members.reduce((acc, jid) => {
+            return acc + (roundPointsByPlayer.get(jid) || 0);
           }, 0);
+          const eligibleCount = faction.members.length; // 5 membros por facção
+          const roundAverage = Math.round(roundMembersSum / eligibleCount);
+          expectedFactionScores[facId] += roundAverage;
 
           assert.equal(
             faction.score,
-            membersSum,
-            `Rodada ${r + 1}: Pontuação da panelinha ${facId} (${faction.score}) difere da soma dos membros (${membersSum})`
+            expectedFactionScores[facId],
+            `Rodada ${r + 1}: Pontuação acumulada da panelinha ${facId} (${faction.score}) difere da soma esperada das médias (${expectedFactionScores[facId]})`
           );
         }
 

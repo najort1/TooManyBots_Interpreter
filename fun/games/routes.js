@@ -3,8 +3,25 @@
  * Integrado ao servidor HTTP do dashboard (porta 8790) e acessível via Quick Tunnel / Next.js rewrites.
  */
 
+export const DEFAULT_GAME_TEST_KEY = 'tmb-local-dev-test-key';
+
+function safeStringify(val) {
+  try {
+    return JSON.stringify(val);
+  } catch {
+    const seen = new WeakSet();
+    return JSON.stringify(val, (key, value) => {
+      if (typeof value === 'object' && value !== null) {
+        if (seen.has(value)) return undefined;
+        seen.add(value);
+      }
+      return value;
+    });
+  }
+}
+
 function sendJson(res, status, body) {
-  const payload = JSON.stringify(body);
+  const payload = safeStringify(body);
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Length', Buffer.byteLength(payload));
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -68,6 +85,9 @@ export function createGameRoutes({
           gameType,
           prize,
           startInMinutes,
+          announce: Boolean(body?.announce ?? false),
+          isTest: Boolean(body?.isTest ?? true),
+          force: Boolean(body?.force ?? false),
         });
 
         sendJson(res, result.ok ? 200 : 400, result);
@@ -214,7 +234,11 @@ export function createGameRoutes({
         }
 
         const result = await gameManager.handlePlayerAction(roomId, playerSession, body);
-        sendJson(res, result.ok ? 200 : 400, result);
+        const activeRoom = gameManager.getRoom(roomId);
+        sendJson(res, result.ok ? 200 : 400, {
+          ...result,
+          room: activeRoom ? gameManager.publicRoomState(activeRoom) : null,
+        });
         return true;
       } catch (err) {
         console.error('[gameRoutes] Erro ao executar ação:', err);

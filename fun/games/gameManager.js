@@ -130,6 +130,8 @@ export function createGameManager({
     prize = 1000,
     startInMinutes = 3,
     customTitle = null,
+    announce = true,
+    isTest = false,
   }) {
     const meta = GAME_METADATA[gameType];
     if (!meta) {
@@ -142,7 +144,13 @@ export function createGameManager({
     // Se já existir sala ativa no grupo, reaproveita ou fecha
     const existing = getActiveRoomByScope(scopeKey);
     if (existing) {
-      return { ok: false, reason: 'room_already_active', room: existing };
+      // Em modo de teste (isTest) ou se a sala anterior era de teste, substitui limpando a antiga
+      if (isTest || existing.isTest) {
+        cleanupRoom(existing);
+        rooms.delete(existing.id);
+      } else {
+        return { ok: false, reason: 'room_already_active', room: publicRoomState(existing) };
+      }
     }
 
     const roomId = generateRoomId();
@@ -159,6 +167,8 @@ export function createGameManager({
       maxPlayers: meta.maxPlayers,
       prize: Math.max(100, Math.floor(Number(prize) || 1000)),
       status: ROOM_STATUS.WAITING,
+      announce: Boolean(announce && !isTest),
+      isTest: Boolean(isTest),
       createdAt: currentTime,
       startsAt,
       finishedAt: null,
@@ -232,10 +242,12 @@ export function createGameManager({
       `_Se você não tem panelinha, crie ou entre em uma com \`/panelinha\` antes da partida iniciar._`,
     ].join('\n');
 
-    try {
-      await sendGroupMessage(scopeKey, announcementText);
-    } catch (err) {
-      console.error('[gameManager] Erro ao enviar anúncio no grupo:', err?.message || err);
+    if (room.announce && !room.isTest) {
+      try {
+        await sendGroupMessage(scopeKey, announcementText);
+      } catch (err) {
+        console.error('[gameManager] Erro ao enviar anúncio no grupo:', err?.message || err);
+      }
     }
 
     return {
@@ -448,10 +460,12 @@ export function createGameManager({
       '_Parabéns a todos os participantes!_',
     ].filter(Boolean).join('\n');
 
-    try {
-      await sendGroupMessage(room.scopeKey, winMsg);
-    } catch (err) {
-      console.error('[gameManager] Erro ao enviar resultado no grupo:', err?.message || err);
+    if (room.announce && !room.isTest) {
+      try {
+        await sendGroupMessage(room.scopeKey, winMsg);
+      } catch (err) {
+        console.error('[gameManager] Erro ao enviar resultado no grupo:', err?.message || err);
+      }
     }
 
     cleanupRoom(room);
@@ -538,6 +552,8 @@ export function createGameManager({
       maxPlayers: room.maxPlayers,
       prize: room.prize,
       status: room.status,
+      announce: Boolean(room.announce),
+      isTest: Boolean(room.isTest),
       createdAt: room.createdAt,
       startsAt: room.startsAt,
       finishedAt: room.finishedAt,

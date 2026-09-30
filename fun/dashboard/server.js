@@ -11,7 +11,7 @@ import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { getLlmFeaturesStatus, normalizeLlmFeatures } from '../llm/llmGovernance.js';
 import { createHouseRealtimeHub } from '../services/houseRealtimeService.js';
 import { getPublicBaseUrl } from '../utils/publicUrl.js';
-import { createGameRoutes } from '../games/routes.js';
+import { createGameRoutes, DEFAULT_GAME_TEST_KEY } from '../games/routes.js';
 import {
   COMMAND_CATEGORIES,
   COMMAND_CATALOG,
@@ -133,7 +133,7 @@ export function startFunDashboardServer(deps = {}) {
           authorizeCreateRoom: (req) => {
             const remoteAddress = String(req.socket?.remoteAddress || '');
             const isLocalRequest = remoteAddress === '127.0.0.1' || remoteAddress === '::1' || remoteAddress === '::ffff:127.0.0.1';
-            const expectedKey = String(process.env.FUN_GAME_TEST_KEY || '').trim();
+            const expectedKey = String(process.env.FUN_GAME_TEST_KEY || DEFAULT_GAME_TEST_KEY).trim();
             const providedKey = String(req.headers['x-game-test-key'] || '').trim();
             return isLocalRequest && Boolean(expectedKey) && providedKey === expectedKey;
           },

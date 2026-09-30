@@ -420,6 +420,12 @@ export function createQuizRoyaleEngine(room, {
   let currentAnswers = new Map();
 
   /**
+   * Membros elegíveis de cada panelinha congelados no início de cada pergunta.
+   * Map<factionId, { factionId: string, memberJids: string[], count: number }>
+   */
+  let roundEligibleFactions = new Map();
+
+  /**
    * Estatísticas da última rodada revelada
    */
   let lastRoundStats = null;
@@ -546,6 +552,19 @@ export function createQuizRoyaleEngine(room, {
     phaseEndsAt = phaseStartedAt + questionDurationMs;
     currentAnswers.clear();
 
+    // Congela a lista e quantidade de membros elegíveis de cada panelinha no início da pergunta.
+    // Garante que o denominador da média permaneça imutável contra exploits de desconexão ou abstenção.
+    roundEligibleFactions.clear();
+    for (const [facId] of room.factions.entries()) {
+      const eligibleMembers = Array.from(room.players.values())
+        .filter(p => (p.faction?.id || p.factionId) === facId);
+      roundEligibleFactions.set(facId, {
+        factionId: facId,
+        memberJids: eligibleMembers.map(m => m.userJid),
+        count: Math.max(1, eligibleMembers.length),
+      });
+    }
+
     const currentQ = questions[currentRoundIndex];
 
     // Transmite a nova pergunta sem revelar a resposta correta
@@ -602,6 +621,45 @@ export function createQuizRoyaleEngine(room, {
       }
     }
 
+    // Cálculo da pontuação coletiva da rodada:
+    // Pontuação da panelinha = soma dos pontos dos membros elegíveis ÷ total congelado de membros elegíveis no início da pergunta
+    const factionRoundStats = {};
+    for (const [facId, facData] of roundEligibleFactions.entries()) {
+      const faction = room.factions.get(facId);
+      if (!faction) continue;
+
+      let sumMemberPoints = 0;
+      let correctCount = 0;
+      let answeredCount = 0;
+
+      for (const jid of facData.memberJids) {
+        const ans = currentAnswers.get(jid);
+        if (ans) {
+          answeredCount++;
+          if (ans.isCorrect) {
+            correctCount++;
+            sumMemberPoints += ans.pointsEarned;
+          }
+        }
+      }
+
+      const eligibleCount = facData.count;
+      const roundScore = Math.round(sumMemberPoints / eligibleCount);
+      faction.score = (Number(faction.score) || 0) + roundScore;
+
+      factionRoundStats[facId] = {
+        factionId: facId,
+        factionName: faction.name,
+        emoji: faction.emoji,
+        roundScore,
+        sumPoints: sumMemberPoints,
+        eligibleCount,
+        answeredCount,
+        correctCount,
+        consensusPercent: Math.round((correctCount / eligibleCount) * 100),
+      };
+    }
+
     lastRoundStats = {
       round: currentRoundIndex + 1,
       totalRounds: questions.length,
@@ -612,6 +670,7 @@ export function createQuizRoyaleEngine(room, {
       correctCount: correctAnswers.length,
       wrongCount: wrongAnswers.length,
       unansweredCount: unansweredPlayers.length,
+      factionStats: factionRoundStats,
       answers: answersList.map(a => ({
         userJid: a.userJid,
         username: a.username,
@@ -770,11 +829,9 @@ export function createQuizRoyaleEngine(room, {
     const player = room.players.get(userJid);
     player.score = (Number(player.score) || 0) + pointsEarned;
 
+    // A pontuação coletiva da panelinha é computada apenas no fim da pergunta (revelação)
+    // pela média dos membros elegíveis, evitando vazamento em tempo real da resposta correta.
     const factionId = playerSession?.faction?.id || player.faction?.id;
-    if (factionId && room.factions.has(factionId)) {
-      const faction = room.factions.get(factionId);
-      faction.score = (Number(faction.score) || 0) + pointsEarned;
-    }
 
     const answerRecord = {
       userJid,
@@ -887,6 +944,7 @@ export function createQuizRoyaleEngine(room, {
     clearAllTimers();
     phase = QUIZ_PHASES.ENDED;
     currentAnswers.clear();
+    roundEligibleFactions.clear();
   }
 
   return {
