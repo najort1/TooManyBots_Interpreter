@@ -18,6 +18,12 @@ import {
   CheckCircle2,
   XCircle,
   LogIn,
+  Users,
+  HelpCircle,
+  Info,
+  Zap,
+  Target,
+  BookOpen,
 } from "lucide-react";
 
 type Props = { params: Promise<{ roomId: string }> };
@@ -206,6 +212,7 @@ export default function GameRoomPage({ params }: Props) {
   const [quizSelectedChoice, setQuizSelectedChoice] = useState<number | null>(null);
   const [actionCooldown, setActionCooldown] = useState(false);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
+  const [showRulesModal, setShowRulesModal] = useState(false);
 
   // Recupera token salvo
   useEffect(() => {
@@ -774,9 +781,7 @@ export default function GameRoomPage({ params }: Props) {
           <span className="text-xl">{room.emoji}</span>
           <div>
             <h1 className="text-xs font-bold text-white leading-tight">{room.title}</h1>
-            <p className="text-[10px] text-slate-400">
-              {room.status === "waiting" ? "Aguardando início..." : "Partida em andamento"}
-            </p>
+            <p className="text-[10px] text-slate-400">Partida em andamento</p>
           </div>
         </div>
 
@@ -794,13 +799,6 @@ export default function GameRoomPage({ params }: Props) {
             <div className="flex items-center gap-1.5 px-2.5 py-1 bg-slate-950 rounded-lg border border-slate-800 text-xs">
               <span>{currentUser.faction?.emoji || "🏴‍☠️"}</span>
               <span className="font-semibold text-slate-200">{currentUser.username}</span>
-            </div>
-          )}
-
-          {countdown !== null && room.status === "waiting" && (
-            <div className="flex items-center gap-1 text-xs font-mono font-bold text-purple-400">
-              <Clock className="w-3.5 h-3.5" />
-              <span>{countdown}s</span>
             </div>
           )}
         </div>
@@ -1603,9 +1601,6 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
       <footer className="pt-3 text-center text-[11px] text-slate-500">
         Esta partida iniciará automaticamente assim que o cronômetro zerar. Não feche esta tela.
       </footer>
-    </div>
-  );
-}
     </div>
   );
 }
