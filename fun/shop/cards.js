@@ -156,9 +156,11 @@ export function rollRandomCard(random = Math.random, weightsOrOpts = TIER_DROP_W
     if (!list.length) continue;
     const rawW = activeWeights?.[tier] ?? activeWeights?.[String(tier)] ?? TIER_DROP_WEIGHTS[tier] ?? 1;
     const w = Number(rawW);
-    const safeW = Number.isFinite(w) && w > 0 ? w : 1;
-    totalW += safeW;
-    tiers.push({ tier, list, w: safeW });
+    const safeW = Number.isFinite(w) && w >= 0 ? w : (TIER_DROP_WEIGHTS[tier] ?? 1);
+    if (safeW > 0) {
+      totalW += safeW;
+      tiers.push({ tier, list, w: safeW });
+    }
   }
   if (!totalW) return null;
 
