@@ -46,6 +46,9 @@ export function createRoundBasedGameEngine(room, {
   totalRounds = 6,
   roundDurationMs = 15_000,
   revealDurationMs = 6_000,
+  bombMode = COLINAS_CONSTANTS.DEFAULT_BOMB_MODE,
+  maxBombsPerPlayer = COLINAS_CONSTANTS.MAX_BOMBS_PER_PLAYER,
+  maxBombsPerTeam = COLINAS_CONSTANTS.MAX_BOMBS_PER_TEAM,
 } = {}) {
   if (!room) {
     throw new Error('[roundBasedGameEngine] Objeto room é obrigatório');
@@ -70,6 +73,19 @@ export function createRoundBasedGameEngine(room, {
 
   // Histórico de bombas por jogador em Colinas (userJid -> boolean)
   const bombsUsed = new Map();
+  // Histórico de bombas usadas por equipe em Colinas (teamId -> number)
+  const teamBombsUsed = new Map();
+
+  function isBombAvailableForPlayer(userJid, teamId) {
+    if (!isColinas) return false;
+    if (bombMode === COLINAS_CONSTANTS.BOMB_MODES.DISABLED) return false;
+    if (bombMode === COLINAS_CONSTANTS.BOMB_MODES.PER_TEAM) {
+      const usedByTeam = teamBombsUsed.get(teamId) || 0;
+      return usedByTeam < maxBombsPerTeam;
+    }
+    // PER_PLAYER (default)
+    return !bombsUsed.get(userJid);
+  }
 
   // Histórico da última escolha de cada jogador (para fallback AFK)
   const lastChoices = new Map();
@@ -292,8 +308,10 @@ export function createRoundBasedGameEngine(room, {
     // Atualiza histórico de escolhas
     for (const [userJid, v] of currentVotes.entries()) {
       lastChoices.set(userJid, v.choice);
-      if (v.useBomb) {
+      if (v.useBomb && bombMode !== COLINAS_CONSTANTS.BOMB_MODES.DISABLED) {
         bombsUsed.set(userJid, true);
+        const prevTeamBombs = teamBombsUsed.get(v.teamId) || 0;
+        teamBombsUsed.set(v.teamId, prevTeamBombs + 1);
       }
     }
 
@@ -481,10 +499,18 @@ export function createRoundBasedGameEngine(room, {
         }
 
         const wantsBomb = Boolean(actionData.useBomb);
-        const alreadyUsed = Boolean(bombsUsed.get(userJid));
+        const canBomb = isBombAvailableForPlayer(userJid, pData.teamId);
 
-        if (wantsBomb && alreadyUsed) {
-          return { ok: false, error: 'bomb_already_used', message: 'Você já usou sua Bomba nesta partida!' };
+        if (wantsBomb) {
+          if (bombMode === COLINAS_CONSTANTS.BOMB_MODES.DISABLED) {
+            return { ok: false, error: 'bombs_disabled', message: 'Bombas estão desativadas nesta partida.' };
+          }
+          if (!canBomb) {
+            const msg = bombMode === COLINAS_CONSTANTS.BOMB_MODES.PER_TEAM
+              ? 'Sua equipe já usou a Bomba da partida!'
+              : 'Você já usou sua Bomba nesta partida!';
+            return { ok: false, error: 'bomb_already_used', message: msg };
+          }
         }
 
         currentVotes.set(userJid, {
@@ -502,7 +528,7 @@ export function createRoundBasedGameEngine(room, {
           ok: true,
           choice: rawChoice,
           useBomb: wantsBomb,
-          hasRemainingBomb: !alreadyUsed && !wantsBomb,
+          hasRemainingBomb: canBomb && !wantsBomb,
         };
       }
 
@@ -597,9 +623,10 @@ export function createRoundBasedGameEngine(room, {
       attackingTeamId: isGolpe ? getAttackingTeamId(currentRoundIndex) : null,
       defendingTeamId: isGolpe ? getDefendingTeamId(currentRoundIndex) : null,
       pots: isColinas ? colinasPots : undefined,
+      bombMode: isColinas ? bombMode : undefined,
       viewerTeamId,
       myCurrentVote,
-      myBombAvailable: viewerJid ? !bombsUsed.get(viewerJid) : true,
+      myBombAvailable: isColinas && viewerJid ? isBombAvailableForPlayer(viewerJid, viewerTeamId) : false,
       myTeamSuggestions,
       myTeamChat,
       lastRoundReport: roundHistory.length > 0 ? roundHistory[roundHistory.length - 1] : null,

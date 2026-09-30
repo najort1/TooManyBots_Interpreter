@@ -20,6 +20,13 @@ export const COLINAS_CONSTANTS = Object.freeze({
   }),
   DEFAULT_AFK_HILL: 'charlie',
   MAX_BOMBS_PER_PLAYER: 1,
+  MAX_BOMBS_PER_TEAM: 1,
+  BOMB_MODES: Object.freeze({
+    PER_PLAYER: 'per_player', // 1 bomba por jogador na partida inteira
+    PER_TEAM: 'per_team',     // 1 bomba compartilhada por equipe na partida inteira
+    DISABLED: 'disabled',     // Bombas desativadas
+  }),
+  DEFAULT_BOMB_MODE: 'per_player',
 });
 
 export const GOLPE_CONSTANTS = Object.freeze({
