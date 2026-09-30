@@ -1,6 +1,7 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
 import { looseParseFacts } from '../services/groupMemoryService.js';
 import { createEventFingerprint, zonedLocalDateTimeToMs } from './eventTime.js';
 
@@ -160,7 +161,7 @@ export function createEventExtractorService({ generateZen = openaiChatComplete, 
     if (funConfig.groupEventsEnabled === false) return { ok: false, reason: 'disabled' };
     const candidateText = [messageText, fragmentText].filter(Boolean).join('\n');
     if (!bypassSignalCheck && !isEventCandidate(candidateText)) return { ok: false, reason: 'no-signal' };
-    if (funConfig.zenEnabled === false || process.env.FUN_DISABLE_LIVE_LLM === '1') {
+    if (!isLlmFeatureEnabled(funConfig, 'events') || process.env.FUN_DISABLE_LIVE_LLM === '1') {
       return { ok: false, reason: 'llm-disabled' };
     }
 

@@ -3,6 +3,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { normalizeBoolean, normalizeInt, toText } from '../utils/normalization.js';
 import { DEFAULT_FUN_CONFIG } from './constants.js';
+import { normalizeLlmFeatures, isLlmFeatureEnabled } from './llm/llmGovernance.js';
+
+export { isLlmFeatureEnabled, normalizeLlmFeatures };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -278,6 +281,7 @@ export function normalizeFunConfig(input) {
       ? Math.max(0, Number(raw.eventCrossWeight))
       : DEFAULT_FUN_CONFIG.eventCrossWeight,
     zenEnabled: normalizeBoolean(raw.zenEnabled, DEFAULT_FUN_CONFIG.zenEnabled),
+    llmFeatures: normalizeLlmFeatures(raw.llmFeatures),
     zenBaseUrl: toText(raw.zenBaseUrl, DEFAULT_FUN_CONFIG.zenBaseUrl) || DEFAULT_FUN_CONFIG.zenBaseUrl,
     zenModel: toText(raw.zenModel, DEFAULT_FUN_CONFIG.zenModel) || DEFAULT_FUN_CONFIG.zenModel,
     zenTimeoutMs: normalizeInt(raw.zenTimeoutMs, DEFAULT_FUN_CONFIG.zenTimeoutMs, {
@@ -310,7 +314,10 @@ export function normalizeFunConfig(input) {
       raw.zenSendSamplingParams,
       DEFAULT_FUN_CONFIG.zenSendSamplingParams
     ),
-    zenApiKey: toText(raw.zenApiKey, DEFAULT_FUN_CONFIG.zenApiKey) || '',
+    zenApiKey: toText(
+      raw.zenApiKey,
+      process.env.ZEN_API_KEY || process.env.OPENAI_API_KEY || DEFAULT_FUN_CONFIG.zenApiKey
+    ) || '',
     zenInventTemperature: Number.isFinite(Number(raw.zenInventTemperature))
       ? Math.min(1.5, Math.max(0, Number(raw.zenInventTemperature)))
       : DEFAULT_FUN_CONFIG.zenInventTemperature,
@@ -1645,87 +1652,41 @@ export function loadFunUserConfig() {
   }
 }
 
-export function saveFunUserConfig(input) {
-  const normalized = normalizeFunConfig(input);
-  const payload = {
-    ...(normalized.preset ? { preset: normalized.preset } : {}),
-    prefix: normalized.prefix,
-    cooldownMs: normalized.cooldownMs,
-    xpMin: normalized.xpMin,
-    xpMax: normalized.xpMax,
-    dailyXp: normalized.dailyXp,
-    dailyCoins: normalized.dailyCoins,
-    rankLimit: normalized.rankLimit,
-    announceLevelUp: normalized.announceLevelUp,
-    requireGroupWhitelist: normalized.requireGroupWhitelist,
-    allowDm: normalized.allowDm,
-    groupWhitelistJids: normalized.groupWhitelistJids,
-    debugMode: normalized.debugMode,
-    logLevel: normalized.logLevel,
-    dataDir: normalized.dataDir || FUN_DEFAULT_DATA_DIR,
-    rankCardImage: normalized.rankCardImage,
-    cardsEnabled: normalized.cardsEnabled,
-    cardPackCost: normalized.cardPackCost,
-    cardMaxPacksPerOpen: normalized.cardMaxPacksPerOpen,
-    cardTradeTtlMs: normalized.cardTradeTtlMs,
-    dashboardEnabled: normalized.dashboardEnabled,
-    dashboardHost: normalized.dashboardHost,
-    dashboardPort: normalized.dashboardPort,
-    zenEnabled: normalized.zenEnabled,
-    zenBaseUrl: normalized.zenBaseUrl,
-    zenModel: normalized.zenModel,
-    zenTimeoutMs: normalized.zenTimeoutMs,
-    zenMaxTokens: normalized.zenMaxTokens,
-    zenTemperature: normalized.zenTemperature,
-    zenSendSamplingParams: normalized.zenSendSamplingParams,
-    zenApiKey: normalized.zenApiKey,
-    flavorTimeoutMs: normalized.flavorTimeoutMs,
-    ollamaEnabled: normalized.ollamaEnabled,
-    ollamaBaseUrl: normalized.ollamaBaseUrl,
-    ollamaModel: normalized.ollamaModel,
-    ollamaTimeoutMs: normalized.ollamaTimeoutMs,
-    ollamaNumPredict: normalized.ollamaNumPredict,
-    ollamaTemperature: normalized.ollamaTemperature,
-    ollamaMaxChars: normalized.ollamaMaxChars,
-    ollamaKeepAlive: normalized.ollamaKeepAlive,
-    ollamaWarmupOnBoot: normalized.ollamaWarmupOnBoot,
-    ollamaWarmupTimeoutMs: normalized.ollamaWarmupTimeoutMs,
-    ollamaKeepAliveRefreshMs: normalized.ollamaKeepAliveRefreshMs,
-    replyCommandsInPrivate: normalized.replyCommandsInPrivate,
-    mentionUsers: normalized.mentionUsers,
-    replyQuoted: normalized.replyQuoted,
-    reactionsEnabled: normalized.reactionsEnabled,
-    reactionProviderTimeoutMs: normalized.reactionProviderTimeoutMs,
-    reactionAnimeProviderOrder: normalized.reactionAnimeProviderOrder,
-    reactionUserAgent: normalized.reactionUserAgent,
-    tenorApiKey: normalized.tenorApiKey,
-    tenorClientKey: normalized.tenorClientKey,
-    geminiApiKey: normalized.geminiApiKey,
-    imageGenEnabled: normalized.imageGenEnabled,
-    imageGenProvider: normalized.imageGenProvider,
-    imageGenBaseUrl: normalized.imageGenBaseUrl,
-    imageGenApiKey: normalized.imageGenApiKey,
-    imageGenModel: normalized.imageGenModel,
-    imageGenFallbackModels: normalized.imageGenFallbackModels,
-    imageGenPrimaryAttempts: normalized.imageGenPrimaryAttempts,
-    imageGenDailyLimit: normalized.imageGenDailyLimit,
-    imageGenTimeoutMs: normalized.imageGenTimeoutMs,
-    imageGenSize: normalized.imageGenSize,
-    imageGenThinkingLevel: normalized.imageGenThinkingLevel,
-    imageGenQuality: normalized.imageGenQuality,
-    imageGenResponseFormat: normalized.imageGenResponseFormat,
-    imageGenLoreMaxChars: normalized.imageGenLoreMaxChars,
-    selfHealEnabled: normalized.selfHealEnabled,
-    selfHealDryRun: normalized.selfHealDryRun,
-    selfHealIntervalMs: normalized.selfHealIntervalMs,
-    selfHealEvidenceRetentionDays: normalized.selfHealEvidenceRetentionDays,
-    selfHealMaxItemsPerRun: normalized.selfHealMaxItemsPerRun,
-    selfHealMaxCallsPerRun: normalized.selfHealMaxCallsPerRun,
-    // TUI (painel full-screen de auditoria)
-    tuiEnabled: normalized.tuiEnabled,
-    tuiRefreshMs: normalized.tuiRefreshMs,
-    tuiMaxHistory: normalized.tuiMaxHistory,
+export function saveFunUserConfig(input, options = {}) {
+  let existing = {};
+  if (fs.existsSync(FUN_USER_CONFIG_PATH)) {
+    try {
+      existing = JSON.parse(fs.readFileSync(FUN_USER_CONFIG_PATH, 'utf-8'));
+      if (!existing || typeof existing !== 'object') existing = {};
+    } catch {
+      existing = {};
+    }
+  }
+
+  const rawInput = input && typeof input === 'object' ? input : {};
+
+  // Preserva groupWhitelistJids existente contra sobrescrita acidental em atualizações parciais
+  let effectiveGroupWhitelist = existing.groupWhitelistJids;
+  if (Array.isArray(rawInput.groupWhitelistJids)) {
+    if (
+      rawInput.groupWhitelistJids.length === 0 &&
+      Array.isArray(existing.groupWhitelistJids) &&
+      existing.groupWhitelistJids.length > 0 &&
+      !options.allowEmptyWhitelist
+    ) {
+      effectiveGroupWhitelist = existing.groupWhitelistJids;
+    } else {
+      effectiveGroupWhitelist = rawInput.groupWhitelistJids;
+    }
+  }
+
+  const merged = {
+    ...existing,
+    ...rawInput,
+    groupWhitelistJids: effectiveGroupWhitelist || [],
   };
-  fs.writeFileSync(FUN_USER_CONFIG_PATH, JSON.stringify(payload, null, 2), 'utf-8');
-  return normalizeFunConfig(payload);
+
+  const normalized = normalizeFunConfig(merged);
+  fs.writeFileSync(FUN_USER_CONFIG_PATH, JSON.stringify(normalized, null, 2), 'utf-8');
+  return normalized;
 }

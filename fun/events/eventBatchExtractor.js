@@ -1,6 +1,7 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
 import { createEventFingerprint, zonedLocalDateTimeToMs } from './eventTime.js';
 
 const ACTIONS = new Set(['create', 'update', 'cancel', 'ignore']);
@@ -220,7 +221,7 @@ export function createEventBatchExtractor({ generateZen = openaiChatComplete, ge
   async function extractBatch({ batch = [], contextCount = 0, activeEvents = [], funConfig = {}, now = Date.now() } = {}) {
     if (funConfig.groupEventsEnabled === false) return { ok: false, reason: 'disabled', operations: [] };
     if (!Array.isArray(batch) || batch.length <= contextCount) return { ok: false, reason: 'empty-batch', operations: [] };
-    if (funConfig.zenEnabled === false || process.env.FUN_DISABLE_LIVE_LLM === '1') {
+    if (!isLlmFeatureEnabled(funConfig, 'events') || process.env.FUN_DISABLE_LIVE_LLM === '1') {
       return { ok: false, reason: 'llm-disabled', operations: [] };
     }
 

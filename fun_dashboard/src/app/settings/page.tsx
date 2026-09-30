@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { Sparkles } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { funApi } from "@/lib/api";
@@ -80,6 +82,15 @@ function SettingsBody() {
           <KV k="Zen model" v={cfg?.zenModel || "—"} mono />
           <KV k="Ollama model" v={cfg?.ollamaModel || "—"} mono />
           <KV k="Tarot CD" v={formatMs(cfg?.tarotCooldownMs)} />
+          <div className="mt-3 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+            <Link
+              href="/llm"
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Abrir Painel de Controle de IA & LLM →
+            </Link>
+          </div>
         </Section>
 
         <Section title="Cassino / Bingo">

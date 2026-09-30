@@ -7,6 +7,7 @@ import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
+import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
 import { isUsablePromptFact } from '../utils/promptFactSanitizer.js';
 
 const EXTRACT_SYSTEM = `Você extrai apenas bio e extras de um texto livre em pt-BR (grupo WhatsApp).
@@ -638,7 +639,7 @@ export function createProfileService({
         'Extraia somente bio e extras em JSON; use o texto como fonte de verdade.',
       ].join('\n\n');
 
-      if (funConfig.zenEnabled !== false) {
+      if (isLlmFeatureEnabled(funConfig, 'profile')) {
         const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
         let parsed = null;
         for (let attempt = 1; attempt <= totalTries; attempt += 1) {

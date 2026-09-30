@@ -397,9 +397,12 @@ export async function openaiChatComplete({
   const headers = {
     'Content-Type': 'application/json',
   };
-  const key = String(apiKey || '').trim();
-  if (key) {
-    headers.Authorization = `Bearer ${key}`;
+  const effectiveKey = String(apiKey || '').trim() ||
+    process.env.ZEN_API_KEY ||
+    process.env.OPENAI_API_KEY ||
+    (/localhost:20128|127\.0\.0\.1:20128/i.test(baseUrl) ? 'local-zen-dev-token' : '');
+  if (effectiveKey) {
+    headers.Authorization = `Bearer ${effectiveKey}`;
   }
 
   const controller = new AbortController();

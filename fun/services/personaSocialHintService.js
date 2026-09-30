@@ -1,6 +1,7 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams, fingerprintLine } from '../llm/zenTaskParams.js';
+import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
 
 const SYSTEM = `Você infere APENAS pistas sociais leves e temporárias de participantes de um grupo de WhatsApp.
 Responda SOMENTE JSON válido: {"hints":[{"participants":[0],"hint":"...","confidence":0-100,"socialSignal":"positive|neutral|negative"}]}.
@@ -72,7 +73,7 @@ export function createPersonaSocialHintService({
 
   function opts(funConfig = {}) {
     return {
-      enabled: funConfig.personaSocialHintsEnabled !== false && funConfig.zenEnabled !== false,
+      enabled: funConfig.personaSocialHintsEnabled !== false && isLlmFeatureEnabled(funConfig, 'socialHints'),
       batchSize: Math.max(8, Math.min(200, Number(funConfig.personaSocialHintsBatchSize) || 50)),
       flushMs: Math.max(60_000, Number(funConfig.personaSocialHintsFlushIntervalMs) || 10 * 60_000),
       minMessages: Math.max(3, Math.min(100, Number(funConfig.personaSocialHintsMinMessages) || 8)),
@@ -148,7 +149,7 @@ export function createPersonaSocialHintService({
     const batch = buffer.messages.splice(0, buffer.messages.length);
     buffer.lastFlushAt = Number(now) || Date.now();
     try {
-      if (funConfig?.zenEnabled === false || (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete)) {
+      if (!isLlmFeatureEnabled(funConfig, 'socialHints') || (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete)) {
         return { ok: true, saved: 0, batchSize: batch.length, reason: 'llm-disabled' };
       }
       const task = resolveZenTaskParams('extract', funConfig);

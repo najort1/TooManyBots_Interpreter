@@ -1284,6 +1284,24 @@ export function buildFunSchemaSql() {
       revision INTEGER NOT NULL DEFAULT 0,
       updated_at INTEGER NOT NULL
     );
+
+    -- Contas de usuário para jogos e integrações (schema v37)
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_user_accounts (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_jid        TEXT    NOT NULL UNIQUE,
+      username        TEXT    NOT NULL COLLATE NOCASE,
+      password_hash   TEXT    NOT NULL,
+      pin_hash        TEXT    NOT NULL,
+      status          TEXT    NOT NULL DEFAULT 'active',
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_user_accounts_jid
+      ON fun_user_accounts(user_jid);
+
+    CREATE UNIQUE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_user_accounts_username
+      ON fun_user_accounts(username COLLATE NOCASE);
   `;
 }
 

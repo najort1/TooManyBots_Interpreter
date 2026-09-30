@@ -74,7 +74,8 @@ export function middleware(req: NextRequest) {
 
   const publicHouseRoute = pathname === "/casas" || pathname.startsWith("/casas/") || pathname === "/api/fun/houses" || pathname.startsWith("/api/fun/houses/");
   const publicCarRoute = pathname === "/carros" || pathname.startsWith("/carros/") || pathname === "/api/fun/cars" || pathname.startsWith("/api/fun/cars/");
-  const publicTokenRoute = publicHouseRoute || publicCarRoute;
+  const publicGameRoute = pathname === "/jogos" || pathname.startsWith("/jogos/") || pathname === "/api/fun/games" || pathname.startsWith("/api/fun/games/");
+  const publicTokenRoute = publicHouseRoute || publicCarRoute || publicGameRoute;
 
   if (!isProtectedPath(pathname) && !publicTokenRoute) {
     return NextResponse.next();

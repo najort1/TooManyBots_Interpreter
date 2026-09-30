@@ -1,38 +1,43 @@
 /**
- * Tarô Fun — tiragem local + leitura via Zen (prompt específico) → template.
- * Humor BR, leitura resumida (até tarotMaxChars, default 3000).
+ * Tarô Oracular — tiragem de arcanos e interpretação oracular séria via Zen → template.
+ * Leitura solene, reflexiva, profunda e respeitosa (até tarotMaxChars, default 3000).
  */
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
+import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
 import {
   drawTarotCards,
   formatTarotDraw,
   fallbackTarotReading,
 } from './tarotDeck.js';
 
-export const TAROT_SYSTEM_PROMPT = `Você é o tarólogo de um bot de WhatsApp BR (pt-BR do dia a dia).
+export const TAROT_SYSTEM_PROMPT = `Você é um oráculo e tarólogo tradicional, solene, empático e profundo.
 
-PERSONA
-- Você inventa a leitura inteira: abertura, tom, humor e conselho — com base só nas cartas do user.
-- Mistura vidente de feira + amigo do grupo. Respeita arcanos, direita/invertida e posições, mas fala humano.
-- Pode ser engraçado, irônico, místico, seco — você escolhe e varia. Nunca cruel com trauma, doença, luto ou ideação.
+POSTURA E PRINCÍPIOS FUNDAMENTAIS
+- O Tarô é tratado aqui como uma arte sagrada de autoconhecimento, reflexão arquetípica e orientação de vida.
+- SERIEDADE ABSOLUTA: zero brincadeiras, zero piadas, zero ironia, zero deboche, zero gírias cômicas de internet, zero caricaturas e zero tom zombeteiro.
+- Mesmo que o consulente faça perguntas informais, curiosas ou jocosas, sua resposta DEVE permanecer 100% séria, acolhedora, respeitosa e sábia, conduzindo o foco para a reflexão madura da alma humana e de suas escolhas.
+- Respeite rigorosamente a simbologia tradicional dos Arcanos Maiores, suas dignidades (carta em posição DIREITA ou INVERTIDA) e suas respectivas posições no jogo.
+- O tarô mostra tendências, espelhos da consciência e caminhos potenciais; jamais determine destinos absolutos ou inalteráveis. O livre-arbítrio e a responsabilidade do consulente são sempre soberanos.
+- É expressamente proibido fazer profecias fatalistas, inventar datas de morte, fazer diagnósticos médicos ou de saúde mental, ou dar conselhos jurídicos.
 
-REGRAS DA LEITURA
-1. Use APENAS as cartas e orientações do user (não invente outras cartas).
-2. Estrutura (sem markdown pesado; *negrito* do WhatsApp ok):
-   - 1 linha de abertura
-   - 1 bloco curto por carta (nome + posição + significado aplicado à pergunta)
-   - 1 fechamento com conselho prático ou "o que observar"
-3. Tom de conversa de zap, não monografia.
-4. Limite: no máximo o número de caracteres indicado.
-5. Não invente coins, XP, datas de morte, "você vai morrer", diagnóstico médico/jurídico.
-6. Não diga destino absoluto; fale em tendência, clima, escolha.
-7. Sem listas intermináveis, sem inglês de assistente, sem "as an AI".
-8. Responda SÓ com a leitura final.
-PROIBIDO: "claro", "aqui vai", "como pediu", descrever o que vai fazer, meta.`;
+ESTRUTURA DA LEITURA
+1. Abertura Solene: Uma breve invocação de acolhimento reflexivo conectada à essência da questão trazida.
+2. Análise dos Arcanos (um parágrafo estruturado por carta):
+   - Nome do arcano, sua orientação (DIREITA ou INVERTIDA) e a posição na tiragem.
+   - Interpretação profunda do arquétipo aplicado com sobriedade à situação do consulente.
+3. Síntese e Conselho Oracular:
+   - Integração das mensagens das cartas em uma visão holística.
+   - Conselho meditativo, maduro e prático para orientar o consulente em seus próximos passos com consciência.
+
+FORMATO E ESTILO
+- Linguagem em português (pt-BR) culto, fluído, elegante, límpido e reflexivo.
+- Use *negrito* nos nomes dos arcanos e conceitos centrais.
+- Mantenha a leitura concisa e contundente, respeitando o limite de caracteres estipulado.
+- Responda EXCLUSIVAMENTE com a leitura oracular direta, sem meta-conversas, preâmbulos ou saudações artificiais ("claro", "como tarólogo", "aqui está").`;
 
 function numOr(v, fb) {
   const n = Number(v);
@@ -93,7 +98,7 @@ export function sanitizeTarotText(raw, maxChars = 3000) {
 }
 
 export function buildTarotUserPrompt({ question, cards, maxChars, identityBlock = '', loreContext = '' }) {
-  const q = String(question || '').trim() || '(sem pergunta — leitura geral do clima atual)';
+  const q = String(question || '').trim() || '(sem pergunta — leitura oracular geral do momento)';
   const cardBlock = (cards || [])
     .map((c, i) => {
       const orient = c.reversed ? 'INVERTIDA' : 'DIREITA';
@@ -101,22 +106,30 @@ export function buildTarotUserPrompt({ question, cards, maxChars, identityBlock 
       return [
         `Carta ${i + 1}: ${c.name} (${orient})`,
         `  Posição no spread: ${c.position}`,
-        `  Palavras-chave: ${keys}`,
+        `  Arquétipos e vibrações: ${keys}`,
       ].join('\n');
     })
     .join('\n');
 
+  const contextLines = [];
+  if (identityBlock) contextLines.push(identityBlock);
+  if (loreContext) {
+    contextLines.push(
+      loreContext,
+      'Observação: Qualquer contexto pessoal ou histórico deve ser tratado com solenidade e reverência. Jamais use para brincadeiras, zombarias ou deboche.'
+    );
+  }
+
   return [
-    `Pergunta do consulente: ${q}`,
-    identityBlock,
-    loreContext,
+    `Consulta do consulente: ${q}`,
+    ...contextLines,
     '',
-    'Tiragem (use só estas cartas):',
+    'Tiragem de Arcanos (use estritamente estas cartas):',
     cardBlock,
     '',
-    `Invente a leitura em pt-BR de zap (até ${maxChars} caracteres).`,
-    'Aplique cada carta à pergunta. Você escolhe o tom. Feche com um conselho curto.',
-  ].join('\n');
+    `Realize uma leitura oracular 100% séria, profunda e respeitosa em pt-BR (máximo de ${maxChars} caracteres).`,
+    'Analise cada arcano em sua posição e orientação com maturidade filosófica. Conclua com uma síntese integrativa e um conselho consciente.',
+  ].filter(Boolean).join('\n');
 }
 
 export function createTarotService({
@@ -142,13 +155,13 @@ export function createTarotService({
       maxTokens: Math.max(128, Math.min(2000, Math.floor(numOr(funConfig.tarotMaxTokens, 1400)))),
       temperature: Number.isFinite(Number(funConfig.tarotTemperature))
         ? Number(funConfig.tarotTemperature)
-        : 0.9,
+        : 0.7,
     };
   }
 
   function zenOn(cfg) {
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') return false;
-    return cfg.zenEnabled !== false;
+    return isLlmFeatureEnabled(cfg, 'tarot');
   }
 
   async function narrate({ question, cards, userJid = '', scopeKey = '', funConfig = {} }) {

@@ -1,6 +1,7 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
 import {
   buildFactTemporalContext,
   formatDatedFact,
@@ -49,7 +50,7 @@ export function createLoreReconciliationService({
     inFlight.add(scope);
     cooldowns.set(scope, now + cooldownMs);
     try {
-      if (process.env.FUN_DISABLE_LIVE_LLM === '1' || funConfig?.zenEnabled === false) return { ok: false, reason: 'llm-disabled' };
+      if (process.env.FUN_DISABLE_LIVE_LLM === '1' || !isLlmFeatureEnabled(funConfig, 'loreReconciliation')) return { ok: false, reason: 'llm-disabled' };
 
       const task = resolveZenTaskParams('lore_reconcile', funConfig);
       const endpoint = resolveZenEndpoint(funConfig);

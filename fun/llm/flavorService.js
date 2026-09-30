@@ -6,6 +6,7 @@ import {
   fingerprintLine,
 } from './zenTaskParams.js';
 import { recordLlmHit } from './llmMetrics.js';
+import { isLlmFeatureEnabled } from './llmGovernance.js';
 import { withRetries, BREAK } from '../utils/retry.js';
 
 /**
@@ -1080,13 +1081,18 @@ export function createFlavorService(deps = {}) {
   const liveLlmAllowed =
     process.env.FUN_DISABLE_LIVE_LLM !== '1' || Boolean(deps.allowLiveLlm);
 
-  function zenOn(cfg) {
+  function zenOn(cfg, scenario = '') {
     if (!liveLlmAllowed && generateZen === openaiChatComplete) return false;
-    return cfg?.zenEnabled !== false;
+    const feature = scenario === 'group_times'
+      ? 'groupNews'
+      : scenario === 'level_up'
+        ? 'levelUp'
+        : 'flavor';
+    return isLlmFeatureEnabled(cfg, feature);
   }
 
-  function isEnabled(cfg) {
-    return zenOn(cfg);
+  function isEnabled(cfg, scenario = '') {
+    return zenOn(cfg, scenario);
   }
 
   function fallback(scenario, vars) {
@@ -1323,7 +1329,7 @@ ${banHint}`.trim();
     vars,
     { simple = false, assault = false, chaos = false, maxRetries = 0, timeoutOverrideMs = undefined } = {}
   ) {
-    if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
+    if (!zenOn(cfg, key)) return { ok: false, reason: 'zen-disabled' };
     const isGroupTimes = key === 'group_times';
     const totalRetries = isGroupTimes
       ? Math.max(0, Math.floor(Number(cfg?.groupNewsMaxAttempts ? cfg.groupNewsMaxAttempts - 1 : maxRetries) || 2))
@@ -1332,7 +1338,7 @@ ${banHint}`.trim();
     const scopePart = String(scopeKeyOf(vars)).slice(0, 24);
 
     return withRetries(totalRetries, async (attempt, prevFailure) => {
-      if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
+      if (!zenOn(cfg, key)) return { ok: false, reason: 'zen-disabled' };
       if (isGroupTimes) {
         if (attempt === 0) {
           console.log(`[fun/news] LLM generation attempt 1/${totalAttempts} started for ${scopePart}...`);
@@ -1377,7 +1383,7 @@ ${banHint}`.trim();
     vars,
     { simple = false, assault = false, chaos = false, attempt = 0, timeoutOverrideMs = undefined } = {}
   ) {
-    if (!zenOn(cfg)) return { ok: false, reason: 'zen-disabled' };
+    if (!zenOn(cfg, key)) return { ok: false, reason: 'zen-disabled' };
     const taskName = assault ? 'assault' : chaos ? 'chaos' : 'flavor';
     const task = resolveZenTaskParams(taskName, cfg);
     const ep = resolveZenSettings(cfg);
@@ -1498,7 +1504,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
     const scopeKey = scopeKeyOf(vars);
     const safeFallback = fallback(key, vars);
 
-    if (!isEnabled(cfg)) {
+    if (!isEnabled(cfg, key)) {
       setLastProvider('template', scopeKey);
       return safeFallback;
     }
@@ -1575,7 +1581,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
     const scopeKey = scopeKeyOf(vars);
     const safeFallback = fallback(key, vars);
 
-    if (!isEnabled(cfg)) {
+    if (!isEnabled(cfg, key)) {
       setLastProvider('template', scopeKey);
       return safeFallback;
     }
@@ -1671,7 +1677,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
     const scopeKey = scopeKeyOf(vars);
     const safeFallback = fallback(key, vars);
 
-    if (!isEnabled(cfg)) {
+    if (!isEnabled(cfg, key)) {
       setLastProvider('template', scopeKey);
       return safeFallback;
     }

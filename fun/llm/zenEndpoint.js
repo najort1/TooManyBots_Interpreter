@@ -23,7 +23,7 @@ export function resolveZenEndpoint(funConfig = {}) {
   return {
     baseUrl: toStr(cfg.zenBaseUrl, DEFAULT_FUN_CONFIG.zenBaseUrl),
     model: toStr(cfg.zenModel, DEFAULT_FUN_CONFIG.zenModel),
-    apiKey: toStr(cfg.zenApiKey, ''),
+    apiKey: toStr(cfg.zenApiKey, process.env.ZEN_API_KEY || process.env.OPENAI_API_KEY || ''),
   };
 }
 

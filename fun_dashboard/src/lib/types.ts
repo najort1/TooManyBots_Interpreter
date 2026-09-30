@@ -145,6 +145,7 @@ export type FunConfig = {
   /** Respostas citam (reply) a mensagem do usuário (default true). */
   replyQuoted?: boolean;
   zenEnabled: boolean;
+  llmFeatures?: Record<string, boolean>;
   zenBaseUrl: string;
   zenModel: string;
   ollamaEnabled: boolean;
@@ -155,6 +156,28 @@ export type FunConfig = {
   bingoMax: number;
   casinoMin: number;
   casinoMax: number;
+};
+
+export type LlmFeatureItem = {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  fallback: string;
+  enabled: boolean;
+  active: boolean;
+};
+
+export type LlmConfigResponse = {
+  ok: boolean;
+  zenEnabled: boolean;
+  zenBaseUrl: string;
+  zenModel: string;
+  llmFeatures: Record<string, boolean>;
+  items: LlmFeatureItem[];
+  masterEnabled: boolean;
+  persisted?: boolean;
+  appliedImmediately?: boolean;
 };
 
 export type GroupSettings = {

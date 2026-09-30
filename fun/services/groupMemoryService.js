@@ -8,6 +8,7 @@ import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
+import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
 import {
   buildFactTemporalContext,
   formatDatedFact,
@@ -1416,7 +1417,7 @@ export function createGroupMemoryService({
 
     // Zen + jsonMode — 3 retentativas (1 chamada + 3 retries = 4 totais) antes de
     // retornar vazio. Fallback Ollama foi descontinuado.
-    if (funConfig.zenEnabled !== false) {
+    if (isLlmFeatureEnabled(funConfig, 'memory')) {
       const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
       for (let attempt = 1; attempt <= totalTries; attempt += 1) {
         try {
@@ -1490,7 +1491,7 @@ export function createGroupMemoryService({
       .join('\n');
     let text = '';
 
-    if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.zenEnabled !== false) {
+    if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && isLlmFeatureEnabled(funConfig, 'memory')) {
       const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
       for (let attempt = 1; attempt <= totalTries; attempt += 1) {
         try {

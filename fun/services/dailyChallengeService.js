@@ -26,6 +26,7 @@ import { WORDS_POOL, scrambleWord } from './data/wordsFallback.js';
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
 
 const CHALLENGE_TYPES = [
   'guess_game',
@@ -248,7 +249,7 @@ export function createDailyChallengeService(deps = {}) {
     const c = cfg();
     const task = resolveZenTaskParams(taskName, c);
     const { baseUrl, model, apiKey } = resolveZenEndpoint(c);
-    if (typeof generateZen !== 'function' || c.dailyChallengeEnabled === false || c.zenEnabled === false) return null;
+    if (typeof generateZen !== 'function' || c.dailyChallengeEnabled === false || !isLlmFeatureEnabled(c, 'dailyChallenge')) return null;
     if (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete) return null;
     try {
       const raw = await generateZen({
@@ -283,7 +284,7 @@ export function createDailyChallengeService(deps = {}) {
   async function llmText(system, userPrompt) {
     const c = cfg();
     const task = resolveZenTaskParams('dailyhint', c);
-    if (c.dailyChallengeEnabled === false || c.zenEnabled === false || typeof generateZen !== 'function') return null;
+    if (c.dailyChallengeEnabled === false || !isLlmFeatureEnabled(c, 'dailyChallenge') || typeof generateZen !== 'function') return null;
     if (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete) return null;
     const { baseUrl, model, apiKey } = resolveZenEndpoint(c);
     try {

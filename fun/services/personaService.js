@@ -21,6 +21,7 @@ import { sanitizeFlavor, looksLikeScoreboardEcho } from '../llm/flavorService.js
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
 import { PERSONA_CONTEXT_TURNS, PERSONA_DERIVE_INTERVAL_MS, PERSONA_TOKEN_HALF_LIFE_MS, PERSONA_TOP_TOKENS } from '../constants.js';
 import {
   buildPersonaToolManifest,
@@ -659,7 +660,7 @@ export function createPersonaService({
       ...immediateContext.map((message) => message?.text),
     ].map((value) => cleanPromptText(value, 500)).filter(Boolean).join('\n');
 
-    if (process.env.FUN_DISABLE_LIVE_LLM === '1' || funConfig?.zenEnabled === false) return '';
+    if (process.env.FUN_DISABLE_LIVE_LLM === '1' || !isLlmFeatureEnabled(funConfig, 'persona')) return '';
 
     const zen = resolveZenTaskParams('persona', funConfig);
     const ep = resolveZenEndpoint(funConfig);

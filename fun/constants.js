@@ -1,4 +1,4 @@
-export const FUN_SCHEMA_VERSION = '36';
+export const FUN_SCHEMA_VERSION = '37';
 
 export const PERSONA_MEMORY_TYPES = Object.freeze(['thread', 'episodic', 'semantic', 'social']);
 export const PERSONA_MEMORY_EVIDENCE = Object.freeze(['explicit', 'corroborated', 'inferred']);
@@ -117,6 +117,10 @@ export const FUN_COMMANDS = Object.freeze({
   // Rolês reais detectados nas conversas do grupo
   ROLES: 'roles',
   REMOVE_ROLE: 'remove_role',
+  // Cadastro / Conta
+  CADASTRAR: 'cadastrar',
+  // Evento diário de jogos multiplayer de panelinhas
+  JOGO_DIARIO: 'jogo_diario',
   // Administração de Grupo (Baileys)
   GROUP_BAN: 'group_ban',
   GROUP_PROMOTE: 'group_promote',
@@ -143,6 +147,7 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     FUN_COMMANDS.MISSION,
     FUN_COMMANDS.SQUAD,
     FUN_COMMANDS.EVENT,
+    FUN_COMMANDS.JOGO_DIARIO,
     // social: o outro jogador precisa ver no grupo
     FUN_COMMANDS.MARRY,
     FUN_COMMANDS.DIVORCE,
@@ -554,6 +559,20 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   lock: FUN_COMMANDS.GROUP_LOCK,
   destrancar: FUN_COMMANDS.GROUP_UNLOCK,
   unlock: FUN_COMMANDS.GROUP_UNLOCK,
+  // Cadastro de Conta
+  cadastrar: FUN_COMMANDS.CADASTRAR,
+  cadastro: FUN_COMMANDS.CADASTRAR,
+  registrar: FUN_COMMANDS.CADASTRAR,
+  registro: FUN_COMMANDS.CADASTRAR,
+  // Evento diário de jogos multiplayer de panelinhas
+  jogododia: FUN_COMMANDS.JOGO_DIARIO,
+  jogodiario: FUN_COMMANDS.JOGO_DIARIO,
+  jogo_diario: FUN_COMMANDS.JOGO_DIARIO,
+  iniciar_jogo: FUN_COMMANDS.JOGO_DIARIO,
+  iniciarjogo: FUN_COMMANDS.JOGO_DIARIO,
+  evento_jogo: FUN_COMMANDS.JOGO_DIARIO,
+  eventojogo: FUN_COMMANDS.JOGO_DIARIO,
+  jogos: FUN_COMMANDS.JOGO_DIARIO,
 });
 
 export const ACTION_TYPE = Object.freeze({
@@ -608,6 +627,25 @@ export const PERSONA_TOP_TOKENS = 50;
  * Cada troca = 2 entries (membro + bot) → 40 = 20 trocas.
  */
 export const PERSONA_CONTEXT_TURNS = 40;
+
+/** Features com suporte a LLM no bot Fun (controle granular de ativação). */
+export const DEFAULT_LLM_FEATURES = Object.freeze({
+  persona: true,
+  memory: true,
+  socialHints: true,
+  loreReconciliation: true,
+  flavor: true,
+  groupNews: true,
+  levelUp: true,
+  market: true,
+  dailyChallenge: true,
+  tarot: true,
+  qmp: true,
+  quizRoyale: true,
+  events: true,
+  selfHeal: true,
+  profile: true,
+});
 
 /** Defaults do bot Fun standalone (não herda config do TMB). */
 export const DEFAULT_FUN_CONFIG = Object.freeze({
@@ -732,6 +770,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // Flavor LLM — OpenCode Zen (principal) → Ollama (fallback) → template
   // OpenCode Zen Proxy (OpenAI-compatible)
   zenEnabled: true,
+  llmFeatures: DEFAULT_LLM_FEATURES,
   /** Proxy OpenAI-compatible Zen padronizado para todas as tarefas de chat. */
   zenBaseUrl: 'http://localhost:20128/v1',
   zenModel: 'bot-zap',

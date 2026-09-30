@@ -8,8 +8,10 @@ import { URL } from 'url';
 import { getDefaultOutboundGuard } from '../../engine/outboundGuard.js';
 import { normalizeFunConfig, saveFunUserConfig } from '../config.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
+import { getLlmFeaturesStatus, normalizeLlmFeatures } from '../llm/llmGovernance.js';
 import { createHouseRealtimeHub } from '../services/houseRealtimeService.js';
 import { getPublicBaseUrl } from '../utils/publicUrl.js';
+import { createGameRoutes } from '../games/routes.js';
 import {
   COMMAND_CATEGORIES,
   COMMAND_CATALOG,
@@ -83,6 +85,8 @@ function withDisplayName(getContactDisplayName, entry) {
  */
 export function startFunDashboardServer(deps = {}) {
   const getConfig = deps.getConfig || (() => ({}));
+  const updateConfig = typeof deps.updateConfig === 'function' ? deps.updateConfig : null;
+  const saveConfig = typeof deps.saveConfig === 'function' ? deps.saveConfig : saveFunUserConfig;
   const funModule = deps.funModule;
   const getContactDisplayName = deps.getContactDisplayName || (() => '');
   const getLogger = deps.getLogger || (() => null);
@@ -117,7 +121,25 @@ export function startFunDashboardServer(deps = {}) {
     giftService = null,
     robberyService = null,
     soundSystemService = null,
+    gameManager = null,
+    gameAuthService = null,
   } = funModule._services;
+
+  const resolvedGameRoutes = funModule._services?.gameRoutes || (
+    gameManager && gameAuthService
+      ? createGameRoutes({
+          gameManager,
+          authService: gameAuthService,
+          authorizeCreateRoom: (req) => {
+            const remoteAddress = String(req.socket?.remoteAddress || '');
+            const isLocalRequest = remoteAddress === '127.0.0.1' || remoteAddress === '::1' || remoteAddress === '::ffff:127.0.0.1';
+            const expectedKey = String(process.env.FUN_GAME_TEST_KEY || '').trim();
+            const providedKey = String(req.headers['x-game-test-key'] || '').trim();
+            return isLocalRequest && Boolean(expectedKey) && providedKey === expectedKey;
+          },
+        })
+      : null
+  );
 
   /** Normaliza scope do path/query: aceita JID completo ou só o número do grupo. */
   function resolveScopeKey(raw) {
@@ -333,6 +355,16 @@ export function startFunDashboardServer(deps = {}) {
           api: `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}/api/fun/health`,
         });
         return;
+      }
+
+      if (path.startsWith('/api/fun/games/')) {
+        if (!resolvedGameRoutes) {
+          sendJson(res, 503, { error: 'games-indisponivel' });
+          return;
+        }
+        if (await resolvedGameRoutes.handleRequest(req, res, url)) {
+          return;
+        }
       }
 
       if (req.method === 'GET' && path === '/api/fun/health') {
@@ -872,6 +904,7 @@ export function startFunDashboardServer(deps = {}) {
           replyQuoted: cfg.replyQuoted !== false,
           replyCommandsInPrivate: cfg.replyCommandsInPrivate !== false,
           zenEnabled: cfg.zenEnabled !== false,
+          llmFeatures: normalizeLlmFeatures(cfg.llmFeatures),
           zenBaseUrl: zenEndpoint.baseUrl,
           zenModel: zenEndpoint.model,
           ollamaEnabled: cfg.ollamaEnabled !== false,
@@ -885,6 +918,76 @@ export function startFunDashboardServer(deps = {}) {
           dashboardHost: cfg.dashboardHost,
           dashboardPort: cfg.dashboardPort,
         });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/llm/config') {
+        const cfg = getConfig();
+        const zenEndpoint = resolveZenEndpoint(cfg);
+        const status = getLlmFeaturesStatus(cfg);
+        sendJson(res, 200, {
+          ok: true,
+          zenEnabled: cfg.zenEnabled !== false,
+          zenBaseUrl: zenEndpoint.baseUrl,
+          zenModel: zenEndpoint.model,
+          llmFeatures: status.features,
+          items: status.items,
+          masterEnabled: status.masterEnabled,
+        });
+        return;
+      }
+
+      if ((req.method === 'POST' || req.method === 'PUT') && path === '/api/fun/llm/config') {
+        if (!requireAdmin(req, res)) return;
+        const body = await readBody(req);
+        const current = getConfig();
+        const nextFeatures = body.llmFeatures && typeof body.llmFeatures === 'object'
+          ? { ...(current.llmFeatures || {}), ...body.llmFeatures }
+          : current.llmFeatures;
+
+        const next = normalizeFunConfig({
+          ...current,
+          ...(Object.hasOwn(body, 'zenEnabled') ? { zenEnabled: Boolean(body.zenEnabled) } : {}),
+          llmFeatures: nextFeatures,
+        });
+
+        saveConfig(next);
+        if (typeof updateConfig === 'function') {
+          updateConfig(next);
+        }
+
+        const zenEndpoint = resolveZenEndpoint(next);
+        const status = getLlmFeaturesStatus(next);
+        sendJson(res, 200, {
+          ok: true,
+          zenEnabled: next.zenEnabled !== false,
+          zenBaseUrl: zenEndpoint.baseUrl,
+          zenModel: zenEndpoint.model,
+          llmFeatures: status.features,
+          items: status.items,
+          masterEnabled: status.masterEnabled,
+          persisted: true,
+          appliedImmediately: true,
+        });
+        return;
+      }
+
+      if ((req.method === 'POST' || req.method === 'PUT') && path === '/api/fun/config') {
+        if (!requireAdmin(req, res)) return;
+        const body = await readBody(req);
+        const current = getConfig();
+        const next = normalizeFunConfig({
+          ...current,
+          ...body,
+          ...(body.llmFeatures && typeof body.llmFeatures === 'object'
+            ? { llmFeatures: { ...(current.llmFeatures || {}), ...body.llmFeatures } }
+            : {}),
+        });
+        saveConfig(next);
+        if (typeof updateConfig === 'function') {
+          updateConfig(next);
+        }
+        sendJson(res, 200, { ok: true, config: next, persisted: true, appliedImmediately: true });
         return;
       }
 
@@ -1574,7 +1677,7 @@ export function startFunDashboardServer(deps = {}) {
           ...(Object.hasOwn(body, 'maxItemsPerRun') ? { selfHealMaxItemsPerRun: body.maxItemsPerRun } : {}),
           ...(Object.hasOwn(body, 'maxCallsPerRun') ? { selfHealMaxCallsPerRun: body.maxCallsPerRun } : {}),
         });
-        saveFunUserConfig(next);
+        saveConfig(next);
         sendJson(res, 200, { ok: true, config: selfHealConfig(next), persisted: true, appliesAfterConfigReload: true });
         return;
       }

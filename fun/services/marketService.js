@@ -9,6 +9,7 @@ import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { recordLlmHit, inventTemplateAlert } from '../llm/llmMetrics.js';
+import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
 import {
   COLLECTIBLES,
   getCollectible,
@@ -552,7 +553,7 @@ export function createMarketService({
 
     // 1) Zen — 3 retentativas (1 chamada + 3 retries = 4 totais) antes do template
     //    mockado. Fallback Ollama foi descontinuado.
-    if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && funConfig.zenEnabled !== false) {
+    if (process.env.FUN_DISABLE_LIVE_LLM !== '1' && isLlmFeatureEnabled(funConfig, 'market')) {
       const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
       let parsed = null;
       let source = '';
@@ -679,7 +680,7 @@ export function createMarketService({
   async function maybeJournalistRewrite(facts, funConfig = {}) {
     if (funConfig.marketJournalistEnabled === false) return null;
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') return null;
-    if (funConfig.zenEnabled === false) return null;
+    if (!isLlmFeatureEnabled(funConfig, 'market')) return null;
     const task = resolveZenTaskParams('journalist', funConfig);
     const ep = resolveZenEndpoint(funConfig);
     try {

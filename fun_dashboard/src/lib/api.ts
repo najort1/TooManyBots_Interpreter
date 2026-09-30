@@ -10,6 +10,7 @@ import type {
   DailyChallengeType,
   Faction,
   FunConfig,
+  LlmConfigResponse,
   FunGroup,
   GroupSettings,
   CommandCatalogResponse,
@@ -78,6 +79,14 @@ export const funApi = {
   health: () => request<{ ok: boolean }>("/api/fun/health"),
 
   config: () => request<FunConfig>("/api/fun/config"),
+
+  llmConfig: () => request<LlmConfigResponse>("/api/fun/llm/config"),
+
+  updateLlmConfig: (payload: { zenEnabled?: boolean; llmFeatures?: Record<string, boolean> }) =>
+    request<LlmConfigResponse>("/api/fun/llm/config", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 
   groups: () => request<{ groups: FunGroup[] }>("/api/fun/groups"),
 

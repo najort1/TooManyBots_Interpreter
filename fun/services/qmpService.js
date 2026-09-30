@@ -7,6 +7,7 @@ import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
+import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
 import { getWeekKey } from '../db/funSocialRepository.js';
 
 /** Normal / leve — dinâmica casual de festa e cartas de grupo (impossível violar safety, foco em humor cotidiano). */
@@ -441,7 +442,7 @@ export function createQmpService({
 
   function zenOn(cfg) {
     if (process.env.FUN_DISABLE_LIVE_LLM === '1') return false;
-    return cfg.zenEnabled !== false;
+    return isLlmFeatureEnabled(cfg, 'qmp');
   }
 
   function fallbackPrompt(tone = 'normal', recent = []) {

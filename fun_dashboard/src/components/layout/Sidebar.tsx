@@ -12,6 +12,7 @@ import {
   Megaphone,
   Puzzle,
   ShieldCheck,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { ThemeToggle } from "@/components/theme/ThemeToggle";
@@ -25,6 +26,7 @@ const NAV = [
   { href: "/changelog", label: "Changelog", icon: Megaphone },
   { href: "/desafios", label: "Desafios", icon: Puzzle },
   { href: "/selfheal", label: "Auto-aprimorar", icon: ShieldCheck },
+  { href: "/llm", label: "IA & LLM", icon: Sparkles },
   { href: "/settings", label: "Config", icon: Settings2 },
 ] as const;
 

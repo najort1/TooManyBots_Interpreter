@@ -28,6 +28,9 @@ function isPublicSurface(pathname: string | null): boolean {
   if (!pathname) return false;
   if (pathname === "/bolsa" || pathname.startsWith("/bolsa/")) return true;
   if (pathname.startsWith("/job/")) return true;
+  if (pathname === "/casas" || pathname.startsWith("/casas/")) return true;
+  if (pathname === "/carros" || pathname.startsWith("/carros/")) return true;
+  if (pathname === "/jogos" || pathname.startsWith("/jogos/")) return true;
   return false;
 }
 
