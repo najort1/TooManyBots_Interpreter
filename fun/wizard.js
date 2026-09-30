@@ -230,7 +230,7 @@ export async function runFunSetupWizard({
     cooldownMs: Math.max(0, Number(extras.cooldownMs) || 60_000),
   };
 
-  const saved = saveFunUserConfig(next);
+  const saved = saveFunUserConfig(next, { allowEmptyWhitelist: true });
   console.log(`\n[fun] Config salva em fun/config.user.json (${saved.groupWhitelistJids.length} grupo(s)).\n`);
   if (saved.groupWhitelistJids.length === 0) {
     console.warn('[fun] Sem grupos: rode depois `npm run fun -- --setup` para escolher.');
