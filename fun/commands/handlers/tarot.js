@@ -31,18 +31,18 @@ export async function handleTarotCommand({
   if (question && /^(help|ajuda|\?)$/i.test(question)) {
     await reply(
       [
-        '🔮 *Tarô Fun*',
+        '🔮 *Tarô Oracular*',
         `Uso: \`${p}tarot sua pergunta aqui\``,
-        `Ou: \`${p}tarot\` — leitura geral do clima`,
-        'Tiragem de *3 arcanos* (pode vir invertida).',
-        'O bot marca a carta; o “vidente” (IA) interpreta em pt-BR, resumido.',
-        '_É entretenimento, não consulta profissional._',
+        `Ou: \`${p}tarot\` — leitura oracular do momento presente`,
+        'Tiragem clássica de *3 arcanos* com posições e dignidades (direta ou invertida).',
+        'Interpretação oracular profunda e séria sobre suas escolhas e tendências.',
+        '_O tarô reflete estados de consciência e autoconhecimento; suas decisões pertencem ao seu livre-arbítrio._',
       ].join('\n')
     );
     return { handled: true };
   }
 
-  await reply('🔮 Embaralhando… _não é papo de coach, é arcano com sotaque BR._');
+  await reply('🔮 *Embaralhando os arcanos sagrados...* Silencie a mente e concentre-se na sua intenção.');
 
   const result = await tarotService.reading({
     userJid,
@@ -64,7 +64,7 @@ export async function handleTarotCommand({
       await reply('Tarô desligado na config.');
       return { handled: true };
     }
-    await reply('As cartas se espalharam no chão. Tenta de novo.');
+    await reply('As cartas silenciaram neste momento. Tente novamente em instantes.');
     return { handled: true };
   }
 

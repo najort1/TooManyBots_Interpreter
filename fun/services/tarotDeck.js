@@ -8,155 +8,155 @@ export const TAROT_MAJOR = Object.freeze([
     id: 0,
     name: 'O Louco',
     emoji: '🃏',
-    upright: ['início', 'salto no escuro', 'inocência', 'liberdade'],
-    reversed: ['imprudência', 'medo de começar', 'caos sem filtro', 'naivê demais'],
+    upright: ['novo ciclo', 'salto de fé', 'espontaneidade', 'potencial puro'],
+    reversed: ['imprudência', 'precipitação', 'hesitação paralisante', 'falta de discernimento'],
   },
   {
     id: 1,
     name: 'O Mago',
     emoji: '🪄',
-    upright: ['habilidade', 'foco', 'manifestar', 'ter as ferramentas'],
-    reversed: ['manipulação', 'promessa vazia', 'dispersão', 'falar mais que fazer'],
+    upright: ['habilidade', 'foco e intenção', 'capacidade de manifestação', 'recursos internos'],
+    reversed: ['manipulação', 'intenções turvas', 'dispersão de energia', 'potencial bloqueado'],
   },
   {
     id: 2,
     name: 'A Sacerdotisa',
     emoji: '🌙',
-    upright: ['intuição', 'segredo', 'paciência', 'ouvir o silêncio'],
-    reversed: ['ignorar o feeling', 'fofoca', 'bloqueio interior', 'forçar resposta'],
+    upright: ['intuição profunda', 'mistério', 'sabedoria interior', 'silêncio contemplativo'],
+    reversed: ['intuição reprimida', 'superficialidade', 'segredos nocivos', 'desconexão interior'],
   },
   {
     id: 3,
     name: 'A Imperatriz',
     emoji: '👑',
-    upright: ['cuidado', 'abundância', 'criar', 'afeto generoso'],
-    reversed: ['dependência', 'esgotamento', 'possessividade', 'mimo demais'],
+    upright: ['fertilidade criativa', 'abundância', 'nutrição emocional', 'generosidade'],
+    reversed: ['sufocamento afetivo', 'bloqueio criativo', 'esgotamento', 'negligência pessoal'],
   },
   {
     id: 4,
     name: 'O Imperador',
     emoji: '🏛️',
-    upright: ['estrutura', 'autoridade', 'plano', 'limites saudáveis'],
-    reversed: ['controle tóxico', 'rigidez', 'chefe chato', 'medo de ceder'],
+    upright: ['estrutura', 'autoridade legítima', 'disciplina', 'limites conscientes'],
+    reversed: ['autoritarismo', 'rigidez inflexível', 'instabilidade', 'perda de controle'],
   },
   {
     id: 5,
     name: 'O Hierofante',
     emoji: '📿',
-    upright: ['tradição', 'mentor', 'valores', 'grupo de referência'],
-    reversed: ['rebeldia cega', 'dogma', 'seguir moda errada', 'guru furado'],
+    upright: ['tradição espiritual', 'sabedoria ancestral', 'valores éticos', 'busca de sentido'],
+    reversed: ['dogmatismo cego', 'crise de crenças', 'rigidez moral', 'rejeição a ensinamentos válidos'],
   },
   {
     id: 6,
     name: 'Os Enamorados',
-    emoji: '💕',
-    upright: ['escolha do coração', 'parceria', 'valores alinhados', 'atração real'],
-    reversed: ['indecisão', 'triangulação', 'escolher por medo', 'desalinho'],
+    emoji: '🕊️',
+    upright: ['escolha da alma', 'aliança consciente', 'harmonia de valores', 'atração genuína'],
+    reversed: ['indecisão profunda', 'conflito interno', 'escolhas por medo', 'desalinhamento ético'],
   },
   {
     id: 7,
     name: 'O Carro',
-    emoji: '🏎️',
-    upright: ['vitória', 'direção', 'força de vontade', 'seguir em frente'],
-    reversed: ['perda de controle', 'raiva no volante', 'travado', 'ego no caminho'],
+    emoji: '🛡️',
+    upright: ['determinação vitoriosa', 'autodomínio', 'direção clara', 'superação de obstáculos'],
+    reversed: ['perda de direção', 'pressa destrutiva', 'descontrole emocional', 'força desgovernada'],
   },
   {
     id: 8,
     name: 'A Força',
     emoji: '🦁',
-    upright: ['coragem mansa', 'paciência firme', 'domínio de si', 'gentileza poderosa'],
-    reversed: ['insegurança', 'explosão', 'forçar a barra', 'dúvida de si'],
+    upright: ['coragem compassiva', 'paciência inabalável', 'domínio interior', 'força moral'],
+    reversed: ['fraqueza diante do medo', 'impulsividade agressiva', 'insegurança', 'dúvida sobre si'],
   },
   {
     id: 9,
     name: 'O Eremita',
     emoji: '🏮',
-    upright: ['recuo sábio', 'autoconhecimento', 'solitude útil', 'buscar luz interior'],
-    reversed: ['isolamento tóxico', 'fugir de gente', 'teimosia solitária', 'perdido'],
+    upright: ['recolhimento sábio', 'busca da verdade', 'introspecção iluminada', 'prudência'],
+    reversed: ['isolamento estéril', 'alienação', 'recusa em ouvir', 'solidão amarga'],
   },
   {
     id: 10,
     name: 'A Roda da Fortuna',
     emoji: '🎡',
-    upright: ['virada', 'ciclo', 'sorte em movimento', 'o que sobe desce (e sobe)'],
-    reversed: ['má fase', 'resistir à mudança', 'azar temporário', 'ficar no mesmo loop'],
+    upright: ['viradas do destino', 'ciclos universais', 'movimento inevitável', 'oportunidades'],
+    reversed: ['resistência à mudança', 'fase de provação', 'repetição de erros', 'estagnação kármica'],
   },
   {
     id: 11,
     name: 'A Justiça',
     emoji: '⚖️',
-    upright: ['verdade', 'consequência', 'equilíbrio', 'conta que fecha'],
-    reversed: ['injustiça', 'desculpa esfarrapada', 'evitar responsabilidade', 'vies'],
+    upright: ['verdade cristalina', 'imparcialidade', 'equilíbrio kármico', 'responsabilidade ética'],
+    reversed: ['injustiça', 'fuga da responsabilidade', 'parcialidade nociva', 'autonegação da verdade'],
   },
   {
     id: 12,
     name: 'O Enforcado',
-    emoji: '🙃',
-    upright: ['pausa estratégica', 'novo ângulo', 'soltar o controle', 'sacrifício útil'],
-    reversed: ['martírio inútil', 'atraso teimoso', 'ficar preso', 'vitimismo'],
+    emoji: '⏳',
+    upright: ['pausa consciente', 'nova perspectiva', 'renúncia iluminada', 'rendição ao tempo'],
+    reversed: ['sacrifício estéril', 'estagnação obstinada', 'vitimização', 'resistência ao aprendizado'],
   },
   {
     id: 13,
     name: 'A Morte',
     emoji: '🥀',
-    upright: ['fim necessário', 'transformação', 'fechar ciclo', 'renascimento'],
-    reversed: ['apegar no morto', 'medo de mudar', 'arrastar o que já era', 'negar o óbvio'],
+    upright: ['encerramento necessário', 'profunda transmutação', 'fechamento de ciclo', 'renovação'],
+    reversed: ['resistência à transição', 'apego ao que findou', 'medo do renascimento', 'estagnação dolorosa'],
   },
   {
     id: 14,
     name: 'A Temperança',
     emoji: '🕊️',
-    upright: ['equilíbrio', 'paciência', 'mistura certa', 'meio-termo inteligente'],
-    reversed: ['excesso', 'impaciência', 'tudo ou nada', 'descompasso'],
+    upright: ['harmonia e cura', 'paciência serena', 'alquimia interior', 'moderação sábia'],
+    reversed: ['desequilíbrio', 'impaciência desmedida', 'excessos prejudiciais', 'desarmonia interna'],
   },
   {
     id: 15,
     name: 'O Diabo',
-    emoji: '😈',
-    upright: ['apego', 'tentação', 'vício de padrão', 'sombra exposta'],
-    reversed: ['soltar corrente', 'enxergar a armadilha', 'recuperar agência', 'sair do looping'],
+    emoji: '⛓️',
+    upright: ['sombras inconscientes', 'apego material', 'fascínio ilusório', 'força dos instintos'],
+    reversed: ['libertação de amarras', 'consciência das próprias correntes', 'superação de ilusões', 'cura da sombra'],
   },
   {
     id: 16,
     name: 'A Torre',
-    emoji: '🗼',
-    upright: ['queda de castelo de areia', 'verdade brusca', 'liberdade após o tombo', 'reset'],
-    reversed: ['adiar o colapso', 'medo do caos', 'reforma cosmetica', 'negar o abalo'],
+    emoji: '⚡',
+    upright: ['ruptura de falsas certezas', 'queda de ilusões', 'despertar brusco', 'libertação necessária'],
+    reversed: ['adiamento do colapso', 'medo da verdade', 'crise prolongada', 'resistência à renovação'],
   },
   {
     id: 17,
     name: 'A Estrela',
     emoji: '⭐',
-    upright: ['esperança', 'cura', 'inspiração', 'fé calma'],
-    reversed: ['desânimo', 'fé baixa', 'cinismo', 'perder o norte por um tempo'],
+    upright: ['esperança renovada', 'cura espiritual', 'inspiração serena', 'fé e clareza'],
+    reversed: ['desalento temporário', 'crise de fé', 'pessimismo', 'desconexão com a esperança'],
   },
   {
     id: 18,
     name: 'A Lua',
     emoji: '🌕',
-    upright: ['ilusão', 'inconsciente', 'medo nebuloso', 'o que não está claro'],
-    reversed: ['clareza chegando', 'ansiedade baixando', 'segredo saindo', 'pé no chão'],
+    upright: ['mistérios do inconsciente', 'intuição oculta', 'navegar pelas sombras', 'sonhos reveladores'],
+    reversed: ['dissipação de ilusões', 'superação de medos ocultos', 'clareza emergente', 'angústia superada'],
   },
   {
     id: 19,
     name: 'O Sol',
     emoji: '☀️',
-    upright: ['clareza', 'alegria', 'sucesso visível', 'vitalidade'],
-    reversed: ['otimismo forçado', 'ego brilhando demais', 'atraso da vitória', 'cansaço'],
+    upright: ['vitalidade plena', 'clareza e verdade', 'alegria consciente', 'sucesso iluminado'],
+    reversed: ['dificuldade em enxergar a luz', 'otimismo ingênuo', 'vaidade temporária', 'vitalidade reduzida'],
   },
   {
     id: 20,
     name: 'O Julgamento',
     emoji: '📯',
-    upright: ['chamado', 'prestação de contas', 'despertar', 'segunda chance real'],
-    reversed: ['dúvida no chamado', 'autojulgamento pesado', 'ignorar o aviso', 'ficar no passado'],
+    upright: ['chamado da consciência', 'despertar espiritual', 'redenção e cura', 'segunda oportunidade'],
+    reversed: ['recusa ao chamado', 'culpa estéril', 'resistência ao despertar', 'apego a velhos julgamentos'],
   },
   {
     id: 21,
     name: 'O Mundo',
     emoji: '🌍',
-    upright: ['conclusão', 'integração', 'ciclo completo', 'chegada'],
-    reversed: ['quase lá', 'ponta solta', 'medo de fechar', 'próximo nível adiado'],
+    upright: ['integração cósmica', 'realização plena', 'conclusão de jornada', 'harmonia total'],
+    reversed: ['ciclo incompleto', 'pendências a sanar', 'hesitação na reta final', 'plenitude adiada'],
   },
 ]);
 
@@ -203,26 +203,24 @@ export function formatTarotDraw(cards) {
  * @param {ReturnType<typeof drawTarotCards>} cards
  */
 export function fallbackTarotReading(question, cards) {
-  const q = String(question || '').trim() || 'a situação em geral';
+  const q = String(question || '').trim() || 'questão apresentada';
   const parts = (cards || []).map((c) => {
-    const orient = c.reversed ? 'invertida' : 'na direita';
+    const orient = c.reversed ? 'em posição invertida' : 'em posição direta';
     const k = (c.keywords || []).slice(0, 2).join(' e ');
-    return `*${c.name}* (${orient}, ${c.position}): aponta pra *${k}*.`;
+    return `*${c.name}* (${orient}) na posição *${c.position}*:\n  Manifesta energias de *${k}*, indicando reflexão necessária sobre essas forças.`;
   });
   const last = cards?.[cards.length - 1];
   const tip = last
     ? last.reversed
-      ? 'Conselho da casa: solta o que tá te prendendo antes de forçar o próximo passo.'
-      : 'Conselho da casa: confia no movimento, mas não ignore o detalhe chato do caminho.'
-    : 'As cartas sumiram. Até o destino tirou férias.';
+      ? '*Orientação Oracular:* O momento exige prudência, introspecção e liberação de bloqueios antes de empreender novos passos.'
+      : '*Orientação Oracular:* Mantenha a presença de espírito e avance com discernimento, confiando no processo e mantendo a integridade de seus valores.'
+    : 'As cartas permanecem em silêncio neste momento.';
 
   return [
-    `Tiragem pra: _${q.slice(0, 120)}_`,
+    `*Tiragem para:* _${q.slice(0, 120)}_`,
     '',
     ...parts,
     '',
     tip,
-    '',
-    '_(leitura reserva — o astrólogo virtual tava de bico)_',
   ].join('\n');
 }

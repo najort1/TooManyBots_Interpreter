@@ -235,3 +235,26 @@ test('facade: /tarot no grupo', async () => {
 
   delete process.env.FUN_DISABLE_LIVE_LLM;
 });
+
+test('tarot: postura 100% seria no system prompt, user prompt e fallback', () => {
+  const tarot = createTarotService();
+  assert.ok(tarot.TAROT_SYSTEM_PROMPT);
+
+  // Proíbe menção a vidente de feira ou humor/piada
+  assert.doesNotMatch(tarot.TAROT_SYSTEM_PROMPT, /vidente de feira/i);
+  assert.doesNotMatch(tarot.TAROT_SYSTEM_PROMPT, /Pode ser engraçado/i);
+  assert.doesNotMatch(tarot.TAROT_SYSTEM_PROMPT, /conversa de zap/i);
+
+  // Exige regras de solenidade e seriedade
+  assert.match(tarot.TAROT_SYSTEM_PROMPT, /SERIEDADE ABSOLUTA/i);
+  assert.match(tarot.TAROT_SYSTEM_PROMPT, /arte sagrada de autoconhecimento/i);
+  assert.match(tarot.TAROT_SYSTEM_PROMPT, /zero brincadeiras/i);
+
+  // Fallback não pode ter piada de bico ou férias
+  const cards = drawTarotCards(() => 0.1, 3);
+  const fb = fallbackTarotReading('qual o meu caminho?', cards);
+  assert.doesNotMatch(fb, /de bico/i);
+  assert.doesNotMatch(fb, /férias/i);
+  assert.doesNotMatch(fb, /Conselho da casa/i);
+  assert.match(fb, /Orientação Oracular/i);
+});
