@@ -982,7 +982,7 @@ function ColinasView({
             className={`h-full transition-all duration-1000 ${
               isReveal ? "bg-purple-500" : timer <= 5 ? "bg-red-500" : "bg-amber-400"
             }`}
-            style={{ width: `${(timer / (isReveal ? 4 : 15)) * 100}%` }}
+            style={{ width: `${(timer / (isReveal ? 6 : 15)) * 100}%` }}
           />
         </div>
 
@@ -1332,7 +1332,7 @@ function GrandeGolpeView({
             className={`h-full transition-all duration-1000 ${
               isReveal ? "bg-purple-500" : timer <= 5 ? "bg-red-500" : "bg-amber-400"
             }`}
-            style={{ width: `${(timer / (isReveal ? 4 : 15)) * 100}%` }}
+            style={{ width: `${(timer / (isReveal ? 6 : 15)) * 100}%` }}
           />
         </div>
 
@@ -1567,6 +1567,7 @@ function GrandeGolpeRulesSection() {
         <p className="text-slate-300 leading-relaxed text-xs">
           • Cada guardião defensor na rota barra <strong className="text-white">1 invasor</strong>.<br />
           • Invasores não barrados roubam as relíquias correspondentes à rota!<br />
+          • <strong className="text-amber-400">Partidas 3v2:</strong> O time menor compensa a desvantagem atacando 4 das 6 rodadas (rodadas 1, 3, 4 e 6) enquanto o time maior ataca 2 rodadas (rodadas 2 e 5)!<br />
           • Quem tiver mais relíquias roubadas ao final das 6 rodadas vence a disputa!
         </p>
       </div>

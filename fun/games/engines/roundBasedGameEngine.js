@@ -45,7 +45,7 @@ export function createRoundBasedGameEngine(room, {
   gameManager = null,
   totalRounds = 6,
   roundDurationMs = 15_000,
-  revealDurationMs = 4_000,
+  revealDurationMs = 6_000,
 } = {}) {
   if (!room) {
     throw new Error('[roundBasedGameEngine] Objeto room é obrigatório');
@@ -187,12 +187,30 @@ export function createRoundBasedGameEngine(room, {
 
   /**
    * Determina qual time está atacando na rodada atual (para Grande Golpe).
-   * Rodadas ímpares (0, 2, 4): Time 1 ataca.
-   * Rodadas pares (1, 3, 5): Time 2 ataca.
+   * Em times iguais:
+   *   Rodadas ímpares (0, 2, 4): Time 1 ataca.
+   *   Rodadas pares (1, 3, 5): Time 2 ataca.
+   * Em times desiguais (3v2):
+   *   Compensação estrutural: o time menor ataca 4 das 6 rodadas (0, 2, 3, 5) e o maior 2 (1, 4).
    */
   function getAttackingTeamId(roundIdx = currentRoundIndex) {
     const teamIds = Array.from(teams.keys());
-    return roundIdx % 2 === 0 ? teamIds[0] : teamIds[1];
+    if (teamIds.length < 2) return teamIds[0] || null;
+
+    const t0 = teamIds[0];
+    const t1 = teamIds[1];
+    const count0 = teams.get(t0)?.members?.length ?? 0;
+    const count1 = teams.get(t1)?.members?.length ?? 0;
+
+    // Compensação estrutural em 3v2: time menor ataca mais vezes
+    if (count0 !== count1 && count0 > 0 && count1 > 0) {
+      const smallerTeamId = count0 < count1 ? t0 : t1;
+      const biggerTeamId = count0 < count1 ? t1 : t0;
+      const smallerRounds = GOLPE_CONSTANTS.UNEVEN_3V2_STRUCTURE.SMALLER_ATTACK_ROUNDS;
+      return smallerRounds.includes(roundIdx) ? smallerTeamId : biggerTeamId;
+    }
+
+    return roundIdx % 2 === 0 ? t0 : t1;
   }
 
   function getDefendingTeamId(roundIdx = currentRoundIndex) {
@@ -381,8 +399,13 @@ export function createRoundBasedGameEngine(room, {
       if (teamList[0].score > teamList[1].score) winningTeamId = teamList[0].id;
       else if (teamList[1].score > teamList[0].score) winningTeamId = teamList[1].id;
       else {
-        // Desempate em Colinas: mais colinas dominadas no histórico
-        if (isColinas) {
+        const count0 = teamList[0].members?.length ?? 0;
+        const count1 = teamList[1].members?.length ?? 0;
+        // Desempate em times desiguais (3v2): mérito ao time menor
+        if (count0 !== count1 && count0 > 0 && count1 > 0) {
+          winningTeamId = count0 < count1 ? teamList[0].id : teamList[1].id;
+        } else if (isColinas) {
+          // Desempate em Colinas: mais colinas dominadas no histórico
           let wins0 = 0;
           let wins1 = 0;
           for (const rh of roundHistory) {

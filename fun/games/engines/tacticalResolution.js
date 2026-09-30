@@ -11,7 +11,7 @@
 export const COLINAS_CONSTANTS = Object.freeze({
   TOTAL_ROUNDS: 6,
   ROUND_DURATION_MS: 15_000,
-  REVEAL_DURATION_MS: 4_000,
+  REVEAL_DURATION_MS: 6_000,
   HILLS: Object.freeze(['alfa', 'bravo', 'charlie']),
   BASE_VALUES: Object.freeze({
     alfa: 5,
@@ -25,7 +25,7 @@ export const COLINAS_CONSTANTS = Object.freeze({
 export const GOLPE_CONSTANTS = Object.freeze({
   TOTAL_ROUNDS: 6,
   ROUND_DURATION_MS: 15_000,
-  REVEAL_DURATION_MS: 4_000,
+  REVEAL_DURATION_MS: 6_000,
   ROUTES: Object.freeze(['floresta', 'tunel', 'ponte']),
   ROUTE_VALUES: Object.freeze({
     floresta: 1,
@@ -33,7 +33,11 @@ export const GOLPE_CONSTANTS = Object.freeze({
     ponte: 3,
   }),
   DEFAULT_AFK_ROUTE: 'floresta',
-  UNEVEN_3V2_BONUS: 1, // Bônus por invasor não barrado quando o time menor de 2 ataca
+  // Em 3v2 estrutural: o time menor ataca 4 das 6 rodadas (rodadas 0, 2, 3, 5) e o maior 2 (rodadas 1, 4)
+  UNEVEN_3V2_STRUCTURE: Object.freeze({
+    SMALLER_ATTACK_ROUNDS: Object.freeze([0, 2, 3, 5]),
+    BIGGER_ATTACK_ROUNDS: Object.freeze([1, 4]),
+  }),
 });
 
 /**
@@ -259,8 +263,8 @@ export function resolveGolpe(votes = [], attackingTeamId, options = {}) {
     const passedCount = invadersCount - blockedCount;
 
     let routeUnitValue = GOLPE_CONSTANTS.ROUTE_VALUES[route];
-    if (isSmallerAttacking) {
-      routeUnitValue += GOLPE_CONSTANTS.UNEVEN_3V2_BONUS;
+    if (options.bonus && isSmallerAttacking) {
+      routeUnitValue += options.bonus;
     }
 
     const pointsEarned = passedCount * routeUnitValue;
