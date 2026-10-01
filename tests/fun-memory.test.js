@@ -1000,6 +1000,79 @@ test('handlers: esquecelore @user remove só o sujeito', async () => {
   assert.equal(left[0].subjects.includes(b), true);
 });
 
+test('handlers: /esquecelore <termo> remove fato correspondente por palavra-chave', async () => {
+  const repo = createFunMemoryRepository({ getDatabase: getDb });
+  const scope = uniqueGroup();
+  const f1 = repo.insertFact({ scopeKey: scope, summary: 'Lucas bateu o celta azul no poste', score: 60 });
+  const f2 = repo.insertFact({ scopeKey: scope, summary: 'Pedro danca samba no bar', score: 60 });
+  const mem = createGroupMemoryService({ memoryRepository: repo });
+  const replies = [];
+
+  const res = await handleForgetLoreCommand({
+    userJid: uniqueJid(),
+    scopeKey: scope,
+    isGroup: true,
+    groupMemoryService: mem,
+    funConfig: resolveFunConfig({}),
+    reply: async (t) => replies.push(t),
+    args: ['celta'],
+  });
+
+  assert.equal(res.handled, true);
+  assert.equal(res.wiped, 1);
+  assert.equal(repo.countFacts(scope), 1);
+  assert.equal(repo.getFact(f1.id), null);
+  assert.ok(repo.getFact(f2.id));
+  assert.ok(replies.some((r) => /celta/i.test(r)));
+});
+
+test('handlers: /esquecelore <termo> com muitos matches (>5) avisa que e muito amplo', async () => {
+  const repo = createFunMemoryRepository({ getDatabase: getDb });
+  const scope = uniqueGroup();
+  for (let i = 0; i < 7; i++) {
+    repo.insertFact({ scopeKey: scope, summary: `Fato comum sobre jogo numero ${i}`, score: 50 });
+  }
+  const mem = createGroupMemoryService({ memoryRepository: repo });
+  const replies = [];
+
+  const res = await handleForgetLoreCommand({
+    userJid: uniqueJid(),
+    scopeKey: scope,
+    isGroup: true,
+    groupMemoryService: mem,
+    funConfig: resolveFunConfig({}),
+    reply: async (t) => replies.push(t),
+    args: ['jogo'],
+  });
+
+  assert.equal(res.handled, true);
+  assert.equal(res.reason, 'too-broad');
+  assert.equal(repo.countFacts(scope), 7);
+  assert.ok(replies.some((r) => /amplo|espec[ií]fico/i.test(r)));
+});
+
+test('handlers: /esquecelore <termo> inexistente relata que nao encontrou', async () => {
+  const repo = createFunMemoryRepository({ getDatabase: getDb });
+  const scope = uniqueGroup();
+  repo.insertFact({ scopeKey: scope, summary: 'Fato qualquer aqui', score: 50 });
+  const mem = createGroupMemoryService({ memoryRepository: repo });
+  const replies = [];
+
+  const res = await handleForgetLoreCommand({
+    userJid: uniqueJid(),
+    scopeKey: scope,
+    isGroup: true,
+    groupMemoryService: mem,
+    funConfig: resolveFunConfig({}),
+    reply: async (t) => replies.push(t),
+    args: ['inexistentexyz'],
+  });
+
+  assert.equal(res.handled, true);
+  assert.equal(res.reason, 'not-found');
+  assert.ok(replies.some((r) => /Não encontrei/i.test(r)));
+});
+
 test('buildLoreContext: persona cache hit', () => {
   const repo = createFunMemoryRepository({ getDatabase: getDb });
   const scope = uniqueGroup();

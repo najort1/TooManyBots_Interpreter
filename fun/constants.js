@@ -1153,8 +1153,11 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // Reconciliação inversa: pedido explícito pode remover lore antiga ou errada.
   loreReconciliationEnabled: true,
   loreReconciliationCooldownMs: 60_000,
+  loreReconciliationMissCooldownMs: 5_000,
   loreReconciliationMaxCandidates: 50,
   loreReconciliationTimeoutMs: 35_000,
+  loreReconciliationAckMode: 'react',
+  loreReconciliationAckEmoji: '🗑️',
   // Inferência social assíncrona por lote para a persona.
   personaSocialHintsEnabled: true,
   personaSocialHintsBatchSize: 50,

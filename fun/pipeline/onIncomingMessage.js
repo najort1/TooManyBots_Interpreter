@@ -829,6 +829,19 @@ export async function handleFunIncomingMessage(deps, ctx) {
         void loreReconciliationService.observe({
           scopeKey: scope.scopeKey,
           text,
+          quotedText,
+          quotedParticipant,
+          quotedParticipantName: quotedParticipant && typeof getContactDisplayName === 'function'
+            ? getContactDisplayName(quotedParticipant)
+            : '',
+          authorJid: userJid,
+          authorName: typeof getContactDisplayName === 'function'
+            ? getContactDisplayName(userJid)
+            : '',
+          mentionedJids: Array.isArray(mentionedJids) ? mentionedJids : [],
+          messageKey: rawMessage?.key || (messageId ? { remoteJid: scope.scopeKey, id: messageId } : null),
+          sock,
+          sendText,
           funConfig,
           now: msgTimeMs,
         }).catch(() => {});

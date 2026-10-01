@@ -1691,6 +1691,49 @@ export function createGroupMemoryService({
     return n;
   }
 
+  function findMatchingFacts(scopeKey, query) {
+    if (!scopeKey) return [];
+    const qNorm = normalizeKey(query);
+    if (!qNorm) return [];
+    const allFacts = memoryRepository.listFacts(scopeKey, { limit: 200, minScore: 0 });
+    const qTokens = tokenSet(qNorm);
+
+    return allFacts.filter((fact) => {
+      // 1. Casamento por ID ou prefixo do ID
+      if (fact.id && String(fact.id).toLowerCase().startsWith(qNorm)) return true;
+      const sumNorm = normalizeKey(fact.summary);
+      // 2. Substring direta no resumo
+      if (sumNorm.includes(qNorm)) return true;
+      // 3. Palavras-chave do fato
+      const kwNorms = (fact.keywords || []).map(normalizeKey);
+      if (kwNorms.some((kw) => kw.includes(qNorm) || qNorm.includes(kw))) return true;
+      // 4. Se tiver tokens, sobreposição com tokens do resumo
+      if (qTokens.size > 0) {
+        for (const tok of qTokens) {
+          if (sumNorm.includes(tok)) return true;
+        }
+      }
+      return false;
+    });
+  }
+
+  function forgetByQuery(scopeKey, query, { maxWipe = 5 } = {}) {
+    const matches = findMatchingFacts(scopeKey, query);
+    if (!matches.length) return { ok: false, reason: 'not-found', removed: 0, matches: [] };
+    if (matches.length > maxWipe) {
+      return { ok: false, reason: 'too-broad', removed: 0, matches, count: matches.length };
+    }
+
+    let n = 0;
+    for (const f of matches) {
+      if (memoryRepository.deleteFact(f.id)) n += 1;
+    }
+    if (n > 0) {
+      invalidatePersonaCache(scopeKey);
+    }
+    return { ok: true, removed: n, matches };
+  }
+
   async function forceFlush(scopeKey, funConfig = {}) {
     return flushScope(scopeKey, funConfig, Date.now());
   }
@@ -1769,6 +1812,8 @@ export function createGroupMemoryService({
     formatLoreList,
     forgetAll,
     forgetSubject,
+    findMatchingFacts,
+    forgetByQuery,
     refreshPersona,
     getPersonaCached,
     parseFactsJson,

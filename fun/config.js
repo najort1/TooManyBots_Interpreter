@@ -1302,6 +1302,17 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.loreReconciliationCooldownMs,
       { min: 5_000, max: 24 * 60 * 60_000, rounding: 'floor', clamp: true }
     ),
+    loreReconciliationMissCooldownMs: normalizeInt(
+      raw.loreReconciliationMissCooldownMs,
+      DEFAULT_FUN_CONFIG.loreReconciliationMissCooldownMs,
+      { min: 1_000, max: 60_000, rounding: 'floor', clamp: true }
+    ),
+    loreReconciliationAckMode: ['react', 'text', 'silent'].includes(String(raw.loreReconciliationAckMode || '').toLowerCase())
+      ? String(raw.loreReconciliationAckMode).toLowerCase()
+      : DEFAULT_FUN_CONFIG.loreReconciliationAckMode,
+    loreReconciliationAckEmoji: typeof raw.loreReconciliationAckEmoji === 'string' && raw.loreReconciliationAckEmoji.trim()
+      ? raw.loreReconciliationAckEmoji.trim()
+      : DEFAULT_FUN_CONFIG.loreReconciliationAckEmoji,
     loreReconciliationMaxCandidates: normalizeInt(
       raw.loreReconciliationMaxCandidates,
       DEFAULT_FUN_CONFIG.loreReconciliationMaxCandidates,

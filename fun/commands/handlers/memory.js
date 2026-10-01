@@ -95,9 +95,39 @@ export async function handleForgetLoreCommand({
     return { handled: true, wiped: n, target: resolved.jid };
   }
 
+  const query = (args || []).map((a) => String(a || '').trim()).join(' ').trim();
+  if (query && typeof groupMemoryService.forgetByQuery === 'function') {
+    const res = groupMemoryService.forgetByQuery(scopeKey, query);
+    if (res.ok) {
+      if (res.removed === 1 && res.matches?.[0]) {
+        await reply(`🧠 *Fato esquecido:*\n"${res.matches[0].summary}"`);
+      } else {
+        await reply(`🧠 *Lore atualizada:*\nApaguei *${res.removed}* fatos sobre "${query}".`);
+      }
+      return { handled: true, wiped: res.removed, query };
+    }
+    if (res.reason === 'too-broad') {
+      const examples = (res.matches || [])
+        .slice(0, 3)
+        .map((m) => `• _${m.summary}_`)
+        .join('\n');
+      await reply(
+        [
+          `⚠️ Encontrei *${res.count}* fatos que combinam com "${query}".`,
+          'Para não apagar coisa demais sem querer, seja mais específico:',
+          examples,
+        ].join('\n')
+      );
+      return { handled: true, reason: 'too-broad' };
+    }
+    await reply(`Não encontrei nenhum fato sobre "${query}" na lore deste grupo.`);
+    return { handled: true, reason: 'not-found' };
+  }
+
   await reply(
     [
       '🧠 *Esquecer lore*',
+      '• `/esquecelore <termo>` — remove fatos sobre um assunto (ex.: `/esquecelore celta`)',
       '• `/esquecelore @pessoa` — tira fatos da pessoa',
       '• `/esquecelore tudo sim` — zera a memória do *grupo*',
       '',
