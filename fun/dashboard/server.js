@@ -12,6 +12,7 @@ import { getLlmFeaturesStatus, normalizeLlmFeatures } from '../llm/llmGovernance
 import { createHouseRealtimeHub } from '../services/houseRealtimeService.js';
 import { getPublicBaseUrl } from '../utils/publicUrl.js';
 import { createGameRoutes, DEFAULT_GAME_TEST_KEY } from '../games/routes.js';
+import { GAME_TYPES } from '../games/gameManager.js';
 import {
   COMMAND_CATEGORIES,
   COMMAND_CATALOG,
@@ -353,6 +354,112 @@ export function startFunDashboardServer(deps = {}) {
           message: 'UI Next.js em fun_dashboard',
           ui: `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${uiPort}`,
           api: `http://${host === '0.0.0.0' ? '127.0.0.1' : host}:${port}/api/fun/health`,
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/api/fun/games/spawn') {
+        if (!requireAdmin(req, res)) return;
+        if (!gameManager) {
+          sendJson(res, 503, { ok: false, error: 'games-indisponivel', message: 'Gerenciador de jogos não disponível.' });
+          return;
+        }
+
+        const body = await readBody(req);
+        const rawScope = body.scope || body.scopeKey || '';
+        const scope = resolveScopeKey(rawScope);
+        if (!scope) {
+          sendJson(res, 400, { ok: false, error: 'scope-obrigatorio', message: 'Grupo (scope) é obrigatório.' });
+          return;
+        }
+
+        if (!isScopeAllowed(scope)) {
+          sendJson(res, 403, { ok: false, error: 'scope-not-allowed', message: 'Grupo não permitido pela whitelist.' });
+          return;
+        }
+
+        const validGameTypes = Object.values(GAME_TYPES);
+        const gameType = String(body.gameType || '').trim();
+        if (!validGameTypes.includes(gameType)) {
+          sendJson(res, 400, {
+            ok: false,
+            error: 'invalid-game-type',
+            message: `Tipo de jogo inválido. Válidos: ${validGameTypes.join(', ')}`,
+            validTypes: validGameTypes,
+          });
+          return;
+        }
+
+        const prize = Number.isFinite(Number(body.prize)) ? Math.max(100, Math.floor(Number(body.prize))) : 1000;
+        const startInMinutes = Number.isInteger(Number(body.startInMinutes))
+          ? Math.max(1, Math.min(15, Number(body.startInMinutes)))
+          : 3;
+        const announce = body.announce !== false;
+        const force = Boolean(body.force);
+
+        try {
+          const result = await gameManager.createRoom({
+            scopeKey: scope,
+            gameType,
+            prize,
+            startInMinutes,
+            announce,
+            isTest: false,
+            force,
+          });
+
+          if (!result.ok) {
+            sendJson(res, 400, {
+              ok: false,
+              error: result.reason || 'create-room-failed',
+              reason: result.reason,
+              room: result.room,
+              message: result.reason === 'room_already_active'
+                ? 'Já existe uma sala de jogo ativa para este grupo.'
+                : 'Falha ao criar sala de jogo.',
+            });
+            return;
+          }
+
+          sendJson(res, 200, {
+            ok: true,
+            room: result.room,
+            gameLink: result.gameLink,
+            announcementText: result.announcementText,
+          });
+          return;
+        } catch (err) {
+          getLogger?.()?.error?.({ err }, 'Erro ao spawnar jogo de panelinha via dashboard');
+          sendJson(res, 500, {
+            ok: false,
+            error: 'internal-error',
+            message: err?.message || 'Erro interno ao criar sala de jogo.',
+          });
+          return;
+        }
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/games/active') {
+        const rawScope = url.searchParams.get('scope') || '';
+        const scope = resolveScopeKey(rawScope);
+        if (!scope) {
+          sendJson(res, 400, { ok: false, error: 'scope-obrigatorio' });
+          return;
+        }
+        if (!gameManager) {
+          sendJson(res, 200, { ok: true, active: false, room: null });
+          return;
+        }
+        const activeRoom = gameManager.getActiveRoomByScope?.(scope);
+        if (!activeRoom) {
+          sendJson(res, 200, { ok: true, active: false, room: null });
+          return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          active: true,
+          room: gameManager.publicRoomState ? gameManager.publicRoomState(activeRoom) : activeRoom,
+          gameLink: `/jogos/${activeRoom.id}`,
         });
         return;
       }

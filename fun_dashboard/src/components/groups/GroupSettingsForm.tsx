@@ -1,12 +1,15 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { Swords } from "lucide-react";
 import { funApi } from "@/lib/api";
 import type { CommandCategory, CommandItem, GroupSettings } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { useDashboardScope } from "@/components/layout/AppShell";
+import { SpawnGameModal } from "@/components/games/SpawnGameModal";
 
 type Props = {
   groupJid: string;
@@ -40,6 +43,8 @@ export function GroupSettingsForm({ groupJid }: Props) {
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [collapsedCategories, setCollapsedCategories] = useState<Record<string, boolean>>({});
 
+  const { groups } = useDashboardScope();
+  const [spawnModalOpen, setSpawnModalOpen] = useState(false);
   const [source, setSource] = useState<"override" | "defaults">("defaults");
   const [status, setStatus] = useState("");
   const [loading, setLoading] = useState(false);
@@ -670,7 +675,18 @@ export function GroupSettingsForm({ groupJid }: Props) {
           Forçar disparo de eventos (bloqueia o disparo automático no resto do dia).
         </p>
 
-        <div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={() => setSpawnModalOpen(true)}
+            disabled={loading || !groupJid}
+            className="gap-1.5"
+          >
+            <Swords className="h-4 w-4" />
+            Spawnar Jogo de Panelinhas
+          </Button>
+
           <Button
             variant="secondary"
             size="sm"
@@ -706,6 +722,18 @@ export function GroupSettingsForm({ groupJid }: Props) {
         </Button>
         <span className="text-xs text-zinc-500 dark:text-zinc-400">{status}</span>
       </div>
+
+      <SpawnGameModal
+        open={spawnModalOpen}
+        onClose={() => setSpawnModalOpen(false)}
+        groups={groups}
+        currentScope={groupJid}
+        onSuccess={(res) => {
+          if (res.room) {
+            setStatus(`Partida de ${res.room.title} iniciada com sucesso!`);
+          }
+        }}
+      />
     </div>
   );
 }

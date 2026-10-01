@@ -1,4 +1,5 @@
 import type {
+  ActiveGameResult,
   BolsaBoard,
   BolsaEvent,
   BolsaHistory,
@@ -28,6 +29,8 @@ import type {
   CarView,
   NeighborhoodHouse,
   SoundSystemState,
+  SpawnGamePayload,
+  SpawnGameResult,
   YouTubeSearchResult,
 } from "./types";
 
@@ -134,6 +137,15 @@ export const funApi = {
       method: "POST",
       body: JSON.stringify({ scope }),
     }),
+
+  spawnGame: (payload: SpawnGamePayload) =>
+    request<SpawnGameResult>("/api/fun/games/spawn", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  activeGame: (scope: string) =>
+    request<ActiveGameResult>(`/api/fun/games/active?scope=${encodeURIComponent(scope)}`),
 
   outbound: () =>
     request<{

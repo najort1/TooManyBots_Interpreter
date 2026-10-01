@@ -40,6 +40,7 @@ test('dashboard security: bypass de ownership, rotas admin e mascaramento públi
     launchDaily: 0,
     changelog: 0,
     chaos: 0,
+    spawnGame: 0,
   };
 
   const mockServices = {
@@ -121,6 +122,27 @@ test('dashboard security: bypass de ownership, rotas admin e mascaramento públi
       },
       formatStartAnnouncement: () => 'Chaos iniciado!',
     },
+    gameManager: {
+      createRoom: async ({ scopeKey: s, gameType, prize, startInMinutes, announce, force }) => {
+        calls.spawnGame += 1;
+        if (s === 'already-active@g.us' && !force) {
+          return { ok: false, reason: 'room_already_active', room: { id: 'room-existing', scopeKey: s, gameType } };
+        }
+        return {
+          ok: true,
+          room: { id: 'room-123', scopeKey: s, gameType, prize, startsAt: Date.now() + startInMinutes * 60000, status: 'waiting' },
+          gameLink: `/jogos/room-123`,
+          announcementText: `Partida de ${gameType} criada!`,
+        };
+      },
+      getActiveRoomByScope: (s) => {
+        if (s === 'already-active@g.us') {
+          return { id: 'room-existing', scopeKey: s, gameType: 'quiz_royale', status: 'waiting' };
+        }
+        return null;
+      },
+      publicRoomState: (r) => r,
+    },
   };
 
   const fakeFunModule = {
@@ -143,7 +165,7 @@ test('dashboard security: bypass de ownership, rotas admin e mascaramento públi
     getConfig: () => ({
       dashboardHost: '127.0.0.1',
       dashboardAllowedOrigins: ['http://127.0.0.1:3000'],
-      groupWhitelistJids: [scopeKey],
+      groupWhitelistJids: [scopeKey, 'already-active@g.us'],
     }),
     funModule: fakeFunModule,
     getContactDisplayName: (jid) => (jid === ownerJid ? 'Dono Da Casa' : 'Visitante'),
@@ -217,6 +239,7 @@ test('dashboard security: bypass de ownership, rotas admin e mascaramento públi
       { method: 'POST', path: '/api/fun/daily-challenge/launch-all', body: { type: 'guess_game' } },
       { method: 'POST', path: '/api/fun/changelog', body: { body: 'Release notas' } },
       { method: 'POST', path: '/api/fun/chaos/trigger', body: { scope: scopeKey } },
+      { method: 'POST', path: '/api/fun/games/spawn', body: { scope: scopeKey, gameType: 'quiz_royale' } },
       { method: 'PUT', path: `/api/fun/groups/${encodeURIComponent(scopeKey)}/settings`, body: { enabled: false } },
       { method: 'POST', path: `/api/fun/groups/${encodeURIComponent(scopeKey)}/settings`, body: { enabled: true } },
       { method: 'POST', path: '/api/fun/llm/config', body: { zenEnabled: false } },
@@ -269,6 +292,51 @@ test('dashboard security: bypass de ownership, rotas admin e mascaramento públi
     });
     assert.equal(settingsAdmin.status, 200);
     assert.equal(calls.upsertGroupSettings, 1);
+
+    const spawnNoScope = await fetch(`${api}/api/fun/games/spawn`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ gameType: 'quiz_royale' }),
+    });
+    assert.equal(spawnNoScope.status, 400);
+
+    const spawnInvalidGame = await fetch(`${api}/api/fun/games/spawn`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ scope: scopeKey, gameType: 'non_existent_game' }),
+    });
+    assert.equal(spawnInvalidGame.status, 400);
+
+    const spawnAdmin = await fetch(`${api}/api/fun/games/spawn`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ scope: scopeKey, gameType: 'quiz_royale', prize: 1500, startInMinutes: 5 }),
+    });
+    assert.equal(spawnAdmin.status, 200);
+    const spawnJson = await spawnAdmin.json();
+    assert.equal(spawnJson.ok, true);
+    assert.equal(spawnJson.room?.id, 'room-123');
+    assert.equal(calls.spawnGame, 1);
+
+    const spawnAlreadyActive = await fetch(`${api}/api/fun/games/spawn`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ scope: 'already-active@g.us', gameType: 'grid_ctf' }),
+    });
+    assert.equal(spawnAlreadyActive.status, 400);
+    const alreadyActiveJson = await spawnAlreadyActive.json();
+    assert.equal(alreadyActiveJson.reason, 'room_already_active');
+
+    const activeRes = await fetch(`${api}/api/fun/games/active?scope=already-active@g.us`);
+    assert.equal(activeRes.status, 200);
+    const activeJson = await activeRes.json();
+    assert.equal(activeJson.active, true);
+    assert.equal(activeJson.room?.id, 'room-existing');
+
+    const inactiveRes = await fetch(`${api}/api/fun/games/active?scope=12345678@g.us`);
+    assert.equal(inactiveRes.status, 200);
+    const inactiveJson = await inactiveRes.json();
+    assert.equal(inactiveJson.active, false);
 
     // 5) Mascaramento de dados em endpoints públicos (groups, overview, leaderboard)
     const publicGroupsRes = await fetch(`${api}/api/fun/groups`);

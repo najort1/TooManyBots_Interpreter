@@ -577,6 +577,59 @@ export type CarView = {
   };
 };
 
+export type PanelinhaGameType = "quiz_royale" | "grid_ctf" | "king_of_the_hill";
+
+export type SpawnGamePayload = {
+  scope: string;
+  gameType: PanelinhaGameType;
+  prize?: number;
+  startInMinutes?: number;
+  announce?: boolean;
+  force?: boolean;
+};
+
+export type SpawnGameResult = {
+  ok: boolean;
+  room?: {
+    id: string;
+    scopeKey: string;
+    gameType: PanelinhaGameType;
+    title: string;
+    emoji: string;
+    description: string;
+    minPlayers: number;
+    maxPlayers: number;
+    prize: number;
+    status: string;
+    startsAt: number;
+  };
+  gameLink?: string;
+  announcementText?: string;
+  reason?: string;
+  error?: string;
+  message?: string;
+};
+
+export type ActiveGameResult = {
+  ok: boolean;
+  active: boolean;
+  room: {
+    id: string;
+    scopeKey: string;
+    gameType: PanelinhaGameType;
+    title: string;
+    emoji: string;
+    description: string;
+    minPlayers: number;
+    maxPlayers: number;
+    prize: number;
+    status: string;
+    startsAt: number;
+    playersCount?: number;
+  } | null;
+  gameLink?: string | null;
+};
+
 export type CarApplyResult = {
   ok: boolean;
   state: CarState;

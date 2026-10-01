@@ -132,6 +132,7 @@ export function createGameManager({
     customTitle = null,
     announce = true,
     isTest = false,
+    force = false,
   }) {
     const meta = GAME_METADATA[gameType];
     if (!meta) {
@@ -144,8 +145,8 @@ export function createGameManager({
     // Se já existir sala ativa no grupo, reaproveita ou fecha
     const existing = getActiveRoomByScope(scopeKey);
     if (existing) {
-      // Em modo de teste (isTest) ou se a sala anterior era de teste, substitui limpando a antiga
-      if (isTest || existing.isTest) {
+      // Em modo de teste (isTest), se force=true ou se a sala anterior era de teste, substitui limpando a antiga
+      if (force || isTest || existing.isTest) {
         cleanupRoom(existing);
         rooms.delete(existing.id);
       } else {
