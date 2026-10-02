@@ -4,6 +4,12 @@
  */
 
 import { DEFAULT_FUN_CONFIG } from '../constants.js';
+import {
+  isLlmDebugActive,
+  logLlmCallStart,
+  logLlmCallSuccess,
+  logLlmCallError,
+} from './llmLogger.js';
 
 function joinUrl(baseUrl, path) {
   const base = String(baseUrl || DEFAULT_FUN_CONFIG.zenBaseUrl).replace(/\/+$/, '');
@@ -348,6 +354,12 @@ export async function openaiChatComplete({
    */
   sendSamplingParams = true,
   fetchImpl,
+  task = '',
+  debugMode = undefined,
+  debug = undefined,
+  logger = null,
+  logFn = null,
+  configPath = undefined,
 } = {}) {
   const userText = String(prompt ?? '').trim();
   const rawImages = Array.isArray(images) ? images : (images ? [images] : []);
@@ -409,9 +421,32 @@ export async function openaiChatComplete({
   const ms = Math.max(500, Math.floor(Number(timeoutMs) || 20_000));
   const timer = setTimeout(() => controller.abort(), ms);
 
+  const isDebug = isLlmDebugActive({ debugMode, debug, logger, configPath });
+  const requestUrl = joinUrl(baseUrl, '/v1/chat/completions');
+  const effectiveModel = String(model || DEFAULT_FUN_CONFIG.zenModel);
+  const startTime = Date.now();
+
+  if (isDebug) {
+    logLlmCallStart({
+      provider: 'openai',
+      model: effectiveModel,
+      url: requestUrl,
+      task,
+      prompt: userText,
+      system,
+      maxTokens: sendSamplingParams !== false ? maxTokens : undefined,
+      temperature: sendSamplingParams !== false ? temperature : undefined,
+      imagesCount: validImages.length,
+      audiosCount: validAudios.length,
+      jsonMode,
+      logFn,
+      logger,
+    });
+  }
+
   try {
     const body = {
-      model: String(model || DEFAULT_FUN_CONFIG.zenModel),
+      model: effectiveModel,
       messages,
       stream: false,
     };
@@ -423,7 +458,7 @@ export async function openaiChatComplete({
       body.response_format = { type: 'json_object' };
     }
 
-    const res = await fetchFn(joinUrl(baseUrl, '/v1/chat/completions'), {
+    const res = await fetchFn(requestUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),
@@ -436,22 +471,52 @@ export async function openaiChatComplete({
     }
 
     const data = await res.json();
+    let resultText = '';
     if (jsonOnly || jsonMode) {
       const only = extractJsonFromChat(data);
-      if (only) return only;
-      // content truncado sem fechar } — ainda tenta extractChatText/json blob
-      const content = normalizeContent(data?.choices?.[0]?.message?.content || '');
-      if (content && content.includes('{')) return content;
-      return '';
+      if (only) {
+        resultText = only;
+      } else {
+        // content truncado sem fechar } — ainda tenta extractChatText/json blob
+        const content = normalizeContent(data?.choices?.[0]?.message?.content || '');
+        if (content && content.includes('{')) resultText = content;
+      }
+    } else {
+      resultText = extractChatText(data);
     }
-    return extractChatText(data);
+
+    if (isDebug) {
+      logLlmCallSuccess({
+        provider: 'openai',
+        model: effectiveModel,
+        task,
+        durationMs: Date.now() - startTime,
+        status: res.status,
+        output: resultText,
+        logFn,
+        logger,
+      });
+    }
+
+    return resultText;
   } catch (err) {
-    if (err?.name === 'AbortError') {
-      const e = new Error(`openai-timeout-${ms}ms`);
-      e.name = 'AbortError';
-      throw e;
+    const isTimeout = err?.name === 'AbortError';
+    const reportedErr = isTimeout ? new Error(`openai-timeout-${ms}ms`) : err;
+    if (isTimeout) reportedErr.name = 'AbortError';
+
+    if (isDebug) {
+      logLlmCallError({
+        provider: 'openai',
+        model: effectiveModel,
+        task,
+        durationMs: Date.now() - startTime,
+        error: reportedErr,
+        logFn,
+        logger,
+      });
     }
-    throw err;
+
+    throw reportedErr;
   } finally {
     clearTimeout(timer);
   }

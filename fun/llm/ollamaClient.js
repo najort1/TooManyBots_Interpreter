@@ -3,6 +3,13 @@
  * Suporta keep_alive, think:false (Gemma4), fila serial e extração de thinking.
  */
 
+import {
+  isLlmDebugActive,
+  logLlmCallStart,
+  logLlmCallSuccess,
+  logLlmCallError,
+} from './llmLogger.js';
+
 function joinUrl(baseUrl, path) {
   const base = String(baseUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
   const p = path.startsWith('/') ? path : `/${path}`;
@@ -122,13 +129,40 @@ export async function ollamaGenerate({
   format = null,
   fetchImpl,
   serialize = true,
+  task = '',
+  debugMode = undefined,
+  debug = undefined,
+  logger = null,
+  logFn = null,
+  configPath = undefined,
 } = {}) {
   const text = String(prompt ?? '').trim();
   if (!text) return '';
 
   const run = async () => {
+    const isDebug = isLlmDebugActive({ debugMode, debug, logger, configPath });
+    const effectiveModel = String(model || 'gemma4:latest');
+    const requestUrl = joinUrl(baseUrl, '/api/generate');
+    const startTime = Date.now();
+
+    if (isDebug) {
+      logLlmCallStart({
+        provider: 'ollama',
+        model: effectiveModel,
+        url: requestUrl,
+        task,
+        prompt: text,
+        system,
+        maxTokens: numPredict,
+        temperature,
+        jsonMode: format === 'json' || format === true,
+        logFn,
+        logger,
+      });
+    }
+
     const body = {
-      model: String(model || 'gemma4:latest'),
+      model: effectiveModel,
       prompt: text,
       system: String(system || ''),
       stream: false,
@@ -144,8 +178,38 @@ export async function ollamaGenerate({
       body.format = 'json';
     }
 
-    const data = await postGenerate(body, { baseUrl, timeoutMs, fetchImpl });
-    return extractTextFromOllamaPayload(data);
+    try {
+      const data = await postGenerate(body, { baseUrl, timeoutMs, fetchImpl });
+      const resultText = extractTextFromOllamaPayload(data);
+
+      if (isDebug) {
+        logLlmCallSuccess({
+          provider: 'ollama',
+          model: effectiveModel,
+          task,
+          durationMs: Date.now() - startTime,
+          status: 200,
+          output: resultText,
+          logFn,
+          logger,
+        });
+      }
+
+      return resultText;
+    } catch (err) {
+      if (isDebug) {
+        logLlmCallError({
+          provider: 'ollama',
+          model: effectiveModel,
+          task,
+          durationMs: Date.now() - startTime,
+          error: err,
+          logFn,
+          logger,
+        });
+      }
+      throw err;
+    }
   };
 
   if (serialize === false) return run();

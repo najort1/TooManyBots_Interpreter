@@ -104,7 +104,10 @@ export function normalizeFunConfig(input) {
     ),
     commandExclusive: normalizeBoolean(raw.commandExclusive, DEFAULT_FUN_CONFIG.commandExclusive),
     groupWhitelistJids: toStringArray(raw.groupWhitelistJids),
-    debugMode: normalizeBoolean(raw.debugMode, DEFAULT_FUN_CONFIG.debugMode),
+    debugMode: normalizeBoolean(
+      raw.debugMode ?? raw.debug ?? (String(raw.logLevel ?? '').toLowerCase() === 'debug'),
+      DEFAULT_FUN_CONFIG.debugMode
+    ),
     logLevel: toText(raw.logLevel, DEFAULT_FUN_CONFIG.logLevel).toLowerCase() || DEFAULT_FUN_CONFIG.logLevel,
     dataDir: toText(raw.dataDir, '') || '',
     rankCardImage: normalizeBoolean(raw.rankCardImage, DEFAULT_FUN_CONFIG.rankCardImage),

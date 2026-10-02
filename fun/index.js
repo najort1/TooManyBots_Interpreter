@@ -378,6 +378,8 @@ export function createFunModule(deps = {}) {
       const endpoint = resolveZenEndpoint(config);
       return openaiChatComplete({
         ...params,
+        debugMode: config.debugMode,
+        logger: getLogger?.(),
         baseUrl: endpoint.baseUrl,
         model: endpoint.model,
         apiKey: endpoint.apiKey,
@@ -1641,6 +1643,12 @@ export {
 export { createFlavorService } from './llm/flavorService.js';
 export { ollamaGenerate, ollamaPing, ollamaWarmup, ollamaTouch } from './llm/ollamaClient.js';
 export { openaiChatComplete, openaiPing } from './llm/openaiClient.js';
+export {
+  isLlmDebugActive,
+  logLlmCallStart,
+  logLlmCallSuccess,
+  logLlmCallError,
+} from './llm/llmLogger.js';
 export { resolveZenTaskParams, ZEN_TASK_DEFAULTS } from './llm/zenTaskParams.js';
 export {
   recordLlmHit,
