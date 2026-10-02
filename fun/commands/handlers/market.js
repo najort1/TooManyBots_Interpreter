@@ -727,7 +727,7 @@ export async function handleAssaultCommand({
     }
     if (result.reason === 'unknown-weapon') {
       await reply(
-        'Arma *desconhecida*. Use `/armas` para ver as opções (faca, pistola, rifle).'
+        'Arma *desconhecida*. Use `/armas` para ver as opções (faca, pistola, rifle, bazuca, drone_kamikaze, ogiva_nuclear).'
       );
       return { handled: true };
     }
@@ -738,7 +738,12 @@ export async function handleAssaultCommand({
       return { handled: true };
     }
     if (result.reason === 'no-ammo') {
-      await reply('Arma de fogo sem *municao*. Compre no `/mercado` ou no `/bazar`.');
+      const need = result.need || 'munição';
+      await reply(`Arma sem insumo (*${need}*). Compre no \`/mercado\` (\`/adquirir ${need}\`) ou no \`/bazar\`.`);
+      return { handled: true };
+    }
+    if (result.reason === 'nuclear-embargo') {
+      await reply('☢️ *Ataque Nuclear Embargado!* A ONU e a Vigilância Sanitária embargaram o ataque: proibido usar ogiva nuclear contra quem almoça pastel de vento ou tem patrimônio menor que 15.000c.');
       return { handled: true };
     }
     if (result.reason === 'no-lockpick') {
@@ -834,67 +839,88 @@ export async function handleAssaultCommand({
     ? `🕶️ Imunidade ativa${result.immunityUsesLeft != null ? ` (${result.immunityUsesLeft} usos)` : ''}`
     : null;
 
-  const header = result.policeBust
-    ? '🚔 *Polícia interceptou*'
-    : !result.success
-      ? isNpc
-        ? '🚨 *Heist falhou*'
-        : '🚨 *Assalto falhou*'
-      : result.mode === 'bank'
-        ? '🏦 *Banco arrombado*'
-        : result.mode === 'shop'
-          ? '🏪 *Lojinha arrombada*'
-          : '💀 *Assalto em player*';
+  const header = result.interceptedByCupula
+    ? '🛡️ *OGIVA NUCLEAR ABATIDA PELA CÚPULA DE FERRO!*'
+    : result.deflectedByCupula
+      ? '🛡️ *DISPARO DA BAZUCA DEFLETIDO!*'
+      : result.isNuclear
+        ? '☢️ *COGUMELO NUCLEAR NO GRUPO!*'
+        : result.policeBust
+          ? '🚔 *Polícia interceptou*'
+          : !result.success
+            ? isNpc
+              ? '🚨 *Heist falhou*'
+              : '🚨 *Assalto falhou*'
+            : result.mode === 'bank'
+              ? '🏦 *Banco arrombado*'
+              : result.mode === 'shop'
+                ? '🏪 *Lojinha arrombada*'
+                : '💀 *Assalto em player*';
 
-  const stats = result.policeBust
+  const stats = result.interceptedByCupula
     ? [
-        `A polícia te pegou em *${isNpc ? heistLabel : pvpName}*.`,
-        result.fine > 0 ? `Multa policial: *${result.fine}*c` : null,
-        result.heat != null ? `Heat: *${result.heat}*` : null,
-        wantedStars,
-        result.suspicion != null
-          ? `Suspicion: ~*${Math.round(result.suspicion * 100)}%*`
-          : null,
-        `Saldo: *${result.coins}*`,
+        `A Cúpula de Ferro de *${pvpName}* detectou a ogiva nuclear nos radares e abateu o míssil no ar!`,
+        `A ogiva de 35.000c virou fumaça e a cúpula do alvo gastou 1 uso.`,
+        `O negócio de *${pvpName}* saiu 100% ileso!`,
+        `Seu saldo: *${result.coins}* · alvo: *${result.targetCoins}*`,
       ]
-    : !result.success
+    : result.deflectedByCupula
       ? [
-          `Alvo: *${isNpc ? heistLabel : pvpName}* · chance ~*${chancePct}%*`,
-          `Arma: ${result.weapon?.emoji || ''} ${result.weapon?.name || '?'}`,
-          result.usedGas ? 'Usou gasolina na fuga (mesmo assim deu ruim).' : null,
-          result.fine > 0
-            ? `Multa: *${result.fine}*c de prejuízo (${Math.round((result.finePct ?? 0.05) * 100)}% do bolso).`
-            : null,
-          immuneNote,
-          wantedStars,
-          `Saldo: *${result.coins}*`,
+          `A Cúpula de Ferro de *${pvpName}* interceptou o foguete da Bazuca antes de atingir as paredes!`,
+          `Seu saldo: *${result.coins}* · alvo: *${result.targetCoins}*`,
         ]
-      : isNpc
+      : result.policeBust
         ? [
-            `Levou *${result.stolen}* coins de *${heistLabel}*`,
-            `Chance ~*${chancePct}%* · ${result.weapon?.emoji || ''} ${result.weapon?.name}`,
-            result.usedGas ? 'Fuga com combustível ajudou.' : null,
-            result.heat >= 3 ? '🚔 A cidade tá quente — a polícia já desconfia de você.' : null,
+            `A polícia te pegou em *${isNpc ? heistLabel : pvpName}*.`,
+            result.lawyerSaved ? '⚖️ *Doutor Habeas Corpus VIP:* Seu advogado achou uma brecha processual e anulou 100% da multa!' : (result.fine > 0 ? `Multa policial: *${result.fine}*c` : null),
+            result.heat != null ? `Heat: *${result.heat}*` : null,
             wantedStars,
-            immuneNote,
-            result.effectiveDecay < 1
-              ? `💸 O loot rendeu menos que o esperado — os cofres tão vazios de tanto assalto hoje (${Math.round(result.effectiveDecay * 100)}% do normal).`
+            result.suspicion != null
+              ? `Suspicion: ~*${Math.round(result.suspicion * 100)}%*`
               : null,
             `Saldo: *${result.coins}*`,
           ]
-        : [
-            `Tirou *${result.stolen}* coins de *${pvpName}*`,
-            result.stolenBuffer > 0
-              ? `· Caixa do negócio (*${result.propertyName || 'propriedade'}*): *${result.stolenBuffer}*c${result.propertyDamage ? ` · dano ${result.propertyDamage}` : ''}`
-              : null,
-            result.stolenWallet > 0 ? `· Bolso: *${result.stolenWallet}*c` : null,
-            `Chance ~*${chancePct}%* · ${result.weapon?.emoji || ''} ${result.weapon?.name}`,
-            result.usedGas ? 'Fuga com combustível ajudou.' : null,
-            wantedStars,
-            immuneNote,
-            `Seu saldo: *${result.coins}* · alvo: *${result.targetCoins}*`,
-            '_Quer grana de verdade?_ `/assaltar banco`',
-          ];
+        : !result.success
+          ? [
+              `Alvo: *${isNpc ? heistLabel : pvpName}* · chance ~*${chancePct}%*`,
+              `Arma: ${result.weapon?.emoji || ''} ${result.weapon?.name || '?'}`,
+              result.usedGas ? 'Usou gasolina na fuga (mesmo assim deu ruim).' : null,
+              result.fine > 0
+                ? `Multa: *${result.fine}*c de prejuízo (${Math.round((result.finePct ?? 0.05) * 100)}% do bolso).`
+                : null,
+              immuneNote,
+              wantedStars,
+              `Saldo: *${result.coins}*`,
+            ]
+          : isNpc
+            ? [
+                `Levou *${result.stolen}* coins de *${heistLabel}*`,
+                `Chance ~*${chancePct}%* · ${result.weapon?.emoji || ''} ${result.weapon?.name}`,
+                result.usedGas ? 'Fuga com combustível ajudou.' : null,
+                result.heat >= 3 ? '🚔 A cidade tá quente — a polícia já desconfia de você.' : null,
+                wantedStars,
+                immuneNote,
+                result.effectiveDecay < 1
+                  ? `💸 O loot rendeu menos que o esperado — os cofres tão vazios de tanto assalto hoje (${Math.round(result.effectiveDecay * 100)}% do normal).`
+                  : null,
+                `Saldo: *${result.coins}*`,
+              ]
+            : [
+                result.isNuclear ? '💣 *DETONAÇÃO NUCLEAR CONFIRMADA:* 100% de precisão atômica!' : null,
+                `Tirou *${result.stolen}* coins de *${pvpName}*`,
+                result.stolenBuffer > 0
+                  ? `· Caixa do negócio (*${result.propertyName || 'propriedade'}*): *${result.stolenBuffer}*c${result.propertyDamage ? ` · dano ${result.propertyDamage}` : ''}`
+                  : null,
+                result.isNuclear ? `· Estrutura de *${result.propertyName || 'Negócio'}* foi para 0% (destruição total, conserto caro)!` : null,
+                result.insurancePayout > 0 ? `📑 *Seguro Acionado:* A seguradora devolveu *${result.insurancePayout}*c do caixa para ${pvpName}!` : null,
+                result.stolenWallet > 0 ? `· Bolso: *${result.stolenWallet}*c` : null,
+                `Chance ~*${chancePct}%* · ${result.weapon?.emoji || ''} ${result.weapon?.name}`,
+                result.usedGas ? 'Fuga com combustível ajudou.' : null,
+                wantedStars,
+                immuneNote,
+                `Seu saldo: *${result.coins}* · alvo: *${result.targetCoins}*`,
+                '_Quer grana de verdade?_ `/assaltar banco`',
+              ];
 
   await reply(
     [header, '', story || null, story ? '────────' : null, ...stats]

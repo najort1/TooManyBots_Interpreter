@@ -11,6 +11,7 @@ import {
 export function createPropertyService({
   repository,
   propertyRepository,
+  effectsRepository = null,
   random = Math.random,
 } = {}) {
   function enabled(funConfig = {}) {
@@ -24,8 +25,12 @@ export function createPropertyService({
     );
   }
 
-  function maxOwned(funConfig = {}) {
-    return Math.max(1, Math.floor(Number(funConfig.propertyMaxOwned) || 2));
+  function maxOwned(funConfig = {}, userJid = null, scopeKey = null, now = Date.now()) {
+    const base = Math.max(1, Math.floor(Number(funConfig.propertyMaxOwned) || 2));
+    if (!userJid || !scopeKey || !effectsRepository) return base;
+    const effect = effectsRepository.getEffect(userJid, scopeKey, 'holding_license', now);
+    const bonus = effect?.charges ? Math.min(2, effect.charges) : 0;
+    return base + bonus;
   }
 
   function minHealth(funConfig = {}) {
@@ -63,9 +68,10 @@ export function createPropertyService({
     const existing = propertyRepository.getByUserType(scopeKey, userJid, def.id);
     if (existing) return { ok: false, reason: 'already-owned', def };
 
+    const userMax = maxOwned(funConfig, userJid, scopeKey, now);
     const count = propertyRepository.countByUser(scopeKey, userJid);
-    if (count >= maxOwned(funConfig)) {
-      return { ok: false, reason: 'max-owned', max: maxOwned(funConfig), count };
+    if (count >= userMax) {
+      return { ok: false, reason: 'max-owned', max: userMax, count };
     }
 
     const stats =
@@ -290,6 +296,20 @@ export function createPropertyService({
       .reduce((s, r) => s + (r.bufferCoins || 0), 0);
   }
 
+  function nukeTopProperty(scopeKey, userJid) {
+    const owned = propertyRepository.listByUser(scopeKey, userJid);
+    if (!owned.length) return null;
+    const sorted = [...owned].sort((a, b) => {
+      const defA = getProperty(a.propertyType)?.cost || 0;
+      const defB = getProperty(b.propertyType)?.cost || 0;
+      return defB - defA;
+    });
+    const top = sorted[0];
+    const def = getProperty(top.propertyType);
+    const updated = propertyRepository.setHealth(top.id, 0);
+    return { property: updated || { ...top, health: 0 }, def };
+  }
+
   function formatList(scopeKey, userJid, funConfig = {}) {
     const owned = listOwned(scopeKey, userJid);
     const catalog = listCatalog();
@@ -317,9 +337,10 @@ export function createPropertyService({
         `${def.emoji} \`${def.id}\` *${def.name}* · *${def.cost}*c · +${def.incomePerTick}/tick · sec. ${securityLabel(def.security)}${has ? ' · _seu_' : ''}`
       );
     }
+    const userMax = maxOwned(funConfig, userJid, scopeKey);
     lines.push(
       '',
-      `_Máx ${maxOwned(funConfig)} negócios · \`/coletar\` saca o caixa · \`/negocio vender <id>\` · \`/negocio consertar <id>\`_`
+      `_Máx ${userMax} negócios · \`/coletar\` saca o caixa · \`/negocio vender <id>\` · \`/negocio consertar <id>\`_`
     );
     return lines.join('\n');
   }
@@ -335,6 +356,7 @@ export function createPropertyService({
     repair,
     robBuffer,
     totalBuffer,
+    nukeTopProperty,
     formatList,
     effectiveIncome,
     repairCost,

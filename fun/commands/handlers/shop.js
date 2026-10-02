@@ -36,10 +36,12 @@ export async function handleShopCommand({
     );
   }
 
-  lines.push('Comprar: `/comprar chave_armas` · `/comprar boost_xp` · `/comprar crime_immunity_pass`');
+  lines.push('Comprar: `/comprar chave_armas` · `/comprar alvara_holding` · `/comprar seguro_empresarial`');
+  lines.push('Alto padrão: `/comprar advogado_supremo` · `/comprar iate_dourado`');
   lines.push('Título: `/titulo MeuNick`');
   lines.push('');
   lines.push('_Chave de armas é *só sua* — não libera o grupo._');
+  lines.push('_Alvará de Holding: expande até 4 negócios no /negocio._');
   lines.push('_Crime Immunity Pass: 1 por semana no servidor (3 dias ou 20 crimes)._');
   lines.push('_Rua (estoque finito + preço vivo):_ `/mercado` · `/armas`');
   lines.push('_Players:_ `/bazar` · farm: `/assaltar banco` · for fun: `/assaltar @user`');

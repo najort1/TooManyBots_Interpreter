@@ -291,6 +291,7 @@ export function createFunModule(deps = {}) {
     createPropertyService({
       repository,
       propertyRepository,
+      effectsRepository,
     });
   const policeService = deps.policeService || createPoliceService({ getDatabase, repository, effectsRepository });
   const houseService = deps.houseService || createHouseService({ repository, houseRepository });

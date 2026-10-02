@@ -1453,10 +1453,10 @@ export function createMarketService({
     );
   }
 
-  function ammoUnitCost(scopeKey, funConfig = {}) {
+  function ammoUnitCost(scopeKey, funConfig = {}, itemId = 'municao') {
     ensureMarket(scopeKey, funConfig);
-    const p = marketRepository.getPrice(scopeKey, 'municao');
-    return p?.price ?? getCollectible('municao')?.basePrice ?? 38;
+    const p = marketRepository.getPrice(scopeKey, itemId);
+    return p?.price ?? getCollectible(itemId)?.basePrice ?? 38;
   }
 
   function applyVehicleBonus(userJid, scopeKey) {
@@ -1469,9 +1469,17 @@ export function createMarketService({
     let usedGas = false;
     if (vehicle) {
       const need = vehicle.collectible?.requires;
-      if (need === 'gasolina' && consumeOneConsumable(userJid, scopeKey, 'gasolina')) {
+      if (need && consumeOneConsumable(userJid, scopeKey, need)) {
         usedGas = true;
-        vehicleBonus = vehicle.itemId === 'carro' ? 14 : 9;
+        if (vehicle.itemId === 'jatinho') {
+          vehicleBonus = 35;
+        } else if (vehicle.itemId === 'blindado') {
+          vehicleBonus = 22;
+        } else if (vehicle.itemId === 'carro') {
+          vehicleBonus = 14;
+        } else {
+          vehicleBonus = 9;
+        }
       } else if (!need) {
         vehicleBonus = 5;
       }
@@ -1665,7 +1673,7 @@ export function createMarketService({
     const o = opts(funConfig);
     const power = Number(weaponCol?.assaultPower) || 0;
     const ammoCost =
-      weaponCol.requires === 'municao' ? ammoUnitCost(scopeKey, funConfig) : 0;
+      weaponCol.requires ? ammoUnitCost(scopeKey, funConfig, weaponCol.requires) : 0;
     const assumedBalance = 500;
     // EV usa a multa calibrada do modo (banco 10% · loja 5% · PvP 0%).
     const failFineMid = computeFailFine(assumedBalance, o, mode);
@@ -1781,9 +1789,9 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       '• `/assaltar @pessoa` — for fun entre players',
       '• `/assaltar banco faca` — *escolha a arma* do crime (opcional)',
       '  Sem arma na mensagem, usa sempre a *mais forte* pronta.',
-      '  Armas: `faca`, `pistola`, `rifle` (disponíveis no `/armas`).',
+      '  Armas: `faca`, `pistola`, `rifle`, `bazuca`, `drone_kamikaze`, `ogiva_nuclear` (`/armas`).',
       '',
-      'Precisa de *arma*. Pistola/rifle gastam *municao*.',
+      'Precisa de *arma*. Armas de fogo e pesadas gastam munição/insumos.',
       `Reposição: a cada *7 dias* (próx. ${formatRestockEta(Math.max(0, restock.nextAt - Date.now()))}).`,
       '',
       '⚠️ *Riscos:* multa progressiva, heat, wanted, suspeita policial.',
@@ -1838,9 +1846,9 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     if (!weapon) return { ok: false, reason };
     const wCol = weapon.collectible;
 
-    if (wCol.requires === 'municao') {
-      if (!consumeOneConsumable(a, scopeKey, 'municao')) {
-        return { ok: false, reason: 'no-ammo' };
+    if (wCol.requires) {
+      if (!consumeOneConsumable(a, scopeKey, wCol.requires)) {
+        return { ok: false, reason: 'no-ammo', need: wCol.requires };
       }
     }
 
@@ -1894,10 +1902,19 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       const bustHeat = Math.min(15, heat + 2);
       setAssaultHeat(a, scopeKey, bustHeat, now);
       const fineBase = computeFailFine(aStats.coins, o, heist.kind);
-      const fine = Math.min(
+      let fine = Math.min(
         aStats.coins,
         Math.max(fineBase, Math.floor(fineBase * (1 + policeEval.wantedLevel * 0.15)))
       );
+      let lawyerSaved = false;
+      if (fine > 0 && effectsRepository) {
+        const lawyer = effectsRepository.getEffect(a, scopeKey, 'supreme_lawyer', now);
+        if (lawyer && lawyer.charges > 0) {
+          fine = 0;
+          lawyerSaved = true;
+          effectsRepository.consumeCharge(a, scopeKey, 'supreme_lawyer', now);
+        }
+      }
       if (fine > 0) {
         repository.addCoins({
           userJid: a,
@@ -2141,9 +2158,9 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     if (!weapon) return { ok: false, reason };
     const wCol = weapon.collectible;
 
-    if (wCol.requires === 'municao') {
-      if (!consumeOneConsumable(a, scopeKey, 'municao')) {
-        return { ok: false, reason: 'no-ammo' };
+    if (wCol.requires) {
+      if (!consumeOneConsumable(a, scopeKey, wCol.requires)) {
+        return { ok: false, reason: 'no-ammo', need: wCol.requires };
       }
     }
 
@@ -2169,6 +2186,68 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       return { ok: false, reason: 'target-poor', coins: tCoins, propBuffer };
     }
 
+    if (wCol.id === 'ogiva_nuclear') {
+      const tOwned = propertyService?.listOwned ? propertyService.listOwned(scopeKey, t) : [];
+      const hasTier2Plus = tOwned.some((p) => p.propertyType !== 'barraca');
+      if (tCoins + propBuffer < 15000 && !hasTier2Plus) {
+        return { ok: false, reason: 'nuclear-embargo' };
+      }
+    }
+
+    const defenderCupula = findReadyItem(
+      t,
+      scopeKey,
+      (i) => i.collectible?.id === 'cupula_ferro'
+    );
+
+    if (wCol.id === 'ogiva_nuclear') {
+      if (defenderCupula && random() < 0.70) {
+        consumeUse(weapon, now);
+        consumeUse(defenderCupula, now);
+        touchAssaultCooldown(a, scopeKey, now);
+        return {
+          ok: true,
+          success: false,
+          interceptedByCupula: true,
+          mode: 'player',
+          chance: 0.30,
+          fine: 0,
+          weapon: wCol,
+          usedGas,
+          vehicleBonus,
+          coins: repository.getUserStats(a, scopeKey)?.coins || 0,
+          targetCoins: tCoins,
+          propBuffer,
+          windowCount: 1,
+          heat: getAssaultHeat(a, scopeKey, now),
+          wantedLevel: police.getWantedLevel?.(a, scopeKey, now) || 0,
+        };
+      }
+    } else if (wCol.id === 'bazuca') {
+      if (defenderCupula && random() < 0.50) {
+        consumeUse(weapon, now);
+        consumeUse(defenderCupula, now);
+        touchAssaultCooldown(a, scopeKey, now);
+        return {
+          ok: true,
+          success: false,
+          deflectedByCupula: true,
+          mode: 'player',
+          chance: 0.50,
+          fine: 0,
+          weapon: wCol,
+          usedGas,
+          vehicleBonus,
+          coins: repository.getUserStats(a, scopeKey)?.coins || 0,
+          targetCoins: tCoins,
+          propBuffer,
+          windowCount: 1,
+          heat: getAssaultHeat(a, scopeKey, now),
+          wantedLevel: police.getWantedLevel?.(a, scopeKey, now) || 0,
+        };
+      }
+    }
+
     // Janela 2h — diminishing returns
     const windowCount = manageAssaultWindow(a, scopeKey, now);
     const { chancePenalty, payoutMult } = applyDiminishingReturns(windowCount);
@@ -2186,23 +2265,34 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     const immune = Boolean(policeEval.immune);
 
     let chance = o.assaultBaseChance;
-    chance += (Number(wCol.assaultPower) || 0) / 200;
-    chance += (Number(aStats.level) || 1) * 0.008;
-    chance += vehicleBonus / 100;
-    chance -= (Number(tStats.level) || 1) * 0.01;
-    chance -= (Number(defenderVest?.collectible?.defensePower) || 0) / 120;
-    chance -= (Number(defenderWeapon?.collectible?.assaultPower) || 0) / 250;
-    if (tCoins > 200) chance += 0.04;
-    if (tCoins > 500) chance += 0.03;
-    if (propBuffer > 40) chance += 0.03;
-    chance -= chancePenalty;
-    chance -= heat * 0.03;
-    chance -= Number(policeEval.chancePenalty) || 0;
-    chance = Math.min(0.82, Math.max(0.12, chance));
+    if (wCol.id === 'ogiva_nuclear') {
+      chance = 1.0;
+    } else {
+      chance += (Number(wCol.assaultPower) || 0) / 200;
+      chance += (Number(aStats.level) || 1) * 0.008;
+      if (wCol.id !== 'drone_kamikaze') {
+        chance += vehicleBonus / 100;
+      } else {
+        chance += 0.15;
+      }
+      chance -= (Number(tStats.level) || 1) * 0.01;
+      chance -= (Number(defenderVest?.collectible?.defensePower) || 0) / 120;
+      chance -= (Number(defenderWeapon?.collectible?.assaultPower) || 0) / 250;
+      if (tCoins > 200) chance += 0.04;
+      if (tCoins > 500) chance += 0.03;
+      if (propBuffer > 40) chance += 0.03;
+      chance -= chancePenalty;
+      chance -= heat * 0.03;
+      chance -= Number(policeEval.chancePenalty) || 0;
+      chance = Math.min(0.82, Math.max(0.12, chance));
+    }
 
     consumeUse(weapon, now);
     if (defenderVest && random() < 0.55) {
       consumeUse(defenderVest, now);
+      if (wCol.id === 'bazuca') {
+        consumeUse(defenderVest, now);
+      }
     }
     touchAssaultCooldown(a, scopeKey, now);
 
@@ -2211,10 +2301,19 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       const bustHeat = Math.min(15, heat + 2);
       setAssaultHeat(a, scopeKey, bustHeat, now);
       const fineBase = computeFailFine(aStats.coins, o, 'player');
-      const fine = Math.min(
+      let fine = Math.min(
         aStats.coins,
         Math.max(fineBase, Math.floor(fineBase * (1 + policeEval.wantedLevel * 0.15)))
       );
+      let lawyerSaved = false;
+      if (fine > 0 && effectsRepository) {
+        const lawyer = effectsRepository.getEffect(a, scopeKey, 'supreme_lawyer', now);
+        if (lawyer && lawyer.charges > 0) {
+          fine = 0;
+          lawyerSaved = true;
+          effectsRepository.consumeCharge(a, scopeKey, 'supreme_lawyer', now);
+        }
+      }
       if (fine > 0) {
         repository.addCoins({
           userJid: a,
@@ -2345,8 +2444,16 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       };
     }
 
-    const nextHeat = immune ? heat : heat + 1;
-    if (!immune) setAssaultHeat(a, scopeKey, nextHeat, now);
+    let nextHeat = immune ? heat : heat + 1;
+    if (wCol.id === 'ogiva_nuclear') {
+      nextHeat = 15;
+    } else if (wCol.id === 'drone_kamikaze' && !immune) {
+      nextHeat = Math.min(15, heat + 0.5);
+    }
+    if (!immune || wCol.id === 'ogiva_nuclear') setAssaultHeat(a, scopeKey, nextHeat, now);
+    if (wCol.id === 'ogiva_nuclear') {
+      police.setWantedPoints?.(a, scopeKey, 85, now);
+    }
 
     // 1) prioriza caixa do negócio (buffer); 2) residual na carteira
     let fromBuffer = 0;
@@ -2363,7 +2470,25 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       )
     );
 
-    if (propertyService?.robBuffer && propBuffer > 0) {
+    if (wCol.id === 'ogiva_nuclear') {
+      if (propertyService?.nukeTopProperty) {
+        const nuked = propertyService.nukeTopProperty(scopeKey, t);
+        if (nuked) {
+          propertyHit = nuked.property;
+          propertyDef = nuked.def;
+          propertyDamage = 100;
+        }
+      }
+      if (propBuffer > 0 && propertyService?.robBuffer) {
+        const rob = propertyService.robBuffer({
+          targetJid: t,
+          scopeKey,
+          maxWant: propBuffer,
+          now,
+        });
+        fromBuffer = Number(rob.stolen) || 0;
+      }
+    } else if (propertyService?.robBuffer && propBuffer > 0) {
       const rob = propertyService.robBuffer({
         targetJid: t,
         scopeKey,
@@ -2374,6 +2499,9 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       propertyHit = rob.property;
       propertyDef = rob.def;
       propertyDamage = rob.damage || 0;
+      if (wCol.id === 'bazuca') {
+        propertyDamage = Math.min(100, Math.floor(propertyDamage * 2.2));
+      }
     }
 
     let fromWallet = 0;
@@ -2431,6 +2559,22 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       });
     }
 
+    let insurancePayout = 0;
+    if (adjustedFromBuffer > 0 && effectsRepository) {
+      const ins = effectsRepository.getEffect(t, scopeKey, 'business_insurance', now);
+      if (ins && ins.charges > 0) {
+        insurancePayout = Math.floor(adjustedFromBuffer * 0.8);
+        repository.addCoins({
+          userJid: t,
+          scopeKey,
+          amount: insurancePayout,
+          now,
+          reason: 'business-insurance-payout',
+        });
+        effectsRepository.consumeCharge(t, scopeKey, 'business_insurance', now);
+      }
+    }
+
     const after = police.afterCrime({
       userJid: a,
       scopeKey,
@@ -2470,18 +2614,21 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       roll,
       stolen: stealAfterDim,
       stolenBuffer: adjustedFromBuffer,
+      stolenFromBuffer: adjustedFromBuffer,
       stolenWallet: adjustedFromWallet,
+      insurancePayout,
       propertyName: propertyDef?.name || null,
-      propertyDamage,
+      propertyDamage: wCol.id === 'ogiva_nuclear' ? 100 : propertyDamage,
       propertyHealth: propertyHit?.health ?? null,
       weapon: wCol,
+      isNuclear: wCol.id === 'ogiva_nuclear',
       usedGas,
       vehicleBonus,
       coins: repository.getUserStats(a, scopeKey)?.coins || 0,
       targetCoins: repository.getUserStats(t, scopeKey)?.coins || 0,
       windowCount,
-      heat: nextHeat,
-      wantedLevel: after.wantedLevel,
+      heat: wCol.id === 'ogiva_nuclear' ? 15 : nextHeat,
+      wantedLevel: wCol.id === 'ogiva_nuclear' ? 5 : after.wantedLevel,
       wantedPoints: after.wantedPoints,
       suspicion: policeEval.suspicion,
       immune,
