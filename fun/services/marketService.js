@@ -1882,17 +1882,21 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
 
     let chance =
       heist.kind === 'bank' ? o.heistBankBaseChance : o.heistShopBaseChance;
-    chance += (Number(wCol.assaultPower) || 0) / (heist.kind === 'bank' ? 200 : 220);
-    chance += (Number(aStats.level) || 1) * 0.006;
-    chance += vehicleBonus / 100;
-    if (heist.kind === 'bank' && (Number(wCol.assaultPower) || 0) > 0) {
-      chance -= o.heistBankWeaponPenalty;
+    if (wCol.id === 'ogiva_nuclear') {
+      chance = 1.0;
+    } else {
+      chance += (Number(wCol.assaultPower) || 0) / (heist.kind === 'bank' ? 200 : 220);
+      chance += (Number(aStats.level) || 1) * 0.006;
+      chance += vehicleBonus / 100;
+      if (heist.kind === 'bank' && (Number(wCol.assaultPower) || 0) > 0) {
+        chance -= o.heistBankWeaponPenalty;
+      }
+      chance -= chancePenalty;
+      chance -= heat * 0.03;
+      // Wanted/Suspicion endurecem o crime (imunidade zera esta parte)
+      chance -= Number(policeEval.chancePenalty) || 0;
+      chance = Math.min(0.82, Math.max(0.12, chance));
     }
-    chance -= chancePenalty;
-    chance -= heat * 0.03;
-    // Wanted/Suspicion endurecem o crime (imunidade zera esta parte)
-    chance -= Number(policeEval.chancePenalty) || 0;
-    chance = Math.min(0.82, Math.max(0.12, chance));
 
     consumeUse(weapon, now);
     touchAssaultCooldown(a, scopeKey, now);
@@ -2055,8 +2059,16 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     }
 
     // Sucesso: Heat +1 só sem imunidade
-    const nextHeat = immune ? heat : heat + 1;
-    if (!immune) setAssaultHeat(a, scopeKey, nextHeat, now);
+    let nextHeat = immune ? heat : heat + 1;
+    if (wCol.id === 'ogiva_nuclear') {
+      nextHeat = 15;
+    } else if (wCol.id === 'drone_kamikaze' && !immune) {
+      nextHeat = Math.min(15, heat + 0.5);
+    }
+    if (!immune || wCol.id === 'ogiva_nuclear') setAssaultHeat(a, scopeKey, nextHeat, now);
+    if (wCol.id === 'ogiva_nuclear') {
+      police.setWantedPoints?.(a, scopeKey, 85, now);
+    }
 
     const minP = heist.kind === 'bank' ? o.heistBankMin : o.heistShopMin;
     const maxP = heist.kind === 'bank' ? o.heistBankMax : o.heistShopMax;
@@ -2098,8 +2110,8 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
         weapon: wCol?.id,
         level: aStats.level,
         windowCount,
-        heat: nextHeat,
-        wantedLevel: after.wantedLevel,
+        heat: wCol.id === 'ogiva_nuclear' ? 15 : nextHeat,
+        wantedLevel: wCol.id === 'ogiva_nuclear' ? 5 : after.wantedLevel,
         suspicion: policeEval.suspicion,
         immune,
         paidWins24h,
@@ -2117,12 +2129,13 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
       roll,
       stolen: payout,
       weapon: wCol,
+      isNuclear: wCol.id === 'ogiva_nuclear',
       usedGas,
       vehicleBonus,
       coins: repository.getUserStats(a, scopeKey)?.coins || 0,
       windowCount,
-      heat: nextHeat,
-      wantedLevel: after.wantedLevel,
+      heat: wCol.id === 'ogiva_nuclear' ? 15 : nextHeat,
+      wantedLevel: wCol.id === 'ogiva_nuclear' ? 5 : after.wantedLevel,
       wantedPoints: after.wantedPoints,
       suspicion: policeEval.suspicion,
       immune,
@@ -2751,62 +2764,6 @@ function formatAssaultHelp(scopeKey, funConfig = {}, userJid = '') {
     if (listing.sellerJid !== userJid) return { ok: false, reason: 'not-owner' };
     marketRepository.closeListing(listingId, 'cancelled');
     return { ok: true };
-  }
-
-  function buyFromBazaar({ userJid, scopeKey, listingId, now = Date.now() }) {
-    const listing = marketRepository.getListing(listingId);
-    if (!listing || listing.scopeKey !== scopeKey || listing.status !== 'open') {
-      return { ok: false, reason: 'not-found' };
-    }
-    if (listing.sellerJid === userJid) return { ok: false, reason: 'self-buy' };
-    const inv = marketRepository.getInventoryById(listing.inventoryId);
-    if (!inv || inv.condition === 'broken') {
-      marketRepository.closeListing(listingId, 'cancelled');
-      return { ok: false, reason: 'item-gone' };
-    }
-    const price = listing.price;
-    const bal =
-      repository.getUserStats(userJid, scopeKey)?.coins ??
-      repository.ensureUserRow(userJid, scopeKey, now).coins;
-    if (bal < price) {
-      return { ok: false, reason: 'insufficient-funds', coins: bal, price };
-    }
-    const spend = repository.addCoins({
-      userJid,
-      scopeKey,
-      amount: -price,
-      now,
-      reason: `bazaar-buy:${listing.id}`,
-    });
-    if (!spend.ok) return { ok: false, reason: 'spend-failed' };
-    repository.addCoins({
-      userJid: listing.sellerJid,
-      scopeKey,
-      amount: price,
-      now,
-      reason: `bazaar-sell:${listing.id}`,
-    });
-    const uses = inv.usesLeft;
-    marketRepository.deleteInventory(inv.id);
-    const newInv = marketRepository.addInventory({
-      userJid,
-      scopeKey,
-      itemId: inv.itemId,
-      acquiredPrice: price,
-      condition: 'ok',
-      usesLeft: uses,
-      now,
-    });
-    marketRepository.closeListing(listingId, 'sold');
-    return {
-      ok: true,
-      listing,
-      inventory: newInv,
-      collectible: getCollectible(inv.itemId),
-      price,
-      coins: repository.getUserStats(userJid, scopeKey)?.coins || 0,
-      sellerJid: listing.sellerJid,
-    };
   }
 
   function buyFromBazaar({ userJid, scopeKey, listingId, now = Date.now() }) {

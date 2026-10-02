@@ -185,6 +185,26 @@ export function createShopService({
       }
     }
 
+    if (item.payload?.title) {
+      const grantTitle = String(item.payload.title).slice(0, 16);
+      if (profileService?.setTitle) {
+        profileService.setTitle({
+          userJid: u,
+          scopeKey: s,
+          title: grantTitle,
+          funConfig,
+          now,
+        });
+      } else if (typeof repository?.setTitle === 'function') {
+        repository.setTitle({
+          userJid: u,
+          scopeKey: s,
+          title: grantTitle,
+          now,
+        });
+      }
+    }
+
     const coins = repository.getUserStats(u, s)?.coins || 0;
     const immunity =
       item.kind === 'timed_charges'

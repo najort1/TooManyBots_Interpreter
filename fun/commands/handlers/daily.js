@@ -17,6 +17,7 @@ export async function handleDailyCommand({
   let rewardCoins = effectiveRates?.dailyCoins ?? funConfig.dailyCoins;
   let rewardXp = effectiveRates?.dailyXp ?? funConfig.dailyXp;
   let doubled = false;
+  let yachtBonus = false;
   let panelinha = false;
 
   if (effectsRepository) {
@@ -25,6 +26,12 @@ export async function handleDailyCommand({
       rewardCoins = Math.floor(Number(rewardCoins) || 0) * 2;
       doubled = true;
       effectsRepository.consumeCharge(userJid, scopeKey, 'daily_double', now);
+    }
+    const yacht = effectsRepository.getEffect(userJid, scopeKey, 'golden_yacht', now);
+    if (yacht) {
+      const bonusPct = Number(yacht.payload?.dailyBonusPct) || 10;
+      rewardCoins = Math.floor(Number(rewardCoins) * (1 + bonusPct / 100));
+      yachtBonus = true;
     }
   }
 
@@ -56,6 +63,9 @@ export async function handleDailyCommand({
   let text = formatDailyResult(result);
   if (result.claimed && doubled) {
     text += '\n⚡ *Daily turbinado* da loja aplicado!';
+  }
+  if (result.claimed && yachtBonus) {
+    text += '\n🛥️ *Iate Dourado:* +10% de bônus de magnata no daily!';
   }
   if (result.claimed && panelinha) {
     text += '\n💀 Ponte Social baixa: menos XP de daily. Aumente a mistura — veja `/ponte`.';

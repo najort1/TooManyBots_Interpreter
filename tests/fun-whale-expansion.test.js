@@ -16,6 +16,8 @@ import { createShopService } from '../fun/services/shopService.js';
 import { getProperty, listProperties } from '../fun/shop/properties.js';
 import { getCollectible, listCollectibles, listWeaponShop, listUtilityShop } from '../fun/shop/collectibles.js';
 import { getShopItem, listShopItems } from '../fun/shop/catalog.js';
+import { createDailyService } from '../fun/services/dailyService.js';
+import { handleDailyCommand } from '../fun/commands/handlers/daily.js';
 
 await initDb();
 _resetDefaultFunStatsRepository();
@@ -462,3 +464,196 @@ test('marketService: seguro_empresarial reembolsa 80% do buffer roubado', () => 
     assert.equal(insEffect.charges, 4);
   }
 });
+
+test('marketService: advogado_supremo anula multa em police bust', () => {
+  const { repository, marketRepository, marketService, effectsRepository } = setup();
+  const scope = uniqueGroup();
+  const attacker = uniqueJid('5511');
+
+  effectsRepository.addCharges({
+    userJid: attacker,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+
+  // Atacante compra 3 cargas de advogado_supremo
+  effectsRepository.addCharges({
+    userJid: attacker,
+    scopeKey: scope,
+    effectKey: 'supreme_lawyer',
+    charges: 3,
+  });
+
+  marketRepository.addInventory({
+    userJid: attacker,
+    scopeKey: scope,
+    itemId: 'faca',
+    acquiredPrice: 90,
+    usesLeft: 10,
+    condition: 'ok',
+  });
+
+  repository.addCoins({ userJid: attacker, scopeKey: scope, amount: 50000, reason: 'seed' });
+
+  // Força police intervention
+  const fakePolice = {
+    evaluate: () => ({
+      immune: false,
+      intervention: { intervene: true, roll: 0.1 },
+      wantedLevel: 3,
+      suspicion: 0.8,
+    }),
+    afterCrime: () => ({ wantedLevel: 3 }),
+    getWantedLevel: () => 3,
+  };
+
+  const marketWithPolice = createMarketService({
+    repository,
+    marketRepository,
+    effectsRepository,
+    policeService: fakePolice,
+  });
+
+  const res = marketWithPolice.assault({
+    attackerJid: attacker,
+    heistToken: 'lojinha',
+    scopeKey: scope,
+    weaponToken: 'faca',
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.policeBust, true);
+  // Multa deve ter sido zerada pelo advogado!
+  assert.equal(res.fine, 0);
+
+  // Efeito deve ter consumido 1 carga (3 -> 2)
+  const lawyer = effectsRepository.getEffect(attacker, scope, 'supreme_lawyer');
+  assert.equal(lawyer.charges, 2);
+});
+
+test('marketService: cupula_ferro deflete bazuca com 50% de chance', () => {
+  const { repository, marketRepository, effectsRepository, propertyService } = setup();
+  const scope = uniqueGroup();
+  const attacker = uniqueJid('5511');
+  const victim = uniqueJid('5512');
+
+  effectsRepository.addCharges({
+    userJid: attacker,
+    scopeKey: scope,
+    effectKey: 'weapons_license',
+    charges: 1,
+    payload: { permanent: true },
+  });
+
+  repository.addCoins({ userJid: victim, scopeKey: scope, amount: 20000, reason: 'seed' });
+  propertyService.buy({ userJid: victim, scopeKey: scope, propertyId: 'barraca', funConfig: { propertiesEnabled: true } });
+
+  marketRepository.addInventory({
+    userJid: victim,
+    scopeKey: scope,
+    itemId: 'cupula_ferro',
+    acquiredPrice: 14000,
+    usesLeft: 5,
+    condition: 'ok',
+  });
+
+  marketRepository.addInventory({
+    userJid: attacker,
+    scopeKey: scope,
+    itemId: 'bazuca',
+    acquiredPrice: 2800,
+    usesLeft: 6,
+    condition: 'ok',
+  });
+  marketRepository.addInventory({
+    userJid: attacker,
+    scopeKey: scope,
+    itemId: 'foguete',
+    acquiredPrice: 150,
+    usesLeft: 1,
+    condition: 'ok',
+  });
+
+  // Random 0.30 < 0.50 -> Defletido!
+  const deterministicMarket = createMarketService({
+    repository,
+    marketRepository,
+    propertyService,
+    effectsRepository,
+    random: () => 0.30,
+  });
+
+  const res = deterministicMarket.assault({
+    attackerJid: attacker,
+    targetJid: victim,
+    scopeKey: scope,
+    weaponToken: 'bazuca',
+  });
+
+  assert.equal(res.ok, true);
+  assert.equal(res.success, false);
+  assert.equal(res.deflectedByCupula, true);
+
+  const victimCupula = marketRepository.listInventory(victim, scope).find(i => i.itemId === 'cupula_ferro');
+  assert.equal(victimCupula.usesLeft, 4);
+});
+
+test('shopService: iate dourado concede titulo e efeito permanente', () => {
+  const { repository, shopService, effectsRepository } = setup();
+  const scope = uniqueGroup();
+  const user = uniqueJid('5511');
+
+  repository.addCoins({ userJid: user, scopeKey: scope, amount: 200000, reason: 'seed' });
+
+  const buy = shopService.buy({
+    userJid: user,
+    scopeKey: scope,
+    itemId: 'iate_dourado',
+  });
+
+  assert.equal(buy.ok, true);
+
+  const effect = effectsRepository.getEffect(user, scope, 'golden_yacht');
+  assert.ok(effect);
+  assert.equal(effect.payload?.title, 'Magnata');
+  assert.equal(effect.payload?.dailyBonusPct, 10);
+
+  // Título foi concedido nos stats do usuário
+  const stats = repository.getUserStats(user, scope);
+  assert.equal(stats.title, 'Magnata');
+});
+
+test('dailyCommand: iate dourado concede +10% de bonus no daily', async () => {
+  const { repository, effectsRepository } = setup();
+  const dailyService = createDailyService({ repository });
+  const scope = uniqueGroup();
+  const user = uniqueJid('5511');
+
+  // Adiciona o efeito do iate dourado
+  effectsRepository.addCharges({
+    userJid: user,
+    scopeKey: scope,
+    effectKey: 'golden_yacht',
+    charges: 1,
+    payload: { permanent: true, dailyBonusPct: 10, title: 'Magnata' },
+  });
+
+  let repliedText = '';
+  await handleDailyCommand({
+    userJid: user,
+    scopeKey: scope,
+    dailyService,
+    effectsRepository,
+    funConfig: { dailyCoins: 100, dailyXp: 50 },
+    reply: async (msg) => { repliedText = msg; },
+  });
+
+  // Base 100 + 10% = 110 coins!
+  const stats = repository.getUserStats(user, scope);
+  assert.equal(stats.coins, 110);
+  assert.ok(repliedText.includes('Iate Dourado'));
+});
+
+
