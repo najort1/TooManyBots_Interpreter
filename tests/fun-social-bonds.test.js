@@ -203,4 +203,9 @@ test('bondService: decaimento temporal assimétrico reduz rivalidade e caos mais
   const lossRivalry = 80 - decayed.rivalry;
   const lossIntimacy = 80 - decayed.intimacy;
   assert.ok(lossRivalry > lossIntimacy, 'Rivalidade deve esfriar mais rápido que intimidade');
+
+  // Verifica que o decaimento foi persistido duravelmente no banco de dados (CRITICAL #2)
+  const persistedInDb = repo.getBond(scope, a, b);
+  assert.equal(persistedInDb.rivalry, decayed.rivalry, 'Decaimento deve persistir duravelmente no SQLite');
+  assert.equal(persistedInDb.lastDecayAt, threeDaysLater, 'lastDecayAt deve ser atualizado no banco');
 });

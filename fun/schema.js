@@ -1333,6 +1333,9 @@ export function buildFunSchemaSql() {
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_bonds_user_b
       ON fun_social_bonds(scope_key, user_b);
 
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_bonds_last_interaction
+      ON fun_social_bonds(scope_key, last_interaction_at);
+
     -- Sistema de Recompensas de Vingança (Bounties)
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_bounties (
       id                  TEXT PRIMARY KEY,

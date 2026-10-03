@@ -257,3 +257,58 @@ test('handleDivorceCommand: aplica indenização de divórcio litigioso se houve
   assert.equal(balA, 800, 'Traidor deve perder 20% em pensão/indenização');
   assert.equal(balB, 300, 'Traído deve receber a indenização de 200 coins');
 });
+
+test('handleDivorceCommand: protege contra saldo insuficiente no adultério conservando moedas sem inflação', async () => {
+  const statsRepo = createFunStatsRepository({ getDatabase: getDb });
+  const relRepo = createFunRelationshipRepository({ getDatabase: getDb });
+  const actionRepo = createFunActionRepository({ getDatabase: getDb });
+  const bondRepo = createFunBondRepository({ getDatabase: getDb });
+  const relService = createRelationshipService({
+    relationshipRepository: relRepo,
+    actionRepository: actionRepo,
+  });
+  const bondService = createBondService({
+    bondRepository: bondRepo,
+    relationshipRepository: relRepo,
+  });
+
+  const scopeKey = uniqueGroup();
+  const spouseA = uniqueJid();
+  const spouseB = uniqueJid();
+  const thirdParty = uniqueJid();
+
+  relRepo.marry({ userJid: spouseA, partnerJid: spouseB, scopeKey });
+
+  // A só tem 15 coins (abaixo do piso de 30 coins da indenização)
+  statsRepo.addCoins({ userJid: spouseA, scopeKey, amount: 15, reason: 'seed' });
+  statsRepo.addCoins({ userJid: spouseB, scopeKey, amount: 50, reason: 'seed' });
+
+  // Flagrante de infidelidade
+  bondService.recordAction({
+    scopeKey,
+    actorJid: spouseA,
+    targetJid: thirdParty,
+    action: 'kiss',
+    now: Date.now(),
+  });
+
+  const messages = [];
+  const res = await handleDivorceCommand({
+    userJid: spouseB,
+    scopeKey,
+    relationshipService: relService,
+    bondService,
+    repository: statsRepo,
+    getContactDisplayName: (j) => (j === spouseA ? 'Alice' : 'Bob'),
+    reply: async (msg) => { messages.push(msg); },
+    funConfig: { divorceCost: 40 },
+  });
+
+  assert.equal(res.handled, true);
+  const balA = statsRepo.getUserStats(spouseA, scopeKey).coins;
+  const balB = statsRepo.getUserStats(spouseB, scopeKey).coins;
+
+  // A não pode ficar negativo (deve debitar no máximo seus 15 coins)
+  assert.equal(balA, 0, 'Traidor deve ceder até o teto do seu saldo real (15)');
+  assert.equal(balB, 65, 'Vítima deve receber exatamente o valor debitado (50 + 15 = 65)');
+});

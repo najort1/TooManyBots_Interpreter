@@ -934,6 +934,14 @@ export async function handleAssaultCommand({
   try {
     if (result.success) {
       if (!isNpc && result.targetJid) {
+        if (bondService?.recordAction) {
+          bondService.recordAction({
+            scopeKey,
+            actorJid: userJid,
+            targetJid: result.targetJid,
+            action: 'assault',
+          });
+        }
         if (bountyService?.claimOnAssault) {
           const claim = bountyService.claimOnAssault({
             scopeKey,
@@ -944,14 +952,6 @@ export async function handleAssaultCommand({
           if (claim?.claimed) {
             await reply(`🎯 *CONTRATO DE CAÇA RESGATADO!* Recompensa de *+${claim.rewardAmount}* coins embolsada pela captura do procurado!`);
           }
-        }
-        if (bondService?.recordAction) {
-          bondService.recordAction({
-            scopeKey,
-            actorJid: userJid,
-            targetJid: result.targetJid,
-            action: 'assault',
-          });
         }
       }
       achievementService?.check?.(userJid, scopeKey, 'assault_win', {}, funConfig);

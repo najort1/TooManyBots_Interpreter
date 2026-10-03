@@ -103,7 +103,7 @@ export function createBountyService({
     }
 
     // Filtra contratos válidos para o caçador (não pode ser quem colocou o contrato, nem cônjuge)
-    const valid = activeBounties.find((b) => {
+    const validBounties = activeBounties.filter((b) => {
       if (b.issuerJid === hunter) return false;
       if (relationshipRepository) {
         const m = relationshipRepository.getMarriage?.(hunter, s);
@@ -112,12 +112,20 @@ export function createBountyService({
       return true;
     });
 
-    if (!valid) {
+    if (!validBounties.length) {
       return { claimed: false, reason: 'no-eligible-bounty' };
     }
 
-    const claimed = bountyRepository.claimBounty({ id: valid.id, claimedByJid: hunter, now });
-    if (!claimed) {
+    let claimedBounty = null;
+    for (const b of validBounties) {
+      const claimed = bountyRepository.claimBounty({ id: b.id, claimedByJid: hunter, now });
+      if (claimed) {
+        claimedBounty = b;
+        break;
+      }
+    }
+
+    if (!claimedBounty) {
       return { claimed: false, reason: 'claim-failed' };
     }
 
@@ -125,16 +133,16 @@ export function createBountyService({
     statsRepository.addCoins({
       userJid: hunter,
       scopeKey: s,
-      amount: valid.bountyAmount,
+      amount: claimedBounty.bountyAmount,
       reason: 'bounty-reward',
     });
 
     return {
       claimed: true,
-      bountyId: valid.id,
-      rewardAmount: valid.bountyAmount,
+      bountyId: claimedBounty.id,
+      rewardAmount: claimedBounty.bountyAmount,
       targetJid: target,
-      issuerJid: valid.issuerJid,
+      issuerJid: claimedBounty.issuerJid,
     };
   }
 

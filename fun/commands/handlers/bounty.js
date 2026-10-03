@@ -132,7 +132,7 @@ export async function handleBountyCommand({
     return { handled: true };
   }
 
-  const reason = reasonTokens.join(' ').trim();
+  const reason = reasonTokens.join(' ').replace(/[_*`~]/g, '').trim().slice(0, 120);
   const res = bountyService.createBounty({
     scopeKey,
     issuerJid: userJid,

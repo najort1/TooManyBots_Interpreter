@@ -172,18 +172,31 @@ export async function handleDivorceCommand({
       litigationBonus = adultererBal > 0 ? Math.min(adultererBal, Math.min(5000, Math.max(30, rawBonus))) : 0;
 
       if (litigationBonus > 0) {
-        repository.addCoins({
-          userJid: partnerJid,
-          scopeKey,
-          amount: -litigationBonus,
-          reason: 'divorce-adultery-fine',
-        });
-        repository.addCoins({
-          userJid,
-          scopeKey,
-          amount: litigationBonus,
-          reason: 'divorce-adultery-alimony',
-        });
+        if (typeof repository.transferCoins === 'function') {
+          const xfer = repository.transferCoins({
+            fromJid: partnerJid,
+            toJid: userJid,
+            scopeKey,
+            amount: litigationBonus,
+            reason: 'divorce-adultery-alimony',
+          });
+          if (!xfer.ok) {
+            litigationBonus = 0;
+          }
+        } else {
+          repository.addCoins({
+            userJid: partnerJid,
+            scopeKey,
+            amount: -litigationBonus,
+            reason: 'divorce-adultery-fine',
+          });
+          repository.addCoins({
+            userJid,
+            scopeKey,
+            amount: litigationBonus,
+            reason: 'divorce-adultery-alimony',
+          });
+        }
       }
     }
   } else if (cost > 0 && repository) {

@@ -128,7 +128,10 @@ export function createBondService({
   function getBondWithDecay(scopeKey, u1, u2, now = Date.now()) {
     const raw = bondRepository.getBond(scopeKey, u1, u2);
     if (!raw || raw.isNew) return raw;
-    return applyDecay(raw, now, false);
+    const msPerDay = 24 * 60 * 60 * 1000;
+    const last = raw.lastDecayAt || raw.lastInteractionAt;
+    const elapsedDays = last && now > last ? Math.floor((now - last) / msPerDay) : 0;
+    return applyDecay(raw, now, elapsedDays > 0);
   }
 
   function recordAction({

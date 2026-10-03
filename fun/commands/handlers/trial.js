@@ -37,6 +37,13 @@ export async function handleTrialCommand({
     const accuserName = nameOf(getContactDisplayName, active.accuserJid);
     const defendantName = nameOf(getContactDisplayName, active.defendantJid);
 
+    const hasWeightDiff =
+      (active.guiltyWeighted != null && active.guiltyWeighted !== active.guiltyVotes) ||
+      (active.innocentWeighted != null && active.innocentWeighted !== active.innocentVotes);
+    const scoreLine = hasWeightDiff
+      ? `🗳️ Placar Parcial: 🔴 *${active.guiltyVotes}* Culpado (${active.guiltyWeighted} pts) vs 🟢 *${active.innocentVotes}* Inocente (${active.innocentWeighted} pts)`
+      : `🗳️ Placar Parcial: 🔴 *${active.guiltyVotes}* Culpado vs 🟢 *${active.innocentVotes}* Inocente`;
+
     await reply(
       [
         '⚖️ *JULGAMENTO EM ANDAMENTO!*',
@@ -44,7 +51,7 @@ export async function handleTrialCommand({
         `Réu no Banco dos Réus: *${defendantName}*`,
         `Acusação: _"${active.evidenceSummary || 'Quebra da paz comunitária'}"_`,
         '',
-        `🗳️ Placar Parcial: 🔴 *${active.guiltyVotes}* Culpado vs 🟢 *${active.innocentVotes}* Inocente`,
+        scoreLine,
         `⏱️ Tempo restante de votação: *${remSec}s*`,
         '',
         'Use `/voto culpado` ou `/voto inocente` para decidir o destino do réu!',
@@ -104,7 +111,8 @@ export async function handleTrialCommand({
       chargeParts.push(clean);
     }
   }
-  const charge = chargeParts.join(' ').trim() || 'Quebra da ordem comunitária e conduta desordeira';
+  const rawCharge = chargeParts.join(' ').replace(/[_*`~]/g, '').trim().slice(0, 150);
+  const charge = rawCharge || 'Quebra da ordem comunitária e conduta desordeira';
 
   const res = trialService.openTrial({
     scopeKey,
@@ -215,7 +223,15 @@ async function announceVerdict(resolved, active, getContactDisplayName, reply) {
   const accuserName = nameOf(getContactDisplayName, active.accuserJid);
   const defendantName = nameOf(getContactDisplayName, active.defendantJid);
 
-  if (resolved.status === 'convicted') {
+  if (resolved.status === 'dismissed') {
+    await reply(
+      [
+        '⚖️🛡️ *PROCESSO ARQUIVADO!*',
+        `O réu *${defendantName}* possui Imunidade Judicial ativa.`,
+        `A caução judicial de *${DEFAULT_TRIAL_BAIL}* coins foi restituída integralmente a *${accuserName}*.`,
+      ].join('\n')
+    );
+  } else if (resolved.status === 'convicted') {
     await reply(
       [
         '⚖️🔨 *VEREDITO: RÉU CONDENADO!*',

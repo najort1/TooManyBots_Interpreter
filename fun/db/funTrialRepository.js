@@ -38,11 +38,31 @@ export function createFunTrialRepository({ getDatabase = getDb } = {}) {
 
   function getTrial(id) {
     ensureSchema();
-    const row = getDatabase()
+    const tid = String(id || '');
+    const db = getDatabase();
+    const row = db
       .prepare(`SELECT * FROM ${ANALYTICS_SCHEMA}.fun_trials WHERE id = ?`)
-      .get(String(id || ''));
+      .get(tid);
 
     if (!row) return null;
+
+    const votesSummary = db
+      .prepare(
+        `SELECT
+           COUNT(CASE WHEN vote = 'guilty' THEN 1 END) AS live_guilty,
+           COUNT(CASE WHEN vote = 'innocent' THEN 1 END) AS live_innocent,
+           TOTAL(CASE WHEN vote = 'guilty' THEN vote_weight ELSE 0 END) AS live_guilty_w,
+           TOTAL(CASE WHEN vote = 'innocent' THEN vote_weight ELSE 0 END) AS live_innocent_w
+         FROM ${ANALYTICS_SCHEMA}.fun_trial_votes
+         WHERE trial_id = ?`
+      )
+      .get(tid);
+
+    const guiltyVotes = Number(votesSummary?.live_guilty) || Number(row.guilty_votes) || 0;
+    const innocentVotes = Number(votesSummary?.live_innocent) || Number(row.innocent_votes) || 0;
+    const guiltyWeighted = Number((Number(votesSummary?.live_guilty_w) || guiltyVotes).toFixed(1));
+    const innocentWeighted = Number((Number(votesSummary?.live_innocent_w) || innocentVotes).toFixed(1));
+
     return {
       id: String(row.id || ''),
       scopeKey: String(row.scope_key || ''),
@@ -52,8 +72,10 @@ export function createFunTrialRepository({ getDatabase = getDb } = {}) {
       evidenceSummary: String(row.evidence_summary || ''),
       bailAmount: Number(row.bail_amount) || 0,
       status: String(row.status || 'voting'),
-      guiltyVotes: Number(row.guilty_votes) || 0,
-      innocentVotes: Number(row.innocent_votes) || 0,
+      guiltyVotes,
+      innocentVotes,
+      guiltyWeighted,
+      innocentWeighted,
       penaltyCoins: Number(row.penalty_coins) || 0,
       endsAt: Number(row.ends_at) || 0,
       createdAt: Number(row.created_at) || 0,

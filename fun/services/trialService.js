@@ -133,6 +133,34 @@ export function createTrialService({
     const accuser = trial.accuserJid;
     const defendant = trial.defendantJid;
 
+    // Se o réu adquiriu imunidade judicial no ínterim da votação, encerra como arquivado
+    if (effectsRepository?.getEffect?.(defendant, s, 'tribunal_immunity', now)) {
+      const updated = trialRepository.resolveTrial({
+        trialId,
+        status: 'dismissed',
+        penaltyCoins: 0,
+        now,
+      });
+
+      try {
+        statsRepository.addCoins({
+          userJid: accuser,
+          scopeKey: s,
+          amount: trial.bailAmount,
+          reason: 'trial-dismissed-bail-refund',
+        });
+      } catch (err) {
+        console.error('[fun/trialService] Erro ao devolver caução de processo arquivado:', err);
+      }
+
+      return {
+        ok: true,
+        status: 'dismissed',
+        reason: 'defendant-immune',
+        trial: updated,
+      };
+    }
+
     if (guiltyWeighted > innocentWeighted && guiltyWeighted > 0) {
       // 1. CONDENAÇÃO: Multa do réu e devolução de caução com recompensa ao acusador
       const defStats = statsRepository.getUserStats(defendant, s);
