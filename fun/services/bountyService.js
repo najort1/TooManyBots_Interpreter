@@ -102,12 +102,19 @@ export function createBountyService({
       return { claimed: false, reason: 'no-active-bounty' };
     }
 
-    // Filtra contratos válidos para o caçador (não pode ser quem colocou o contrato, nem cônjuge)
+    // Filtra contratos válidos para o caçador (não pode ser quem colocou o contrato, nem cônjuge, nem mesma facção)
     const validBounties = activeBounties.filter((b) => {
       if (b.issuerJid === hunter) return false;
       if (relationshipRepository) {
         const m = relationshipRepository.getMarriage?.(hunter, s);
         if (m && m.partnerJid === target) return false;
+      }
+      if (factionRepository) {
+        const facHunter = factionRepository.getUserFaction?.(s, hunter);
+        const facTarget = factionRepository.getUserFaction?.(s, target);
+        if (facHunter?.faction?.id && facTarget?.faction?.id && facHunter.faction.id === facTarget.faction.id) {
+          return false;
+        }
       }
       return true;
     });
@@ -116,16 +123,49 @@ export function createBountyService({
       return { claimed: false, reason: 'no-eligible-bounty' };
     }
 
-    let claimedBounty = null;
+    // Regra de Proporcionalidade: Recompensa limitada ao dobro do roubo real
+    // O saldo restante do contrato continua aberto na cabeça do procurado!
+    const stolen = Math.max(1, Math.floor(Number(stolenCoins) || 0));
+    const proportionalCap = Math.max(20, Math.floor(stolen * 2.0));
+
+    let claimedRecord = null;
     for (const b of validBounties) {
-      const claimed = bountyRepository.claimBounty({ id: b.id, claimedByJid: hunter, now });
-      if (claimed) {
-        claimedBounty = b;
-        break;
+      const payout = Math.min(b.bountyAmount, proportionalCap);
+      if (typeof bountyRepository.reduceBountyAmount === 'function') {
+        const reduction = bountyRepository.reduceBountyAmount({
+          id: b.id,
+          amountPaid: payout,
+          claimedByJid: hunter,
+          now,
+        });
+        if (reduction) {
+          claimedRecord = {
+            bountyId: b.id,
+            rewardAmount: reduction.paid,
+            remainingBounty: reduction.remaining,
+            fullyClaimed: reduction.fullyClaimed,
+            targetJid: target,
+            issuerJid: b.issuerJid,
+          };
+          break;
+        }
+      } else {
+        const claimed = bountyRepository.claimBounty({ id: b.id, claimedByJid: hunter, now });
+        if (claimed) {
+          claimedRecord = {
+            bountyId: b.id,
+            rewardAmount: b.bountyAmount,
+            remainingBounty: 0,
+            fullyClaimed: true,
+            targetJid: target,
+            issuerJid: b.issuerJid,
+          };
+          break;
+        }
       }
     }
 
-    if (!claimedBounty) {
+    if (!claimedRecord) {
       return { claimed: false, reason: 'claim-failed' };
     }
 
@@ -133,16 +173,13 @@ export function createBountyService({
     statsRepository.addCoins({
       userJid: hunter,
       scopeKey: s,
-      amount: claimedBounty.bountyAmount,
+      amount: claimedRecord.rewardAmount,
       reason: 'bounty-reward',
     });
 
     return {
       claimed: true,
-      bountyId: claimedBounty.id,
-      rewardAmount: claimedBounty.bountyAmount,
-      targetJid: target,
-      issuerJid: claimedBounty.issuerJid,
+      ...claimedRecord,
     };
   }
 

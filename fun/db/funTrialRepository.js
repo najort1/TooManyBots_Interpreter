@@ -83,17 +83,21 @@ export function createFunTrialRepository({ getDatabase = getDb } = {}) {
     };
   }
 
-  function getActiveTrial(scopeKey, now = Date.now()) {
+  function getActiveTrial(scopeKey, now = Date.now(), { allowExpired = false } = {}) {
     ensureSchema();
     const s = String(scopeKey || '').trim();
-    const row = getDatabase()
-      .prepare(
-        `SELECT * FROM ${ANALYTICS_SCHEMA}.fun_trials
-         WHERE scope_key = ? AND status = 'voting' AND ends_at > ?
+    const sql = allowExpired
+      ? `SELECT id FROM ${ANALYTICS_SCHEMA}.fun_trials
+         WHERE scope_key = ? AND status = 'voting'
          ORDER BY created_at DESC
          LIMIT 1`
-      )
-      .get(s, now);
+      : `SELECT id FROM ${ANALYTICS_SCHEMA}.fun_trials
+         WHERE scope_key = ? AND status = 'voting' AND ends_at > ?
+         ORDER BY created_at DESC
+         LIMIT 1`;
+    const row = allowExpired
+      ? getDatabase().prepare(sql).get(s)
+      : getDatabase().prepare(sql).get(s, now);
 
     if (!row) return null;
     return getTrial(row.id);

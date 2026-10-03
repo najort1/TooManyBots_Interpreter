@@ -27,7 +27,7 @@ export async function handleTrialCommand({
 
   // 1. /tribunal status ou /tribunal ver
   if (sub === 'status' || sub === 'ativo' || sub === 'ver') {
-    const active = trialService.getActiveTrial(scopeKey);
+    const active = trialService.getActiveTrial(scopeKey, Date.now(), { allowExpired: true });
     if (!active) {
       await reply('⚖️ *O Tribunal do Povo está silencioso.*\nNenhum julgamento em andamento no momento.');
       return { handled: true };
@@ -44,17 +44,19 @@ export async function handleTrialCommand({
       ? `🗳️ Placar Parcial: 🔴 *${active.guiltyVotes}* Culpado (${active.guiltyWeighted} pts) vs 🟢 *${active.innocentVotes}* Inocente (${active.innocentWeighted} pts)`
       : `🗳️ Placar Parcial: 🔴 *${active.guiltyVotes}* Culpado vs 🟢 *${active.innocentVotes}* Inocente`;
 
+    const statusActionLine = remSec > 0
+      ? `⏱️ Tempo restante de votação: *${remSec}s*\n\nUse \`/voto culpado\` ou \`/voto inocente\` para decidir o destino do réu!`
+      : '⏱️ *Votação encerrada!*\nUse `/tribunal resolver` para proclamar o veredito do júri popular!';
+
     await reply(
       [
-        '⚖️ *JULGAMENTO EM ANDAMENTO!*',
+        '⚖️ *JULGAMENTO DO TRIBUNAL DO POVO*',
         `Acusador: *${accuserName}*`,
         `Réu no Banco dos Réus: *${defendantName}*`,
         `Acusação: _"${active.evidenceSummary || 'Quebra da paz comunitária'}"_`,
         '',
         scoreLine,
-        `⏱️ Tempo restante de votação: *${remSec}s*`,
-        '',
-        'Use `/voto culpado` ou `/voto inocente` para decidir o destino do réu!',
+        statusActionLine,
       ].join('\n')
     );
     return { handled: true, trial: active };
@@ -62,9 +64,14 @@ export async function handleTrialCommand({
 
   // 2. /tribunal resolver (se o tempo expirou)
   if (sub === 'resolver' || sub === 'veredito') {
-    const active = trialService.getActiveTrial(scopeKey);
+    const active = trialService.getActiveTrial(scopeKey, Date.now(), { allowExpired: true });
     if (!active) {
       await reply('Nenhum julgamento pendente de resolução.');
+      return { handled: true };
+    }
+    const remSec = Math.max(0, Math.ceil((active.endsAt - Date.now()) / 1000));
+    if (remSec > 0) {
+      await reply(`⏱️ *A sessão de votação ainda está em andamento!*\nAguarde mais *${remSec}s* para a conclusão do júri popular antes de colher o veredito.`);
       return { handled: true };
     }
     const resolved = trialService.resolveTrial(active.id);
@@ -224,13 +231,23 @@ async function announceVerdict(resolved, active, getContactDisplayName, reply) {
   const defendantName = nameOf(getContactDisplayName, active.defendantJid);
 
   if (resolved.status === 'dismissed') {
-    await reply(
-      [
-        '⚖️🛡️ *PROCESSO ARQUIVADO!*',
-        `O réu *${defendantName}* possui Imunidade Judicial ativa.`,
-        `A caução judicial de *${DEFAULT_TRIAL_BAIL}* coins foi restituída integralmente a *${accuserName}*.`,
-      ].join('\n')
-    );
+    if (resolved.reason === 'no-quorum') {
+      await reply(
+        [
+          '⚖️🦗 *SESSÃO ARQUIVADA POR FALTA DE QUÓRUM!*',
+          'O grupo não atingiu o quórum mínimo de 2 jurados para proclamar um veredito.',
+          `A caução judicial de *${DEFAULT_TRIAL_BAIL}* coins foi restituída integralmente a *${accuserName}*.`,
+        ].join('\n')
+      );
+    } else {
+      await reply(
+        [
+          '⚖️🛡️ *PROCESSO ARQUIVADO!*',
+          `O réu *${defendantName}* possui Imunidade Judicial ativa.`,
+          `A caução judicial de *${DEFAULT_TRIAL_BAIL}* coins foi restituída integralmente a *${accuserName}*.`,
+        ].join('\n')
+      );
+    }
   } else if (resolved.status === 'convicted') {
     await reply(
       [

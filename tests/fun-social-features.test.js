@@ -250,12 +250,12 @@ test('handleDivorceCommand: aplica indenização de divórcio litigioso se houve
   assert.equal(res.handled, true);
   assert.match(messages[0], /Litigioso|Indenização|Pensão/i);
 
-  // A deve ter perdido 20% do saldo (200 coins) repassados para B
+  // A deve ter perdido 20% do saldo (200 coins: 180 para B + 20 custas cartorárias)
   const balA = statsRepo.getUserStats(spouseA, scopeKey).coins;
   const balB = statsRepo.getUserStats(spouseB, scopeKey).coins;
 
-  assert.equal(balA, 800, 'Traidor deve perder 20% em pensão/indenização');
-  assert.equal(balB, 300, 'Traído deve receber a indenização de 200 coins');
+  assert.equal(balA, 800, 'Traidor deve perder 20% em pensão + custas');
+  assert.equal(balB, 280, 'Traído deve receber a pensão líquida de 180 coins (descontados 10% de custas)');
 });
 
 test('handleDivorceCommand: protege contra saldo insuficiente no adultério conservando moedas sem inflação', async () => {
@@ -308,7 +308,7 @@ test('handleDivorceCommand: protege contra saldo insuficiente no adultério cons
   const balA = statsRepo.getUserStats(spouseA, scopeKey).coins;
   const balB = statsRepo.getUserStats(spouseB, scopeKey).coins;
 
-  // A não pode ficar negativo (deve debitar no máximo seus 15 coins)
+  // A não pode ficar negativo (deve debitar no máximo seus 15 coins: 14 para B + 1 custa)
   assert.equal(balA, 0, 'Traidor deve ceder até o teto do seu saldo real (15)');
-  assert.equal(balB, 65, 'Vítima deve receber exatamente o valor debitado (50 + 15 = 65)');
+  assert.equal(balB, 64, 'Vítima deve receber a pensão líquida (50 + 14 = 64)');
 });

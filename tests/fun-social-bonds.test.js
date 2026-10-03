@@ -209,3 +209,31 @@ test('bondService: decaimento temporal assimétrico reduz rivalidade e caos mais
   assert.equal(persistedInDb.rivalry, decayed.rivalry, 'Decaimento deve persistir duravelmente no SQLite');
   assert.equal(persistedInDb.lastDecayAt, threeDaysLater, 'lastDecayAt deve ser atualizado no banco');
 });
+
+test('bondService: reação afetuosa em vínculo diário saturado não ativa proc de moedas nem XP', () => {
+  const repo = createFunBondRepository({ getDatabase: getDb });
+  const service = createBondService({
+    bondRepository: repo,
+    random: () => 0.01, // Força proc crítico se elegível (chance >= 1%)
+  });
+
+  const scope = uniqueGroup();
+  const a = uniqueJid();
+  const b = uniqueJid();
+
+  // Executa 3 ações no dia para saturar o soft-cap diário
+  service.recordAction({ scopeKey: scope, actorJid: a, targetJid: b, action: 'kiss' });
+  service.recordAction({ scopeKey: scope, actorJid: b, targetJid: a, action: 'cuddle' });
+  service.recordAction({ scopeKey: scope, actorJid: a, targetJid: b, action: 'hug' });
+
+  // Na 4ª ação do dia, o vínculo está saturado (dailyPointsAcc >= 3)
+  const saturatedProc = service.checkReactionProc({
+    scopeKey: scope,
+    actorJid: a,
+    targetJid: b,
+    action: 'kiss',
+  });
+
+  assert.equal(saturatedProc.procType, 'none', 'Proc não deve disparar quando a relação já estiver saturada no dia');
+  assert.equal(saturatedProc.bonusCoins, undefined, 'Nenhuma moeda deve ser emitida no estado saturado');
+});

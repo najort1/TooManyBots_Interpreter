@@ -172,15 +172,26 @@ export async function handleDivorceCommand({
       litigationBonus = adultererBal > 0 ? Math.min(adultererBal, Math.min(5000, Math.max(30, rawBonus))) : 0;
 
       if (litigationBonus > 0) {
+        // Taxa cartorária de 10% (custas judiciais que queimam moedas como sink deflacionário)
+        const courtFee = Math.max(1, Math.floor(litigationBonus * 0.10));
+        const netAlimony = litigationBonus - courtFee;
+
         if (typeof repository.transferCoins === 'function') {
           const xfer = repository.transferCoins({
             fromJid: partnerJid,
             toJid: userJid,
             scopeKey,
-            amount: litigationBonus,
+            amount: netAlimony,
             reason: 'divorce-adultery-alimony',
           });
-          if (!xfer.ok) {
+          if (xfer.ok) {
+            repository.addCoins({
+              userJid: partnerJid,
+              scopeKey,
+              amount: -courtFee,
+              reason: 'divorce-court-fee-sink',
+            });
+          } else {
             litigationBonus = 0;
           }
         } else {
@@ -193,7 +204,7 @@ export async function handleDivorceCommand({
           repository.addCoins({
             userJid,
             scopeKey,
-            amount: litigationBonus,
+            amount: netAlimony,
             reason: 'divorce-adultery-alimony',
           });
         }
@@ -211,11 +222,14 @@ export async function handleDivorceCommand({
   const balAfter = repository?.getUserStats?.(userJid, scopeKey)?.coins;
 
   if (litigationBonus > 0) {
+    const courtFee = Math.max(1, Math.floor(litigationBonus * 0.10));
+    const netAlimony = litigationBonus - courtFee;
     await reply(
       [
         '⚖️💔 *DIVÓRCIO LITIGIOSO POR INFIDELIDADE!*',
         `*${me}* provou o adultério de *${partner}* perante a comunidade!`,
-        `Pensão/Indenização: *+${litigationBonus}* coins transferidos de *${partner}* para *${me}*!`,
+        `Pensão/Indenização líquida: *+${netAlimony}* coins transferidos para *${me}*!`,
+        `Custas judiciais retidas pelo cartório: *${courtFee}* coins.`,
         balAfter != null ? `Seu novo saldo: *${balAfter}* coins.` : null,
       ]
         .filter(Boolean)

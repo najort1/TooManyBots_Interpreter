@@ -138,6 +138,38 @@ export function createFunBountyRepository({ getDatabase = getDb } = {}) {
     return res.changes > 0;
   }
 
+  function reduceBountyAmount({ id, amountPaid, claimedByJid, now = Date.now() }) {
+    ensureSchema();
+    const db = getDatabase();
+    const b = getBounty(id);
+    if (!b || b.status !== 'open') return null;
+
+    const paid = Math.max(0, Math.floor(Number(amountPaid) || 0));
+    const remaining = Math.max(0, b.bountyAmount - paid);
+
+    if (remaining <= 0) {
+      const res = db
+        .prepare(
+          `UPDATE ${ANALYTICS_SCHEMA}.fun_bounties
+           SET status = 'claimed', bounty_amount = 0, claimed_by_jid = ?, resolved_at = ?
+           WHERE id = ? AND status = 'open'`
+        )
+        .run(String(claimedByJid || ''), now, String(id || ''));
+      if (res.changes === 0) return null;
+      return { fullyClaimed: true, paid: b.bountyAmount, remaining: 0 };
+    } else {
+      const res = db
+        .prepare(
+          `UPDATE ${ANALYTICS_SCHEMA}.fun_bounties
+           SET bounty_amount = ?, resolved_at = ?
+           WHERE id = ? AND status = 'open'`
+        )
+        .run(remaining, now, String(id || ''));
+      if (res.changes === 0) return null;
+      return { fullyClaimed: false, paid, remaining };
+    }
+  }
+
   return {
     createBounty,
     getBounty,
@@ -145,5 +177,6 @@ export function createFunBountyRepository({ getDatabase = getDb } = {}) {
     listActiveBounties,
     claimBounty,
     cancelBounty,
+    reduceBountyAmount,
   };
 }

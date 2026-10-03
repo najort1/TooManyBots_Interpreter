@@ -284,6 +284,13 @@ export function createBondService({
 
     // 2. Reação Crítica: Alta afinidade e intimidade geram proc crítico com recompensa
     if (['kiss', 'hug', 'cuddle', 'pat'].includes(action)) {
+      // Bloqueio de exploit anti-macro: se o vínculo diário já saturou (3+ interações), o proc não emite moedas/XP
+      const today = dayKey(Date.now());
+      const isSaturated = currentBond.flags?.lastDayKey === today && (currentBond.dailyPointsAcc || 0) >= 3;
+      if (isSaturated) {
+        return { procType: 'none', blocked: false };
+      }
+
       const critChance = Math.min(0.35, 0.05 + 0.003 * I);
       if (Number(random()) < critChance) {
         return {

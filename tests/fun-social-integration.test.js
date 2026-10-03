@@ -149,7 +149,7 @@ test('integração social: fluxo completo via onIncomingMessage (/kiss, /relacao
   assert.ok(sentMessages.length > 0);
   assert.match(sentMessages[0].text, /TRIBUNAL DO POVO/i);
 
-  // 7. Bob vota no Tribunal (/voto culpado)
+  // 7. Jurados votam no Tribunal (Bob e David)
   sentMessages.length = 0;
   const resVoto = await module.onIncomingMessage({
     chatJid: scopeKey,
@@ -161,6 +161,17 @@ test('integração social: fluxo completo via onIncomingMessage (/kiss, /relacao
   assert.equal(resVoto.handled, true);
   assert.ok(sentMessages.length > 0);
   assert.match(sentMessages[0].text, /CULPADO/i);
+
+  const david = uniqueJid();
+  await module.onIncomingMessage({
+    chatJid: scopeKey,
+    actorJid: david,
+    isGroup: true,
+    text: '/voto culpado',
+  });
+
+  // Simula o encerramento da janela de votação de 90s do tribunal
+  getDb().prepare("UPDATE analytics.fun_trials SET ends_at = ? WHERE scope_key = ?").run(Date.now() - 1000, scopeKey);
 
   // 8. Resolução do Tribunal (/tribunal resolver)
   sentMessages.length = 0;

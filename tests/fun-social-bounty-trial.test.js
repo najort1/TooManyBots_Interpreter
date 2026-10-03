@@ -92,7 +92,8 @@ test('bountyService: liquida recompensa para caçador após assalto bem-sucedido
   statsRepo.addCoins({ userJid: issuer, scopeKey, amount: 500, reason: 'seed' });
   const created = service.createBounty({ scopeKey, issuerJid: issuer, targetJid: target, amount: 200 });
 
-  // Hunter assalta target com sucesso
+  // Hunter assalta target com sucesso roubando 20 coins
+  // Regra de proporcionalidade: recompensa limitada a min(160, 20 * 2 = 40 coins)
   const claimed = service.claimOnAssault({
     scopeKey,
     hunterJid: hunter,
@@ -102,16 +103,30 @@ test('bountyService: liquida recompensa para caçador após assalto bem-sucedido
 
   assert.equal(claimed.claimed, true);
   assert.equal(claimed.bountyId, created.bounty.id);
-  assert.equal(claimed.rewardAmount, 160);
+  assert.equal(claimed.rewardAmount, 40, 'Recompensa deve ser proporcional ao roubo real (40)');
 
-  // Hunter recebe os 160 coins do contrato
+  // Hunter recebe os 40 coins parciais do contrato
   const balHunter = statsRepo.getUserStats(hunter, scopeKey).coins;
-  assert.equal(balHunter, 160);
+  assert.equal(balHunter, 40);
 
-  // Contrato fica marcado como resgatado (claimed)
+  // Contrato permanece aberto com o saldo remanescente de 120 coins
   const b = bountyRepo.getBounty(created.bounty.id);
-  assert.equal(b.status, 'claimed');
-  assert.equal(b.claimedByJid, hunter);
+  assert.equal(b.status, 'open');
+  assert.equal(b.bountyAmount, 120, 'Saldo remanescente de 120 coins continua aberto');
+
+  // Segundo assalto rouba 80 coins e liquida o restante (120 coins)
+  const claimed2 = service.claimOnAssault({
+    scopeKey,
+    hunterJid: hunter,
+    targetJid: target,
+    stolenCoins: 80,
+  });
+  assert.equal(claimed2.claimed, true);
+  assert.equal(claimed2.rewardAmount, 120, 'Deve liquidar os 120 coins restantes');
+  assert.equal(statsRepo.getUserStats(hunter, scopeKey).coins, 160);
+
+  const bFinal = bountyRepo.getBounty(created.bounty.id);
+  assert.equal(bFinal.status, 'claimed');
 });
 
 test('trialService: abre julgamento com caução e condena réu com voto da maioria', () => {
@@ -311,4 +326,39 @@ test('bountyService: suporta múltiplos contratos no mesmo alvo e impede double-
   const claim3 = service.claimOnAssault({ scopeKey, hunterJid: hunter1, targetJid: target, stolenCoins: 30 });
   assert.equal(claim3.claimed, false, 'Não deve haver mais contratos abertos');
   assert.equal(claim3.reason, 'no-active-bounty');
+});
+
+test('trialService: arquiva julgamento e estorna caução quando quórum for inferior a 2 jurados', () => {
+  const statsRepo = createFunStatsRepository({ getDatabase: getDb });
+  const trialRepo = createFunTrialRepository({ getDatabase: getDb });
+  const service = createTrialService({
+    trialRepository: trialRepo,
+    statsRepository: statsRepo,
+  });
+
+  const scopeKey = uniqueGroup();
+  const accuser = uniqueJid();
+  const defendant = uniqueJid();
+  const singleVoter = uniqueJid();
+
+  statsRepo.addCoins({ userJid: accuser, scopeKey, amount: 200, reason: 'seed' });
+  statsRepo.addCoins({ userJid: defendant, scopeKey, amount: 100, reason: 'seed' });
+
+  const startRes = service.openTrial({
+    scopeKey,
+    accuserJid: accuser,
+    defendantJid: defendant,
+    charge: 'Processo na calada da noite',
+  });
+
+  // Apenas 1 voto computado (falta de quórum)
+  service.vote({ trialId: startRes.trial.id, voterJid: singleVoter, vote: 'guilty' });
+
+  const resolveRes = service.resolveTrial(startRes.trial.id);
+  assert.equal(resolveRes.status, 'dismissed');
+  assert.equal(resolveRes.reason, 'no-quorum');
+
+  // Caução de 150 restituída ao acusador
+  assert.equal(statsRepo.getUserStats(accuser, scopeKey).coins, 200);
+  assert.equal(statsRepo.getUserStats(defendant, scopeKey).coins, 100);
 });

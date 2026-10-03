@@ -161,11 +161,39 @@ export function createTrialService({
       };
     }
 
+    // Verificação de quórum popular (mínimo de 2 jurados para validar um julgamento popular)
+    if (votes.length < 2) {
+      const updated = trialRepository.resolveTrial({
+        trialId,
+        status: 'dismissed',
+        penaltyCoins: 0,
+        now,
+      });
+
+      try {
+        statsRepository.addCoins({
+          userJid: accuser,
+          scopeKey: s,
+          amount: trial.bailAmount,
+          reason: 'trial-dismissed-no-quorum',
+        });
+      } catch (err) {
+        console.error('[fun/trialService] Erro ao estornar caução por falta de quórum:', err);
+      }
+
+      return {
+        ok: true,
+        status: 'dismissed',
+        reason: 'no-quorum',
+        trial: updated,
+      };
+    }
+
     if (guiltyWeighted > innocentWeighted && guiltyWeighted > 0) {
       // 1. CONDENAÇÃO: Multa do réu e devolução de caução com recompensa ao acusador
       const defStats = statsRepository.getUserStats(defendant, s);
       const defBal = Math.max(0, Number(defStats?.coins) || 0);
-      const penalty = Math.max(30, Math.min(300, Math.floor(defBal * 0.10) || 30));
+      const penalty = Math.min(defBal, Math.min(300, Math.floor(defBal * 0.10)));
 
       const updated = trialRepository.resolveTrial({
         trialId,
@@ -237,6 +265,18 @@ export function createTrialService({
           amount: trial.bailAmount,
           reason: 'trial-damages-compensation',
         });
+
+        // Aplica imunidade judicial também ao réu absolvido (24h) contra perseguição/griefing
+        if (effectsRepository) {
+          effectsRepository.setTimedEffect?.({
+            userJid: defendant,
+            scopeKey: s,
+            effectKey: 'tribunal_immunity',
+            durationMs: 24 * 60 * 60 * 1000,
+            payload: { trialId, reason: 'acquitted' },
+            now,
+          });
+        }
       } catch (err) {
         console.error('[fun/trialService] Erro ao transferir caução na absolvição:', err);
       }
@@ -250,8 +290,8 @@ export function createTrialService({
     }
   }
 
-  function getActiveTrial(scopeKey, now = Date.now()) {
-    return trialRepository.getActiveTrial(scopeKey, now);
+  function getActiveTrial(scopeKey, now = Date.now(), options = {}) {
+    return trialRepository.getActiveTrial(scopeKey, now, options);
   }
 
   return {
