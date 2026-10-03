@@ -167,7 +167,9 @@ export async function handleDivorceCommand({
     if (infidelityClaim.adultererJid === partnerJid) {
       const adultererStats = repository.getUserStats(partnerJid, scopeKey);
       const adultererBal = Math.max(0, Number(adultererStats?.coins) || 0);
-      litigationBonus = Math.floor(adultererBal * 0.20); // 20% de pensão/indenização
+      const rawBonus = Math.floor(adultererBal * 0.20); // 20% de pensão/indenização
+      // Proteção de estabilidade econômica: mínimo 30, máximo 5000 coins, limitado ao saldo real
+      litigationBonus = adultererBal > 0 ? Math.min(adultererBal, Math.min(5000, Math.max(30, rawBonus))) : 0;
 
       if (litigationBonus > 0) {
         repository.addCoins({

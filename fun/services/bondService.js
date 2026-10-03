@@ -1,3 +1,17 @@
+export const DECAY_RATES = Object.freeze({
+  affection: 0.05,
+  rivalry: 0.10,
+  chaos: 0.15,
+  intimacy: 0.03,
+});
+
+export const DECAY_MINIMUMS = Object.freeze({
+  affection: 1,
+  rivalry: 2,
+  chaos: 2,
+  intimacy: 1,
+});
+
 const ACTION_DELTAS = Object.freeze({
   kiss: { affection: 5, rivalry: -2, intimacy: 4, chaos: 1 },
   cuddle: { affection: 5, rivalry: -2, intimacy: 4, chaos: 1 },
@@ -32,22 +46,22 @@ export function classifyBond({ affection = 0, rivalry = 0, intimacy = 0, chaos =
   if (A >= 50 && R >= 35) {
     return { key: 'love_hate', label: 'Tapas e Beijos', desc: 'Entre xingamentos e carinhos, ninguém entende mas funciona.' };
   }
-  if (A >= 70 && I >= 45 && R < 25) {
+  if (A >= 65 && I >= 40 && R < 30) {
     return { key: 'soulmates', label: 'Inseparáveis', desc: 'Sintonia pura e fidelidade incondicional.' };
   }
-  if (R >= 55 && C >= 40 && A < 25) {
+  if (R >= 50 && C >= 35 && A < 30) {
     return { key: 'archnemesis', label: 'Arqui-inimigos', desc: 'Sangue nos olhos. Se um cair, o outro comemora.' };
   }
-  if (I >= 40 && C >= 45 && R < 35) {
+  if (I >= 35 && C >= 40 && R < 35) {
     return { key: 'partners_in_crime', label: 'Cúmplices de Crime', desc: 'A mente por trás das maiores loucuras do grupo.' };
   }
-  if (R >= 45 && I < 30) {
+  if (R >= 40 && I < 30) {
     return { key: 'bitter_rivals', label: 'Treta Declarada', desc: 'A faísca tá solta, qualquer comando vira guerra.' };
   }
-  if (A >= 40 && R < 20) {
+  if (A >= 35 && R < 25) {
     return { key: 'sweethearts', label: 'Chamego Doce', desc: 'Amizade fofa cheia de carinhos e mimos.' };
   }
-  if (C >= 50 && A < 40 && R < 40) {
+  if (C >= 45 && A < 40 && R < 40) {
     return { key: 'chaos_agents', label: 'Agentes do Caos', desc: 'Só interagem pra causar confusão e rir da cara do grupo.' };
   }
   return { key: 'acquaintances', label: 'Conhecidos', desc: 'Uma convivência pacífica com interações esporádicas.' };
@@ -74,7 +88,7 @@ export function createBondService({
   // Janelas ativas de contra-tapa em memória: `${scopeKey}:${victimJid}:${attackerJid}` -> expiresAt
   const counterSlapWindows = new Map();
 
-  function applyDecay(bond, now = Date.now()) {
+  function applyDecay(bond, now = Date.now(), persist = false) {
     const last = bond.lastDecayAt || bond.lastInteractionAt;
     if (!last || now <= last) return bond;
 
@@ -88,10 +102,10 @@ export function createBondService({
     let C = bond.chaos;
 
     for (let day = 0; day < elapsedDays; day++) {
-      A = clamp(A - Math.max(1, Math.floor(0.05 * A)));
-      R = clamp(R - Math.max(2, Math.floor(0.10 * R)));
-      C = clamp(C - Math.max(2, Math.floor(0.15 * C)));
-      I = clamp(I - Math.max(1, Math.floor(0.03 * I)));
+      A = clamp(A - Math.max(DECAY_MINIMUMS.affection, Math.floor(DECAY_RATES.affection * A)));
+      R = clamp(R - Math.max(DECAY_MINIMUMS.rivalry, Math.floor(DECAY_RATES.rivalry * R)));
+      C = clamp(C - Math.max(DECAY_MINIMUMS.chaos, Math.floor(DECAY_RATES.chaos * C)));
+      I = clamp(I - Math.max(DECAY_MINIMUMS.intimacy, Math.floor(DECAY_RATES.intimacy * I)));
     }
 
     const updated = {
@@ -105,13 +119,16 @@ export function createBondService({
       updatedAt: now,
     };
 
-    return bondRepository.saveBond(updated);
+    if (persist) {
+      return bondRepository.saveBond(updated);
+    }
+    return updated;
   }
 
   function getBondWithDecay(scopeKey, u1, u2, now = Date.now()) {
     const raw = bondRepository.getBond(scopeKey, u1, u2);
     if (!raw || raw.isNew) return raw;
-    return applyDecay(raw, now);
+    return applyDecay(raw, now, false);
   }
 
   function recordAction({

@@ -93,6 +93,10 @@ export function createBountyService({
       return { claimed: false, reason: 'invalid-participants' };
     }
 
+    if (Number(stolenCoins) <= 0) {
+      return { claimed: false, reason: 'zero-stolen-coins' };
+    }
+
     const activeBounties = bountyRepository.getActiveBountiesForTarget(s, target, now);
     if (!activeBounties.length) {
       return { claimed: false, reason: 'no-active-bounty' };

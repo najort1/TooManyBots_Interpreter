@@ -1,3 +1,5 @@
+export const DEFAULT_TRIAL_BAIL = 150;
+
 export function createTrialService({
   trialRepository,
   statsRepository,
@@ -14,13 +16,13 @@ export function createTrialService({
     defendantJid,
     charge = '',
     durationMs = 90_000,
-    bailAmount = 150,
+    bailAmount = DEFAULT_TRIAL_BAIL,
     now = Date.now(),
   }) {
     const s = String(scopeKey || '').trim();
     const accuser = String(accuserJid || '').trim();
     const defendant = String(defendantJid || '').trim();
-    const bail = Math.max(50, Math.floor(Number(bailAmount) || 150));
+    const bail = Math.max(50, Math.floor(Number(bailAmount) || DEFAULT_TRIAL_BAIL));
 
     if (!s || !accuser || !defendant) return { ok: false, reason: 'invalid-participants' };
     if (accuser === defendant) return { ok: false, reason: 'self-accusation' };
@@ -137,48 +139,52 @@ export function createTrialService({
       const defBal = Math.max(0, Number(defStats?.coins) || 0);
       const penalty = Math.max(30, Math.min(300, Math.floor(defBal * 0.10) || 30));
 
-      // Debita réu
-      statsRepository.addCoins({
-        userJid: defendant,
-        scopeKey: s,
-        amount: -penalty,
-        reason: 'trial-conviction-fine',
-      });
-
-      // Devolve caução + multa ao acusador
-      statsRepository.addCoins({
-        userJid: accuser,
-        scopeKey: s,
-        amount: trial.bailAmount + penalty,
-        reason: 'trial-victory-refund',
-      });
-
-      // Aplica efeitos no réu: condenado_publico (24h) e tribunal_immunity (48h)
-      if (effectsRepository) {
-        effectsRepository.setTimedEffect({
-          userJid: defendant,
-          scopeKey: s,
-          effectKey: 'condenado_publico',
-          durationMs: 24 * 60 * 60 * 1000,
-          payload: { trialId },
-          now,
-        });
-        effectsRepository.setTimedEffect({
-          userJid: defendant,
-          scopeKey: s,
-          effectKey: 'tribunal_immunity',
-          durationMs: 48 * 60 * 60 * 1000,
-          payload: { trialId },
-          now,
-        });
-      }
-
       const updated = trialRepository.resolveTrial({
         trialId,
         status: 'convicted',
         penaltyCoins: penalty,
         now,
       });
+
+      try {
+        // Debita réu
+        statsRepository.addCoins({
+          userJid: defendant,
+          scopeKey: s,
+          amount: -penalty,
+          reason: 'trial-conviction-fine',
+        });
+
+        // Devolve caução + multa ao acusador
+        statsRepository.addCoins({
+          userJid: accuser,
+          scopeKey: s,
+          amount: trial.bailAmount + penalty,
+          reason: 'trial-victory-refund',
+        });
+
+        // Aplica efeitos no réu: condenado_publico (24h) e tribunal_immunity (48h)
+        if (effectsRepository) {
+          effectsRepository.setTimedEffect?.({
+            userJid: defendant,
+            scopeKey: s,
+            effectKey: 'condenado_publico',
+            durationMs: 24 * 60 * 60 * 1000,
+            payload: { trialId },
+            now,
+          });
+          effectsRepository.setTimedEffect?.({
+            userJid: defendant,
+            scopeKey: s,
+            effectKey: 'tribunal_immunity',
+            durationMs: 48 * 60 * 60 * 1000,
+            payload: { trialId },
+            now,
+          });
+        }
+      } catch (err) {
+        console.error('[fun/trialService] Erro ao aplicar efeitos colaterais de condenação:', err);
+      }
 
       return {
         ok: true,
@@ -189,19 +195,23 @@ export function createTrialService({
       };
     } else {
       // 2. ABSOLVIÇÃO / LITIGÂNCIA DE MÁ-FÉ: Caução transferida integralmente ao réu
-      statsRepository.addCoins({
-        userJid: defendant,
-        scopeKey: s,
-        amount: trial.bailAmount,
-        reason: 'trial-damages-compensation',
-      });
-
       const updated = trialRepository.resolveTrial({
         trialId,
         status: 'acquitted',
         penaltyCoins: 0,
         now,
       });
+
+      try {
+        statsRepository.addCoins({
+          userJid: defendant,
+          scopeKey: s,
+          amount: trial.bailAmount,
+          reason: 'trial-damages-compensation',
+        });
+      } catch (err) {
+        console.error('[fun/trialService] Erro ao transferir caução na absolvição:', err);
+      }
 
       return {
         ok: true,

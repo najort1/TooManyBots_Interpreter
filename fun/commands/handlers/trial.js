@@ -2,6 +2,7 @@ import { resolveUserTarget } from '../../utils/mentions.js';
 import { isCanonicalUserJid } from '../../utils/identity.js';
 import { nameOf } from '../../utils/userLabel.js';
 import { fmt } from '../../messages/index.js';
+import { DEFAULT_TRIAL_BAIL } from '../../services/trialService.js';
 
 export async function handleTrialCommand({
   userJid,
@@ -87,9 +88,9 @@ export async function handleTrialCommand({
         'Exemplo: `/tribunal @fulano Me deu calote e beijou meu ex`',
         '',
         'Regras do Tribunal:',
-        '• Caução judicial: *150* coins debitados do acusador.',
+        `• Caução judicial: *${DEFAULT_TRIAL_BAIL}* coins debitados do acusador.`,
         '• Se condenado: o réu paga multa de 10% do saldo e a caução volta ao acusador + indenização.',
-        '• Se absolvido: acusador responde por Litigância de Má-Fé e PERDE os 150 coins para o réu!',
+        `• Se absolvido: acusador responde por Litigância de Má-Fé e PERDE os ${DEFAULT_TRIAL_BAIL} coins para o réu!`,
         '• Votação rápida de *90 segundos* aberta a todos do grupo.',
       ].join('\n')
     );
