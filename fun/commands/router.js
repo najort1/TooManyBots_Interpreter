@@ -115,6 +115,9 @@ import {
 } from './handlers/groupAdmin.js';
 import { handleCadastrarCommand } from './handlers/cadastrar.js';
 import { handleGameEventCommand } from './handlers/gameEvent.js';
+import { handleRelacaoCommand } from './handlers/relacao.js';
+import { handleBountyCommand } from './handlers/bounty.js';
+import { handleTrialCommand, handleVoteCommand } from './handlers/trial.js';
 
 /**
  * @returns {{ command: string, args: string[] } | null}
@@ -259,6 +262,9 @@ export async function routeFunCommand(ctx) {
     msgTimeMs,
     farewellService,
     registrationService,
+    bondService,
+    bountyService,
+    trialService,
     messageId,
     messageKey,
   } = ctx;
@@ -391,6 +397,9 @@ export async function routeFunCommand(ctx) {
     imageGenerationService,
     farewellService,
     registrationService,
+    bondService,
+    bountyService,
+    trialService,
     gameManager: ctx.gameManager,
     msgTimeMs,
     messageId,
@@ -421,6 +430,14 @@ export async function routeFunCommand(ctx) {
       return handleDivorceCommand(base);
     case FUN_COMMANDS.SHIP:
       return handleShipCommand(base);
+    case FUN_COMMANDS.RELACAO:
+      return handleRelacaoCommand(base);
+    case FUN_COMMANDS.BOUNTY:
+      return handleBountyCommand(base);
+    case FUN_COMMANDS.TRIBUNAL:
+      return handleTrialCommand(base);
+    case FUN_COMMANDS.VOTO:
+      return handleVoteCommand(base);
     case FUN_COMMANDS.ACCEPT:
       return handleAcceptCommand(base);
     case FUN_COMMANDS.DECLINE:

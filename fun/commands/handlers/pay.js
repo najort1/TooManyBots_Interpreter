@@ -16,6 +16,7 @@ export async function handlePayCommand({
   sock,
   identityMap,
   socialHooks,
+  bondService = null,
   funConfig,
   messageId = '',
   messageKey = null,
@@ -96,6 +97,16 @@ export async function handlePayCommand({
     if (hook?.eventBonus) {
       eventLine = `⚡ Evento: +${hook.eventBonus.bonusCoins} coins e XP pra ambos (*${hook.eventBonus.mult}x*)`;
     }
+  }
+
+  if (!result.replayed && bondService?.recordAction) {
+    bondService.recordAction({
+      scopeKey,
+      actorJid: userJid,
+      targetJid: target,
+      action: 'pay',
+      now: Date.now(),
+    });
   }
 
   const receipt = fmt.transferComplete({

@@ -118,6 +118,7 @@ export async function handleDivorceCommand({
   userJid,
   scopeKey,
   relationshipService,
+  bondService,
   coinsService,
   repository,
   getContactDisplayName,
@@ -137,13 +138,53 @@ export async function handleDivorceCommand({
     }
   }
 
+  // Verifica infidelidade antes de desfazer o casamento
+  const existingMarriage = relationshipService.getMarriage?.(userJid, scopeKey);
+  let infidelityClaim = null;
+
+  if (existingMarriage?.partnerJid && bondService?.getBondWithDecay) {
+    const bond = bondService.getBondWithDecay(scopeKey, userJid, existingMarriage.partnerJid);
+    const inf = bond?.flags?.lastInfidelity;
+    // Se o adultério aconteceu nas últimas 48 horas
+    if (inf && (Date.now() - (inf.at || 0)) < 48 * 60 * 60 * 1000) {
+      infidelityClaim = inf;
+    }
+  }
+
   const result = relationshipService.divorce({ userJid, scopeKey });
   if (!result.ok) {
     await reply('Você não está casado(a) neste grupo.');
     return { handled: true };
   }
 
-  if (cost > 0 && repository) {
+  const partnerJid = result.partnerJid;
+  const partner = nameOf(getContactDisplayName, partnerJid);
+  const me = nameOf(getContactDisplayName, userJid);
+
+  let litigationBonus = 0;
+  if (infidelityClaim && repository) {
+    // Se o solicitante foi a vítima da traição
+    if (infidelityClaim.adultererJid === partnerJid) {
+      const adultererStats = repository.getUserStats(partnerJid, scopeKey);
+      const adultererBal = Math.max(0, Number(adultererStats?.coins) || 0);
+      litigationBonus = Math.floor(adultererBal * 0.20); // 20% de pensão/indenização
+
+      if (litigationBonus > 0) {
+        repository.addCoins({
+          userJid: partnerJid,
+          scopeKey,
+          amount: -litigationBonus,
+          reason: 'divorce-adultery-fine',
+        });
+        repository.addCoins({
+          userJid,
+          scopeKey,
+          amount: litigationBonus,
+          reason: 'divorce-adultery-alimony',
+        });
+      }
+    }
+  } else if (cost > 0 && repository) {
     repository.addCoins({
       userJid,
       scopeKey,
@@ -152,22 +193,36 @@ export async function handleDivorceCommand({
     });
   }
 
-  const partner = nameOf(getContactDisplayName, result.partnerJid);
   const balAfter = repository?.getUserStats?.(userJid, scopeKey)?.coins;
-  await reply(
-    [
-      `💔 Divórcio registrado. Adeus, *${partner}*.`,
-      cost > 0 ? `Taxa: *−${cost}* coins${balAfter != null ? ` · saldo *${balAfter}*` : ''}` : null,
-    ]
-      .filter(Boolean)
-      .join('\n')
-  );
+
+  if (litigationBonus > 0) {
+    await reply(
+      [
+        '⚖️💔 *DIVÓRCIO LITIGIOSO POR INFIDELIDADE!*',
+        `*${me}* provou o adultério de *${partner}* perante a comunidade!`,
+        `Pensão/Indenização: *+${litigationBonus}* coins transferidos de *${partner}* para *${me}*!`,
+        balAfter != null ? `Seu novo saldo: *${balAfter}* coins.` : null,
+      ]
+        .filter(Boolean)
+        .join('\n')
+    );
+  } else {
+    await reply(
+      [
+        `💔 Divórcio registrado. Adeus, *${partner}*.`,
+        cost > 0 ? `Taxa: *−${cost}* coins${balAfter != null ? ` · saldo *${balAfter}*` : ''}` : null,
+      ]
+        .filter(Boolean)
+        .join('\n')
+    );
+  }
+
   try {
     const unlocked =
       achievementService?.check?.(userJid, scopeKey, 'divorce', {}, funConfig) || [];
     newsService?.log?.(scopeKey, 'divorce', {
       userJid,
-      payload: { partner: partner },
+      payload: { partner: partner, litigation: litigationBonus > 0 },
     });
     if (unlocked.length) {
       await reply(unlocked.map((u) => `🏆 *${u.icon} ${u.name}*`).join('\n'));

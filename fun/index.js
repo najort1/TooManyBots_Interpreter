@@ -112,6 +112,12 @@ import { createFunImageGenerationRepository } from './db/funImageGenerationRepos
 import { createImageGenerationService } from './services/imageGenerationService.js';
 import { createFunFarewellRepository } from './db/funFarewellRepository.js';
 import { createFarewellService } from './services/farewellService.js';
+import { createFunBondRepository } from './db/funBondRepository.js';
+import { createFunBountyRepository } from './db/funBountyRepository.js';
+import { createFunTrialRepository } from './db/funTrialRepository.js';
+import { createBondService } from './services/bondService.js';
+import { createBountyService } from './services/bountyService.js';
+import { createTrialService } from './services/trialService.js';
 import { createExtractionAdapters } from './services/extractionAdapters/index.js';
 import { handleFunIncomingMessage } from './pipeline/onIncomingMessage.js';
 import { nameOf } from './utils/userLabel.js';
@@ -286,6 +292,35 @@ export function createFunModule(deps = {}) {
     repository,
     bridgeService,
   });
+  const bondRepository =
+    deps.bondRepository || createFunBondRepository({ getDatabase });
+  const bondService =
+    deps.bondService ||
+    createBondService({
+      bondRepository,
+      relationshipRepository,
+    });
+  const bountyRepository =
+    deps.bountyRepository || createFunBountyRepository({ getDatabase });
+  const bountyService =
+    deps.bountyService ||
+    createBountyService({
+      bountyRepository,
+      statsRepository: repository,
+      relationshipRepository,
+      factionRepository,
+    });
+  const trialRepository =
+    deps.trialRepository || createFunTrialRepository({ getDatabase });
+  const trialService =
+    deps.trialService ||
+    createTrialService({
+      trialRepository,
+      statsRepository: repository,
+      effectsRepository,
+      relationshipRepository,
+      factionRepository,
+    });
   const propertyService =
     deps.propertyService ||
     createPropertyService({
@@ -770,6 +805,9 @@ export function createFunModule(deps = {}) {
         imageGenerationService,
         farewellService,
         registrationService,
+        bondService,
+        bountyService,
+        trialService,
         gameManager,
       },
       {
@@ -1599,6 +1637,12 @@ export function createFunModule(deps = {}) {
       prefsRepository,
       accountRepository,
       registrationService,
+      bondRepository,
+      bondService,
+      bountyRepository,
+      bountyService,
+      trialRepository,
+      trialService,
       gameManager,
       gameAuthService,
       nsfwVoteRepository,

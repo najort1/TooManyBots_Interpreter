@@ -88,6 +88,9 @@ export async function handleReactionCommand({
   identityMap,
   reactionMediaService,
   nsfwVoteRepository,
+  bondService,
+  socialHooks,
+  statsRepository,
 }) {
   const action = normalizeReactionAction(parseCommandHead(text, funConfig?.prefix || '/'));
   const kind = getReactionKind(action);
@@ -135,14 +138,89 @@ export async function handleReactionCommand({
     return { handled: true, result: media || null };
   }
 
-  const caption = reactionCaption({
-    action,
-    kind,
-    userJid,
-    targetJid,
-    getContactDisplayName,
-    provider: media.provider,
-  });
+  let isCounterSlap = false;
+  let procResult = null;
+  const actorName = nameOf(getContactDisplayName, userJid);
+  const targetName = targetJid && isCanonicalUserJid(targetJid) ? nameOf(getContactDisplayName, targetJid) : '';
+
+  if (targetJid && isCanonicalUserJid(targetJid) && targetJid !== userJid && bondService) {
+    // 1. Verifica contra-tapa em janela de revide
+    if (action === 'slap') {
+      const counterCheck = bondService.getCounterSlapWindow?.(scopeKey, userJid, targetJid);
+      if (counterCheck?.active) {
+        isCounterSlap = true;
+      }
+    }
+
+    // 2. Verifica procs dinâmicos (crítico ou esquiva)
+    procResult = bondService.checkReactionProc?.({
+      scopeKey,
+      actorJid: userJid,
+      targetJid,
+      action,
+    });
+
+    // 3. Registra ação no motor de vínculos se não foi esquivado/bloqueado
+    if (!procResult?.blocked) {
+      bondService.recordAction?.({
+        scopeKey,
+        actorJid: userJid,
+        targetJid,
+        action,
+        now: Date.now(),
+      });
+    }
+
+    // 4. Integração com socialHooks para bridgeService, panelinhas e missões mistas
+    if (typeof socialHooks?.onSocialPair === 'function') {
+      socialHooks.onSocialPair({
+        scopeKey,
+        fromJid: userJid,
+        toJid: targetJid,
+        kind: action,
+        funConfig,
+      });
+    }
+
+    // 5. Premia bônus de proc crítico se aplicável
+    if (procResult?.procType === 'critical_reaction' && statsRepository) {
+      if (procResult.bonusXp) {
+        statsRepository.awardXp?.({
+          userJid,
+          scopeKey,
+          amount: procResult.bonusXp,
+          cooldownMs: 0,
+        });
+      }
+      if (procResult.bonusCoins) {
+        statsRepository.addCoins?.({
+          userJid,
+          scopeKey,
+          amount: procResult.bonusCoins,
+          reason: 'critical-reaction-proc',
+        });
+      }
+    }
+  }
+
+  let caption = '';
+  if (procResult?.blocked && targetName) {
+    caption = `*${actorName}* tentou ${ACTION_LABELS[action] || action} *${targetName}*, mas ${procResult.message}`;
+  } else if (isCounterSlap && targetName) {
+    caption = `⚡ *REVIDE!* *${actorName}* revidou a bofetada em *${targetName}* com estalo em dobro!`;
+  } else {
+    caption = reactionCaption({
+      action,
+      kind,
+      userJid,
+      targetJid,
+      getContactDisplayName,
+      provider: media.provider,
+    });
+    if (procResult?.flavor) {
+      caption += `\n${procResult.flavor}`;
+    }
+  }
 
   if (typeof replyImageUrl === 'function') {
     await replyImageUrl(media.url, caption, media.mimeType || '');

@@ -189,6 +189,9 @@ export async function handleFunIncomingMessage(deps, ctx) {
     imageGenerationService,
     farewellService,
     registrationService,
+    bondService,
+    bountyService,
+    trialService,
     gameManager = null,
   } = deps;
 
@@ -1094,6 +1097,9 @@ export async function handleFunIncomingMessage(deps, ctx) {
           imageGenerationService,
           farewellService,
           registrationService,
+          bondService,
+          bountyService,
+          trialService,
           gameManager: deps.gameManager || gameManager,
           dmGroups: scope.dmGroups || null,
           rawMessage,

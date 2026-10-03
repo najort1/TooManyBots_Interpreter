@@ -9,6 +9,8 @@ export async function handleDailyCommand({
   socialHooks,
   jobService,
   repository,
+  relationshipService = null,
+  bondService = null,
   funConfig,
   reply,
   effectiveRates,
@@ -19,6 +21,18 @@ export async function handleDailyCommand({
   let doubled = false;
   let yachtBonus = false;
   let panelinha = false;
+  let marriageBonus = false;
+
+  if (relationshipService && bondService) {
+    const marriage = relationshipService.getMarriage?.(userJid, scopeKey);
+    if (marriage?.partnerJid) {
+      const bond = bondService.getBondWithDecay?.(scopeKey, userJid, marriage.partnerJid, now);
+      if (bond && bond.lastInteractionAt && (now - bond.lastInteractionAt) < 48 * 60 * 60 * 1000) {
+        rewardCoins = Math.floor(Number(rewardCoins) * 1.15);
+        marriageBonus = true;
+      }
+    }
+  }
 
   if (effectsRepository) {
     const boost = effectsRepository.getEffect(userJid, scopeKey, 'daily_double', now);
@@ -66,6 +80,9 @@ export async function handleDailyCommand({
   }
   if (result.claimed && yachtBonus) {
     text += '\n🛥️ *Iate Dourado:* +10% de bônus de magnata no daily!';
+  }
+  if (result.claimed && marriageBonus) {
+    text += '\n💍 *Fidelidade Conjugal:* +15% de coins por carinho recente com seu amor!';
   }
   if (result.claimed && panelinha) {
     text += '\n💀 Ponte Social baixa: menos XP de daily. Aumente a mistura — veja `/ponte`.';

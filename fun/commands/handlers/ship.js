@@ -7,6 +7,7 @@ export async function handleShipCommand({
   userJid,
   scopeKey,
   relationshipService,
+  bondService,
   getContactDisplayName,
   listContacts,
   reply,
@@ -82,10 +83,25 @@ export async function handleShipCommand({
     return { handled: true };
   }
 
-  const result = relationshipService.ship(a, b);
-  if (!result.ok) {
-    await reply('Não deu pra calcular o ship.');
-    return { handled: true };
+  let percent = 50;
+  let label = 'Meh';
+  let diagnosis = '';
+  let archetypeLabel = '';
+
+  if (bondService?.calculateShipCompatibility) {
+    const dynamicShip = bondService.calculateShipCompatibility(scopeKey, a, b);
+    percent = dynamicShip.percent;
+    label = dynamicShip.archetype?.label || 'Compatibilidade';
+    archetypeLabel = dynamicShip.archetype?.label || '';
+    diagnosis = dynamicShip.diagnosis || '';
+  } else {
+    const result = relationshipService.ship(a, b);
+    if (!result.ok) {
+      await reply('Não deu pra calcular o ship.');
+      return { handled: true };
+    }
+    percent = result.percent;
+    label = result.label;
   }
 
   const name = (jid) => nameOf(getContactDisplayName, jid);
@@ -93,7 +109,7 @@ export async function handleShipCommand({
   const plain = (jid) => displayNameOnly(getContactDisplayName, jid);
 
   const barLen = 10;
-  const filled = Math.round((result.percent / 100) * barLen);
+  const filled = Math.round((percent / 100) * barLen);
   const bar = '█'.repeat(filled) + '░'.repeat(barLen - filled);
 
   let extra = null;
@@ -121,8 +137,8 @@ export async function handleShipCommand({
     {
       a: plain(a),
       b: plain(b),
-      percent: result.percent,
-      label: result.label,
+      percent,
+      label,
     },
     {
       groupMemoryService,
@@ -134,17 +150,16 @@ export async function handleShipCommand({
     }
   );
 
-  await reply(
-    [
-      '💘 *Ship*',
-      `*${name(a)}* × *${name(b)}*`,
-      `${bar} *${result.percent}%*`,
-      result.label,
-      extra,
-      fl,
-    ]
-      .filter(Boolean)
-      .join('\n')
-  );
-  return { handled: true, result };
+  const messageLines = [
+    '💘 *Ship*',
+    `*${name(a)}* × *${name(b)}*`,
+    `${bar} *${percent}%*`,
+    archetypeLabel ? `*Arquétipo:* ${archetypeLabel}` : label,
+    diagnosis ? `_${diagnosis}_` : null,
+    extra,
+    fl,
+  ].filter(Boolean);
+
+  await reply(messageLines.join('\n'));
+  return { handled: true, result: { ok: true, percent, label, diagnosis } };
 }

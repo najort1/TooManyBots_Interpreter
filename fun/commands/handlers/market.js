@@ -532,6 +532,8 @@ export async function handleAssaultCommand({
   sock,
   identityMap,
   chaosEventService,
+  bountyService = null,
+  bondService = null,
   msgTimeMs,
 }) {
   // Purga ativa: rota alternativa sem arma/heat
@@ -928,9 +930,30 @@ export async function handleAssaultCommand({
       .join('\n')
   );
 
-  // hooks: conquistas + jornal
+  // hooks: conquistas + jornal + recompensas + vínculos
   try {
     if (result.success) {
+      if (!isNpc && result.targetJid) {
+        if (bountyService?.claimOnAssault) {
+          const claim = bountyService.claimOnAssault({
+            scopeKey,
+            hunterJid: userJid,
+            targetJid: result.targetJid,
+            stolenCoins: result.stolen || 0,
+          });
+          if (claim?.claimed) {
+            await reply(`🎯 *CONTRATO DE CAÇA RESGATADO!* Recompensa de *+${claim.rewardAmount}* coins embolsada pela captura do procurado!`);
+          }
+        }
+        if (bondService?.recordAction) {
+          bondService.recordAction({
+            scopeKey,
+            actorJid: userJid,
+            targetJid: result.targetJid,
+            action: 'assault',
+          });
+        }
+      }
       achievementService?.check?.(userJid, scopeKey, 'assault_win', {}, funConfig);
       newsService?.log?.(scopeKey, 'assault_win', {
         userJid,

@@ -1302,6 +1302,87 @@ export function buildFunSchemaSql() {
 
     CREATE UNIQUE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_user_accounts_username
       ON fun_user_accounts(username COLLATE NOCASE);
+
+    -- Matriz de Vínculos Sociais 4D (Afeto, Rivalidade, Intimidade, Caos)
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_social_bonds (
+      scope_key           TEXT    NOT NULL,
+      user_a              TEXT    NOT NULL,
+      user_b              TEXT    NOT NULL,
+      affection           REAL    NOT NULL DEFAULT 0,
+      rivalry             REAL    NOT NULL DEFAULT 0,
+      intimacy            REAL    NOT NULL DEFAULT 0,
+      chaos               REAL    NOT NULL DEFAULT 0,
+      archetype           TEXT    NOT NULL DEFAULT 'strangers',
+      last_action         TEXT    NOT NULL DEFAULT '',
+      last_actor_jid      TEXT    NOT NULL DEFAULT '',
+      daily_points_acc    INTEGER NOT NULL DEFAULT 0,
+      last_interaction_at INTEGER NOT NULL DEFAULT 0,
+      last_decay_at       INTEGER NOT NULL DEFAULT 0,
+      interactions_count  INTEGER NOT NULL DEFAULT 0,
+      flags_json          TEXT    NOT NULL DEFAULT '{}',
+      updated_at          INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, user_a, user_b)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_bonds_scope_archetype
+      ON fun_social_bonds(scope_key, archetype);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_bonds_user_a
+      ON fun_social_bonds(scope_key, user_a);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_bonds_user_b
+      ON fun_social_bonds(scope_key, user_b);
+
+    -- Sistema de Recompensas de Vingança (Bounties)
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_bounties (
+      id                  TEXT PRIMARY KEY,
+      scope_key           TEXT    NOT NULL,
+      issuer_jid          TEXT    NOT NULL,
+      target_jid          TEXT    NOT NULL,
+      bounty_amount       INTEGER NOT NULL,
+      status              TEXT    NOT NULL DEFAULT 'open',
+      claimed_by_jid      TEXT    NOT NULL DEFAULT '',
+      reason              TEXT    NOT NULL DEFAULT '',
+      expires_at          INTEGER NOT NULL,
+      created_at          INTEGER NOT NULL,
+      resolved_at         INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_bounties_scope_target
+      ON fun_bounties(scope_key, target_jid, status);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_bounties_scope_status
+      ON fun_bounties(scope_key, status);
+
+    -- O Tribunal do Povo (Julgamentos Coletivos)
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_trials (
+      id                  TEXT PRIMARY KEY,
+      scope_key           TEXT    NOT NULL,
+      accuser_jid         TEXT    NOT NULL,
+      defendant_jid       TEXT    NOT NULL,
+      infraction_type     TEXT    NOT NULL,
+      evidence_summary    TEXT    NOT NULL DEFAULT '',
+      bail_amount         INTEGER NOT NULL DEFAULT 150,
+      status              TEXT    NOT NULL DEFAULT 'voting',
+      guilty_votes        INTEGER NOT NULL DEFAULT 0,
+      innocent_votes      INTEGER NOT NULL DEFAULT 0,
+      penalty_coins       INTEGER NOT NULL DEFAULT 0,
+      ends_at             INTEGER NOT NULL,
+      created_at          INTEGER NOT NULL,
+      resolved_at         INTEGER NOT NULL DEFAULT 0
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_trials_scope_status
+      ON fun_trials(scope_key, status);
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_trial_votes (
+      trial_id            TEXT    NOT NULL,
+      voter_jid           TEXT    NOT NULL,
+      vote                TEXT    NOT NULL,
+      vote_weight         REAL    NOT NULL DEFAULT 1.0,
+      voted_at            INTEGER NOT NULL,
+      PRIMARY KEY (trial_id, voter_jid)
+    );
   `;
 }
 
