@@ -30,6 +30,7 @@ export function createSelfHealingService({ selfHealRepository, evidenceRepositor
   }
   async function runSweep({ scopeKey, domain = 'memory_lore', dryRun, now = Date.now() } = {}) {
     const config = getConfig() || {};
+    if (config.selfHealEnabled === false || config.enabled === false) return { ok: false, reason: 'self-heal-disabled' };
     if (isWorldQuietHours(config, now)) return { ok: false, reason: 'quiet-hours' };
     const configuredMaxItems = Number(config.selfHealMaxItemsPerRun);
     const maxItemsPerRun = Math.min(500, Math.max(1, Math.floor(Number.isFinite(configuredMaxItems) ? configuredMaxItems : 50)));
@@ -65,7 +66,17 @@ export function createSelfHealingService({ selfHealRepository, evidenceRepositor
     ].join('\n');
     let payload;
     try {
-      payload = await generateZen({ ...resolveZenTaskParams('selfheal', config), prompt, tools, domain, facts: domain === 'memory_lore' ? state.items : undefined, memories: domain === 'conversation_memory' ? state.items : undefined, invariants: domain === 'economy' || domain === 'profile' ? state.items : undefined });
+      payload = await generateZen({
+        task: 'selfHeal',
+        scopeKey: String(scopeKey || ''),
+        ...resolveZenTaskParams('selfheal', config),
+        prompt,
+        tools,
+        domain,
+        facts: domain === 'memory_lore' ? state.items : undefined,
+        memories: domain === 'conversation_memory' ? state.items : undefined,
+        invariants: domain === 'economy' || domain === 'profile' ? state.items : undefined,
+      });
       if (typeof payload === 'string') payload = JSON.parse(payload);
     } catch (error) {
       selfHealRepository.insertAudit({ runId, scopeKey, domain, targetTable: state.targetTable, targetId: '0', action: 'report', riskLevel: 'low', status: 'error', reason: error?.message || 'llm-error', mode, createdAt: now });
