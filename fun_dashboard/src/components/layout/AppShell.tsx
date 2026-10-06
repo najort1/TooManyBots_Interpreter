@@ -11,6 +11,9 @@ type Props = {
   onRefresh?: () => void;
   refreshing?: boolean;
   status?: string | null;
+  allowAllGroups?: boolean;
+  scopeOverride?: string;
+  onScopeOverrideChange?: (scope: string) => void;
 };
 
 export function AppShell({
@@ -20,8 +23,14 @@ export function AppShell({
   onRefresh,
   refreshing,
   status,
+  allowAllGroups,
+  scopeOverride,
+  onScopeOverrideChange,
 }: Props) {
   const scopeState = useDashboardScope();
+
+  const currentScope = scopeOverride !== undefined ? scopeOverride : scopeState.scope;
+  const handleScopeChange = onScopeOverrideChange !== undefined ? onScopeOverrideChange : scopeState.setScope;
 
   return (
     <div className="flex min-h-screen bg-zinc-50 text-zinc-900 dark:bg-zinc-950 dark:text-zinc-50">
@@ -31,8 +40,8 @@ export function AppShell({
           title={title}
           subtitle={subtitle}
           groups={scopeState.groups}
-          scope={scopeState.scope}
-          onScopeChange={scopeState.setScope}
+          scope={currentScope}
+          onScopeChange={handleScopeChange}
           onRefresh={
             onRefresh
               ? () => {
@@ -45,6 +54,7 @@ export function AppShell({
           }
           refreshing={Boolean(refreshing || scopeState.loading)}
           status={status ?? scopeState.error}
+          allowAllGroups={allowAllGroups}
         />
         <main className="flex-1 p-5">{children}</main>
       </div>
