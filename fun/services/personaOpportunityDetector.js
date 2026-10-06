@@ -496,6 +496,8 @@ export function createPersonaOpportunityDetector({
 
     try {
       const raw = await generateZen({
+        task: 'personaOpportunity',
+        scopeKey: String(scope || ''),
         baseUrl: endpoint.baseUrl,
         model: endpoint.model,
         apiKey: endpoint.apiKey,
@@ -592,6 +594,7 @@ export function createPersonaOpportunityDetector({
     scopeKey,
     text,
     authorLabel = '',
+    authorJid = '',
     messageType = 'text',
     responseContextPack = null,
     funConfig = {},
@@ -633,6 +636,9 @@ export function createPersonaOpportunityDetector({
 
     try {
       const raw = await generateZen({
+        task: 'personaOpportunity',
+        scopeKey: String(scopeKey || ''),
+        userJid: String(authorJid || ''),
         baseUrl: endpoint.baseUrl,
         model: endpoint.model,
         apiKey: endpoint.apiKey,

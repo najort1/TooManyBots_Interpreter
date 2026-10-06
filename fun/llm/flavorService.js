@@ -1424,6 +1424,8 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
     try {
       const raw = await generateZen({
         task: taskName,
+        scopeKey: scopeKey !== '__global__' ? scopeKey : '',
+        userJid: String(vars?.userJid || vars?.user || vars?.me || vars?.attacker || ''),
         debugMode: cfg.debugMode,
         logger: getLogger?.(),
         baseUrl: ep.baseUrl,

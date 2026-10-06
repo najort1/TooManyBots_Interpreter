@@ -452,6 +452,9 @@ export function createPersonaService({
       if (remainingMs <= 0) break;
 
       const raw = await generateZen({
+        task: 'persona',
+        scopeKey: String(scopeKey || ''),
+        userJid: String(agentContext?.authorJid || ''),
         baseUrl: endpoint.baseUrl,
         model: endpoint.model,
         prompt: `${prompt}\n\nResultados reais das ferramentas:\n${traceText}\n\nEscolha a próxima tool somente se ela for necessária, ou responda com reply/actions. Não invente dados nem diga que uma tool falhou executou com sucesso.`,
@@ -680,6 +683,9 @@ export function createPersonaService({
           : `${system}${audioPromptDirective}`;
 
         const raw = await generateZen({
+          task: 'persona',
+          scopeKey: String(scopeKey || ''),
+          userJid: String(authorJid || ''),
           baseUrl: ep.baseUrl,
           model: ep.model,
           prompt,
@@ -843,6 +849,8 @@ export function createPersonaService({
     const endpoint = resolveZenEndpoint(funConfig);
     try {
       const raw = await generateZen({
+        task: 'persona',
+        scopeKey: scope,
         baseUrl: endpoint.baseUrl,
         model: endpoint.model,
         apiKey: endpoint.apiKey,
@@ -899,6 +907,8 @@ export function createPersonaService({
     inFlightScopes.add(scopeKey);
     try {
       const raw = await generateZen({
+        task: 'persona',
+        scopeKey: String(scopeKey || ''),
         baseUrl: endpoint.baseUrl,
         model: endpoint.model,
         apiKey: endpoint.apiKey,

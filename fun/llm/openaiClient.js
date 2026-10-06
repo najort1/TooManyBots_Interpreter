@@ -10,6 +10,7 @@ import {
   logLlmCallSuccess,
   logLlmCallError,
 } from './llmLogger.js';
+import { recordLlmCall } from './llmMetrics.js';
 
 function joinUrl(baseUrl, path) {
   const base = String(baseUrl || DEFAULT_FUN_CONFIG.zenBaseUrl).replace(/\/+$/, '');
@@ -355,6 +356,8 @@ export async function openaiChatComplete({
   sendSamplingParams = true,
   fetchImpl,
   task = '',
+  scopeKey = '',
+  userJid = '',
   debugMode = undefined,
   debug = undefined,
   logger = null,
@@ -498,18 +501,69 @@ export async function openaiChatComplete({
       });
     }
 
+    const durationMs = Date.now() - startTime;
+    const usage = data?.usage || {};
+    const promptTokens = Number(usage.prompt_tokens) || Math.max(1, Math.ceil((userText.length + (system?.length || 0)) / 4));
+    const completionTokens = Number(usage.completion_tokens) || Math.max(1, Math.ceil(resultText.length / 4));
+    const totalTokens = Number(usage.total_tokens) || (promptTokens + completionTokens);
+
+    try {
+      recordLlmCall({
+        createdAt: startTime,
+        scopeKey,
+        userJid,
+        task: task || 'openai',
+        provider: 'zen',
+        model: effectiveModel,
+        status: 'success',
+        promptTokens,
+        completionTokens,
+        totalTokens,
+        durationMs,
+        promptPreview: userText || system,
+        responsePreview: resultText,
+        errorMessage: '',
+      });
+    } catch {
+      // Safe ignore
+    }
+
     return resultText;
   } catch (err) {
     const isTimeout = err?.name === 'AbortError';
     const reportedErr = isTimeout ? new Error(`openai-timeout-${ms}ms`) : err;
     if (isTimeout) reportedErr.name = 'AbortError';
 
+    const durationMs = Date.now() - startTime;
+    const estPromptTokens = Math.max(1, Math.ceil((userText.length + (system?.length || 0)) / 4));
+
+    try {
+      recordLlmCall({
+        createdAt: startTime,
+        scopeKey,
+        userJid,
+        task: task || 'openai',
+        provider: 'zen',
+        model: effectiveModel,
+        status: isTimeout ? 'timeout' : 'error',
+        promptTokens: estPromptTokens,
+        completionTokens: 0,
+        totalTokens: estPromptTokens,
+        durationMs,
+        promptPreview: userText || system,
+        responsePreview: '',
+        errorMessage: reportedErr?.message || String(reportedErr),
+      });
+    } catch {
+      // Safe ignore
+    }
+
     if (isDebug) {
       logLlmCallError({
         provider: 'openai',
         model: effectiveModel,
         task,
-        durationMs: Date.now() - startTime,
+        durationMs,
         error: reportedErr,
         logFn,
         logger,

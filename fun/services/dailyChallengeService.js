@@ -245,7 +245,7 @@ export function createDailyChallengeService(deps = {}) {
 
   /* ---------- LLM helpers ---------- */
 
-  async function tryLlmJson(taskName, system, userPrompt) {
+  async function tryLlmJson(taskName, system, userPrompt, scopeKey = '') {
     const c = cfg();
     const task = resolveZenTaskParams(taskName, c);
     const { baseUrl, model, apiKey } = resolveZenEndpoint(c);
@@ -253,6 +253,8 @@ export function createDailyChallengeService(deps = {}) {
     if (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete) return null;
     try {
       const raw = await generateZen({
+        task: 'dailyChallenge',
+        scopeKey: String(scopeKey || ''),
         baseUrl,
         model,
         system,
@@ -281,7 +283,7 @@ export function createDailyChallengeService(deps = {}) {
     }
   }
 
-  async function llmText(system, userPrompt) {
+  async function llmText(system, userPrompt, scopeKey = '') {
     const c = cfg();
     const task = resolveZenTaskParams('dailyhint', c);
     if (c.dailyChallengeEnabled === false || !isLlmFeatureEnabled(c, 'dailyChallenge') || typeof generateZen !== 'function') return null;
@@ -289,6 +291,8 @@ export function createDailyChallengeService(deps = {}) {
     const { baseUrl, model, apiKey } = resolveZenEndpoint(c);
     try {
       const raw = await generateZen({
+        task: 'dailyChallenge',
+        scopeKey: String(scopeKey || ''),
         baseUrl,
         model,
         system,

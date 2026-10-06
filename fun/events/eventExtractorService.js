@@ -157,7 +157,7 @@ export { isEventCandidate as shouldExtractEvent };
 export function createEventExtractorService({ generateZen = openaiChatComplete, getLogger = () => null } = {}) {
   const logger = getLogger();
 
-  async function extractAnnouncement({ text: messageText, quotedText = '', mentionedJids = [], msgTimeMs = Date.now(), funConfig = {}, fragmentText = '', bypassSignalCheck = false } = {}) {
+  async function extractAnnouncement({ text: messageText, quotedText = '', mentionedJids = [], msgTimeMs = Date.now(), funConfig = {}, fragmentText = '', bypassSignalCheck = false, scopeKey = '', userJid = '' } = {}) {
     if (funConfig.groupEventsEnabled === false) return { ok: false, reason: 'disabled' };
     const candidateText = [messageText, fragmentText].filter(Boolean).join('\n');
     if (!bypassSignalCheck && !isEventCandidate(candidateText)) return { ok: false, reason: 'no-signal' };
@@ -171,6 +171,9 @@ export function createEventExtractorService({ generateZen = openaiChatComplete, 
     const endpoint = resolveZenEndpoint(funConfig);
     try {
       const raw = await generateZen({
+        task: 'events',
+        scopeKey: String(scopeKey || ''),
+        userJid: String(userJid || ''),
         baseUrl: endpoint.baseUrl,
         model: endpoint.model,
         apiKey: endpoint.apiKey,

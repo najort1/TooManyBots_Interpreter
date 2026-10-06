@@ -260,7 +260,11 @@ export function createMarketService({
     } catch {
       balances = [];
     }
-    const circulating = balances.reduce((a, b) => a + b, 0);
+    // Regulador decide sobre participantes reais da economia (saldo > 0).
+    // Membros passivos com saldo 0 inflariam o Gini e disparariam
+    // intervenções (blitz_luxury / austerity_soft) contra jogadores reais.
+    const economicBalances = balances.filter((c) => c > 0);
+    const circulating = economicBalances.reduce((a, b) => a + b, 0);
     const prices = marketRepository.listPrices(scopeKey);
     let invested = 0;
     try {
@@ -280,9 +284,9 @@ export function createMarketService({
     return {
       circulatingCoins: circulating,
       baselineCoins: baseline,
-      gini: computeGini(balances),
+      gini: economicBalances.length >= 2 ? computeGini(economicBalances) : 0,
       mintSink: Number(reg.mintSinkEstimate) || 0,
-      activePlayers: balances.length,
+      activePlayers: economicBalances.length,
       investedValue: invested,
       avgAbsDeltaPct: computeAvgAbsDelta(prices),
       eventsLast24h,
@@ -562,6 +566,9 @@ export function createMarketService({
       for (let attempt = 1; attempt <= totalTries; attempt += 1) {
         try {
           const raw = await generateZen({
+            task: 'invent',
+            scopeKey: String(scopeKey || ''),
+            userJid: String(targetJid || ''),
             baseUrl: ep.baseUrl,
             model: ep.model,
             system: inventSystem,
@@ -685,6 +692,7 @@ export function createMarketService({
     const ep = resolveZenEndpoint(funConfig);
     try {
       const raw = await generateZen({
+        task: 'journalist',
         baseUrl: ep.baseUrl,
         model: ep.model,
         system: JOURNALIST_SYSTEM,

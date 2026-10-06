@@ -937,6 +937,19 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     return Number(row?.total) || 0;
   }
 
+  function countActiveUsersInScope(scopeKey, since = Date.now() - 24 * 60 * 60 * 1000) {
+    ensureFunSchema();
+    const db = getDatabase();
+    const sinceTs = Number(since) || (Date.now() - 24 * 60 * 60 * 1000);
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS total FROM ${ANALYTICS_SCHEMA}.fun_user_stats
+         WHERE scope_key = ? AND (updated_at >= ? OR last_xp_at >= ?)`
+      )
+      .get(String(scopeKey || ''), sinceTs, sinceTs);
+    return Number(row?.total) || 0;
+  }
+
   /**
    * Soma abs(amount) no ledger para to_jid/from_jid no período.
    * amount negativo no to_jid = perda do user; positivo = ganho.
@@ -1132,6 +1145,7 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     refundEscrow,
     setTitle,
     countUsersInScope,
+    countActiveUsersInScope,
     getDatabase,
     sumLedgerForUser,
     biggestLossSince,

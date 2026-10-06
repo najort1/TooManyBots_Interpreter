@@ -221,6 +221,7 @@ export function createEventAggregationService({
         activeEvents,
         funConfig,
         now: timestamp,
+        scopeKey: scope,
       });
       if (!extracted?.ok) {
         if (extracted?.reason === 'llm-disabled' || extracted?.reason === 'disabled') {

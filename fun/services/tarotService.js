@@ -205,6 +205,9 @@ export function createTarotService({
           const task = resolveZenTaskParams('tarot', funConfig);
           const ep = resolveZenEndpoint(funConfig);
           const raw = await generateZen({
+            task: 'tarot',
+            scopeKey: String(scopeKey || ''),
+            userJid: String(userJid || ''),
             baseUrl: ep.baseUrl,
             model: ep.model,
             system,
@@ -219,7 +222,7 @@ export function createTarotService({
           });
           const clean = sanitizeTarotText(raw, o.maxChars);
           if (clean) {
-            recordLlmHit('tarot', 'zen', { attempt });
+            recordLlmHit('tarot', 'zen', { attempt, scopeKey, userJid });
             return { text: clean, provider: 'zen' };
           }
         } catch (err) {

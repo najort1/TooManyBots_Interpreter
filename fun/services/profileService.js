@@ -618,7 +618,7 @@ export function createProfileService({
     return next;
   }
 
-  async function extractFromText(text, funConfig = {}) {
+  async function extractFromText(text, funConfig = {}, options = {}) {
     const o = opts(funConfig);
     const raw = String(text || '').trim();
     if (!raw) return { ok: false, reason: 'empty', fields: {} };
@@ -647,6 +647,9 @@ export function createProfileService({
             const task = resolveZenTaskParams('extract', funConfig);
             const ep = resolveZenEndpoint(funConfig);
             const out = await generateZen({
+              task: 'profile',
+              scopeKey: String(options?.scopeKey || ''),
+              userJid: String(options?.userJid || ''),
               baseUrl: ep.baseUrl,
               model: ep.model,
               system: EXTRACT_SYSTEM,

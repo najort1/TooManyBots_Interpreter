@@ -217,6 +217,8 @@ export function createLoreReconciliationService({
       );
 
       const raw = await generateZen({
+        task: 'loreReconciliation',
+        scopeKey: String(scopeKey || ''),
         baseUrl: endpoint.baseUrl,
         model: endpoint.model,
         apiKey: endpoint.apiKey,

@@ -43,10 +43,12 @@ import { createFunNewsRepository } from './db/funNewsRepository.js';
 import { createFunJournalMessageRepository } from './db/funJournalMessageRepository.js';
 import { createFunAchievementRepository } from './db/funAchievementRepository.js';
 import { createFunSnapshotRepository } from './db/funSnapshotRepository.js';
+import { createFunLlmRepository } from './db/funLlmRepository.js';
 import { createGroupMembershipService } from './utils/groupMembership.js';
 import { createSocialHooks } from './services/socialHooks.js';
 import { createFlavorService } from './llm/flavorService.js';
 import { openaiChatComplete } from './llm/openaiClient.js';
+import { setLlmMetricsRepository } from './llm/llmMetrics.js';
 import { createReactionMediaService } from './services/reactionMediaService.js';
 import { createChaosService } from './services/chaosService.js';
 import { createChaosEventService } from './services/chaosEventService.js';
@@ -219,6 +221,9 @@ export function createFunModule(deps = {}) {
     deps.achievementRepository || createFunAchievementRepository({ getDatabase });
   const snapshotRepository =
     deps.snapshotRepository || createFunSnapshotRepository({ getDatabase });
+  const llmRepository =
+    deps.llmRepository || createFunLlmRepository({ getDatabase });
+  setLlmMetricsRepository(llmRepository);
   const relationshipService = createRelationshipService({
     relationshipRepository,
     actionRepository,
@@ -238,6 +243,7 @@ export function createFunModule(deps = {}) {
   });
   let profileService = null;
   let groupMemoryService = null;
+  const effectiveGenerateZen = deps.openaiChatComplete || deps.zenGenerate || openaiChatComplete;
   const tarotService =
     deps.tarotService ||
     createTarotService({
@@ -245,7 +251,7 @@ export function createFunModule(deps = {}) {
       getLogger,
       getProfileService: () => profileService,
       getGroupMemoryService: () => groupMemoryService,
-      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateZen: effectiveGenerateZen,
     });
   const profileRepository =
     deps.profileRepository || createFunProfileRepository({ getDatabase });
@@ -256,7 +262,7 @@ export function createFunModule(deps = {}) {
       statsRepository: repository,
       getContactDisplayName: resolveContactName,
       getLogger,
-      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateZen: effectiveGenerateZen,
     });
   const cardRepository =
     deps.cardRepository || createFunCardRepository({ getDatabase });
@@ -275,7 +281,7 @@ export function createFunModule(deps = {}) {
       qmpRepository,
       profileService,
       getLogger,
-      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateZen: effectiveGenerateZen,
     });
   const shopService = createShopService({
     repository,
@@ -366,7 +372,7 @@ export function createFunModule(deps = {}) {
       profileService,
       getGroupMemoryService: () => groupMemoryService,
       getLogger,
-      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateZen: effectiveGenerateZen,
     });
   const missionService = createMissionService({
     missionRepository,
@@ -447,7 +453,7 @@ export function createFunModule(deps = {}) {
       profileService,
       getContactDisplayName: resolveContactName,
       getLogger,
-      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateZen: effectiveGenerateZen,
       getNewsService: () => newsService,
       evidenceRepository,
       adapters: extractionAdapters,
@@ -457,7 +463,7 @@ export function createFunModule(deps = {}) {
     repository: personaSocialHintRepository,
     getContactDisplayName: resolveContactName,
     getLogger,
-    generateZen: deps.openaiChatComplete || deps.zenGenerate,
+    generateZen: effectiveGenerateZen,
   });
   const conversationMemoryRepository = deps.conversationMemoryRepository || createFunConversationMemoryRepository({ getDatabase });
   const personaRecentMessageRepository = deps.personaRecentMessageRepository || createFunPersonaRecentMessageRepository({ getDatabase });
@@ -473,7 +479,7 @@ export function createFunModule(deps = {}) {
   const personaAutonomyPolicy = deps.personaAutonomyPolicy || createPersonaAutonomyPolicy({ autonomyRepository: personaAutonomyRepository });
   const personaOpportunityDetector = deps.personaOpportunityDetector || createPersonaOpportunityDetector({
     autonomyPolicy: personaAutonomyPolicy,
-    generateZen: deps.openaiChatComplete || deps.zenGenerate || openaiChatComplete,
+    generateZen: effectiveGenerateZen,
     personaSocialHintService,
     getLogger,
   });
@@ -493,7 +499,7 @@ export function createFunModule(deps = {}) {
     createFlavorService({
       getConfig: () => resolveFunConfig(getConfig() || {}),
       getLogger,
-      zenGenerate: deps.openaiChatComplete || deps.zenGenerate,
+      zenGenerate: effectiveGenerateZen,
     });
   const reactionMediaService =
     deps.reactionMediaService ||
@@ -537,7 +543,7 @@ export function createFunModule(deps = {}) {
       flavorService,
       groupMemoryService,
       getContactDisplayName: resolveContactName,
-      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateZen: effectiveGenerateZen,
       getConfig: () => resolveFunConfig(getConfig() || {}),
       getLogger,
     });
@@ -635,7 +641,7 @@ export function createFunModule(deps = {}) {
       personaToolExecutor,
       personaTtsService,
       getLogger,
-      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateZen: effectiveGenerateZen,
       adapters: extractionAdapters,
       personaRecentMessageRepository,
       personaAutonomyPolicy,
@@ -654,7 +660,7 @@ export function createFunModule(deps = {}) {
     deps.eventBatchExtractor ||
     createEventBatchExtractor({
       getLogger,
-      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateZen: effectiveGenerateZen,
     });
   const eventAggregationService =
     deps.eventAggregationService ||
@@ -676,7 +682,7 @@ export function createFunModule(deps = {}) {
       memoryRepository,
       groupMemoryService,
       getLogger,
-      generateZen: deps.openaiChatComplete || deps.zenGenerate,
+      generateZen: effectiveGenerateZen,
     });
 
   const farewellRepository =
@@ -703,8 +709,16 @@ export function createFunModule(deps = {}) {
   let initialized = false;
   let lastSelfHealAt = 0;
 
+  let lastLlmPruneAt = 0;
+
   function init() {
     repository.ensureFunSchema();
+    try {
+      llmRepository.pruneOldCalls(90);
+      lastLlmPruneAt = Date.now();
+    } catch {
+      // ignore
+    }
     initialized = true;
     return { ok: true };
   }
@@ -854,6 +868,14 @@ export function createFunModule(deps = {}) {
     getContactDisplayName: nameFn = null,
   } = {}) {
     ensureInit();
+    if (now - lastLlmPruneAt > 86_400_000) {
+      try {
+        llmRepository.pruneOldCalls(90);
+        lastLlmPruneAt = now;
+      } catch {
+        // ignore
+      }
+    }
     const funConfig = resolveFunConfig(getConfig() || {});
     if (funConfig.enabled === false) {
       return { ok: false, reason: 'disabled' };
@@ -1566,6 +1588,7 @@ export function createFunModule(deps = {}) {
     _services: {
       repository,
       groupRepository,
+      llmRepository,
       relationshipRepository,
       actionRepository,
       xpService,
@@ -1697,8 +1720,12 @@ export {
 export { resolveZenTaskParams, ZEN_TASK_DEFAULTS } from './llm/zenTaskParams.js';
 export {
   recordLlmHit,
+  recordLlmCall,
   getLlmMetrics,
   resetLlmMetrics,
   inventTemplateAlert,
+  setLlmMetricsRepository,
+  getLlmMetricsRepository,
 } from './llm/llmMetrics.js';
+export { createFunLlmRepository } from './db/funLlmRepository.js';
 export * as firefighters from './firefighters/index.js';

@@ -164,6 +164,8 @@ export function createPersonaSocialHintService({
       for (let attempt = 1; attempt <= totalTries; attempt += 1) {
         try {
           const raw = await generateZen({
+            task: 'socialHints',
+            scopeKey: String(scopeKey || ''),
             baseUrl: ep.baseUrl, model: ep.model,
             system: SYSTEM, prompt, timeoutMs: task.timeoutMs, maxTokens: task.maxTokens,
             temperature: task.temperature, apiKey: ep.apiKey, jsonMode: true, jsonOnly: true,

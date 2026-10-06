@@ -64,6 +64,31 @@ export function createFunCasinoRepository({ getDatabase = getDb } = {}) {
     })();
   }
 
+  function burnJackpot(scopeKey, amount, now = Date.now()) {
+    ensureSchema();
+    const db = getDatabase();
+    const s = String(scopeKey || '');
+    const ts = Number(now) || Date.now();
+    const toBurn =
+      amount !== undefined && amount !== null ? Math.max(0, Math.floor(Number(amount) || 0)) : null;
+    return db.transaction(() => {
+      const row = db
+        .prepare(`SELECT pot FROM ${ANALYTICS_SCHEMA}.fun_jackpot WHERE scope_key = ?`)
+        .get(s);
+      const currentPot = Number(row?.pot) || 0;
+      const burned = toBurn === null ? currentPot : Math.min(currentPot, toBurn);
+      const newPot = Math.max(0, currentPot - burned);
+      db.prepare(
+        `INSERT INTO ${ANALYTICS_SCHEMA}.fun_jackpot (scope_key, pot, updated_at)
+         VALUES (?, ?, ?)
+         ON CONFLICT(scope_key) DO UPDATE SET
+           pot = excluded.pot,
+           updated_at = excluded.updated_at`
+      ).run(s, newPot, ts);
+      return { previousPot: currentPot, pot: newPot, burned };
+    })();
+  }
+
   function recordStats({
     userJid,
     scopeKey,
@@ -371,6 +396,7 @@ export function createFunCasinoRepository({ getDatabase = getDb } = {}) {
     getJackpot,
     addJackpot,
     takeJackpot,
+    burnJackpot,
     recordStats,
     getStats,
     getLeaderboard,

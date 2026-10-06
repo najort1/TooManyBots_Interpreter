@@ -293,6 +293,8 @@ export async function generateQuizQuestions({
   funConfig = {},
   generateZen = openaiChatComplete,
   random = Math.random,
+  scopeKey = '',
+  userJid = '',
 } = {}) {
   const targetCount = Math.min(
     QUIZ_CONSTANTS.MAX_ROUNDS,
@@ -326,6 +328,9 @@ export async function generateQuizQuestions({
 
     try {
       const rawResponse = await generateZen({
+        task: 'quizRoyale',
+        scopeKey: String(scopeKey || ''),
+        userJid: String(userJid || ''),
         baseUrl,
         model,
         apiKey,
@@ -490,11 +495,14 @@ export function createQuizRoyaleEngine(room, {
   }
 
   /**
-   * Identifica a panelinha que está na liderança.
+   * Identifica a panelinha que está na liderança (apenas se houver pelo menos 2 panelinhas rivais, pontuação > 0 e sem empate).
    */
   function getWinningFaction() {
+    if (room.factions.size < 2) return null;
     const sorted = getFactionsRanking();
-    return sorted.length > 0 ? sorted[0] : null;
+    if (sorted.length === 0 || sorted[0].score <= 0) return null;
+    if (sorted.length > 1 && sorted[0].score === sorted[1].score) return null;
+    return sorted[0];
   }
 
   /**

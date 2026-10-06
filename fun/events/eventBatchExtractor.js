@@ -218,7 +218,7 @@ export function parseEventBatch(raw, {
 export function createEventBatchExtractor({ generateZen = openaiChatComplete, getLogger = () => null } = {}) {
   const logger = getLogger();
 
-  async function extractBatch({ batch = [], contextCount = 0, activeEvents = [], funConfig = {}, now = Date.now() } = {}) {
+  async function extractBatch({ batch = [], contextCount = 0, activeEvents = [], funConfig = {}, now = Date.now(), scopeKey = '' } = {}) {
     if (funConfig.groupEventsEnabled === false) return { ok: false, reason: 'disabled', operations: [] };
     if (!Array.isArray(batch) || batch.length <= contextCount) return { ok: false, reason: 'empty-batch', operations: [] };
     if (!isLlmFeatureEnabled(funConfig, 'events') || process.env.FUN_DISABLE_LIVE_LLM === '1') {
@@ -244,6 +244,9 @@ export function createEventBatchExtractor({ generateZen = openaiChatComplete, ge
     for (let attempt = 1; attempt <= totalTries; attempt += 1) {
       try {
         const raw = await generateZen({
+          task: 'events',
+          scopeKey: String(scopeKey || ''),
+          userJid: String(batch[0]?.authorJid || batch[0]?.userJid || ''),
           baseUrl: endpoint.baseUrl,
           model: endpoint.model,
           apiKey: endpoint.apiKey,

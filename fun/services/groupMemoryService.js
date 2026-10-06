@@ -756,7 +756,7 @@ export function createGroupMemoryService({
     if (!body && messageType && messageType !== 'text') {
       return { observed: false, reason: 'media-empty' };
     }
-    if (evidenceRepository && messageId) {
+    if (funConfig.selfHealEnabled && evidenceRepository && messageId) {
       evidenceRepository.insertEvidence({
         scopeKey,
         messageId,
@@ -1383,7 +1383,7 @@ export function createGroupMemoryService({
       '{"facts":[{"kind":"epic_fail","summary":"Pedro bateu o carro no poste","target":["P1"],"evidence_msg":0,"keywords":["carro","poste"],"score":75}]}',
     ].join('\n');
 
-    if (process.env.FUN_DISABLE_LIVE_LLM === '1') {
+    if (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete) {
       return [];
     }
 
@@ -1424,6 +1424,8 @@ export function createGroupMemoryService({
           const task = resolveZenTaskParams('extract', funConfig);
           const ep = resolveZenEndpoint(funConfig);
           const raw = await generateZen({
+            task: 'memory',
+            scopeKey: String(scopeKey || ''),
             baseUrl: ep.baseUrl,
             model: ep.model,
             system: EXTRACT_SYSTEM,
@@ -1498,6 +1500,8 @@ export function createGroupMemoryService({
           const task = resolveZenTaskParams('persona', funConfig);
           const ep = resolveZenEndpoint(funConfig);
           text = await generateZen({
+            task: 'persona',
+            scopeKey: String(scopeKey || ''),
             baseUrl: ep.baseUrl,
             model: ep.model,
             system: buildPersonaSystem(o.personaBullets),

@@ -556,6 +556,8 @@ export function createQmpService({
         try {
           const ep = resolveZenEndpoint(funConfig);
           const raw = await generateZen({
+            task: 'qmp',
+            scopeKey: String(ctx?.scopeKey || ''),
             baseUrl: ep.baseUrl,
             model: o.zenModel || ep.model,
             system,

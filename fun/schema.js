@@ -1386,6 +1386,37 @@ export function buildFunSchemaSql() {
       voted_at            INTEGER NOT NULL,
       PRIMARY KEY (trial_id, voter_jid)
     );
+
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_llm_calls (
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at          INTEGER NOT NULL,
+      scope_key           TEXT    NOT NULL DEFAULT '',
+      user_jid            TEXT    NOT NULL DEFAULT '',
+      task                TEXT    NOT NULL DEFAULT '',
+      provider            TEXT    NOT NULL DEFAULT '',
+      model               TEXT    NOT NULL DEFAULT '',
+      status              TEXT    NOT NULL DEFAULT 'success',
+      prompt_tokens       INTEGER NOT NULL DEFAULT 0,
+      completion_tokens   INTEGER NOT NULL DEFAULT 0,
+      total_tokens        INTEGER NOT NULL DEFAULT 0,
+      duration_ms         INTEGER NOT NULL DEFAULT 0,
+      prompt_preview      TEXT    NOT NULL DEFAULT '',
+      response_preview    TEXT    NOT NULL DEFAULT '',
+      error_message       TEXT    NOT NULL DEFAULT '',
+      cost_estimated      REAL    NOT NULL DEFAULT 0.0
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_llm_calls_created
+      ON fun_llm_calls(created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_llm_calls_task
+      ON fun_llm_calls(task, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_llm_calls_provider
+      ON fun_llm_calls(provider, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_llm_calls_scope
+      ON fun_llm_calls(scope_key, created_at DESC);
   `;
 }
 
@@ -1511,6 +1542,16 @@ export function ensureFunSchema(db) {
       db.exec(
         `ALTER TABLE ${ANALYTICS_SCHEMA}.fun_persona_profile ADD COLUMN token_counts_json TEXT NOT NULL DEFAULT '{}'`
       );
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const llmCols = db.prepare(`PRAGMA ${ANALYTICS_SCHEMA}.table_info(fun_llm_calls)`).all();
+    const llmNames = new Set(llmCols.map((c) => String(c.name || '')));
+    if (llmNames.size && !llmNames.has('cost_estimated')) {
+      db.exec(`ALTER TABLE ${ANALYTICS_SCHEMA}.fun_llm_calls ADD COLUMN cost_estimated REAL NOT NULL DEFAULT 0.0`);
     }
   } catch {
     // ignore

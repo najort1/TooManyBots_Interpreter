@@ -9,6 +9,7 @@ import {
   logLlmCallSuccess,
   logLlmCallError,
 } from './llmLogger.js';
+import { recordLlmCall } from './llmMetrics.js';
 
 function joinUrl(baseUrl, path) {
   const base = String(baseUrl || 'http://127.0.0.1:11434').replace(/\/+$/, '');
@@ -130,6 +131,8 @@ export async function ollamaGenerate({
   fetchImpl,
   serialize = true,
   task = '',
+  scopeKey = '',
+  userJid = '',
   debugMode = undefined,
   debug = undefined,
   logger = null,
@@ -181,13 +184,38 @@ export async function ollamaGenerate({
     try {
       const data = await postGenerate(body, { baseUrl, timeoutMs, fetchImpl });
       const resultText = extractTextFromOllamaPayload(data);
+      const durationMs = Date.now() - startTime;
+      const promptTokens = data?.prompt_eval_count || Math.max(1, Math.ceil(text.length / 4));
+      const completionTokens = data?.eval_count || Math.max(1, Math.ceil(resultText.length / 4));
+      const totalTokens = (data?.prompt_eval_count || 0) + (data?.eval_count || 0) || (promptTokens + completionTokens);
+
+      try {
+        recordLlmCall({
+          createdAt: startTime,
+          scopeKey,
+          userJid,
+          task: task || 'ollama',
+          provider: 'ollama',
+          model: effectiveModel,
+          status: 'success',
+          promptTokens,
+          completionTokens,
+          totalTokens,
+          durationMs,
+          promptPreview: text || system,
+          responsePreview: resultText,
+          errorMessage: '',
+        });
+      } catch {
+        // Safe ignore
+      }
 
       if (isDebug) {
         logLlmCallSuccess({
           provider: 'ollama',
           model: effectiveModel,
           task,
-          durationMs: Date.now() - startTime,
+          durationMs,
           status: 200,
           output: resultText,
           logFn,
@@ -197,12 +225,37 @@ export async function ollamaGenerate({
 
       return resultText;
     } catch (err) {
+      const durationMs = Date.now() - startTime;
+      const isTimeout = err?.name === 'AbortError';
+      const estPromptTokens = Math.max(1, Math.ceil(text.length / 4));
+
+      try {
+        recordLlmCall({
+          createdAt: startTime,
+          scopeKey,
+          userJid,
+          task: task || 'ollama',
+          provider: 'ollama',
+          model: effectiveModel,
+          status: isTimeout ? 'timeout' : 'error',
+          promptTokens: estPromptTokens,
+          completionTokens: 0,
+          totalTokens: estPromptTokens,
+          durationMs,
+          promptPreview: text || system,
+          responsePreview: '',
+          errorMessage: err?.message || String(err),
+        });
+      } catch {
+        // Safe ignore
+      }
+
       if (isDebug) {
         logLlmCallError({
           provider: 'ollama',
           model: effectiveModel,
           task,
-          durationMs: Date.now() - startTime,
+          durationMs,
           error: err,
           logFn,
           logger,

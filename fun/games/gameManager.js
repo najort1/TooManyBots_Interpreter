@@ -345,14 +345,39 @@ export function createGameManager({
     const room = getRoom(roomId);
     if (!room || room.status !== ROOM_STATUS.WAITING) return false;
 
-    // Checa se há pelo menos o mínimo de jogadores ou pelo menos 2 panelinhas para competir
-    if (room.players.size < room.minPlayers && room.players.size < 2) {
+    // Checa se há pelo menos o mínimo de jogadores e pelo menos 2 panelinhas para competir
+    if (room.players.size < 2 || room.factions.size < 2) {
       room.status = ROOM_STATUS.ABORTED;
       room.finishedAt = now();
+      const abortReason = room.factions.size < 2 ? 'insufficient_factions' : 'insufficient_players';
+      const abortMessage = room.factions.size < 2
+        ? 'A partida foi cancelada porque apenas uma panelinha se inscreveu. São necessárias pelo menos 2 panelinhas rivais para competir.'
+        : 'A partida foi cancelada por falta de jogadores suficientes.';
+      room.abortReason = abortReason;
+      room.abortMessage = abortMessage;
+
       broadcast(room, 'game_aborted', {
-        reason: 'insufficient_players',
-        message: 'A partida foi cancelada por falta de jogadores suficientes.',
+        reason: abortReason,
+        message: abortMessage,
       });
+
+      if (room.announce && !room.isTest) {
+        const cancelMsg = [
+          `⚠️ *EVENTO CANCELADO: ${room.title.toUpperCase()}!*`,
+          '',
+          room.factions.size < 2
+            ? '❌ *Motivo:* Apenas uma panelinha se inscreveu na sala. São necessárias pelo menos *2 panelinhas rivais* para haver disputa!'
+            : '❌ *Motivo:* Não houve jogadores suficientes para iniciar a partida (mínimo de 2 participantes).',
+          '',
+          '💰 *Nenhuma premiação foi distribuída.* Fiquem atentos ao próximo evento no grupo!',
+        ].join('\n');
+        try {
+          await sendGroupMessage(room.scopeKey, cancelMsg);
+        } catch (err) {
+          console.error('[gameManager] Erro ao enviar aviso de cancelamento no grupo:', err?.message || err);
+        }
+      }
+
       cleanupRoom(room);
       return false;
     }
@@ -384,15 +409,18 @@ export function createGameManager({
 
     // Determina a panelinha vencedora
     let winningFaction = null;
-    if (winnerFactionId && room.factions.has(winnerFactionId)) {
-      winningFaction = room.factions.get(winnerFactionId);
-    } else {
-      // Pega a com maior pontuação
-      let highestScore = -Infinity;
-      for (const fac of room.factions.values()) {
-        if (fac.score > highestScore) {
-          highestScore = fac.score;
-          winningFaction = fac;
+    if (room.factions.size >= 2) {
+      if (winnerFactionId && room.factions.has(winnerFactionId)) {
+        winningFaction = room.factions.get(winnerFactionId);
+      } else {
+        // Pega a com maior pontuação (deve ser > 0 e sem empate no topo)
+        const sorted = Array.from(room.factions.values()).sort((a, b) => (Number(b.score) || 0) - (Number(a.score) || 0));
+        if (sorted.length > 0 && sorted[0].score > 0) {
+          const topScore = sorted[0].score;
+          const isTie = sorted.length > 1 && sorted[1].score === topScore;
+          if (!isTie) {
+            winningFaction = sorted[0];
+          }
         }
       }
     }
@@ -448,10 +476,10 @@ export function createGameManager({
       '',
       winningFaction
         ? `🏆 *A panelinha campeã foi:* ${winningFaction.emoji} *${winningFaction.name}*!`
-        : `🤝 *A partida terminou em empate!*`,
+        : `🤝 *A partida terminou em empate (ou sem pontuação)!*`,
       winningFaction
         ? `💰 *Premiação de ${room.prize} moedas depositada diretamente no cofre da panelinha!*`
-        : '',
+        : '💰 *Nenhuma premiação foi distribuída nesta partida.*',
       '',
       '📊 *Placar Final das Panelinhas:*',
       ...Array.from(room.factions.values())
@@ -553,6 +581,8 @@ export function createGameManager({
       maxPlayers: room.maxPlayers,
       prize: room.prize,
       status: room.status,
+      abortReason: room.abortReason || null,
+      abortMessage: room.abortMessage || null,
       announce: Boolean(room.announce),
       isTest: Boolean(room.isTest),
       createdAt: room.createdAt,
