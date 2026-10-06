@@ -7,7 +7,6 @@ import {
   Clock,
   Flag,
   Shield,
-  Flame,
   Sword,
   Sparkles,
   AlertCircle,
@@ -16,7 +15,6 @@ import {
   LogIn,
   Users,
   HelpCircle,
-  Info,
   Target,
   BookOpen,
   Crown,
@@ -172,6 +170,8 @@ type RoomState = {
   maxPlayers: number;
   prize: number;
   status: "waiting" | "in_progress" | "finished" | "aborted";
+  abortReason?: string | null;
+  abortMessage?: string | null;
   startsAt: number;
   finishedAt: number | null;
   winnerFaction: Faction | null;
@@ -437,6 +437,23 @@ export default function GameRoomPage({ params }: Props) {
         }
       });
 
+      eventSource.addEventListener("game_aborted", (e) => {
+        try {
+          const payload = JSON.parse(e.data);
+          setRoom((prev) => {
+            if (!prev) return prev;
+            return {
+              ...prev,
+              status: "aborted",
+              abortReason: payload?.reason || "insufficient_players",
+              abortMessage: payload?.message || "A partida foi cancelada.",
+            };
+          });
+        } catch {
+          void fetchRoomState();
+        }
+      });
+
       // Fallback seguro de polling a cada 2s
       eventSource.onerror = () => {
         if (!fallbackInterval) {
@@ -562,6 +579,36 @@ export default function GameRoomPage({ params }: Props) {
           className="px-6 py-3 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-2xl text-sm transition"
         >
           Voltar ao Dashboard
+        </Link>
+      </div>
+    );
+  }
+
+  // TELA DE PARTIDA CANCELADA / ABORTADA
+  if (room.status === "aborted") {
+    return (
+      <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100 p-6 text-center select-none">
+        <div className="w-16 h-16 rounded-full bg-red-950/60 border border-red-500/40 flex items-center justify-center mb-4 shadow-xl shadow-red-500/10">
+          <AlertCircle className="w-8 h-8 text-red-400" />
+        </div>
+        <span className="text-xs uppercase font-bold tracking-widest text-red-400 mb-1">Partida Cancelada</span>
+        <h1 className="text-2xl font-black text-white mb-2">{room.title}</h1>
+
+        <div className="my-6 p-6 bg-slate-900 border border-slate-800 rounded-3xl max-w-sm w-full shadow-2xl">
+          <p className="text-sm text-slate-200 mb-3 leading-relaxed">
+            {room.abortMessage || "A partida foi cancelada porque não houve jogadores ou panelinhas rivais suficientes para iniciar a disputa."}
+          </p>
+          <div className="text-xs text-slate-400 pt-3 border-t border-slate-800 space-y-1">
+            <p>💰 <strong className="text-amber-400">Nenhuma premiação</strong> foi creditada.</p>
+            <p className="text-[11px] text-slate-500">São necessárias pelo menos 2 panelinhas competindo.</p>
+          </div>
+        </div>
+
+        <Link
+          href="/"
+          className="px-6 py-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold rounded-2xl text-sm transition"
+        >
+          Voltar ao Início
         </Link>
       </div>
     );
@@ -1664,6 +1711,15 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
           <span className="text-slate-300">Prêmio no cofre da panelinha campeã:</span>
           <span className="text-amber-400 font-extrabold text-sm">💰 +{room.prize} moedas</span>
         </div>
+
+        {room.factions.length < 2 && (
+          <div className="mt-3 p-2.5 bg-amber-950/40 border border-amber-500/40 rounded-2xl flex items-center justify-center gap-2 text-xs text-amber-300">
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <span>
+              Aguardando pelo menos <strong>mais 1 panelinha rival</strong> para confirmar a disputa!
+            </span>
+          </div>
+        )}
       </div>
 
       <div className="my-5">
