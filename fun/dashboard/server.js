@@ -18,6 +18,16 @@ import {
   COMMAND_CATALOG,
   getDefaultDisabledCommandIds,
 } from '../commands/catalog.js';
+import { createFunLlmRepository } from '../db/funLlmRepository.js';
+import { getLlmMetrics } from '../llm/llmMetrics.js';
+import { openaiPing } from '../llm/openaiClient.js';
+import { getLogBuffer } from './logBuffer.js';
+import {
+  computeGini,
+  defaultRegulatorKnobs,
+  clampKnobs,
+  computeAvgAbsDelta,
+} from '../economy/regulator.js';
 
 function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
@@ -110,7 +120,9 @@ export function startFunDashboardServer(deps = {}) {
     factionRepository = null,
     jobService = null,
     stockService = null,
+    stockRepository = null,
     marketRepository = null,
+    marketService = null,
     houseRepository = null,
     houseService = null,
     houseLinkService = null,
@@ -122,9 +134,12 @@ export function startFunDashboardServer(deps = {}) {
     giftService = null,
     robberyService = null,
     soundSystemService = null,
+    llmRepository = null,
     gameManager = null,
     gameAuthService = null,
   } = funModule._services;
+
+  const effectiveLlmRepo = llmRepository || createFunLlmRepository();
 
   const resolvedGameRoutes = funModule._services?.gameRoutes || (
     gameManager && gameAuthService
@@ -178,7 +193,14 @@ export function startFunDashboardServer(deps = {}) {
     const jids = Array.isArray(cfg.groupWhitelistJids) ? cfg.groupWhitelistJids : [];
     if (!scopeKey) return false;
     if (!jids.length) return true; // dev local sem whitelist
-    return jids.includes(scopeKey);
+    if (jids.includes(scopeKey)) return true;
+    try {
+      const all = groupRepository?.listAll?.();
+      if (Array.isArray(all) && all.some((g) => g.jid === scopeKey)) return true;
+    } catch {
+      // ignore
+    }
+    return false;
   }
 
   function houseServicesAvailable() {
@@ -322,9 +344,9 @@ export function startFunDashboardServer(deps = {}) {
 
   function selfHealConfig(cfg = getConfig()) {
     return {
-      enabled: cfg.selfHealEnabled !== false,
+      enabled: Boolean(cfg.selfHealEnabled),
       intervalMs: cfg.selfHealIntervalMs,
-      dryRun: cfg.selfHealDryRun !== false,
+      dryRun: Boolean(cfg.selfHealDryRun),
       evidenceRetentionDays: cfg.selfHealEvidenceRetentionDays,
       maxItemsPerRun: cfg.selfHealMaxItemsPerRun,
       maxCallsPerRun: cfg.selfHealMaxCallsPerRun,
@@ -409,6 +431,13 @@ export function startFunDashboardServer(deps = {}) {
           });
 
           if (!result.ok) {
+            getLogBuffer().add({
+              level: 'warn',
+              domain: 'games',
+              message: `Falha ao spawnar jogo ${gameType}: ${result.reason || 'create-room-failed'}`,
+              scope,
+              details: { gameType, reason: result.reason },
+            });
             sendJson(res, 400, {
               ok: false,
               error: result.reason || 'create-room-failed',
@@ -421,6 +450,14 @@ export function startFunDashboardServer(deps = {}) {
             return;
           }
 
+          getLogBuffer().add({
+            level: 'info',
+            domain: 'games',
+            message: `Jogo ${gameType} spawnado com sucesso (${result.room?.id || 'sala'})`,
+            scope,
+            details: { gameType, roomId: result.room?.id, prize, startInMinutes, announce },
+          });
+
           sendJson(res, 200, {
             ok: true,
             room: result.room,
@@ -429,6 +466,12 @@ export function startFunDashboardServer(deps = {}) {
           });
           return;
         } catch (err) {
+          getLogBuffer().add({
+            level: 'error',
+            domain: 'games',
+            message: `Erro interno ao spawnar jogo ${gameType}: ${err?.message || err}`,
+            scope,
+          });
           getLogger?.()?.error?.({ err }, 'Erro ao spawnar jogo de panelinha via dashboard');
           sendJson(res, 500, {
             ok: false,
@@ -1028,6 +1071,97 @@ export function startFunDashboardServer(deps = {}) {
         return;
       }
 
+      if (req.method === 'GET' && path === '/api/fun/llm/analytics') {
+        const urlObj = new URL(req.url, 'http://localhost');
+        const daysParam = urlObj.searchParams.get('days');
+        const scopeParam = urlObj.searchParams.get('scope') || '';
+        const days = daysParam !== null && daysParam !== '' ? Math.max(0, parseInt(daysParam, 10) || 7) : 7;
+        const now = Date.now();
+        const fromTimestamp = days > 0 ? now - (days * 86_400_000) : 0;
+
+        const stats = effectiveLlmRepo.getStats({
+          scopeKey: scopeParam,
+          fromTimestamp,
+          toTimestamp: now,
+          limitRecent: 100,
+        });
+
+        // Enriquecer nomes legíveis de grupos e usuários
+        const groups = groupRepository?.listAllGroups ? groupRepository.listAllGroups() : [];
+        const groupMap = new Map();
+        for (const g of groups) {
+          if (g?.jid) groupMap.set(g.jid, g.name || g.subject || g.jid);
+        }
+
+        const byGroupEnriched = stats.byGroup.map((g) => ({
+          ...g,
+          groupName: groupMap.get(g.scopeKey) || g.scopeKey,
+        }));
+
+        const topUsersEnriched = stats.topUsers.map((u) => ({
+          ...u,
+          userName: getContactDisplayName(u.userJid) || u.userJid,
+        }));
+
+        const isAdmin = hasAdminAccess(req);
+        const recentCallsEnriched = stats.recentCalls.map((c) => ({
+          ...c,
+          groupName: c.scopeKey ? (groupMap.get(c.scopeKey) || c.scopeKey) : '',
+          userName: c.userJid ? (getContactDisplayName(c.userJid) || c.userJid) : '',
+          promptPreview: isAdmin ? c.promptPreview : (c.promptPreview ? '(visível para admin)' : ''),
+          responsePreview: isAdmin ? c.responsePreview : (c.responsePreview ? '(visível para admin)' : ''),
+        }));
+
+        const cfg = getConfig();
+        const zenEndpoint = resolveZenEndpoint(cfg);
+        const memMetrics = getLlmMetrics();
+
+        sendJson(res, 200, {
+          ok: true,
+          period: {
+            days,
+            fromTimestamp,
+            toTimestamp: now,
+          },
+          summary: {
+            ...stats.summary,
+            activeProvider: 'zen',
+            activeModel: zenEndpoint.model,
+            masterEnabled: cfg.zenEnabled !== false,
+          },
+          daily: stats.daily,
+          byTask: stats.byTask,
+          byProvider: stats.byProvider,
+          byModel: stats.byModel,
+          byHour: stats.byHour,
+          byGroup: byGroupEnriched,
+          topUsers: topUsersEnriched,
+          recentCalls: recentCallsEnriched,
+          realtime: memMetrics,
+          zenHealth: {
+            ok: cfg.zenEnabled !== false,
+            baseUrl: zenEndpoint.baseUrl,
+            model: zenEndpoint.model,
+          },
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/api/fun/llm/prune') {
+        if (!requireAdmin(req, res)) return;
+        const body = await readBody(req).catch(() => ({}));
+        const pruneDays = Math.max(1, parseInt(body?.days, 10) || 90);
+        const result = effectiveLlmRepo.pruneOldCalls(pruneDays);
+        getLogBuffer().add({
+          level: 'info',
+          domain: 'llm',
+          message: `Limpeza de histórico de chamadas de LLM executada (${result.deleted} registros removidos)`,
+          details: { days: pruneDays, deleted: result.deleted },
+        });
+        sendJson(res, 200, { ok: true, days: pruneDays, deleted: result.deleted });
+        return;
+      }
+
       if (req.method === 'GET' && path === '/api/fun/llm/config') {
         const cfg = getConfig();
         const zenEndpoint = resolveZenEndpoint(cfg);
@@ -1063,6 +1197,13 @@ export function startFunDashboardServer(deps = {}) {
           updateConfig(next);
         }
 
+        getLogBuffer().add({
+          level: 'info',
+          domain: 'llm',
+          message: `Configurações de IA & LLM atualizadas (mestre: ${next.zenEnabled !== false ? 'ativo' : 'inativo'})`,
+          details: { zenEnabled: next.zenEnabled },
+        });
+
         const zenEndpoint = resolveZenEndpoint(next);
         const status = getLlmFeaturesStatus(next);
         sendJson(res, 200, {
@@ -1094,6 +1235,11 @@ export function startFunDashboardServer(deps = {}) {
         if (typeof updateConfig === 'function') {
           updateConfig(next);
         }
+        getLogBuffer().add({
+          level: 'info',
+          domain: 'system',
+          message: 'Configuração geral do bot atualizada via dashboard',
+        });
         sendJson(res, 200, { ok: true, config: next, persisted: true, appliedImmediately: true });
         return;
       }
@@ -1143,9 +1289,14 @@ export function startFunDashboardServer(deps = {}) {
       if (req.method === 'GET' && path === '/api/fun/overview') {
         const isAdmin = hasAdminAccess(req);
         const cfg = getConfig();
-        const scope = String(url.searchParams.get('scope') || '').trim();
+        const rawScope = String(url.searchParams.get('scope') || '').trim();
         const jids = Array.isArray(cfg.groupWhitelistJids) ? cfg.groupWhitelistJids : [];
-        const scopeKey = scope || jids[0] || '';
+        const scopeKey = resolveScopeKey(rawScope) || jids[0] || '';
+
+        if (scopeKey && !isScopeAllowed(scopeKey)) {
+          sendJson(res, 403, { error: 'scope-not-allowed' });
+          return;
+        }
 
         let players = 0;
         let jackpot = 0;
@@ -1153,9 +1304,23 @@ export function startFunDashboardServer(deps = {}) {
         let factions = 0;
         let topXp = [];
         let topCoins = [];
+        let circulatingCoins = 0;
+        let baselineCoins = 1;
+        let gini = 0;
+        let healthStatus = 'stable';
+        let healthLabel = 'Estável';
+        let activePlayers24h = 0;
+        let totalMembers = 0;
+        let economicPlayers = 0;
+        let passiveMembers = 0;
+        let participationRate = 1;
 
         if (scopeKey) {
-          players = repository.countUsersInScope(scopeKey);
+          try {
+            players = repository.countUsersInScope(scopeKey);
+          } catch {
+            players = 0;
+          }
           try {
             jackpot = casinoRepository?.getJackpot?.(scopeKey)?.pot || 0;
           } catch {
@@ -1171,15 +1336,91 @@ export function startFunDashboardServer(deps = {}) {
           } catch {
             factions = 0;
           }
-          topXp = (repository.getLeaderboard(scopeKey, 5) || []).map((e) =>
-            withDisplayName(getContactDisplayName, e)
-          );
-          topCoins = (repository.getCoinsLeaderboard?.(scopeKey, 5) || []).map((e) =>
-            withDisplayName(getContactDisplayName, e)
-          );
+          try {
+            topXp = (repository.getLeaderboard(scopeKey, 5) || []).map((e) =>
+              withDisplayName(getContactDisplayName, e)
+            );
+          } catch {
+            topXp = [];
+          }
+          try {
+            topCoins = (repository.getCoinsLeaderboard?.(scopeKey, 5) || []).map((e) =>
+              withDisplayName(getContactDisplayName, e)
+            );
+          } catch {
+            topCoins = [];
+          }
           if (!isAdmin) {
             topXp = topXp.map(publicLeaderboardEntry);
             topCoins = topCoins.map(publicLeaderboardEntry);
+          }
+
+          let balances = [];
+          try {
+            if (typeof repository.listScopeCoinBalances === 'function') {
+              balances = repository.listScopeCoinBalances(scopeKey, 2000);
+            } else if (typeof repository.getCoinsLeaderboard === 'function') {
+              balances = (repository.getCoinsLeaderboard(scopeKey, 2000) || []).map(
+                (r) => Number(r.coins) || 0
+              );
+            }
+          } catch {
+            balances = [];
+          }
+          // Gini/saúde calculados só sobre participantes econômicos (saldo > 0);
+          // membros passivos com saldo 0 não distorcem o índice.
+          const economicBalances = balances.filter((c) => c > 0);
+          economicPlayers = economicBalances.length;
+          totalMembers = Math.max(economicPlayers, players);
+          passiveMembers = Math.max(0, totalMembers - economicPlayers);
+          participationRate =
+            totalMembers > 0 ? Number((economicPlayers / totalMembers).toFixed(4)) : 1;
+          circulatingCoins = economicBalances.reduce((a, b) => a + b, 0);
+          baselineCoins = Math.max(circulatingCoins, 1);
+          try {
+            const meta = marketRepository?.getMeta?.(scopeKey);
+            if (meta?.economy?.baselineCoins) {
+              baselineCoins = Number(meta.economy.baselineCoins) || baselineCoins;
+            }
+          } catch {
+            // keep fallback
+          }
+
+          const rawGini =
+            economicBalances.length >= 2 ? computeGini(economicBalances) : 0;
+          gini = Math.round(rawGini * 1000) / 1000;
+
+          if (economicBalances.length > 0 && circulatingCoins > 0) {
+            if (gini > 0.55) {
+              healthStatus = 'high_inequality';
+              healthLabel = 'Alta Desigualdade';
+            } else if (circulatingCoins > baselineCoins * 1.3) {
+              healthStatus = 'inflationary';
+              healthLabel = 'Pressão Inflacionária';
+            } else if (circulatingCoins < baselineCoins * 0.7) {
+              healthStatus = 'deflationary';
+              healthLabel = 'Contração Monetária';
+            } else {
+              healthStatus = 'stable';
+              healthLabel = 'Estável';
+            }
+          }
+
+          try {
+            if (typeof repository.countActiveUsersInScope === 'function') {
+              activePlayers24h = repository.countActiveUsersInScope(scopeKey);
+            } else if (typeof repository.getDatabase === 'function') {
+              const db = repository.getDatabase();
+              const since = Date.now() - 24 * 60 * 60 * 1000;
+              const row = db
+                ?.prepare(
+                  `SELECT COUNT(*) AS total FROM analytics.fun_user_stats WHERE scope_key = ? AND (updated_at >= ? OR last_xp_at >= ?)`
+                )
+                ?.get(scopeKey, since, since);
+              activePlayers24h = Number(row?.total) || 0;
+            }
+          } catch {
+            activePlayers24h = 0;
           }
         }
 
@@ -1209,6 +1450,24 @@ export function startFunDashboardServer(deps = {}) {
             : null,
           topXp,
           topCoins,
+          economy: {
+            circulatingCoins,
+            baselineCoins,
+            healthStatus,
+            healthLabel,
+            gini,
+            totalMembers,
+            economicPlayers,
+            passiveMembers,
+            participationRate,
+          },
+          activity: {
+            activePlayers24h,
+          },
+          botStatus: {
+            uptimeSeconds: Math.floor(process.uptime()),
+            socketReady: Boolean(isSocketReady()),
+          },
           outbound: outbound
             ? {
                 globalLastMinute: outbound.globalLastMinute,
@@ -1330,13 +1589,27 @@ export function startFunDashboardServer(deps = {}) {
           sendJson(res, 503, { error: 'servico-indisponivel' });
           return;
         }
-        
+
         const started = funModule._services.chaosEventService.tryStartEvent(scope, cfg, Date.now(), { force: true });
         if (!started?.ok) {
+          getLogBuffer().add({
+            level: 'error',
+            domain: 'casino',
+            message: `Falha ao iniciar evento de Caos / PURGA: ${started?.reason || 'nao-iniciado'}`,
+            scope,
+          });
           sendJson(res, 400, { error: started?.reason || 'nao-iniciado' });
           return;
         }
-        
+
+        getLogBuffer().add({
+          level: 'warn',
+          domain: 'casino',
+          message: 'Evento de Caos / PURGA disparado manualmente para o grupo',
+          scope,
+          details: { eventType: 'crime_chaos', force: true },
+        });
+
         // Disparar anúncio de início (opcionalmente) se houver sendText / WhatsApp conectado
         const msg = funModule._services.chaosEventService.formatStartAnnouncement(started, cfg);
         if (msg && getSock?.()) {
@@ -1494,6 +1767,431 @@ export function startFunDashboardServer(deps = {}) {
           totalPages: events.length ? 1 : 0,
           readOnly: true,
         });
+        return;
+      }
+
+      if (req.method === 'GET' && path === '/api/fun/economy/metrics') {
+        const rawScope = url.searchParams.get('scope') || '';
+        const cfg = getConfig();
+        const jids = Array.isArray(cfg.groupWhitelistJids) ? cfg.groupWhitelistJids : [];
+        const scope = resolveScopeKey(rawScope) || jids[0] || '';
+        if (!scope) {
+          sendJson(res, 400, { error: 'scope obrigatorio' });
+          return;
+        }
+        if (!isScopeAllowed(scope)) {
+          sendJson(res, 404, { error: 'grupo-nao-encontrado' });
+          return;
+        }
+
+        let balances = [];
+        try {
+          if (typeof repository?.listScopeCoinBalances === 'function') {
+            balances = repository.listScopeCoinBalances(scope, 2000) || [];
+          } else if (typeof repository?.getCoinsLeaderboard === 'function') {
+            balances = (repository.getCoinsLeaderboard(scope, 2000) || []).map((r) =>
+              Math.max(0, Number(r.coins) || 0)
+            );
+          }
+        } catch {
+          balances = [];
+        }
+
+        // Participantes reais da economia: membros com saldo > 0.
+        // Membros passivos (saldo 0, só conversam) não distorcem Gini/brackets.
+        const economicBalances = balances.filter((c) => c > 0);
+        const economicPlayers = economicBalances.length;
+        const circulatingCoins = economicBalances.reduce((a, b) => a + b, 0);
+        const gini = economicBalances.length >= 2 ? computeGini(economicBalances) : 0;
+
+        let totalMembers = economicPlayers;
+        try {
+          if (typeof repository?.countUsersInScope === 'function') {
+            totalMembers = Math.max(economicPlayers, repository.countUsersInScope(scope));
+          }
+        } catch {}
+        const passiveMembers = Math.max(0, totalMembers - economicPlayers);
+        const participationRate =
+          totalMembers > 0 ? Number((economicPlayers / totalMembers).toFixed(4)) : 1;
+        const activePlayers = economicPlayers;
+
+        let jackpot = 0;
+        try {
+          jackpot = casinoRepository?.getJackpot?.(scope)?.pot || 0;
+        } catch {
+          jackpot = 0;
+        }
+
+        let factionsList = [];
+        try {
+          factionsList = factionRepository?.listByScope?.(scope) || [];
+        } catch {
+          factionsList = [];
+        }
+        const factionsCount = factionsList.length;
+        const factionsVaultTotal = factionsList.reduce(
+          (acc, f) => acc + (Number(f.vaultCoins) || 0),
+          0
+        );
+
+        let meta = null;
+        try {
+          meta = marketRepository?.getMeta?.(scope);
+        } catch {}
+        const reg = clampKnobs({ ...defaultRegulatorKnobs(), ...(meta?.economy || {}) });
+        const baselineCoins = Number(reg.baselineCoins) || Math.max(circulatingCoins, 1);
+
+        let investedValue = 0;
+        try {
+          const inv = marketRepository?.listAllInventoryInScope?.(scope) || [];
+          for (const row of inv) {
+            const p = marketRepository?.getPrice?.(scope, row.itemId)?.price || 0;
+            investedValue += p;
+          }
+        } catch {}
+
+        let prices = [];
+        try {
+          prices = marketRepository?.listPrices?.(scope) || [];
+        } catch {}
+        const avgAbsDeltaPct = computeAvgAbsDelta(prices);
+
+        let eventsLast24h = 0;
+        try {
+          const recent = marketRepository?.listRecentEvents?.(scope, 50) || [];
+          const dayAgo = Date.now() - 24 * 60 * 60_000;
+          eventsLast24h = recent.filter((e) => (e.createdAt || 0) >= dayAgo).length;
+        } catch {}
+
+        let minted = 0;
+        let sunk = 0;
+        const PEER_TRANSFER_REASONS = new Set(['pay', 'transfer', 'gift', 'escrow', 'marriage', 'divorce', 'trade']);
+        try {
+          if (typeof repository?.sumLedgerByReason === 'function') {
+            const ledger = repository.sumLedgerByReason({
+              scopeKey: scope,
+              since: Date.now() - 24 * 60 * 60_000,
+            });
+            for (const row of ledger) {
+              const r = String(row.reason || '').toLowerCase();
+              if (!PEER_TRANSFER_REASONS.has(r)) {
+                minted += Number(row.gained) || 0;
+                sunk += Number(row.lost) || 0;
+              }
+            }
+          }
+        } catch {}
+        const net = minted - sunk;
+
+        const M = Math.max(1, circulatingCoins);
+        const baseline = Math.max(1, baselineCoins);
+        const netRatio = net / M;
+        let inflationState = 'stable';
+        let inflationLabel = 'Estável';
+
+        if (M > baseline * 2.0 || (netRatio > 0.4 && M > baseline * 1.5)) {
+          inflationState = 'hyperinflation';
+          inflationLabel = 'Hiperinflação';
+        } else if (M > baseline * 1.25 || netRatio > 0.15) {
+          inflationState = 'inflationary';
+          inflationLabel = 'Inflação';
+        } else if (M < baseline * 0.75 || netRatio < -0.15) {
+          inflationState = 'deflationary';
+          inflationLabel = 'Deflação';
+        } else if (gini > 0.55) {
+          inflationState = 'high_inequality';
+          inflationLabel = 'Alta Desigualdade';
+        } else {
+          inflationState = 'stable';
+          inflationLabel = 'Estável';
+        }
+
+        const sorted = [...economicBalances].sort((a, b) => b - a);
+        const n = sorted.length;
+        const totalCoins = sorted.reduce((sum, b) => sum + b, 0);
+
+        let top1Percent = 0;
+        let top10Percent = 0;
+        let bottom50Percent = 0;
+        let brackets = [];
+
+        if (n > 0 && totalCoins > 0) {
+          const top1Count = Math.max(1, Math.ceil(n * 0.01));
+          const top1Coins = sorted.slice(0, top1Count).reduce((a, b) => a + b, 0);
+          top1Percent = Number(((top1Coins / totalCoins) * 100).toFixed(2));
+
+          const top10Count = Math.max(1, Math.ceil(n * 0.10));
+          const top10Coins = sorted.slice(0, top10Count).reduce((a, b) => a + b, 0);
+          top10Percent = Number(((top10Coins / totalCoins) * 100).toFixed(2));
+
+          const bottom50Count = n >= 2 ? Math.floor(n * 0.50) : 0;
+          const bottom50Coins =
+            bottom50Count > 0 ? sorted.slice(n - bottom50Count).reduce((a, b) => a + b, 0) : 0;
+          bottom50Percent =
+            bottom50Count > 0 ? Number(((bottom50Coins / totalCoins) * 100).toFixed(2)) : 0;
+
+          const next9Count = Math.max(0, top10Count - top1Count);
+          const next9Coins = Math.max(0, top10Coins - top1Coins);
+          const next9Pct = Number(((next9Coins / totalCoins) * 100).toFixed(2));
+
+          const middle40Count = Math.max(0, n - bottom50Count - top10Count);
+          const middle40Coins = Math.max(0, totalCoins - top10Coins - bottom50Coins);
+          const middle40Pct = Number(((middle40Coins / totalCoins) * 100).toFixed(2));
+
+          brackets = [
+            {
+              bracket: 'Top 1%',
+              players: top1Count,
+              totalCoins: top1Coins,
+              percentage: Number.isFinite(top1Percent) ? top1Percent : 0,
+            },
+            {
+              bracket: 'Top 2-10%',
+              players: next9Count,
+              totalCoins: next9Coins,
+              percentage: Number.isFinite(next9Pct) ? next9Pct : 0,
+            },
+            {
+              bracket: 'Intermediário (10-50%)',
+              players: middle40Count,
+              totalCoins: middle40Coins,
+              percentage: Number.isFinite(middle40Pct) ? middle40Pct : 0,
+            },
+            {
+              bracket: 'Base 50%',
+              players: bottom50Count,
+              totalCoins: bottom50Coins,
+              percentage: Number.isFinite(bottom50Percent) ? bottom50Percent : 0,
+            },
+          ];
+        } else {
+          brackets = [
+            { bracket: 'Top 1%', players: 0, totalCoins: 0, percentage: 0 },
+            { bracket: 'Top 2-10%', players: 0, totalCoins: 0, percentage: 0 },
+            { bracket: 'Intermediário (10-50%)', players: 0, totalCoins: 0, percentage: 0 },
+            { bracket: 'Base 50%', players: 0, totalCoins: 0, percentage: 0 },
+          ];
+        }
+
+        sendJson(res, 200, {
+          ok: true,
+          scope,
+          groupName: getContactDisplayName(scope) || '',
+          circulatingCoins,
+          baselineCoins,
+          gini,
+          activePlayers,
+          totalMembers,
+          economicPlayers,
+          passiveMembers,
+          participationRate,
+          investedValue,
+          avgAbsDeltaPct,
+          eventsLast24h,
+          inflationState,
+          inflationLabel,
+          mintSink24h: {
+            minted,
+            sunk,
+            net,
+          },
+          jackpot,
+          factionsCount,
+          factionsVaultTotal,
+          regulator: {
+            volMult: reg.volMult ?? 1,
+            eventImpactMult: reg.eventImpactMult ?? 1,
+            eventFreqMult: reg.eventFreqMult ?? 1,
+            rewardMult: reg.rewardMult ?? 1,
+            restockMult: reg.restockMult ?? 1,
+            flowScale: reg.flowScale ?? 500,
+            baseNoisePct: reg.baseNoisePct ?? 0.012,
+            deceptionRate: reg.deceptionRate ?? 0.12,
+            shockDecay: reg.shockDecay ?? 0.85,
+            volumeDecay: reg.volumeDecay ?? 0.72,
+            lastRegulateAt: reg.lastRegulateAt ?? 0,
+            narrativeSeeds: Array.isArray(reg.narrativeSeeds) ? reg.narrativeSeeds : [],
+          },
+          wealthDistribution: {
+            top1Percent,
+            top10Percent,
+            bottom50Percent,
+            brackets,
+          },
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && path === '/api/fun/economy/intervene') {
+        if (!requireAdmin(req, res)) return;
+        const body = await readBody(req);
+        const scope = resolveScopeKey(body.scope);
+        if (!scope) {
+          sendJson(res, 400, { error: 'scope obrigatorio' });
+          return;
+        }
+        if (!isScopeAllowed(scope)) {
+          sendJson(res, 404, { error: 'grupo-nao-encontrado' });
+          return;
+        }
+        const action = String(body.action || '').trim();
+        if (!action) {
+          sendJson(res, 400, { error: 'action obrigatoria' });
+          return;
+        }
+
+        if (action === 'inject_jackpot') {
+          const amount = Math.floor(Number(body.amount) || 0);
+          if (amount <= 0) {
+            sendJson(res, 400, { error: 'amount deve ser maior que zero' });
+            return;
+          }
+          const prevPot = casinoRepository?.getJackpot?.(scope)?.pot || 0;
+          const updated = casinoRepository?.addJackpot?.(scope, amount);
+          const newPot = updated?.pot ?? (prevPot + amount);
+          sendJson(res, 200, {
+            ok: true,
+            action,
+            message: `Injetados ${amount} coins no Jackpot com sucesso.`,
+            previousValue: prevPot,
+            newValue: newPot,
+          });
+          return;
+        }
+
+        if (action === 'burn_jackpot') {
+          const prevPot = casinoRepository?.getJackpot?.(scope)?.pot || 0;
+          const rawAmount =
+            body.amount !== undefined && body.amount !== null ? Math.floor(Number(body.amount)) : null;
+          const toBurn =
+            rawAmount === null || isNaN(rawAmount) || rawAmount <= 0
+              ? prevPot
+              : Math.min(prevPot, rawAmount);
+          let newPot = Math.max(0, prevPot - toBurn);
+          if (typeof casinoRepository?.burnJackpot === 'function') {
+            const resBurn = casinoRepository.burnJackpot(scope, toBurn);
+            newPot = resBurn?.pot ?? newPot;
+          } else if (typeof casinoRepository?.takeJackpot === 'function') {
+            if (toBurn >= prevPot) {
+              casinoRepository.takeJackpot(scope);
+              newPot = 0;
+            } else {
+              casinoRepository.takeJackpot(scope);
+              if (newPot > 0 && typeof casinoRepository?.addJackpot === 'function') {
+                casinoRepository.addJackpot(scope, newPot);
+              }
+            }
+          }
+          sendJson(res, 200, {
+            ok: true,
+            action,
+            message: `Queimados ${toBurn} coins do Jackpot com sucesso.`,
+            previousValue: prevPot,
+            newValue: newPot,
+          });
+          return;
+        }
+
+        if (action === 'set_baseline') {
+          const amount = Math.floor(Number(body.amount));
+          if (isNaN(amount) || amount <= 0 || amount > 100_000_000_000) {
+            sendJson(res, 400, {
+              error: 'amount deve ser um numero valido entre 1 e 100.000.000.000',
+            });
+            return;
+          }
+          const meta = marketRepository?.getMeta?.(scope) || {};
+          const reg = clampKnobs({ ...defaultRegulatorKnobs(), ...(meta.economy || {}) });
+          const prevBaseline = Number(reg.baselineCoins) || 0;
+          reg.baselineCoins = amount;
+          const clamped = clampKnobs(reg);
+          clamped.baselineCoins = amount;
+          marketRepository?.setMeta?.(scope, { economy: clamped });
+          sendJson(res, 200, {
+            ok: true,
+            action,
+            message: `Baseline monetário ajustado para ${amount} coins com sucesso.`,
+            previousValue: prevBaseline,
+            newValue: amount,
+          });
+          return;
+        }
+
+        if (action === 'trigger_seed') {
+          const rawSeed = String(body.seed || '').trim().toLowerCase();
+          const seed = rawSeed.replace(/[^a-z0-9_-]/g, '_').slice(0, 32);
+          if (!seed) {
+            sendJson(res, 400, { error: 'seed obrigatoria e deve conter caracteres validos' });
+            return;
+          }
+          const meta = marketRepository?.getMeta?.(scope) || {};
+          const reg = clampKnobs({ ...defaultRegulatorKnobs(), ...(meta.economy || {}) });
+          const prevSeeds = [...(reg.narrativeSeeds || [])];
+          if (!reg.narrativeSeeds) reg.narrativeSeeds = [];
+          if (!reg.narrativeSeeds.includes(seed)) {
+            reg.narrativeSeeds.push(seed);
+          }
+          reg.narrativeSeeds = reg.narrativeSeeds.slice(-6);
+          const clamped = clampKnobs(reg);
+          if (reg.baselineCoins) clamped.baselineCoins = reg.baselineCoins;
+          marketRepository?.setMeta?.(scope, { economy: clamped });
+          sendJson(res, 200, {
+            ok: true,
+            action,
+            message: `Semente narrativa '${seed}' ativada com sucesso no Regulador Invisível.`,
+            previousValue: prevSeeds,
+            newValue: clamped.narrativeSeeds,
+          });
+          return;
+        }
+
+        if (action === 'adjust_knobs') {
+          const knobs = body.knobs;
+          if (!knobs || typeof knobs !== 'object') {
+            sendJson(res, 400, { error: 'knobs obrigatorio' });
+            return;
+          }
+          const meta = marketRepository?.getMeta?.(scope) || {};
+          const reg = { ...defaultRegulatorKnobs(), ...(meta.economy || {}) };
+          const allowedKnobs = [
+            'volMult',
+            'eventImpactMult',
+            'eventFreqMult',
+            'rewardMult',
+            'restockMult',
+            'flowScale',
+            'baseNoisePct',
+            'deceptionRate',
+            'shockDecay',
+            'volumeDecay',
+          ];
+          const prevKnobs = {};
+          for (const k of allowedKnobs) {
+            prevKnobs[k] = reg[k];
+          }
+          for (const [k, v] of Object.entries(knobs)) {
+            if (allowedKnobs.includes(k) && typeof v === 'number' && !Number.isNaN(v)) {
+              reg[k] = v;
+            }
+          }
+          const clamped = clampKnobs(reg);
+          if (reg.baselineCoins) clamped.baselineCoins = reg.baselineCoins;
+          marketRepository?.setMeta?.(scope, { economy: clamped });
+          const newKnobs = {};
+          for (const k of allowedKnobs) {
+            newKnobs[k] = clamped[k];
+          }
+          sendJson(res, 200, {
+            ok: true,
+            action,
+            message: 'Knobs do Regulador Invisível ajustados com sucesso.',
+            previousValue: prevKnobs,
+            newValue: newKnobs,
+          });
+          return;
+        }
+
+        sendJson(res, 400, { error: `acao-desconhecida: ${action}` });
         return;
       }
 
@@ -1709,6 +2407,12 @@ export function startFunDashboardServer(deps = {}) {
           sock: getSock?.(),
           sendText,
         });
+        getLogBuffer().add({
+          level: result.ok ? 'info' : 'warn',
+          domain: 'games',
+          message: `Lançamento de desafios diários (${body.type || 'aleatório'}): ${result.okCount || 0} criados, ${result.failCount || 0} falhas`,
+          details: { type: body.type, okCount: result.okCount, failCount: result.failCount },
+        });
         if (!result.ok && ['invalid-type', 'no-groups'].includes(result.reason)) {
           sendJson(res, 400, { error: result.reason, ...result });
           return;
@@ -1739,6 +2443,14 @@ export function startFunDashboardServer(deps = {}) {
           sock: getSock?.(),
           sendText,
         });
+        getLogBuffer().add({
+          level: result.ok || dryRun ? 'info' : 'warn',
+          domain: 'whatsapp',
+          message: dryRun
+            ? `Simulação de broadcast de changelog: ${body.version || 'v?'}`
+            : `Broadcast de changelog disparado: ${result.okCount || 0} enviados, ${result.failCount || 0} falhas`,
+          details: { dryRun, version: body.version, okCount: result.okCount, failCount: result.failCount },
+        });
         if (!result.ok && result.reason === 'empty-body') {
           sendJson(res, 400, { error: 'body-obrigatorio', ...result });
           return;
@@ -1760,6 +2472,34 @@ export function startFunDashboardServer(deps = {}) {
           return;
         }
         sendJson(res, result.ok || dryRun ? 200 : 207, result);
+        return;
+      }
+
+      // --- Logs Operacionais em Tempo Real ---
+      if (req.method === 'GET' && path === '/api/fun/logs') {
+        const since = Number(url.searchParams.get('since') || 0);
+        const limitParam = url.searchParams.get('limit');
+        const limit = limitParam !== null && limitParam !== '' ? Math.max(1, parseInt(limitParam, 10) || 100) : 100;
+        const level = url.searchParams.get('level') || 'all';
+        const domain = url.searchParams.get('domain') || 'all';
+        const search = url.searchParams.get('search') || '';
+        const rawScope = url.searchParams.get('scope') || '';
+        const scope = resolveScopeKey(rawScope);
+
+        const buffer = getLogBuffer();
+        const data = buffer.getLogs({
+          since,
+          limit,
+          level,
+          domain,
+          search,
+          scope,
+        });
+
+        sendJson(res, 200, {
+          ok: true,
+          ...data,
+        });
         return;
       }
 
@@ -1789,6 +2529,11 @@ export function startFunDashboardServer(deps = {}) {
         return;
       }
       if (req.method === 'POST' && path === '/api/fun/selfheal/run') {
+        const currentCfg = getConfig();
+        if (currentCfg.selfHealEnabled === false) {
+          sendJson(res, 400, { ok: false, error: 'selfheal-desativado', reason: 'self-heal-disabled' });
+          return;
+        }
         if (!selfHealService?.runSweep) {
           sendJson(res, 503, { error: 'selfheal-indisponivel' });
           return;
@@ -1808,6 +2553,12 @@ export function startFunDashboardServer(deps = {}) {
         const results = [];
         for (const scopeKey of scopes) results.push(await selfHealService.runSweep({ scopeKey, domain, ...(typeof body.dryRun === 'boolean' ? { dryRun: body.dryRun } : {}) }));
         const first = results[0] || {};
+        getLogBuffer().add({
+          level: 'info',
+          domain: 'system',
+          message: `Motor de auto-aprimoramento disparado: ${domain}`,
+          details: { domain, scopesCount: scopes.length, ok: results.every((r) => r.ok) },
+        });
         sendJson(res, first.ok ? 200 : 409, { ok: results.every(result => result.ok), runId: first.runId, mode: first.mode, results, reason: first.reason });
         return;
       }
@@ -1860,6 +2611,11 @@ export function startFunDashboardServer(deps = {}) {
     server.listen(port, host, () => {
       console.log(`[fun] Dashboard API: http://${host}:${port}`);
       console.log(`[fun] Dashboard UI (Next): http://127.0.0.1:${uiPort}  → npm run fun:dashboard`);
+      getLogBuffer().add({
+        level: 'info',
+        domain: 'system',
+        message: `Servidor HTTP do Fun Dashboard operacional em http://${host}:${port}`,
+      });
       resolve(server);
     });
   });
