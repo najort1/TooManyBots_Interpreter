@@ -266,6 +266,134 @@ test('Multiplayer Games - GameManager Lifecycle & Prize Payout', async (t) => {
       silentGameManager.cleanup();
     }
   });
+
+  await t.test('aborta partida e cancela premiação se apenas 1 panelinha entrar na sala (mesmo com múltiplos jogadores)', async () => {
+    const singleFacMessages = [];
+    const gm = createGameManager({
+      factionRepository: {
+        ...factionRepo,
+        getDatabase,
+      },
+      accountRepository: accountRepo,
+      funConfig: { publicBaseUrl: 'https://test-tunnel.trycloudflare.com' },
+      sendGroupMessage: async (s, msg) => {
+        singleFacMessages.push({ scopeKey: s, text: msg });
+      },
+    });
+
+    try {
+      const res = await gm.createRoom({
+        scopeKey,
+        gameType: GAME_TYPES.QUIZ_ROYALE,
+        prize: 500,
+        startInMinutes: 1,
+        announce: true,
+      });
+      assert.equal(res.ok, true);
+
+      // Entram 2 jogadores da MESMA panelinha (Papo Cueca)
+      const userP1 = '5511999990098@s.whatsapp.net';
+      const userP2 = '5511999990099@s.whatsapp.net';
+      accountRepo.createAccount({ userJid: userP1, username: 'Cueca1', password: '123', pin: '1234' });
+      accountRepo.createAccount({ userJid: userP2, username: 'Cueca2', password: '123', pin: '1234' });
+      const facCueca = factionRepo.createFaction({ scopeKey, name: 'Papo Cueca', leaderJid: userP1 });
+
+      gm.joinRoom(res.room.id, {
+        userJid: userP1,
+        username: 'Cueca1',
+        faction: { id: facCueca.faction.id, name: 'Papo Cueca', emoji: '🏴‍☠️' },
+      });
+      gm.joinRoom(res.room.id, {
+        userJid: userP2,
+        username: 'Cueca2',
+        faction: { id: facCueca.faction.id, name: 'Papo Cueca', emoji: '🏴‍☠️' },
+      });
+
+      const room = gm.getActiveRoomByScope(scopeKey);
+      assert.equal(room.players.size, 2);
+      assert.equal(room.factions.size, 1);
+
+      // Tenta iniciar a partida
+      const started = await gm.startGame(room.id);
+      assert.equal(started, false, 'Partida NÃO deve iniciar com apenas 1 panelinha');
+      assert.equal(room.status, ROOM_STATUS.ABORTED, 'Status deve ser ABORTED');
+
+      // Cofre da panelinha não deve ter recebido nenhuma moeda
+      const updatedCueca = factionRepo.getById(facCueca.faction.id);
+      assert.equal(updatedCueca.vaultCoins, 0, 'Cofre deve permanecer com 0 moedas');
+
+      // Grupo de WhatsApp deve receber aviso claro de cancelamento
+      const cancelMsg = singleFacMessages.find(m => m.text.includes('EVENTO CANCELADO'));
+      assert.ok(cancelMsg, 'Deve enviar anúncio de cancelamento no grupo');
+      assert.match(cancelMsg.text, /apenas uma panelinha/i);
+      assert.match(cancelMsg.text, /Nenhuma premiação foi distribuída/i);
+    } finally {
+      gm.cleanup();
+    }
+  });
+
+  await t.test('finishGame não premia se todas as panelinhas tiverem 0 pontos ou empate', async () => {
+    const tieMessages = [];
+    const gm = createGameManager({
+      factionRepository: {
+        ...factionRepo,
+        getDatabase,
+      },
+      accountRepository: accountRepo,
+      funConfig: { publicBaseUrl: 'https://test-tunnel.trycloudflare.com' },
+      sendGroupMessage: async (s, msg) => {
+        tieMessages.push({ scopeKey: s, text: msg });
+      },
+    });
+
+    try {
+      const res = await gm.createRoom({
+        scopeKey,
+        gameType: GAME_TYPES.QUIZ_ROYALE,
+        prize: 500,
+        startInMinutes: 1,
+        announce: true,
+      });
+
+      gm.joinRoom(res.room.id, {
+        userJid: userJid1,
+        username: 'Jack',
+        faction: { id: fac1.faction.id, name: 'Piratas', emoji: '🏴‍☠️' },
+      });
+      gm.joinRoom(res.room.id, {
+        userJid: userJid2,
+        username: 'Ninja',
+        faction: { id: fac2.faction.id, name: 'Ninjas', emoji: '🥷' },
+      });
+
+      const room = gm.getActiveRoomByScope(scopeKey);
+      await gm.startGame(room.id);
+      assert.equal(room.status, ROOM_STATUS.IN_PROGRESS);
+
+      // Ambas as panelinhas terminam com 0 pontos
+      room.factions.get(fac1.faction.id).score = 0;
+      room.factions.get(fac2.faction.id).score = 0;
+
+      const preFac1Coins = factionRepo.getById(fac1.faction.id).vaultCoins;
+      const preFac2Coins = factionRepo.getById(fac2.faction.id).vaultCoins;
+
+      await gm.finishGame(room.id, null);
+
+      assert.equal(room.status, ROOM_STATUS.FINISHED);
+      assert.equal(room.winnerFaction, null, 'Não deve haver panelinha campeã com 0 pontos ou empate');
+
+      const postFac1Coins = factionRepo.getById(fac1.faction.id).vaultCoins;
+      const postFac2Coins = factionRepo.getById(fac2.faction.id).vaultCoins;
+      assert.equal(postFac1Coins, preFac1Coins, 'Cofre fac1 não deve ser premiado');
+      assert.equal(postFac2Coins, preFac2Coins, 'Cofre fac2 não deve ser premiado');
+
+      const tieMsg = tieMessages.find(m => m.text.includes('FIM DE JOGO'));
+      assert.ok(tieMsg, 'Deve enviar anúncio de fim de jogo');
+      assert.match(tieMsg.text, /empate/i);
+    } finally {
+      gm.cleanup();
+    }
+  });
 });
 
 test('Multiplayer Games - HTTP & SSE Routes', async () => {

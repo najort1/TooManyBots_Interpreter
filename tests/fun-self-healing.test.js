@@ -91,7 +91,7 @@ test('C1/C2 HTTP selfheal: autenticação, config, dry-run e auditoria sem befor
   };
   const server = await startFunDashboardServer({
     funModule,
-    getConfig: () => ({ dashboardHost: '127.0.0.1', dashboardPort: port, groupWhitelistJids: [scope], selfHealDryRun: true, selfHealIntervalMs: 60_000, selfHealEvidenceRetentionDays: 60, selfHealMaxItemsPerRun: 50, selfHealMaxCallsPerRun: 10 }),
+    getConfig: () => ({ dashboardHost: '127.0.0.1', dashboardPort: port, groupWhitelistJids: [scope], selfHealDryRun: true, selfHealIntervalMs: 60_000, selfHealEvidenceRetentionDays: 60, selfHealMaxItemsPerRun: 50, selfHealMaxCallsPerRun: 10, selfHealEnabled: true }),
   });
   try {
     const unauthorized = await requestJson({ port, path: '/api/fun/selfheal/config' });
@@ -102,8 +102,9 @@ test('C1/C2 HTTP selfheal: autenticação, config, dry-run e auditoria sem befor
     const run = await requestJson({ port, path: '/api/fun/selfheal/run', method: 'POST', apiKey, body: { scopeKey: scope, domain: 'memory_lore', dryRun: true } });
     assert.equal(run.status, 200); assert.equal(run.body.mode, 'dry_run');
     assert.deepEqual(receivedRun, { scopeKey: scope, domain: 'memory_lore', dryRun: true });
-    deps.audit.insertAudit({ runId: 'http-audit', scopeKey: scope, domain: 'memory_lore', targetTable: 'fun_group_memories', targetId: 'fact-1', action: 'report', riskLevel: 'low', status: 'applied', mode: 'live', before: { secret: 'before' }, after: { secret: 'after' } });
-    const audit = await requestJson({ port, path: '/api/fun/selfheal/audit', apiKey });
+    const testRunId = `http-audit-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
+    deps.audit.insertAudit({ runId: testRunId, scopeKey: scope, domain: 'memory_lore', targetTable: 'fun_group_memories', targetId: 'fact-1', action: 'report', riskLevel: 'low', status: 'applied', mode: 'live', before: { secret: 'before' }, after: { secret: 'after' } });
+    const audit = await requestJson({ port, path: `/api/fun/selfheal/audit?runId=${testRunId}`, apiKey });
     assert.equal(audit.status, 200); assert.equal(audit.body.entries.length, 1);
     assert.ok(!Object.hasOwn(audit.body.entries[0], 'before')); assert.ok(!Object.hasOwn(audit.body.entries[0], 'after'));
   } finally {
@@ -130,7 +131,7 @@ test('FIX# self-healing: fallback usa configuração Zen normalizada e envia pro
   };
   try {
     const funModule = createFunModule({
-      getConfig: () => ({ enabled: true, worldQuietHoursEnabled: false, selfHealDryRun: true }),
+      getConfig: () => ({ enabled: true, worldQuietHoursEnabled: false, selfHealDryRun: true, selfHealEnabled: true, llmFeatures: { selfHeal: true } }),
     });
     await funModule.init();
     const result = await funModule._services.selfHealingService.runSweep({ scopeKey: scope });
@@ -162,7 +163,7 @@ test('FIX# self-healing: DI vence fallback e flags que desabilitam LLM não faze
   };
   try {
     const injected = createFunModule({
-      getConfig: () => ({ enabled: true, worldQuietHoursEnabled: false, selfHealDryRun: true, zenEnabled: false }),
+      getConfig: () => ({ enabled: true, worldQuietHoursEnabled: false, selfHealDryRun: true, zenEnabled: false, selfHealEnabled: true, llmFeatures: { selfHeal: true } }),
       openaiChatComplete: async () => {
         injectedCalls += 1;
         return '{"domain":"memory_lore","findings":[]}';
@@ -176,7 +177,7 @@ test('FIX# self-healing: DI vence fallback e flags que desabilitam LLM não faze
 
     process.env.FUN_DISABLE_LIVE_LLM = '1';
     const disabled = createFunModule({
-      getConfig: () => ({ enabled: true, worldQuietHoursEnabled: false, selfHealDryRun: true, zenEnabled: false }),
+      getConfig: () => ({ enabled: true, worldQuietHoursEnabled: false, selfHealDryRun: true, zenEnabled: false, selfHealEnabled: true, llmFeatures: { selfHeal: true } }),
     });
     await disabled.init();
     const disabledResult = await disabled._services.selfHealingService.runSweep({ scopeKey: group() });
@@ -192,12 +193,23 @@ test('FIX# self-healing: DI vence fallback e flags que desabilitam LLM não faze
   }
 });
 
-test('C1: captura evidência elegível sem duplicar message_id', () => {
+test('C1: captura evidência elegível sem duplicar message_id quando selfHealEnabled: true', () => {
   const { memory, evidence } = setup(); const scope = group(); const author = jid();
   const service = createGroupMemoryService({ memoryRepository: memory, evidenceRepository: evidence });
-  service.observeMessage({ scopeKey: scope, userJid: author, messageId: 'm-1', text: 'Hoje eu derrubei café no teclado de novo', funConfig: { selfHealEvidenceRetentionDays: 60 }, now: 1000 });
-  service.observeMessage({ scopeKey: scope, userJid: author, messageId: 'm-1', text: 'Hoje eu derrubei café no teclado de novo', funConfig: { selfHealEvidenceRetentionDays: 60 }, now: 1000 });
+  service.observeMessage({ scopeKey: scope, userJid: author, messageId: 'm-1', text: 'Hoje eu derrubei café no teclado de novo', funConfig: { selfHealEvidenceRetentionDays: 60, selfHealEnabled: true }, now: 1000 });
+  service.observeMessage({ scopeKey: scope, userJid: author, messageId: 'm-1', text: 'Hoje eu derrubei café no teclado de novo', funConfig: { selfHealEvidenceRetentionDays: 60, selfHealEnabled: true }, now: 1000 });
   assert.equal(evidence.countByScope(scope), 1);
+});
+
+test('auto-aprimoramento desativado: não captura evidência e bloqueia varreduras', async () => {
+  const { memory, evidence } = setup(); const scope = group(); const author = jid();
+  const service = createGroupMemoryService({ memoryRepository: memory, evidenceRepository: evidence });
+  service.observeMessage({ scopeKey: scope, userJid: author, messageId: 'm-disabled', text: 'Mensagem de teste', funConfig: { selfHealEvidenceRetentionDays: 60, selfHealEnabled: false }, now: 1000 });
+  assert.equal(evidence.countByScope(scope), 0, 'não deve salvar evidência quando selfHealEnabled: false');
+
+  const healingService = selfHealing(setup(), async () => ({ domain: 'memory_lore', findings: [] }), { selfHealEnabled: false });
+  const sweepResult = await healingService.runSweep({ scopeKey: scope });
+  assert.deepEqual(sweepResult, { ok: false, reason: 'self-heal-disabled' }, 'runSweep deve abortar imediatamente quando desativado');
 });
 
 test('validador rejeita schema inválido e classifica risco deterministicamente', () => {

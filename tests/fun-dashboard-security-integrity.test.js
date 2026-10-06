@@ -347,6 +347,21 @@ test('dashboard security: bypass de ownership, rotas admin e mascaramento públi
     const publicOverviewJson = await publicOverviewRes.json();
     assert.equal(publicOverviewJson.topXp[0].userJid, 'user_****0001');
     assert.equal(publicOverviewJson.topCoins[0].userJid, 'user_****0001');
+    assert.ok(publicOverviewJson.economy, 'economy deve existir no overview');
+    assert.equal(typeof publicOverviewJson.economy.circulatingCoins, 'number');
+    assert.equal(typeof publicOverviewJson.economy.baselineCoins, 'number');
+    assert.ok(
+      ['stable', 'inflationary', 'deflationary', 'high_inequality'].includes(
+        publicOverviewJson.economy.healthStatus
+      )
+    );
+    assert.equal(typeof publicOverviewJson.economy.healthLabel, 'string');
+    assert.equal(typeof publicOverviewJson.economy.gini, 'number');
+    assert.ok(publicOverviewJson.activity, 'activity deve existir no overview');
+    assert.equal(typeof publicOverviewJson.activity.activePlayers24h, 'number');
+    assert.ok(publicOverviewJson.botStatus, 'botStatus deve existir no overview');
+    assert.equal(typeof publicOverviewJson.botStatus.uptimeSeconds, 'number');
+    assert.equal(typeof publicOverviewJson.botStatus.socketReady, 'boolean');
 
     const publicLeaderboardRes = await fetch(`${api}/api/fun/leaderboard?scope=${encodeURIComponent(scopeKey)}`);
     const publicLeaderboardJson = await publicLeaderboardRes.json();

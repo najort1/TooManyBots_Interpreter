@@ -18,8 +18,8 @@ test('reconciliação prioriza evidência e depois recência, suprimindo contrad
   const h = await createPersonaMemoryHarness();
   const scopeKey = `reconcile-${Date.now()}@g.us`;
   const base = { scopeKey, subjectUserJid: 'ana@s.whatsapp.net', factKey: 'status', confidence: 0.9, expiresAt: 99_999 };
-  const old = h.memory.create({ ...base, id: 'old', factText: 'Ana mora no Rio', confirmationLevel: 'explicit', now: 1_000 }).memory;
-  const winner = h.memory.create({ ...base, id: 'new', factText: 'Ana mora em SP', confirmationLevel: 'corroborated', now: 2_000 }).memory;
+  const old = h.memory.create({ ...base, id: `old-${Date.now()}`, factText: 'Ana mora no Rio', confirmationLevel: 'explicit', now: 1_000 }).memory;
+  const winner = h.memory.create({ ...base, id: `new-${Date.now()}`, factText: 'Ana mora em SP', confirmationLevel: 'corroborated', now: 2_000 }).memory;
   const result = createMemoryDecayService({ conversationMemoryRepository: h.memory }).reconcile({ scopeKey, subjectUserJid: base.subjectUserJid, factKey: base.factKey, now: 3_000 });
   assert.equal(result.winner.id, winner.id);
   assert.deepEqual(result.suppressedIds, [old.id]);

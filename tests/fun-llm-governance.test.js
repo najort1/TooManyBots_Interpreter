@@ -34,7 +34,8 @@ describe('Governança Centralizada de LLM (fun/llm/llmGovernance)', () => {
     ];
 
     for (const key of expectedKeys) {
-      assert.strictEqual(DEFAULT_LLM_FEATURES[key], true, `Feature ${key} deve ser true por padrão`);
+      const expectedDefault = key === 'selfHeal' ? false : true;
+      assert.strictEqual(DEFAULT_LLM_FEATURES[key], expectedDefault, `Feature ${key} deve ser ${expectedDefault} por padrão`);
       assert.ok(LLM_FEATURE_METADATA[key], `Metadados de ${key} devem existir`);
       assert.ok(LLM_FEATURE_METADATA[key].name, `Nome de ${key} deve existir`);
       assert.ok(LLM_FEATURE_METADATA[key].fallback, `Fallback de ${key} deve existir`);

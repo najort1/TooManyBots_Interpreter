@@ -1833,3 +1833,40 @@ test('persona: reply ao bot com falso positivo ("parar de sumir") não é bloque
   assert.equal(reply.responded, true);
   assert.notEqual(reply.reason, 'stop-request');
 });
+
+test('REGRESSAO: persona passa userJid e scopeKey para generateZen sem ReferenceError', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let capturedInput = null;
+    const authorJid = uniqueJid('5511');
+    const scope = uniqueGroup();
+    const { svc, sock, identityMap, cfg } = setup(baseConfig, undefined, null, {
+      generateZen: async (input) => {
+        capturedInput = input;
+        return 'Fala aí meu nobre, estou 100% ativo!';
+      },
+    });
+    sock.sendMessage = async () => ({ key: { id: 'persona-zen-args-1' } });
+
+    const res = await svc.tryRespond({
+      scopeKey: scope,
+      text: 'bot como vc tá?',
+      authorJid,
+      sock,
+      identityMap,
+      funConfig: cfg,
+      now: 10_500_000,
+    });
+
+    assert.equal(res.responded, true);
+    assert.equal(res.usedFallback, false);
+    assert.ok(capturedInput, 'generateZen deve ter sido chamado');
+    assert.equal(capturedInput.task, 'persona');
+    assert.equal(capturedInput.scopeKey, scope);
+    assert.equal(capturedInput.userJid, authorJid);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});

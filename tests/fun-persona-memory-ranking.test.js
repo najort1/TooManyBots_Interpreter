@@ -5,12 +5,14 @@ import { createPersonaMemoryHarness } from './helpers/funPersonaMemoryTestHarnes
 test('retrieval separa confirmação, inferência, memória sensível e escopo', async () => {
   const h = await createPersonaMemoryHarness();
   const now = 2_000_000;
-  const add = (entry) => h.memory.create({ scopeKey: 'a@g.us', factText: entry.factText, confidence: entry.confidence || 0.9, confirmationLevel: entry.confirmationLevel || 'explicit', sensitivityLevel: entry.sensitivityLevel || 'safe', keywords: ['pizza'], now });
+  const scopeA = `rank-a-${Date.now()}@g.us`;
+  const scopeB = `rank-b-${Date.now()}@g.us`;
+  const add = (entry) => h.memory.create({ scopeKey: scopeA, factText: entry.factText, confidence: entry.confidence || 0.9, confirmationLevel: entry.confirmationLevel || 'explicit', sensitivityLevel: entry.sensitivityLevel || 'safe', keywords: ['pizza'], now });
   add({ factText: 'Ana gosta de pizza' });
   add({ factText: 'Ana talvez ame pizza', confirmationLevel: 'inferred' });
   add({ factText: 'segredo pizza', sensitivityLevel: 'sensitive' });
-  h.memory.create({ scopeKey: 'b@g.us', factText: 'leak', confidence: 1, confirmationLevel: 'explicit', keywords: ['pizza'], now });
-  const result = h.memoryRetrievalService.retrieve({ scopeKey: 'a@g.us', text: 'pizza', now });
+  h.memory.create({ scopeKey: scopeB, factText: 'leak', confidence: 1, confirmationLevel: 'explicit', keywords: ['pizza'], now });
+  const result = h.memoryRetrievalService.retrieve({ scopeKey: scopeA, text: 'pizza', now });
   assert.equal(result.confirmedFacts.length, 1);
   assert.equal(result.inferredSignals.length, 1);
   assert.equal(result.selectedMemoryIds.length, 2);
