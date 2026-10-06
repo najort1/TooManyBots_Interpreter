@@ -12,40 +12,79 @@ import {
   RotateCw,
   Search,
   ZapOff,
+  Activity,
 } from "lucide-react";
-import { AppShell } from "@/components/layout/AppShell";
+import { AppShell, useDashboardScope } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { funApi } from "@/lib/api";
-import type { LlmConfigResponse, LlmFeatureItem } from "@/lib/types";
+import type { LlmConfigResponse, LlmFeatureItem, LlmAnalyticsResponse } from "@/lib/types";
+import { LlmAnalyticsView } from "@/components/llm/LlmAnalyticsView";
 
 export default function LlmPage() {
+  const [activeTab, setActiveTab] = useState<"analytics" | "config">("analytics");
+  const [days, setDays] = useState(7);
+  const [selectedScope, setSelectedScope] = useState<string>("");
+  const [analyticsData, setAnalyticsData] = useState<LlmAnalyticsResponse | null>(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(true);
+
   const [config, setConfig] = useState<LlmConfigResponse | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingConfig, setLoadingConfig] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveSuccess, setSaveSuccess] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const scopeState = useDashboardScope();
+
+  const loadAnalytics = useCallback(async () => {
+    setAnalyticsLoading(true);
     setError(null);
+    try {
+      const data = await funApi.llmAnalytics({
+        scope: selectedScope,
+        days,
+      });
+      setAnalyticsData(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao carregar métricas de LLM");
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  }, [selectedScope, days]);
+
+  const loadConfig = useCallback(async () => {
+    setLoadingConfig(true);
     try {
       const data = await funApi.llmConfig();
       setConfig(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha ao carregar configurações de LLM");
     } finally {
-      setLoading(false);
+      setLoadingConfig(false);
     }
   }, []);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    void loadAnalytics();
+  }, [loadAnalytics]);
+
+  useEffect(() => {
+    if (activeTab === "config" && !config) {
+      void loadConfig();
+    }
+  }, [activeTab, config, loadConfig]);
+
+  const handleRefresh = useCallback(() => {
+    if (activeTab === "analytics") {
+      void loadAnalytics();
+    } else {
+      void loadConfig();
+    }
+  }, [activeTab, loadAnalytics, loadConfig]);
 
   const updateConfig = async (patch: { zenEnabled?: boolean; llmFeatures?: Record<string, boolean> }) => {
     if (!config) return;
@@ -141,172 +180,226 @@ export default function LlmPage() {
   return (
     <AppShell
       title="IA & Modelos de Linguagem"
-      subtitle="Controle central de ativação e fallbacks das funcionalidades com LLM do bot Fun"
-      onRefresh={() => void load()}
-      refreshing={loading}
+      subtitle={
+        activeTab === "analytics"
+          ? "Telemetria de chamadas, consumo de tokens, latência e auditoria de IA no bot Fun"
+          : "Controle central de ativação e fallbacks das funcionalidades com LLM do bot Fun"
+      }
+      onRefresh={handleRefresh}
+      refreshing={activeTab === "analytics" ? analyticsLoading : loadingConfig}
       status={error}
+      allowAllGroups={true}
+      scopeOverride={selectedScope}
+      onScopeOverrideChange={setSelectedScope}
     >
       <div className="mx-auto max-w-5xl space-y-6">
-        {/* Banner de Feedback de Salvamento */}
-        {saveSuccess && (
-          <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2.5 text-sm font-medium text-emerald-700 dark:text-emerald-300">
-            <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-            Configuração sincronizada e aplicada imediatamente no bot em tempo real!
-          </div>
+        {/* Switcher de Abas: Métricas vs Governança */}
+        <div className="flex border-b border-zinc-200 dark:border-zinc-800">
+          <button
+            type="button"
+            onClick={() => setActiveTab("analytics")}
+            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors ${
+              activeTab === "analytics"
+                ? "border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400"
+                : "border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+            }`}
+          >
+            <Activity className="h-4 w-4" />
+            Telemetria & Métricas de IA
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("config")}
+            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors ${
+              activeTab === "config"
+                ? "border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400"
+                : "border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+            }`}
+          >
+            <Settings2 className="h-4 w-4" />
+            Governança & Feature Flags
+          </button>
+        </div>
+
+        {/* Aba 1: Telemetria & Métricas de IA */}
+        {activeTab === "analytics" && (
+          <LlmAnalyticsView
+            data={analyticsData}
+            loading={analyticsLoading}
+            days={days}
+            onDaysChange={setDays}
+            onRefresh={() => void loadAnalytics()}
+            scope={selectedScope}
+            onScopeChange={setSelectedScope}
+            groups={scopeState.groups}
+          />
         )}
 
-        {/* Hero Card: Master Switch */}
-        <div className="relative overflow-hidden rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
-          <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-4">
-              <div
-                className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl transition-colors ${
-                  masterOn
-                    ? "bg-emerald-600/15 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400"
-                    : "bg-amber-600/15 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400"
-                }`}
-              >
-                {masterOn ? <Sparkles className="h-6 w-6" /> : <ZapOff className="h-6 w-6" />}
+        {/* Aba 2: Governança & Feature Flags */}
+        {activeTab === "config" && (
+          <div className="space-y-6">
+            {/* Banner de Feedback de Salvamento */}
+            {saveSuccess && (
+              <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2.5 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+                <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                Configuração sincronizada e aplicada imediatamente no bot em tempo real!
               </div>
-              <div className="space-y-1">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
-                    Master Switch: LLM Global
-                  </h2>
-                  <Badge tone={masterOn ? "success" : "warn"}>
-                    {masterOn ? "ONLINE (Zen Ativo)" : "MODO ECONÔMICO (Offline / Templates)"}
-                  </Badge>
-                  {saving && (
-                    <span className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
-                      <RotateCw className="h-3 w-3 animate-spin" />
-                      Gravando...
-                    </span>
-                  )}
+            )}
+
+            {/* Hero Card: Master Switch */}
+            <div className="relative overflow-hidden rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+              <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex items-start gap-4">
+                  <div
+                    className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl transition-colors ${
+                      masterOn
+                        ? "bg-emerald-600/15 text-emerald-600 dark:bg-emerald-500/20 dark:text-emerald-400"
+                        : "bg-amber-600/15 text-amber-600 dark:bg-amber-500/20 dark:text-amber-400"
+                    }`}
+                  >
+                    {masterOn ? <Sparkles className="h-6 w-6" /> : <ZapOff className="h-6 w-6" />}
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50">
+                        Master Switch: LLM Global
+                      </h2>
+                      <Badge tone={masterOn ? "success" : "warn"}>
+                        {masterOn ? "ONLINE (Zen Ativo)" : "MODO ECONÔMICO (Offline / Templates)"}
+                      </Badge>
+                      {saving && (
+                        <span className="flex items-center gap-1 text-xs text-zinc-500 dark:text-zinc-400">
+                          <RotateCw className="h-3 w-3 animate-spin" />
+                          Gravando...
+                        </span>
+                      )}
+                    </div>
+                    <p className="max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
+                      {masterOn
+                        ? "O LLM está ativo. As funções abaixo geram conteúdos inteligentes e dinâmicos via OpenCode Zen / OpenAI."
+                        : "O LLM está desligado globalmente. NENHUMA chamada externa de IA é feita. Todas as funções usam templates estáticos e bancos locais instantâneos (zero latência e custo zero)."}
+                    </p>
+                  </div>
                 </div>
-                <p className="max-w-2xl text-sm text-zinc-600 dark:text-zinc-400">
-                  {masterOn
-                    ? "O LLM está ativo. As funções abaixo geram conteúdos inteligentes e dinâmicos via OpenCode Zen / OpenAI."
-                    : "O LLM está desligado globalmente. NENHUMA chamada externa de IA é feita. Todas as funções usam templates estáticos e bancos locais instantâneos (zero latência e custo zero)."}
-                </p>
+
+                <div className="flex items-center gap-3 sm:self-center">
+                  <span className="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    {masterOn ? "Ligado" : "Desligado"}
+                  </span>
+                  <Switch
+                    id="master-llm-switch"
+                    size="lg"
+                    checked={masterOn}
+                    onCheckedChange={handleMasterToggle}
+                    disabled={loadingConfig || saving}
+                    aria-label="Liga ou desliga todo o LLM do bot globalmente"
+                  />
+                </div>
+              </div>
+
+              {/* Dados de Endpoint */}
+              <div className="mt-5 grid gap-3 border-t border-zinc-100 pt-4 sm:grid-cols-2 dark:border-zinc-800/80">
+                <div className="rounded-lg bg-zinc-50 px-3.5 py-2.5 dark:bg-zinc-800/40">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    Endpoint Zen
+                  </span>
+                  <div className="mt-0.5 font-mono text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                    {config?.zenBaseUrl || "http://localhost:20128/v1"}
+                  </div>
+                </div>
+                <div className="rounded-lg bg-zinc-50 px-3.5 py-2.5 dark:bg-zinc-800/40">
+                  <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+                    Modelo Configurado
+                  </span>
+                  <div className="mt-0.5 font-mono text-xs font-semibold text-zinc-800 dark:text-zinc-200">
+                    {config?.zenModel || "bot-zap"}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="flex items-center gap-3 sm:self-center">
-              <span className="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                {masterOn ? "Ligado" : "Desligado"}
-              </span>
-              <Switch
-                id="master-llm-switch"
-                size="lg"
-                checked={masterOn}
-                onCheckedChange={handleMasterToggle}
-                disabled={loading || saving}
-                aria-label="Liga ou desliga todo o LLM do bot globalmente"
-              />
-            </div>
-          </div>
+            {/* Barra de Filtros e Ações Rápidas */}
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative w-full sm:w-64">
+                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-400" />
+                  <Input
+                    placeholder="Buscar funcionalidade..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="h-9 pl-8 text-sm"
+                  />
+                </div>
 
-          {/* Dados de Endpoint */}
-          <div className="mt-5 grid gap-3 border-t border-zinc-100 pt-4 sm:grid-cols-2 dark:border-zinc-800/80">
-            <div className="rounded-lg bg-zinc-50 px-3.5 py-2.5 dark:bg-zinc-800/40">
-              <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                Endpoint Zen
-              </span>
-              <div className="mt-0.5 font-mono text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-                {config?.zenBaseUrl || "http://localhost:20128/v1"}
+                <div className="flex flex-wrap gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategory("all")}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                      selectedCategory === "all"
+                        ? "bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900"
+                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
+                    }`}
+                  >
+                    Todas ({config?.items?.length || 0})
+                  </button>
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
+                        selectedCategory === cat
+                          ? "bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900"
+                          : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-            <div className="rounded-lg bg-zinc-50 px-3.5 py-2.5 dark:bg-zinc-800/40">
-              <span className="text-[11px] font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
-                Modelo Configurado
-              </span>
-              <div className="mt-0.5 font-mono text-xs font-semibold text-zinc-800 dark:text-zinc-200">
-                {config?.zenModel || "bot-zap"}
-              </div>
-            </div>
-          </div>
-        </div>
 
-        {/* Barra de Filtros e Ações Rápidas */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="relative w-full sm:w-64">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-400" />
-              <Input
-                placeholder="Buscar funcionalidade..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="h-9 pl-8 text-sm"
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-1">
-              <button
-                type="button"
-                onClick={() => setSelectedCategory("all")}
-                className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                  selectedCategory === "all"
-                    ? "bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900"
-                    : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
-                }`}
-              >
-                Todas ({config?.items?.length || 0})
-              </button>
-              {categories.map((cat) => (
-                <button
-                  key={cat}
-                  type="button"
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium transition-colors ${
-                    selectedCategory === cat
-                      ? "bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900"
-                      : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-800 dark:text-zinc-400 dark:hover:bg-zinc-700"
-                  }`}
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleToggleAll(true)}
+                  disabled={loadingConfig || saving}
                 >
-                  {cat}
-                </button>
+                  Ativar Todos
+                </Button>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => handleToggleAll(false)}
+                  disabled={loadingConfig || saving}
+                >
+                  Desativar Todos
+                </Button>
+              </div>
+            </div>
+
+            {/* Grid de Funcionalidades */}
+            <div className="grid gap-4 sm:grid-cols-2">
+              {filteredItems.map((item) => (
+                <FeatureCard
+                  key={item.id}
+                  item={item}
+                  masterEnabled={masterOn}
+                  disabled={loadingConfig || saving}
+                  onToggle={(checked) => handleFeatureToggle(item.id, checked)}
+                />
               ))}
+
+              {filteredItems.length === 0 && (
+                <div className="col-span-full rounded-xl border border-dashed border-zinc-200 p-8 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
+                  Nenhuma funcionalidade encontrada para os filtros aplicados.
+                </div>
+              )}
             </div>
           </div>
-
-          <div className="flex items-center gap-2 self-end sm:self-auto">
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => handleToggleAll(true)}
-              disabled={loading || saving}
-            >
-              Ativar Todos
-            </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={() => handleToggleAll(false)}
-              disabled={loading || saving}
-            >
-              Desativar Todos
-            </Button>
-          </div>
-        </div>
-
-        {/* Grid de Funcionalidades */}
-        <div className="grid gap-4 sm:grid-cols-2">
-          {filteredItems.map((item) => (
-            <FeatureCard
-              key={item.id}
-              item={item}
-              masterEnabled={masterOn}
-              disabled={loading || saving}
-              onToggle={(checked) => handleFeatureToggle(item.id, checked)}
-            />
-          ))}
-
-          {filteredItems.length === 0 && (
-            <div className="col-span-full rounded-xl border border-dashed border-zinc-200 p-8 text-center text-sm text-zinc-500 dark:border-zinc-800 dark:text-zinc-400">
-              Nenhuma funcionalidade encontrada para os filtros aplicados.
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </AppShell>
   );
