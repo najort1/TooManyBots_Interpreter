@@ -12,6 +12,7 @@ import type {
   Faction,
   FunConfig,
   LlmConfigResponse,
+  LlmAnalyticsResponse,
   FunGroup,
   GroupSettings,
   CommandCatalogResponse,
@@ -32,6 +33,12 @@ import type {
   SpawnGamePayload,
   SpawnGameResult,
   YouTubeSearchResult,
+  EconomyMetrics,
+  EconomyInterventionPayload,
+  EconomyInterventionResult,
+  LogsResponse,
+  LogLevel,
+  LogDomain,
 } from "./types";
 
 /**
@@ -84,6 +91,14 @@ export const funApi = {
   config: () => request<FunConfig>("/api/fun/config"),
 
   llmConfig: () => request<LlmConfigResponse>("/api/fun/llm/config"),
+
+  llmAnalytics: (params?: { scope?: string; days?: number }) => {
+    const sp = new URLSearchParams();
+    if (params?.scope) sp.set("scope", params.scope);
+    if (params?.days !== undefined) sp.set("days", String(params.days));
+    const qs = sp.toString() ? `?${sp.toString()}` : "";
+    return request<LlmAnalyticsResponse>(`/api/fun/llm/analytics${qs}`);
+  },
 
   updateLlmConfig: (payload: { zenEnabled?: boolean; llmFeatures?: Record<string, boolean> }) =>
     request<LlmConfigResponse>("/api/fun/llm/config", {
@@ -297,5 +312,33 @@ export const funApi = {
         body: JSON.stringify({ customizations, idempotencyKey }),
       }),
     imageUrl: (token: string) => `/api/fun/cars/${encodeURIComponent(token)}/image`,
+  },
+
+  economyMetrics: (scope: string) =>
+    request<EconomyMetrics>(`/api/fun/economy/metrics?scope=${encodeURIComponent(scope)}`),
+
+  economyIntervene: (payload: EconomyInterventionPayload) =>
+    request<EconomyInterventionResult>("/api/fun/economy/intervene", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  logs: (params?: {
+    since?: number;
+    limit?: number;
+    level?: LogLevel | "all";
+    domain?: LogDomain | "all";
+    search?: string;
+    scope?: string;
+  }) => {
+    const sp = new URLSearchParams();
+    if (params?.since !== undefined) sp.set("since", String(params.since));
+    if (params?.limit !== undefined) sp.set("limit", String(params.limit));
+    if (params?.level && params.level !== "all") sp.set("level", params.level);
+    if (params?.domain && params.domain !== "all") sp.set("domain", params.domain);
+    if (params?.search) sp.set("search", params.search);
+    if (params?.scope) sp.set("scope", params.scope);
+    const qs = sp.toString() ? `?${sp.toString()}` : "";
+    return request<LogsResponse>(`/api/fun/logs${qs}`);
   },
 };

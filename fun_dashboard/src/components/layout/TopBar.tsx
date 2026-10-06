@@ -16,6 +16,7 @@ type Props = {
   onRefresh?: () => void;
   refreshing?: boolean;
   status?: string | null;
+  allowAllGroups?: boolean;
 };
 
 export function TopBar({
@@ -27,6 +28,7 @@ export function TopBar({
   onRefresh,
   refreshing,
   status,
+  allowAllGroups,
 }: Props) {
   return (
     <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200 bg-white/90 px-5 py-3 backdrop-blur dark:border-zinc-800 dark:bg-zinc-900/90">
@@ -53,16 +55,25 @@ export function TopBar({
             aria-label="Grupo"
             value={scope}
             onChange={(e) => onScopeChange(e.target.value)}
-            disabled={!groups.length}
+            disabled={!groups.length && !allowAllGroups}
           >
             {!groups.length ? (
-              <option value="">Nenhum grupo na whitelist</option>
+              allowAllGroups ? (
+                <option value="">Todos os grupos (Global)</option>
+              ) : (
+                <option value="">Nenhum grupo na whitelist</option>
+              )
             ) : (
-              groups.map((g) => (
-                <option key={g.jid} value={g.jid}>
-                  {g.name || shortJid(g.jid)}
-                </option>
-              ))
+              <>
+                {allowAllGroups && (
+                  <option value="">Todos os grupos (Global)</option>
+                )}
+                {groups.map((g) => (
+                  <option key={g.jid} value={g.jid}>
+                    {g.name || shortJid(g.jid)}
+                  </option>
+                ))}
+              </>
             )}
           </Select>
         </div>

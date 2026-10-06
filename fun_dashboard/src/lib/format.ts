@@ -24,6 +24,19 @@ export function formatMs(ms: number | undefined | null) {
   return `${Math.round(v / 60_000)} min`;
 }
 
+export function formatUptime(seconds: number | undefined | null) {
+  const s = Math.max(0, Math.floor(Number(seconds) || 0));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  const rm = m % 60;
+  if (h < 24) return `${h}h ${rm}m`;
+  const d = Math.floor(h / 24);
+  const rh = h % 24;
+  return `${d}d ${rh}h`;
+}
+
 export function formatEndsIn(endsAt: number) {
   const left = Math.max(0, Number(endsAt) - Date.now());
   if (left <= 0) return "encerrado";

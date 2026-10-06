@@ -50,6 +50,25 @@ export type Overview = {
     tarot: boolean;
     privateReplies: boolean;
   };
+  economy?: {
+    circulatingCoins: number;
+    baselineCoins: number;
+    healthStatus: "stable" | "inflationary" | "deflationary" | "high_inequality";
+    healthLabel: string;
+    gini: number;
+    totalMembers?: number;
+    economicPlayers?: number;
+    passiveMembers?: number;
+    participationRate?: number;
+  };
+  activity?: {
+    activePlayers24h: number;
+    totalTransactions24h?: number;
+  };
+  botStatus?: {
+    uptimeSeconds: number;
+    socketReady: boolean;
+  };
 };
 
 export type ChangelogGroup = {
@@ -178,6 +197,128 @@ export type LlmConfigResponse = {
   masterEnabled: boolean;
   persisted?: boolean;
   appliedImmediately?: boolean;
+};
+
+export type LlmDailyMetric = {
+  date: string;
+  calls: number;
+  success: number;
+  errors: number;
+  fallbacks: number;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  avgDurationMs: number;
+};
+
+export type LlmTaskMetric = {
+  task: string;
+  calls: number;
+  totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  avgDurationMs: number;
+  errors: number;
+  percentage: number;
+};
+
+export type LlmDistributionMetric = {
+  provider?: string;
+  model?: string;
+  calls: number;
+  totalTokens: number;
+  avgDurationMs: number;
+  percentage: number;
+};
+
+export type LlmHourMetric = {
+  hour: number;
+  calls: number;
+  avgDurationMs: number;
+};
+
+export type LlmGroupMetric = {
+  scopeKey: string;
+  groupName: string;
+  calls: number;
+  totalTokens: number;
+  avgDurationMs: number;
+};
+
+export type LlmUserMetric = {
+  userJid: string;
+  userName: string;
+  calls: number;
+  totalTokens: number;
+};
+
+export type LlmCallLog = {
+  id: number;
+  createdAt: number;
+  scopeKey: string;
+  groupName?: string;
+  userJid: string;
+  userName?: string;
+  task: string;
+  provider: string;
+  model: string;
+  status: "success" | "error" | "timeout" | "fallback" | string;
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  durationMs: number;
+  promptPreview: string;
+  responsePreview: string;
+  errorMessage: string | null;
+  costEstimated: number;
+};
+
+export type LlmAnalyticsSummary = {
+  totalCalls: number;
+  successfulCalls: number;
+  errorCalls: number;
+  fallbackCalls: number;
+  successRate: number;
+  fallbackRate: number;
+  totalTokens: number;
+  promptTokens: number;
+  completionTokens: number;
+  avgTokensPerCall: number;
+  avgDurationMs: number;
+  p95DurationMs: number;
+  totalDurationMs: number;
+  estimatedCostUsd: number;
+  activeProvider: string;
+  activeModel: string;
+  masterEnabled: boolean;
+};
+
+export type LlmAnalyticsResponse = {
+  ok: boolean;
+  period: {
+    days: number;
+    fromTimestamp: number;
+    toTimestamp: number;
+  };
+  summary: LlmAnalyticsSummary;
+  daily: LlmDailyMetric[];
+  byTask: LlmTaskMetric[];
+  byProvider: LlmDistributionMetric[];
+  byModel: LlmDistributionMetric[];
+  byHour: LlmHourMetric[];
+  byGroup: LlmGroupMetric[];
+  topUsers: LlmUserMetric[];
+  recentCalls: LlmCallLog[];
+  realtime?: {
+    counts: Record<string, number>;
+    lastByTask: Record<string, unknown>;
+    recent: Array<Record<string, unknown>>;
+  };
+  zenHealth?: {
+    ok: boolean;
+    baseUrl: string;
+    model: string;
+  };
 };
 
 export type GroupSettings = {
@@ -647,3 +788,108 @@ export type AvatarApplyError = Error & {
   coins?: number;
   need?: number;
 };
+
+// ==========================================
+// Tipos de Gestão de Economia & Inflação
+// ==========================================
+
+export type EconomyRegulatorKnobs = {
+  volMult: number;
+  eventImpactMult: number;
+  eventFreqMult: number;
+  rewardMult: number;
+  restockMult: number;
+  flowScale: number;
+  baseNoisePct: number;
+  deceptionRate: number;
+  shockDecay: number;
+  volumeDecay: number;
+  lastRegulateAt: number;
+  narrativeSeeds: string[];
+};
+
+export type WealthBracket = {
+  bracket: string;
+  players: number;
+  totalCoins: number;
+  percentage: number;
+};
+
+export type WealthDistribution = {
+  top1Percent: number;
+  top10Percent: number;
+  bottom50Percent: number;
+  brackets: WealthBracket[];
+};
+
+export type EconomyMetrics = {
+  ok: boolean;
+  scope: string;
+  groupName?: string;
+  circulatingCoins: number;
+  baselineCoins: number;
+  gini: number;
+  activePlayers: number;
+  totalMembers?: number;
+  economicPlayers?: number;
+  passiveMembers?: number;
+  participationRate?: number;
+  investedValue: number;
+  avgAbsDeltaPct: number;
+  eventsLast24h: number;
+  inflationState: "stable" | "inflationary" | "deflationary" | "high_inequality" | "hyperinflation";
+  inflationLabel: string;
+  mintSink24h: {
+    minted: number;
+    sunk: number;
+    net: number;
+  };
+  jackpot: number;
+  factionsCount: number;
+  factionsVaultTotal: number;
+  regulator: EconomyRegulatorKnobs;
+  wealthDistribution: WealthDistribution;
+};
+
+export type EconomyInterventionPayload = {
+  scope: string;
+  action: "inject_jackpot" | "burn_jackpot" | "set_baseline" | "trigger_seed" | "adjust_knobs";
+  amount?: number;
+  seed?: string;
+  knobs?: Partial<Record<string, number>>;
+};
+
+export type EconomyInterventionResult = {
+  ok: boolean;
+  action: string;
+  message: string;
+  previousValue?: unknown;
+  newValue?: unknown;
+};
+
+// ==========================================
+// Tipos de Logs Operacionais em Tempo Real
+// ==========================================
+
+export type LogLevel = "debug" | "info" | "warn" | "error";
+export type LogDomain = "economy" | "casino" | "games" | "whatsapp" | "system" | "llm" | "social";
+
+export type SystemLogEntry = {
+  id: string;
+  timestamp: number;
+  level: LogLevel;
+  domain: LogDomain;
+  message: string;
+  scope?: string;
+  details?: Record<string, unknown>;
+};
+
+export type LogsResponse = {
+  ok: boolean;
+  logs: SystemLogEntry[];
+  total: number;
+  bufferCapacity: number;
+  dropped: number;
+  lastTimestamp: number;
+};
+
