@@ -666,7 +666,7 @@ export const DEFAULT_LLM_FEATURES = Object.freeze({
   qmp: true,
   quizRoyale: true,
   events: true,
-  selfHeal: true,
+  selfHeal: false,
   profile: true,
 });
 
@@ -784,7 +784,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   /** Limites de segurança legados para fallback de resolução de alvo. */
   groupEventFragmentMaxMessages: 4,
   groupEventReminderBatchSize: 12,
-  selfHealEnabled: true,
+  selfHealEnabled: false,
   selfHealDryRun: true,
   selfHealIntervalMs: 10 * 60_000,
   selfHealEvidenceRetentionDays: 60,
