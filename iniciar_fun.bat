@@ -171,17 +171,29 @@ echo ============================================================
 echo  [1] Iniciar Fun Bot (Terminal com QR Code)
 echo  [2] Iniciar Fun Bot + Dashboard Web 3D (Next.js)
 echo  [3] Reconfigurar Opcoes (Setup Wizard)
-echo  [4] Sair
+echo  [4] Diagnostico do Sistema (Doctor)
+echo  [5] Sair
 echo ============================================================
-set /p "CHOICE=Escolha uma opcao (1-4) [padrao: 1]: "
+set /p "CHOICE=Escolha uma opcao (1-5) [padrao: 1]: "
 
 if "%CHOICE%"=="" set "CHOICE=1"
 if "%CHOICE%"=="1" goto :start_bot_only
 if "%CHOICE%"=="2" goto :start_with_dashboard
 if "%CHOICE%"=="3" goto :reconfig
-if "%CHOICE%"=="4" goto :end_ok
+if "%CHOICE%"=="4" goto :doctor
+if "%CHOICE%"=="5" goto :end_ok
 
 echo Opcao invalida. Tente novamente.
+goto :menu
+
+:: ============================================================
+::  ACAO: Diagnostico (Doctor)
+:: ============================================================
+:doctor
+pushd "%PROJECT_DIR%"
+call node scripts/doctor.mjs
+popd
+pause
 goto :menu
 
 :: ============================================================

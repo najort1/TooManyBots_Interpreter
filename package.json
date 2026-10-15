@@ -7,9 +7,12 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
+    "setup": "node fun/scripts/setupWizard.js",
+    "doctor": "node scripts/doctor.mjs",
     "fun": "node fun/start.js",
     "fun:dev": "node --watch fun/start.js",
     "fun:setup": "node fun/scripts/setupWizard.js",
+    "fun:doctor": "node scripts/doctor.mjs",
     "fun:test-game": "node fun/scripts/test-game.mjs",
     "fun:dashboard": "npm --prefix fun_dashboard run dev -- --port 3001",
     "fun:dashboard:build": "npm --prefix fun_dashboard run build",
