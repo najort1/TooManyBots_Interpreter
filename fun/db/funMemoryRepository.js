@@ -181,8 +181,14 @@ export function createFunMemoryRepository({ getDatabase = getDb } = {}) {
     return result.changes ? getFact(id) : null;
   }
 
-  function deleteFact(id) {
+  function deleteFact(id, scopeKey = null) {
     ensureSchema();
+    if (scopeKey) {
+      const r = getDatabase()
+        .prepare(`DELETE FROM ${ANALYTICS_SCHEMA}.fun_group_memories WHERE id = ? AND scope_key = ?`)
+        .run(String(id || ''), String(scopeKey));
+      return r.changes > 0;
+    }
     const r = getDatabase()
       .prepare(`DELETE FROM ${ANALYTICS_SCHEMA}.fun_group_memories WHERE id = ?`)
       .run(String(id || ''));
