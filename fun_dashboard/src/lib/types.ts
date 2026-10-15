@@ -175,6 +175,18 @@ export type FunConfig = {
   bingoMax: number;
   casinoMin: number;
   casinoMax: number;
+  /** QMP (Quem é Mais Provável) — habilitado globalmente. */
+  qmpEnabled?: boolean;
+  /** Chance por mensagem normal do grupo de disparar pergunta automática (0–1, default 0.02). */
+  qmpAutoTriggerChance?: number;
+  /** Cooldown entre autos por grupo (ms, default 30min). */
+  qmpAutoTriggerCooldownMs?: number;
+  /** Duração da rodada de votação (ms, default 10min). */
+  qmpRoundDurationMs?: number;
+  /** Cooldown por usuário entre criar perguntas manuais (ms, default 45s). */
+  qmpCooldownMs?: number;
+  qmpHeavyEnabled?: boolean;
+  qmpHeavyEvery?: number;
 };
 
 export type LlmFeatureItem = {

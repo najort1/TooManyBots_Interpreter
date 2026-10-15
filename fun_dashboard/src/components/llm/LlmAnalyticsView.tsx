@@ -48,6 +48,7 @@ const TASK_LABELS: Record<string, { label: string; icon: typeof Bot; category: s
   profile: { label: "Perfil & Bio de Usuário", icon: Users, category: "Social" },
   memory: { label: "Extração de Memória de Grupo", icon: Database, category: "Memória" },
   socialHints: { label: "Pistas Sociais da Persona", icon: Users, category: "Memória" },
+  chemistry: { label: "Química Social (Bonds)", icon: Users, category: "Social" },
   loreReconciliation: { label: "Reconciliação de Lore", icon: Database, category: "Memória" },
   news: { label: "Redação de Notícias", icon: MessageSquare, category: "Social" },
   roast: { label: "Roast Personalizado", icon: Flame, category: "Social" },

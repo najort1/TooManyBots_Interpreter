@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Sparkles } from "lucide-react";
+import { Sparkles, Zap, ZapOff } from "lucide-react";
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { funApi } from "@/lib/api";
@@ -19,6 +19,7 @@ function SettingsBody() {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -37,6 +38,28 @@ function SettingsBody() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const toggleQmpAutoTrigger = async (enabled: boolean) => {
+    if (!cfg) return;
+    setSaving("qmp");
+    try {
+      await funApi.config(); // ensure we have latest
+      const res = await fetch("/api/fun/config", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          qmpAutoTriggerChance: enabled ? 0.02 : 0,
+        }),
+      });
+      if (!res.ok) throw new Error("Falha ao atualizar");
+      void load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Falha ao salvar");
+    } finally {
+      setSaving(null);
+    }
+  };
 
   return (
     <AppShell
@@ -99,6 +122,59 @@ function SettingsBody() {
           <p className="mt-2 text-xs text-zinc-500 dark:text-zinc-400">
             Bingo clássico removido (flood). Só modo rápido.
           </p>
+        </Section>
+
+        <Section title="QMP (Quem é Mais Provável)">
+          <KV
+            k="Habilitado"
+            v={cfg?.qmpEnabled ? "sim" : "não"}
+          />
+          <KV
+            k="QMP Surpresa (auto-trigger)"
+            v={
+              cfg?.qmpAutoTriggerChance !== undefined && cfg?.qmpAutoTriggerChance > 0
+                ? `${Math.round((cfg.qmpAutoTriggerChance ?? 0) * 100)}% por mensagem`
+                : "desligado"
+            }
+          />
+          <KV
+            k="Cooldown auto-trigger"
+            v={formatMs(cfg?.qmpAutoTriggerCooldownMs)}
+          />
+          <KV k="Duração da rodada" v={formatMs(cfg?.qmpRoundDurationMs)} />
+          <KV k="Cooldown por usuário" v={formatMs(cfg?.qmpCooldownMs)} />
+          <KV
+            k="Modo pesado"
+            v={cfg?.qmpHeavyEnabled ? `a cada ${cfg?.qmpHeavyEvery ?? 5} rodadas` : "desligado"}
+          />
+          <div className="mt-3 pt-2 border-t border-zinc-100 dark:border-zinc-800">
+            <label className="inline-flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={cfg?.qmpAutoTriggerChance !== undefined && cfg?.qmpAutoTriggerChance > 0}
+                onChange={(e) => toggleQmpAutoTrigger(e.target.checked)}
+                disabled={saving === "qmp"}
+                className="h-4 w-4 rounded border-zinc-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <span className="text-sm text-zinc-900 dark:text-zinc-50">
+                {cfg?.qmpAutoTriggerChance && cfg?.qmpAutoTriggerChance > 0 ? (
+                  <>
+                    <Zap className="h-4 w-4 text-emerald-600" />
+                    QMP Surpresa ativo &mdash; desativar
+                  </>
+                ) : (
+                  <>
+                    <ZapOff className="h-4 w-4 text-zinc-500" />
+                    QMP Surpresa desativado &mdash; ativar (2% padr&atilde;o)
+                  </>
+                )}
+              </span>
+            </label>
+            <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+              Quando ativo, o bot dispara perguntas &ldquo;Quem &eacute; Mais Prov&aacute;vel?&rdquo; automaticamente
+              com baixa chance (~2%) a cada mensagem do grupo. Desative para evitar surpresas.
+            </p>
+          </div>
         </Section>
 
         <Section title="Outbound guard" className="lg:col-span-2">

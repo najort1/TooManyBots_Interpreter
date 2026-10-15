@@ -1067,6 +1067,13 @@ export function startFunDashboardServer(deps = {}) {
           casinoMax: cfg.casinoMax,
           dashboardHost: cfg.dashboardHost,
           dashboardPort: cfg.dashboardPort,
+          qmpEnabled: cfg.qmpEnabled !== false,
+          qmpAutoTriggerChance: cfg.qmpAutoTriggerChance ?? 0.02,
+          qmpAutoTriggerCooldownMs: cfg.qmpAutoTriggerCooldownMs ?? 30 * 60_000,
+          qmpRoundDurationMs: cfg.qmpRoundDurationMs ?? 10 * 60_000,
+          qmpCooldownMs: cfg.qmpCooldownMs ?? 45_000,
+          qmpHeavyEnabled: cfg.qmpHeavyEnabled !== false,
+          qmpHeavyEvery: cfg.qmpHeavyEvery ?? 5,
         });
         return;
       }
