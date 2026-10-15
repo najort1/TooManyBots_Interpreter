@@ -209,9 +209,10 @@ export function extractJsonBlob(text) {
           try {
             const obj = JSON.parse(slice);
             if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-              // rejeita schema de exemplo do prompt: {"title":"..."}
+              // rejeita schema de exemplo do prompt: {"title":"..."} ou {"type":"reply","text":"..."}
               const values = Object.values(obj).map((v) => String(v ?? ''));
               if (values.every((v) => !v || v === '...' || /^\.+$/.test(v))) continue;
+              if (values.some((v) => v === '...' || /^\.+$/.test(v) || v === 'texto para narrar')) continue;
               if (values.some((v) => /\|/.test(v) && /combustivel|municao|arma/.test(v))) continue;
               const keys = Object.keys(obj);
               // extract/memory: {"facts":[...]} ou single-key wrappers como {"line":"..."}
@@ -294,14 +295,18 @@ export function extractChatText(data) {
   }
   const content = stripThinkingTags(rawContent);
 
-  // 1) JSON em content ou reasoning (prioridade absoluta p/ invent/market)
-  const onlyJson = extractJsonFromChat(data);
-  if (onlyJson) return onlyJson;
+  // 1) JSON explícito no content (se o modelo devolveu JSON no content)
+  const jsonFromContent = extractJsonBlob(content);
+  if (jsonFromContent) return jsonFromContent;
 
-  // 2) content limpo (flavor pt-BR) — nunca eco de regras
+  // 2) Content limpo (flavor pt-BR, persona texto livre) — se o content é bom, usa ele!
   if (content && !looksLikeIncompleteOrMeta(content)) return content;
 
-  // 3) reasoning com frase final boa (só flavor; invent usa extractJsonFromChat)
+  // 3) Se o content era vazio ou meta/incompleto, tenta JSON no reasoning (thinking models como DeepSeek)
+  const jsonFromReasoning = extractJsonBlob(reasoning);
+  if (jsonFromReasoning) return jsonFromReasoning;
+
+  // 4) Reasoning com frase final boa (só flavor; invent usa extractJsonFromChat)
   if (reasoning) {
     const fromReason = pickBestFromReasoning(reasoning);
     if (fromReason && !looksLikeIncompleteOrMeta(fromReason)) return fromReason;
@@ -475,7 +480,7 @@ export async function openaiChatComplete({
 
     const data = await res.json();
     let resultText = '';
-    if (jsonOnly || jsonMode) {
+    if (jsonOnly) {
       const only = extractJsonFromChat(data);
       if (only) {
         resultText = only;

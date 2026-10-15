@@ -382,8 +382,14 @@ export function createPersonaService({
   }
 
   async function runPersonaToolLoop({ initialCall, system, prompt, endpoint, zen, timeoutMs, funConfig, agentContext, scopeKey, text, maxChars, audioEnabled = false }) {
-    const maxCalls = Math.max(1, Math.min(5, Number(funConfig?.personaAgentMaxToolCalls) || 3));
-    const deadlineAt = clock() + Math.max(5_000, Number(funConfig?.personaAgentDeadlineMs) || timeoutMs);
+    const isUnlimited = funConfig?.personaAgentUnlimitedTools !== false;
+    const maxCalls = isUnlimited
+      ? Infinity
+      : Math.max(1, Math.min(5, Number(funConfig?.personaAgentMaxToolCalls) || 3));
+    const hasExplicitShortDeadline = Number(funConfig?.personaAgentDeadlineMs) > 0 && Number(funConfig.personaAgentDeadlineMs) < 60_000;
+    const deadlineAt = (!isUnlimited || hasExplicitShortDeadline)
+      ? clock() + Math.max(5_000, Number(funConfig?.personaAgentDeadlineMs) || timeoutMs)
+      : Infinity;
     const executed = new Set();
     const trace = [];
     const dispatchActions = [];
@@ -392,6 +398,7 @@ export function createPersonaService({
     const silentToolCounts = new Map();
     const failedToolCounts = new Map();
     let lastDisplayText = '';
+    let lastRaw = '';
     let sideEffectExecuted = false;
     let call = initialCall;
 
@@ -418,7 +425,7 @@ export function createPersonaService({
         now: Number(agentContext?.now) || Date.now(),
       });
       const displayText = cleanPromptText(toolResult?.text, Math.max(600, maxChars * 6));
-      if (toolResult?.ok && displayText) lastDisplayText = displayText;
+      if (toolResult?.ok && displayText && shouldDisplayPersonaToolOutput(call.name)) lastDisplayText = displayText;
       if (toolResult?.ok && isPersonaSideEffectTool(call.name)) sideEffectExecuted = true;
       if (toolResult?.ok) {
         const toolDispatchActions = Array.isArray(toolResult?.dispatchActions) ? toolResult.dispatchActions : [];
@@ -447,7 +454,7 @@ export function createPersonaService({
       trace.push({ name: call.name, ok: Boolean(toolResult?.ok), summary });
       logger?.debug?.('[personaService] tool scope=%s step=%d tool=%s ok=%s', scopeKey, index + 1, call.name, Boolean(toolResult?.ok));
       const traceText = trace.map((item, itemIndex) => `${itemIndex + 1}. ${item.name} (${item.ok ? 'ok' : 'falhou'}): ${item.summary}`).join('\n');
-      const remainingMs = deadlineAt - clock();
+      const remainingMs = deadlineAt === Infinity ? Infinity : deadlineAt - clock();
 
       if (remainingMs <= 0) break;
 
@@ -459,14 +466,15 @@ export function createPersonaService({
         model: endpoint.model,
         prompt: `${prompt}\n\nResultados reais das ferramentas:\n${traceText}\n\nEscolha a próxima tool somente se ela for necessária, ou responda com reply/actions. Não invente dados nem diga que uma tool falhou executou com sucesso.`,
         system: `${system}\n\n${buildPersonaToolManifest({ audioEnabled })}`,
-        timeoutMs: Math.min(timeoutMs, remainingMs),
+        timeoutMs: Number.isFinite(remainingMs) ? Math.min(timeoutMs, remainingMs) : timeoutMs,
         maxTokens: zen.maxTokens,
         temperature: zen.temperature,
         apiKey: endpoint.apiKey,
         sendSamplingParams: funConfig?.zenSendSamplingParams !== false,
         jsonMode: true,
-        jsonOnly: true,
+        jsonOnly: false,
       });
+      lastRaw = raw;
       const decision = parsePersonaEnvelope(raw, { maxChars });
       if (!decision.ok) break;
       if (decision.envelope.type === 'tool_call') {
@@ -514,7 +522,10 @@ export function createPersonaService({
     }
 
     const toolPrefix = formatToolExecutionNotice(silentToolCounts, fullOutputTexts, failedToolCounts);
-    const lastResult = lastDisplayText || toolPrefix || trace.at(-1)?.summary || '';
+    const directReply = lastRaw && !looksLikeRawJson(lastRaw) && !looksLikeScoreboardEcho(lastRaw)
+      ? sanitizePersonaResponse(stripToolEcho(lastRaw, lastDisplayText), maxChars)
+      : '';
+    const lastResult = directReply || lastDisplayText || toolPrefix || trace.at(-1)?.summary || '';
     const fallback = sanitizePersonaResponse(lastResult, Math.max(maxChars, 1_600));
     if (!fallback && !dispatchActions.length) return '';
     return {
@@ -635,6 +646,7 @@ export function createPersonaService({
       })
       .filter(Boolean);
 
+    const agentEnabled = Boolean(personaToolExecutor && funConfig?.personaToolsEnabled !== false);
     const system = [
       buildPersonaSystemPrompt({
         styleBlock,
@@ -644,6 +656,7 @@ export function createPersonaService({
         contextTurns: o.contextTurns,
         botLocalParts: new Set(agentContext?.botLocalParts || []),
         botName: agentContext?.botName || groupIdentity.botName || '',
+        agentEnabled,
       }),
       buildTemporalBlock(currentNow, o.timezone),
       buildFactTemporalContext({ now: currentNow, timeZone: o.timezone }),
@@ -698,7 +711,7 @@ export function createPersonaService({
           apiKey: ep.apiKey,
           sendSamplingParams: funConfig?.zenSendSamplingParams !== false,
           jsonMode: agentEnabled,
-          jsonOnly: agentEnabled,
+          jsonOnly: false,
         });
 
         if (agentEnabled) {
