@@ -113,6 +113,13 @@ export const ZEN_TASK_DEFAULTS = Object.freeze({
     jsonMode: true,
     jsonOnly: true,
   }),
+  chemistry: Object.freeze({
+    temperature: 0.3,
+    maxTokens: 700,
+    timeoutMs: 45_000,
+    jsonMode: true,
+    jsonOnly: true,
+  }),
 });
 
 /**

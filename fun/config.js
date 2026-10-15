@@ -1286,6 +1286,10 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.personaToolCooldownMs,
       { min: 5_000, max: 30 * 60_000, rounding: 'floor', clamp: true }
     ),
+    personaAgentUnlimitedTools: normalizeBoolean(
+      raw.personaAgentUnlimitedTools,
+      DEFAULT_FUN_CONFIG.personaAgentUnlimitedTools
+    ),
     personaAgentMaxToolCalls: normalizeInt(
       raw.personaAgentMaxToolCalls,
       DEFAULT_FUN_CONFIG.personaAgentMaxToolCalls,
@@ -1371,6 +1375,13 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.personaSocialHintsMinConfidence,
       { min: 0, max: 100, rounding: 'floor', clamp: true }
     ),
+    personaChemistryEnabled: normalizeBoolean(raw.personaChemistryEnabled, DEFAULT_FUN_CONFIG.personaChemistryEnabled),
+    personaChemistryBatchSize: normalizeInt(raw.personaChemistryBatchSize, DEFAULT_FUN_CONFIG.personaChemistryBatchSize, {
+      min: 8, max: 200, rounding: 'floor', clamp: true,
+    }),
+    personaChemistryMaxAbsDelta: normalizeInt(raw.personaChemistryMaxAbsDelta, DEFAULT_FUN_CONFIG.personaChemistryMaxAbsDelta, {
+      min: 1, max: 30, rounding: 'floor', clamp: true,
+    }),
     personaTokenHalfLifeMs: normalizeInt(
       raw.personaTokenHalfLifeMs,
       DEFAULT_FUN_CONFIG.personaTokenHalfLifeMs,

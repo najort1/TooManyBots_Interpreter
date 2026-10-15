@@ -296,7 +296,9 @@ export function applyFunPreset({
         imageGenEnabled: true,
         ollamaEnabled: false,
         selfHealEnabled: true,
-        personaSocialHintsEnabled: true,
+        // Desativado no experimento: substituído pelo personaChemistry.
+        personaSocialHintsEnabled: false,
+        personaChemistryEnabled: true,
         groupEventsEnabled: true,
       }
     : {
@@ -304,6 +306,7 @@ export function applyFunPreset({
         ollamaEnabled: false,
         selfHealEnabled: false,
         personaSocialHintsEnabled: false,
+        personaChemistryEnabled: false,
         groupEventsEnabled: false,
       };
 

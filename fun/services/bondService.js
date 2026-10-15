@@ -255,6 +255,61 @@ export function createBondService({
     };
   }
 
+  /**
+   * Aplica deltas de química inferidos por IA (lote de mensagens) a um par.
+   * Não usa o soft-cap diário de `recordAction` — o próprio lote de N mensagens
+   * reais já limita a frequência, e cada eixo é clampado em ±maxAbsDelta.
+   */
+  function applyChemistryDelta({ scopeKey, userA, userB, deltas = {}, maxAbsDelta = 8, now = Date.now() }) {
+    const s = String(scopeKey || '').trim();
+    const a = String(userA || '').trim();
+    const b = String(userB || '').trim();
+    if (!s || !a || !b || a === b) {
+      return { ok: false, reason: 'invalid-participants' };
+    }
+
+    const limit = Math.max(1, Number(maxAbsDelta) || 8);
+    const bond = getBondWithDecay(s, a, b, now);
+
+    const dA = clamp(Number(deltas.affection) || 0, -limit, limit);
+    const dR = clamp(Number(deltas.rivalry) || 0, -limit, limit);
+    const dI = clamp(Number(deltas.intimacy) || 0, -limit, limit);
+    const dC = clamp(Number(deltas.chaos) || 0, -limit, limit);
+
+    const newA = clamp(bond.affection + dA);
+    const newR = clamp(bond.rivalry + dR);
+    const newI = clamp(bond.intimacy + dI);
+    const newC = clamp(bond.chaos + dC);
+
+    const archetypeInfo = classifyBond({ affection: newA, rivalry: newR, intimacy: newI, chaos: newC });
+
+    const saved = bondRepository.saveBond({
+      scopeKey: s,
+      userA: bond.userA,
+      userB: bond.userB,
+      affection: newA,
+      rivalry: newR,
+      intimacy: newI,
+      chaos: newC,
+      archetype: archetypeInfo.key,
+      lastAction: 'ai_chemistry',
+      lastActorJid: bond.lastActorJid || '',
+      dailyPointsAcc: bond.dailyPointsAcc || 0,
+      lastInteractionAt: now,
+      lastDecayAt: now,
+      interactionsCount: (bond.interactionsCount || 0) + 1,
+      flags: bond.flags || {},
+      updatedAt: now,
+    });
+
+    return {
+      ok: true,
+      bond: saved,
+      archetype: archetypeInfo,
+      applied: { affection: dA, rivalry: dR, intimacy: dI, chaos: dC },
+    };
+  }
+
   function getCounterSlapWindow(scopeKey, victimJid, attackerJid, now = Date.now()) {
     const windowKey = `${scopeKey}:${victimJid}:${attackerJid}`;
     const expiresAt = counterSlapWindows.get(windowKey) || 0;
@@ -351,6 +406,7 @@ export function createBondService({
     classifyBond,
     getBondWithDecay,
     recordAction,
+    applyChemistryDelta,
     getCounterSlapWindow,
     checkReactionProc,
     calculateShipCompatibility,

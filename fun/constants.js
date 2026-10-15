@@ -655,7 +655,7 @@ export const PERSONA_CONTEXT_TURNS = 40;
 export const DEFAULT_LLM_FEATURES = Object.freeze({
   persona: true,
   memory: true,
-  socialHints: true,
+  socialHints: false,
   loreReconciliation: true,
   flavor: true,
   groupNews: true,
@@ -668,6 +668,7 @@ export const DEFAULT_LLM_FEATURES = Object.freeze({
   events: true,
   selfHeal: false,
   profile: true,
+  chemistry: true,
 });
 
 /** Defaults do bot Fun standalone (não herda config do TMB). */
@@ -1140,6 +1141,8 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // Persona agentiva: protocolo JSON e allowlist de consultas/zoeira segura.
   personaToolsEnabled: true,
   personaToolCooldownMs: 45_000,
+  /** Permite rodadas ilimitadas de tools pela persona até formular a resposta final. */
+  personaAgentUnlimitedTools: true,
   /** Limite de ferramentas encadeadas antes da fala final da persona. */
   personaAgentMaxToolCalls: 3,
   /** Tempo para tools de domínio concluírem e a persona formular a resposta final. */
@@ -1182,13 +1185,19 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   loreReconciliationAckMode: 'react',
   loreReconciliationAckEmoji: '🗑️',
   // Inferência social assíncrona por lote para a persona.
-  personaSocialHintsEnabled: true,
+  // Desativado no experimento: substituído pelo personaChemistry (ver abaixo).
+  personaSocialHintsEnabled: false,
   personaSocialHintsBatchSize: 50,
   personaSocialHintsFlushIntervalMs: 10 * 60_000,
   personaSocialHintsMinMessages: 8,
   personaSocialHintsMaxChars: 600,
   /** Confiança mínima (0-100) de uma pista social p/ entrar no prompt da persona. */
   personaSocialHintsMinConfidence: 45,
+  // Química social por lote: LLM ajusta afeto/rivalidade/intimidade/caos a cada
+  // N mensagens do grupo. Trigger é SOMENTE contagem — sem timer de flush por tempo.
+  personaChemistryEnabled: true,
+  personaChemistryBatchSize: 50,
+  personaChemistryMaxAbsDelta: 8,
   // 10 Minutos de Crime — evento diário de caos
   chaosEventEnabled: true,
   chaosEventHour: 23,

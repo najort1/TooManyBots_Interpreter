@@ -160,6 +160,7 @@ export async function handleFunIncomingMessage(deps, ctx) {
     casinoRepository,
     groupMemoryService,
     personaSocialHintService,
+    personaChemistryService,
     personaService,
     personaContextService,
     dispatchPersonaAutonomousAction,
@@ -819,6 +820,17 @@ export async function handleFunIncomingMessage(deps, ctx) {
       });
     } catch {
       // pistas sociais nunca quebram o fluxo
+    }
+  }
+
+  // Química social roda em lote (só contagem, sem timer) e nunca aguarda o LLM no caminho da mensagem.
+  if (isGroup && personaChemistryService?.observeMessage && scope.scopeKey) {
+    try {
+      personaChemistryService.observeMessage({
+        scopeKey: scope.scopeKey, userJid, text, messageType, funConfig, now: Date.now(), isGroup: true,
+      });
+    } catch {
+      // química social nunca quebra o fluxo
     }
   }
 

@@ -94,6 +94,7 @@ import { createGeminiTtsService } from './services/geminiTtsService.js';
 import { createPersonaToolExecutor } from './services/personaToolExecutor.js';
 import { createLoreReconciliationService } from './services/loreReconciliationService.js';
 import { createPersonaSocialHintService } from './services/personaSocialHintService.js';
+import { createPersonaChemistryService } from './services/personaChemistryService.js';
 import { createFunConversationMemoryRepository } from './db/funConversationMemoryRepository.js';
 import { createFunThreadContextRepository } from './db/funThreadContextRepository.js';
 import { createFunPersonaIdentityRepository } from './db/funPersonaIdentityRepository.js';
@@ -465,6 +466,12 @@ export function createFunModule(deps = {}) {
     getLogger,
     generateZen: effectiveGenerateZen,
   });
+  const personaChemistryService = deps.personaChemistryService || createPersonaChemistryService({
+    bondService,
+    getContactDisplayName: resolveContactName,
+    getLogger,
+    generateZen: effectiveGenerateZen,
+  });
   const conversationMemoryRepository = deps.conversationMemoryRepository || createFunConversationMemoryRepository({ getDatabase });
   const personaRecentMessageRepository = deps.personaRecentMessageRepository || createFunPersonaRecentMessageRepository({ getDatabase });
   const personaFollowupRepository = deps.personaFollowupRepository || createFunPersonaFollowupRepository({ getDatabase });
@@ -790,6 +797,7 @@ export function createFunModule(deps = {}) {
         groupEventRepository,
         eventAggregationService,
         personaSocialHintService,
+        personaChemistryService,
         personaService,
         personaContextService,
         dispatchPersonaAutonomousAction,
@@ -970,6 +978,15 @@ export function createFunModule(deps = {}) {
         if (socialHints?.results?.length) results.push(...socialHints.results);
       } catch (err) {
         results.push({ kind: 'persona-social-hints', ok: false, reason: err?.message || 'persona-social-hints-tick-error' });
+      }
+    }
+
+    if (personaChemistryService?.flushDueScopes) {
+      try {
+        const chemistry = await personaChemistryService.flushDueScopes(funConfig, now);
+        if (chemistry?.results?.length) results.push(...chemistry.results);
+      } catch (err) {
+        results.push({ kind: 'persona-chemistry', ok: false, reason: err?.message || 'persona-chemistry-tick-error' });
       }
     }
 

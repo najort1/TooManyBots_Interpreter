@@ -31,6 +31,13 @@ export const LLM_FEATURE_METADATA = Object.freeze({
     description: 'Inferência de afinidades e dinâmicas sociais da conversa.',
     fallback: 'Pula a inferência de novas pistas sociais.',
   },
+  chemistry: {
+    id: 'chemistry',
+    name: 'Química Social (Experimental)',
+    category: 'Memória',
+    description: 'Ajuste de afeto/rivalidade/intimidade/caos entre membros a cada lote de mensagens.',
+    fallback: 'Pula o ajuste de química por IA; pontos seguem apenas de ações explícitas.',
+  },
   loreReconciliation: {
     id: 'loreReconciliation',
     name: 'Reconciliação de Lore',
@@ -156,9 +163,9 @@ export function isLlmFeatureEnabled(funConfig = {}, featureKey = '') {
     return false;
   }
 
-  // Feature individual
+  // Feature individual - use normalized features to respect defaults
   if (featureKey && Object.hasOwn(DEFAULT_LLM_FEATURES, featureKey)) {
-    const features = funConfig.llmFeatures || {};
+    const features = normalizeLlmFeatures(funConfig.llmFeatures);
     if (features[featureKey] === false) {
       return false;
     }
