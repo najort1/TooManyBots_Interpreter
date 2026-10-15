@@ -236,7 +236,13 @@ export function createLoreReconciliationService({
       const removals = parseRemovals(raw, factsById, maxCandidates);
       let removed = 0;
       for (const item of removals) {
-        if (memoryRepository.deleteFact(item.factId)) removed += 1;
+        const fact = factsById.get(item.factId);
+        if (memoryRepository.deleteFact(item.factId)) {
+          removed += 1;
+          if (fact) {
+            groupMemoryService?.recordRecentRemoval?.(scope, fact);
+          }
+        }
       }
 
       if (removed > 0) {

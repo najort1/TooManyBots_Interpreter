@@ -643,6 +643,63 @@ export function createGroupMemoryService({
   const buffers = new Map();
   /** @type {Map<string, { text: string, factCount: number, updatedAt: number, at: number }>} */
   const personaCache = new Map();
+  /** @type {Map<string, Array<{ id: string, summary: string, keywords: string[], removedAt: number }>>} */
+  const recentRemovals = new Map();
+  const RECENT_REMOVALS_TTL_MS = 180_000;
+  const MAX_RECENT_REMOVALS_PER_SCOPE = 25;
+
+  function recordRecentRemoval(scopeKey, fact) {
+    if (!scopeKey || !fact) return;
+    const s = String(scopeKey);
+    const list = recentRemovals.get(s) || [];
+    const now = Date.now();
+    const cleanList = list.filter((item) => now - item.removedAt < RECENT_REMOVALS_TTL_MS);
+    cleanList.unshift({
+      id: String(fact.id || ''),
+      summary: String(fact.summary || ''),
+      keywords: Array.isArray(fact.keywords) ? fact.keywords : [],
+      removedAt: now,
+    });
+    if (cleanList.length > MAX_RECENT_REMOVALS_PER_SCOPE) {
+      cleanList.length = MAX_RECENT_REMOVALS_PER_SCOPE;
+    }
+    recentRemovals.set(s, cleanList);
+  }
+
+  function findRecentRemoval(scopeKey, queryOrId) {
+    if (!scopeKey || !queryOrId) return null;
+    const s = String(scopeKey);
+    const list = recentRemovals.get(s);
+    if (!list || !list.length) return null;
+    const now = Date.now();
+    const valid = list.filter((item) => now - item.removedAt < RECENT_REMOVALS_TTL_MS);
+    recentRemovals.set(s, valid);
+
+    const target = String(queryOrId).trim();
+    const targetNorm = normalizeKey(target);
+    if (!targetNorm) return null;
+
+    // 1. Casamento por ID exato ou prefixo do ID
+    const byId = valid.find((item) =>
+      item.id && (item.id.toLowerCase() === target.toLowerCase() || item.id.toLowerCase().startsWith(targetNorm))
+    );
+    if (byId) return byId;
+
+    const targetTokens = tokenSet(targetNorm);
+
+    return valid.find((item) => {
+      const sumNorm = normalizeKey(item.summary);
+      if (sumNorm.includes(targetNorm) || targetNorm.includes(sumNorm)) return true;
+      const kwNorms = (item.keywords || []).map(normalizeKey);
+      if (kwNorms.some((kw) => kw.includes(targetNorm) || targetNorm.includes(kw))) return true;
+      if (targetTokens.size > 0) {
+        for (const tok of targetTokens) {
+          if (tok.length >= 3 && sumNorm.includes(tok)) return true;
+        }
+      }
+      return false;
+    }) || null;
+  }
 
   function opts(funConfig = {}) {
     return {
@@ -1685,6 +1742,7 @@ export function createGroupMemoryService({
     const n = memoryRepository.deleteByScope(scopeKey);
     memoryRepository.clearPersona(scopeKey);
     buffers.delete(String(scopeKey || ''));
+    recentRemovals.delete(String(scopeKey || ''));
     invalidatePersonaCache(scopeKey);
     return n;
   }
@@ -1730,7 +1788,10 @@ export function createGroupMemoryService({
 
     let n = 0;
     for (const f of matches) {
-      if (memoryRepository.deleteFact(f.id)) n += 1;
+      if (memoryRepository.deleteFact(f.id)) {
+        n += 1;
+        recordRecentRemoval(scopeKey, f);
+      }
     }
     if (n > 0) {
       invalidatePersonaCache(scopeKey);
@@ -1818,8 +1879,12 @@ export function createGroupMemoryService({
     forgetSubject,
     findMatchingFacts,
     forgetByQuery,
+    recordRecentRemoval,
+    findRecentRemoval,
     refreshPersona,
     getPersonaCached,
+    invalidatePersonaCache,
+    memoryRepository,
     parseFactsJson,
     validateExtractedFact,
     findSimilar,
@@ -1830,6 +1895,7 @@ export function createGroupMemoryService({
     _pushRaw,
     _buffers: buffers,
     _personaCache: personaCache,
+    _recentRemovals: recentRemovals,
   };
 }
 
