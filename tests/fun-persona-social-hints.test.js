@@ -17,6 +17,7 @@ const bob = '5511999990002@s.whatsapp.net';
 const cfg = {
   zenEnabled: true,
   personaSocialHintsEnabled: true,
+  llmFeatures: { socialHints: true },
   personaSocialHintsBatchSize: 8,
   personaSocialHintsMinMessages: 3,
   personaSocialHintsFlushIntervalMs: 10 * 60_000,
@@ -98,7 +99,7 @@ test('pistas sociais: salva JSON embrulhado após retry e evita eco no mesmo sco
     },
   });
   const scope = uniqueGroup();
-  const retryCfg = { ...cfg, zenMaxRetries: 1 };
+  const retryCfg = { ...cfg, zenMaxRetries: 1, llmFeatures: { socialHints: true } };
 
   for (const text of ['pizza de novo', 'quem pediu pizza?', 'pizza é debate sério']) {
     service.observeMessage({ scopeKey: scope, userJid: alice, text, funConfig: retryCfg, now: 60_000 });

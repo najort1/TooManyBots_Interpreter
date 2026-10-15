@@ -6,7 +6,11 @@ import { getDb } from '../db/context.js';
 import { DEFAULT_FUN_CONFIG } from '../fun/constants.js';
 import { createFunGroupRepository } from '../fun/db/funGroupRepository.js';
 import { createFunPersonaRepository } from '../fun/db/funPersonaRepository.js';
+import { createFunMemoryRepository } from '../fun/db/funMemoryRepository.js';
+import { createFunEffectsRepository } from '../fun/db/funEffectsRepository.js';
+import { createChaosService } from '../fun/services/chaosService.js';
 import { createPersonaService } from '../fun/services/personaService.js';
+import { createPersonaToolExecutor } from '../fun/services/personaToolExecutor.js';
 import { createIdentityMap } from '../fun/utils/identity.js';
 
 await initDb();
@@ -290,7 +294,44 @@ test('persona agent blocks a repeated tool call and returns only confirmed outpu
 
     assert.equal(result.responded, true);
     assert.deepEqual(executions, ['group_identity']);
-    assert.equal(sent[0].text, 'identidade confirmada');
+    assert.equal(sent[0].text, 'Usou (group_identity) 1 vez');
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent does not leak silent tool raw database text or IDs into chat on timeout or loop break', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const executions = [];
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async (call) => {
+          executions.push(call.name);
+          return {
+            ok: true,
+            text: 'Fato adicionado à lore do grupo (id: 42-secret-id): "segredo interno"',
+            summary: 'Adicionou à lore',
+          };
+        },
+      },
+      generateZen: async () => '{"type":"tool_call","name":"lore_add","arguments":{"summary":"segredo interno"}}',
+    });
+    const { sent, ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({
+      ...ctx,
+      funConfig: { ...DEFAULT_FUN_CONFIG, personaAgentMaxToolCalls: 3 },
+    });
+
+    assert.equal(result.responded, true);
+    assert.deepEqual(executions, ['lore_add']);
+    assert.doesNotMatch(sent[0].text, /42-secret-id/);
+    assert.doesNotMatch(sent[0].text, /Fato adicionado à lore/);
+    assert.match(sent[0].text, /^Usou \(lore_add\) 1 vez/);
   } finally {
     if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
     else process.env.FUN_DISABLE_LIVE_LLM = previous;
@@ -734,6 +775,227 @@ test('persona agent: combina tool silenciosa e tool com full output', async () =
     assert.doesNotMatch(sent[0].text, /fato confidencial da lore/);
     // Contém a fala da persona
     assert.match(sent[0].text, /as cartas não mentem jamais kk/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent: tool lore_add exibe apenas "Usou (lore_add) 1 vez" em vez de despejar o texto bruto', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let generations = 0;
+    const executions = [];
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async (call) => {
+          executions.push(call.name);
+          return {
+            ok: true,
+            text: 'Fato adicionado à lore do grupo (id: 12345): "Lucas esqueceu a pizza no forno"',
+            summary: 'Adicionou à lore: "Lucas esqueceu a pizza no forno"',
+            data: { id: '12345', summary: 'Lucas esqueceu a pizza no forno' },
+          };
+        },
+      },
+      generateZen: async () => {
+        generations += 1;
+        if (generations === 1) return '{"type":"tool_call","name":"lore_add","arguments":{"summary":"Lucas esqueceu a pizza no forno"}}';
+        return '{"type":"reply","text":"já anotei na história do grupo kkkk"}';
+      },
+    });
+    const { sent, ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({
+      ...ctx,
+      text: 'bot anota aí que o Lucas esqueceu a pizza no forno',
+      funConfig: { ...DEFAULT_FUN_CONFIG, personaAgentMaxToolCalls: 3 },
+    });
+
+    assert.equal(result.responded, true);
+    assert.deepEqual(executions, ['lore_add']);
+    assert.equal(sent.length, 1);
+    // Contém o aviso da tool silenciosa com nome
+    assert.match(sent[0].text, /Usou \(lore_add\) 1 vez/);
+    // Resposta final da persona
+    assert.match(sent[0].text, /já anotei na história do grupo kkkk/);
+    // NÃO vaza o dump bruto da tool
+    assert.doesNotMatch(sent[0].text, /Fato adicionado à lore do grupo \(id: 12345\)/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent: tool lore_remove exibe apenas "Usou (lore_remove) 1 vez" em vez de despejar o texto bruto', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let generations = 0;
+    const executions = [];
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async (call) => {
+          executions.push(call.name);
+          return {
+            ok: true,
+            text: 'Removido(s) 1 fato(s) da lore.',
+            summary: 'Removeu 1 fato(s) da lore',
+          };
+        },
+      },
+      generateZen: async () => {
+        generations += 1;
+        if (generations === 1) return '{"type":"tool_call","name":"lore_remove","arguments":{"query":"pizza"}}';
+        return '{"type":"reply","text":"apagado da memória, nunca aconteceu"}';
+      },
+    });
+    const { sent, ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({
+      ...ctx,
+      text: 'bot apaga a parada da pizza aí',
+      funConfig: { ...DEFAULT_FUN_CONFIG, personaAgentMaxToolCalls: 3 },
+    });
+
+    assert.equal(result.responded, true);
+    assert.deepEqual(executions, ['lore_remove']);
+    assert.equal(sent.length, 1);
+    // Contém o aviso da tool silenciosa com nome
+    assert.match(sent[0].text, /Usou \(lore_remove\) 1 vez/);
+    // Resposta final da persona
+    assert.match(sent[0].text, /apagado da memória, nunca aconteceu/);
+    // NÃO vaza o dump bruto da tool
+    assert.doesNotMatch(sent[0].text, /Removido\(s\) 1 fato\(s\) da lore\./);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent loop: lore trace visibility expõe IDs e LLM encadeia lore_update por ID', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const calls = [];
+    const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
+    const groupMemoryService = {
+      memoryRepository,
+      invalidatePersonaCache: () => {},
+    };
+    const scopeKey = uniqueGroup();
+
+    // Insere um fato na lore antes
+    const initialFact = memoryRepository.insertFact({
+      scopeKey,
+      summary: 'João perdeu o celular no ônibus ontem à noite',
+      kind: 'event',
+    });
+
+    const executor = createPersonaToolExecutor({
+      chaosService: createChaosService({
+        repository: { getLeaderboard: () => [] },
+      }),
+      memoryRepository,
+      groupMemoryService,
+    });
+
+    let receivedPrompts = [];
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: executor,
+      generateZen: async ({ prompt }) => {
+        calls.push('generation');
+        receivedPrompts.push(prompt);
+        if (calls.length === 1) {
+          // Passo 1: LLM busca a lore sobre joao
+          return '{"type":"tool_call","name":"lore","arguments":{"query":"joao"}}';
+        }
+        if (calls.length === 2) {
+          // Passo 2: LLM viu o trace contendo o ID e chama lore_update com esse ID
+          return JSON.stringify({
+            type: 'tool_call',
+            name: 'lore_update',
+            arguments: {
+              id: initialFact.id,
+              summary: 'João achou o celular no bolso da calça afinal',
+            },
+          });
+        }
+        // Passo 3: resposta final
+        return '{"type":"reply","text":"já corrigi a história do João!"}';
+      },
+    });
+
+    const { sent, ctx } = createPersonaLoopContext(scopeKey);
+    const result = await persona.tryRespond({
+      ...ctx,
+      text: 'bot, corrige aquela história do João',
+      funConfig: { ...DEFAULT_FUN_CONFIG, personaAgentMaxToolCalls: 4 },
+    });
+
+    assert.equal(result.responded, true);
+    assert.equal(calls.length, 3);
+
+    // No segundo prompt, o trace deve conter o ID do fato e o resumo retornado pela tool lore
+    assert.match(receivedPrompts[1], new RegExp(`\\[id: ${initialFact.id}\\]`));
+    assert.match(receivedPrompts[1], /João perdeu o celular/);
+
+    // O banco de dados deve ter sido atualizado com o novo resumo
+    const updatedFact = memoryRepository.getFact(initialFact.id);
+    assert.equal(updatedFact.summary, 'João achou o celular no bolso da calça afinal');
+
+    // Mensagem final enviada
+    assert.match(sent[0].text, /já corrigi a história do João!/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent loop: executa rodadas ilimitadas de tools sem ser truncado por teto fixo', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    const executed = [];
+    let generations = 0;
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async (call) => {
+          executed.push(`${call.name}-${JSON.stringify(call.arguments || {})}`);
+          return { ok: true, text: `resultado de ${call.name}`, summary: `resultado de ${call.name}` };
+        },
+      },
+      generateZen: async () => {
+        generations += 1;
+        if (generations === 1) return '{"type":"tool_call","name":"lore","arguments":{"query":"termo 1"}}';
+        if (generations === 2) return '{"type":"tool_call","name":"lore","arguments":{"query":"termo 2"}}';
+        if (generations === 3) return '{"type":"tool_call","name":"lore","arguments":{"query":"termo 3"}}';
+        if (generations === 4) return '{"type":"tool_call","name":"lore","arguments":{"query":"termo 4"}}';
+        if (generations === 5) return '{"type":"tool_call","name":"lore","arguments":{"query":"termo 5"}}';
+        if (generations === 6) return '{"type":"tool_call","name":"lore","arguments":{"query":"termo 6"}}';
+        if (generations === 7) return '{"type":"tool_call","name":"lore","arguments":{"query":"termo 7"}}';
+        return '{"type":"reply","text":"consultei todas as 7 rodadas e aqui está a resposta final!"}';
+      },
+    });
+
+    const { sent, ctx } = createPersonaLoopContext(uniqueGroup());
+    const result = await persona.tryRespond({
+      ...ctx,
+      text: 'bot, faz uma pesquisa profunda de lore com 7 termos',
+      funConfig: { ...DEFAULT_FUN_CONFIG },
+    });
+
+    assert.equal(result.responded, true);
+    assert.equal(executed.length, 7);
+    assert.equal(generations, 8);
+    assert.match(sent[0].text, /consultei todas as 7 rodadas e aqui está a resposta final!/);
   } finally {
     if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
     else process.env.FUN_DISABLE_LIVE_LLM = previous;

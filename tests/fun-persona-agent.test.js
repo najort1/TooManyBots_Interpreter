@@ -41,6 +41,9 @@ test('persona agent: protocolo aceita só reply ou tool_call da allowlist', () =
 test('persona agent: classificação de tools que exibem ou omitem output completo', () => {
   // Tools de contexto/leitura/RAG omitem output completo para evitar dumps brutos
   assert.equal(shouldDisplayPersonaToolOutput('lore'), false);
+  assert.equal(shouldDisplayPersonaToolOutput('lore_add'), false);
+  assert.equal(shouldDisplayPersonaToolOutput('lore_update'), false);
+  assert.equal(shouldDisplayPersonaToolOutput('lore_remove'), false);
   assert.equal(shouldDisplayPersonaToolOutput('recent_conversation'), false);
   assert.equal(shouldDisplayPersonaToolOutput('group_identity'), false);
   assert.equal(shouldDisplayPersonaToolOutput('daily_challenge_status'), false);
@@ -875,4 +878,576 @@ test('anti-raw-json: JSON inválido ou desconhecido nunca vaza como texto no cha
     if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
     else process.env.FUN_DISABLE_LIVE_LLM = previous;
   }
+});
+
+test('persona agent: protocolo aceita lore_add, lore_update, lore_remove com validação de esquema', () => {
+  // lore_add: válido e inválido
+  const validAdd = parsePersonaEnvelope('{"type":"tool_call","name":"lore_add","arguments":{"summary":"Lucas caiu da cadeira","kind":"epic_fail"}}');
+  assert.equal(validAdd.ok, true);
+  assert.deepEqual(validAdd.envelope, {
+    type: 'tool_call',
+    name: 'lore_add',
+    arguments: { summary: 'Lucas caiu da cadeira', kind: 'epic_fail' },
+    callId: '',
+  });
+  assert.equal(parsePersonaEnvelope('{"type":"tool_call","name":"lore_add","arguments":{"summary":123}}').reason, 'invalid-summary');
+  assert.equal(parsePersonaEnvelope('{"type":"tool_call","name":"lore_add","arguments":{"summary":"fato","unknown":"extra"}}').reason, 'unknown-argument');
+
+  // lore_update: válido por id e query, e inválido
+  const validUpdateId = parsePersonaEnvelope('{"type":"tool_call","name":"lore_update","arguments":{"id":"f-123","summary":"Lucas caiu da rede"}}');
+  assert.equal(validUpdateId.ok, true);
+  assert.deepEqual(validUpdateId.envelope.arguments, { id: 'f-123', summary: 'Lucas caiu da rede' });
+  const validUpdateQuery = parsePersonaEnvelope('{"type":"tool_call","name":"lore_update","arguments":{"query":"cadeira","summary":"Lucas caiu do banco"}}');
+  assert.equal(validUpdateQuery.ok, true);
+  assert.deepEqual(validUpdateQuery.envelope.arguments, { query: 'cadeira', summary: 'Lucas caiu do banco' });
+  assert.equal(parsePersonaEnvelope('{"type":"tool_call","name":"lore_update","arguments":{"summary":{}}}').reason, 'invalid-summary');
+  assert.equal(parsePersonaEnvelope('{"type":"tool_call","name":"lore_update","arguments":{"extra":"campo"}}').reason, 'unknown-argument');
+
+  // lore_remove: válido por id e query, e inválido
+  const validRemoveId = parsePersonaEnvelope('{"type":"tool_call","name":"lore_remove","arguments":{"id":"f-123"}}');
+  assert.equal(validRemoveId.ok, true);
+  assert.deepEqual(validRemoveId.envelope.arguments, { id: 'f-123' });
+  const validRemoveQuery = parsePersonaEnvelope('{"type":"tool_call","name":"lore_remove","arguments":{"query":"cadeira"}}');
+  assert.equal(validRemoveQuery.ok, true);
+  assert.deepEqual(validRemoveQuery.envelope.arguments, { query: 'cadeira' });
+  assert.equal(parsePersonaEnvelope('{"type":"tool_call","name":"lore_remove","arguments":{"id":456}}').reason, 'invalid-id');
+  assert.equal(parsePersonaEnvelope('{"type":"tool_call","name":"lore_remove","arguments":{"foo":"bar"}}').reason, 'unknown-argument');
+});
+
+test('persona agent: executor de tools de lore (lore_add, lore_update, lore_remove, lore)', async () => {
+  const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
+  let cacheInvalidations = [];
+  const groupMemoryService = {
+    memoryRepository,
+    invalidatePersonaCache: (scope) => {
+      cacheInvalidations.push(scope);
+    },
+    findMatchingFacts: (scope, q) => {
+      const qNorm = String(q || '').toLowerCase();
+      return memoryRepository.listFacts(scope, { limit: 50 }).filter((f) =>
+        f.summary.toLowerCase().includes(qNorm)
+      );
+    },
+    forgetByQuery: (scope, q, { maxWipe = 3 } = {}) => {
+      const matches = memoryRepository.listFacts(scope, { limit: 50 }).filter((f) =>
+        f.summary.toLowerCase().includes(String(q || '').toLowerCase())
+      );
+      if (!matches.length) return { ok: false, reason: 'not-found', removed: 0, matches: [] };
+      if (matches.length > maxWipe) return { ok: false, reason: 'too-broad', removed: 0, matches, count: matches.length };
+      let removed = 0;
+      for (const m of matches) {
+        if (memoryRepository.deleteFact(m.id)) removed += 1;
+      }
+      return { ok: true, removed, matches };
+    },
+  };
+  const chaos = createChaosService({ repository: { getLeaderboard: () => [] }, random: () => 0.99 });
+  const executor = createPersonaToolExecutor({
+    chaosService: chaos,
+    memoryRepository,
+    groupMemoryService,
+  });
+
+  const scopeKey = uniqueGroup();
+  const dmScope = uniqueJid('5511');
+  const user1 = uniqueJid('5511');
+  const user2 = uniqueJid('5521');
+
+  // Proteção de escopo: escopo que não é grupo falha com group-only
+  const nonGroupAdd = await executor.execute(
+    { name: 'lore_add', arguments: { summary: 'Fato no PV' } },
+    { scopeKey: dmScope }
+  );
+  assert.equal(nonGroupAdd.ok, false);
+  assert.equal(nonGroupAdd.reason, 'group-only');
+
+  const nonGroupLore = await executor.execute(
+    { name: 'lore', arguments: {} },
+    { scopeKey: dmScope }
+  );
+  assert.equal(nonGroupLore.ok, false);
+  assert.equal(nonGroupLore.reason, 'group-only');
+
+  // lore_add: validação de resumo ausente
+  const addMissing = await executor.execute(
+    { name: 'lore_add', arguments: { summary: '' } },
+    { scopeKey }
+  );
+  assert.equal(addMissing.ok, false);
+  assert.equal(addMissing.reason, 'missing-summary');
+
+  // lore_add: cria fato no banco, anexa subjects de mentionedJids e quoted, invalida cache
+  const addResult = await executor.execute(
+    { name: 'lore_add', arguments: { summary: 'Lucas esqueceu a pizza no forno', kind: 'epic_fail' } },
+    { scopeKey, mentionedJids: [user1], quotedParticipant: user2, now: 1_000_000 }
+  );
+  assert.equal(addResult.ok, true);
+  assert.match(addResult.text, /Fato adicionado à lore do grupo/);
+  assert.match(addResult.text, /Lucas esqueceu a pizza no forno/);
+  assert.equal(cacheInvalidations.includes(scopeKey), true);
+  const factId = addResult.data.id;
+  assert.ok(factId);
+
+  // Verifica persistência real no banco
+  const dbFact = memoryRepository.getFact(factId);
+  assert.equal(dbFact.summary, 'Lucas esqueceu a pizza no forno');
+  assert.equal(dbFact.kind, 'epic_fail');
+  assert.deepEqual(dbFact.subjects, [user1, user2]);
+
+  // lore: consulta com query retorna fato com ID
+  const loreQueryResult = await executor.execute(
+    { name: 'lore', arguments: { query: 'pizza' } },
+    { scopeKey }
+  );
+  assert.equal(loreQueryResult.ok, true);
+  assert.match(loreQueryResult.text, new RegExp(`\\[id: ${factId}\\]`));
+  assert.match(loreQueryResult.text, /Lucas esqueceu a pizza no forno/);
+
+  // lore: consulta com query vazia lista fatos recentes com ID
+  const loreEmptyResult = await executor.execute(
+    { name: 'lore', arguments: {} },
+    { scopeKey }
+  );
+  assert.equal(loreEmptyResult.ok, true);
+  assert.match(loreEmptyResult.text, new RegExp(`\\[id: ${factId}\\]`));
+  assert.match(loreEmptyResult.text, /Lucas esqueceu a pizza no forno/);
+
+  // lore_update: validação de resumo ausente
+  const updateMissing = await executor.execute(
+    { name: 'lore_update', arguments: { id: factId, summary: '' } },
+    { scopeKey }
+  );
+  assert.equal(updateMissing.ok, false);
+  assert.equal(updateMissing.reason, 'missing-summary');
+
+  // lore_update: atualiza fato por ID, reflete no banco e invalida cache
+  cacheInvalidations = [];
+  const updateByIdResult = await executor.execute(
+    { name: 'lore_update', arguments: { id: factId, summary: 'Lucas queimou a pizza no forno de propósito' } },
+    { scopeKey }
+  );
+  assert.equal(updateByIdResult.ok, true);
+  assert.match(updateByIdResult.text, /Fato da lore atualizado/);
+  assert.equal(cacheInvalidations.includes(scopeKey), true);
+  const updatedDbFact1 = memoryRepository.getFact(factId);
+  assert.equal(updatedDbFact1.summary, 'Lucas queimou a pizza no forno de propósito');
+
+  // lore_update: atualiza fato por query, reflete no banco e invalida cache
+  cacheInvalidations = [];
+  const updateByQueryResult = await executor.execute(
+    { name: 'lore_update', arguments: { query: 'queimou', summary: 'Lucas carbonizou a pizza inteira' } },
+    { scopeKey }
+  );
+  assert.equal(updateByQueryResult.ok, true);
+  assert.match(updateByQueryResult.text, /Fato da lore atualizado/);
+  assert.equal(cacheInvalidations.includes(scopeKey), true);
+  const updatedDbFact2 = memoryRepository.getFact(factId);
+  assert.equal(updatedDbFact2.summary, 'Lucas carbonizou a pizza inteira');
+
+  // lore_update: se não encontrar alvo, retorna not-found
+  const updateNotFound = await executor.execute(
+    { name: 'lore_update', arguments: { id: 'inexistente-id', summary: 'Algo novo' } },
+    { scopeKey }
+  );
+  assert.equal(updateNotFound.ok, false);
+  assert.equal(updateNotFound.reason, 'not-found');
+
+  // Adiciona um segundo fato para testar remoção por query e por ID separadamente
+  const addFact2 = await executor.execute(
+    { name: 'lore_add', arguments: { summary: 'Marcos perdeu a aposta do clássico' } },
+    { scopeKey, now: 1_000_100 }
+  );
+  assert.equal(addFact2.ok, true);
+  const fact2Id = addFact2.data.id;
+
+  // lore_remove: remove por query, reflete no banco e invalida cache
+  cacheInvalidations = [];
+  const removeByQueryResult = await executor.execute(
+    { name: 'lore_remove', arguments: { query: 'Marcos' } },
+    { scopeKey }
+  );
+  assert.equal(removeByQueryResult.ok, true);
+  assert.match(removeByQueryResult.text, /Removido\(s\) 1 fato\(s\)/);
+  assert.equal(cacheInvalidations.includes(scopeKey), true);
+  assert.equal(memoryRepository.getFact(fact2Id), null);
+
+  // lore_remove: remove por ID, reflete no banco e invalida cache
+  cacheInvalidations = [];
+  const removeByIdResult = await executor.execute(
+    { name: 'lore_remove', arguments: { id: factId } },
+    { scopeKey }
+  );
+  assert.equal(removeByIdResult.ok, true);
+  assert.match(removeByIdResult.text, /removido da lore/i);
+  assert.equal(cacheInvalidations.includes(scopeKey), true);
+  assert.equal(memoryRepository.getFact(factId), null);
+
+  // lore_remove: id inexistente retorna ok false
+  const removeInexistent = await executor.execute(
+    { name: 'lore_remove', arguments: { id: 'inexistente-999' } },
+    { scopeKey }
+  );
+  assert.equal(removeInexistent.ok, false);
+
+  // lore_remove: sem id nem query retorna missing-target
+  const removeNoTarget = await executor.execute(
+    { name: 'lore_remove', arguments: {} },
+    { scopeKey }
+  );
+  assert.equal(removeNoTarget.ok, false);
+  assert.equal(removeNoTarget.reason, 'missing-target');
+});
+
+test('persona agent: proteção cross-scope em lore_update e lore_remove impede alteração e deleção entre grupos', async () => {
+  const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
+  const executor = createPersonaToolExecutor({
+    chaosService: createChaosService({
+      repository: { getLeaderboard: () => [] },
+    }),
+    memoryRepository,
+  });
+
+  const scopeA = uniqueGroup();
+  const scopeB = uniqueGroup();
+
+  // Cria fato no Grupo A
+  const addA = await executor.execute(
+    { name: 'lore_add', arguments: { summary: 'Fato secreto do Grupo A', kind: 'event' } },
+    { scopeKey: scopeA }
+  );
+  assert.equal(addA.ok, true);
+  const factIdA = addA.data.id;
+
+  // Cria fato no Grupo B
+  const addB = await executor.execute(
+    { name: 'lore_add', arguments: { summary: 'Fato legítimo do Grupo B', kind: 'event' } },
+    { scopeKey: scopeB }
+  );
+  assert.equal(addB.ok, true);
+  const factIdB = addB.data.id;
+
+  // Tentativa do Grupo B de atualizar o fato do Grupo A via ID
+  const crossUpdate = await executor.execute(
+    { name: 'lore_update', arguments: { id: factIdA, summary: 'Tentativa de overwrite hacker' } },
+    { scopeKey: scopeB }
+  );
+  assert.equal(crossUpdate.ok, false);
+  assert.equal(crossUpdate.reason, 'not-found');
+  assert.equal(crossUpdate.text, 'Não encontrei nenhum fato correspondente na lore para atualizar.');
+
+  // Verifica que o Fato A no Grupo A está intacto
+  const factACheck = memoryRepository.getFact(factIdA);
+  assert.equal(factACheck.summary, 'Fato secreto do Grupo A');
+  assert.equal(factACheck.scopeKey, scopeA);
+
+  // Tentativa do Grupo B de deletar o fato do Grupo A via ID
+  const crossRemove = await executor.execute(
+    { name: 'lore_remove', arguments: { id: factIdA } },
+    { scopeKey: scopeB }
+  );
+  assert.equal(crossRemove.ok, false);
+  assert.equal(crossRemove.reason, 'not-found');
+  assert.equal(crossRemove.text, 'Fato não encontrado para remoção.');
+
+  // Verifica que o Fato A no Grupo A continua existindo
+  const factAStillExists = memoryRepository.getFact(factIdA);
+  assert.ok(factAStillExists);
+  assert.equal(factAStillExists.summary, 'Fato secreto do Grupo A');
+
+  // Verifica que o Fato B no Grupo B continua existindo e intocado
+  const factBCheck = memoryRepository.getFact(factIdB);
+  assert.ok(factBCheck);
+  assert.equal(factBCheck.summary, 'Fato legítimo do Grupo B');
+});
+
+test('persona agent: argumentos vazios {} em lore_update e lore_remove retornam missing-target', async () => {
+  const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
+  const executor = createPersonaToolExecutor({
+    chaosService: createChaosService({
+      repository: { getLeaderboard: () => [] },
+    }),
+    memoryRepository,
+  });
+  const scopeKey = uniqueGroup();
+
+  const add = await executor.execute(
+    { name: 'lore_add', arguments: { summary: 'Fato base do grupo' } },
+    { scopeKey }
+  );
+  assert.equal(add.ok, true);
+  const initialFact = memoryRepository.getFact(add.data.id);
+
+  // lore_update com args vazios {}
+  const emptyUpdate = await executor.execute(
+    { name: 'lore_update', arguments: {} },
+    { scopeKey }
+  );
+  assert.equal(emptyUpdate.ok, false);
+  assert.equal(emptyUpdate.reason, 'missing-target');
+  assert.equal(emptyUpdate.text, 'Informe o ID ou um termo de busca para localizar o fato que deseja atualizar.');
+
+  // lore_remove com args vazios {}
+  const emptyRemove = await executor.execute(
+    { name: 'lore_remove', arguments: {} },
+    { scopeKey }
+  );
+  assert.equal(emptyRemove.ok, false);
+  assert.equal(emptyRemove.reason, 'missing-target');
+  assert.equal(emptyRemove.text, 'Informe o ID ou um termo de busca para identificar o fato que deseja remover da lore.');
+
+  // Nada foi alterado ou removido no banco
+  const checkFact = memoryRepository.getFact(add.data.id);
+  assert.ok(checkFact);
+  assert.equal(checkFact.summary, initialFact.summary);
+});
+
+test('persona agent: busca de lore com normalização de acentos e diacríticos em português', async () => {
+  const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
+  const executor = createPersonaToolExecutor({
+    chaosService: createChaosService({
+      repository: { getLeaderboard: () => [] },
+    }),
+    memoryRepository,
+  });
+  const scopeKey = uniqueGroup();
+
+  // Adiciona fato com acentuação rica
+  const add = await executor.execute(
+    { name: 'lore_add', arguments: { summary: 'João foi promovido a líder da bagunça no São João de Campina Grande' } },
+    { scopeKey }
+  );
+  assert.equal(add.ok, true);
+  const factId = add.data.id;
+
+  // Busca sem acento ("joao") encontra fato com acento ("João")
+  const searchSemAcento = await executor.execute(
+    { name: 'lore', arguments: { query: 'joao' } },
+    { scopeKey }
+  );
+  assert.equal(searchSemAcento.ok, true);
+  assert.equal(searchSemAcento.data.length, 1);
+  assert.equal(searchSemAcento.data[0].id, factId);
+  assert.match(searchSemAcento.text, /João foi promovido/);
+
+  // Busca com acento ("João") encontra fato com acento
+  const searchComAcento = await executor.execute(
+    { name: 'lore', arguments: { query: 'João' } },
+    { scopeKey }
+  );
+  assert.equal(searchComAcento.ok, true);
+  assert.equal(searchComAcento.data.length, 1);
+  assert.equal(searchComAcento.data[0].id, factId);
+
+  // Busca "lider" encontra "líder"
+  const searchLider = await executor.execute(
+    { name: 'lore', arguments: { query: 'lider' } },
+    { scopeKey }
+  );
+  assert.equal(searchLider.ok, true);
+  assert.equal(searchLider.data.length, 1);
+  assert.equal(searchLider.data[0].id, factId);
+});
+
+test('persona agent: lore trace visibility expõe IDs e resumos no summary da tool', async () => {
+  const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
+  const executor = createPersonaToolExecutor({
+    chaosService: createChaosService({
+      repository: { getLeaderboard: () => [] },
+    }),
+    memoryRepository,
+  });
+  const scopeKey = uniqueGroup();
+
+  const add1 = await executor.execute(
+    { name: 'lore_add', arguments: { summary: 'Lucas perdeu a chave da moto no churrasco' } },
+    { scopeKey }
+  );
+  const add2 = await executor.execute(
+    { name: 'lore_add', arguments: { summary: 'Mariana comeu 14 fatias de pizza sozinha' } },
+    { scopeKey }
+  );
+  const id1 = add1.data.id;
+  const id2 = add2.data.id;
+
+  // Busca com resultados
+  const search = await executor.execute(
+    { name: 'lore', arguments: { query: 'moto' } },
+    { scopeKey }
+  );
+  assert.equal(search.ok, true);
+  assert.match(search.summary, /^Fatos encontrados na lore:\n/);
+  assert.match(search.summary, new RegExp(`• \\[id: ${id1}\\] Lucas perdeu a chave da moto no churrasco`));
+
+  // Busca sem resultados
+  const searchEmpty = await executor.execute(
+    { name: 'lore', arguments: { query: 'termo_completamente_inexistente_xyz' } },
+    { scopeKey }
+  );
+  assert.equal(searchEmpty.ok, true);
+  assert.equal(searchEmpty.summary, 'Nenhum fato encontrado na lore.');
+});
+
+test('persona agent: mapeamento de categorias em português para kinds válidos em lore_add', async () => {
+  const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
+  const executor = createPersonaToolExecutor({
+    chaosService: createChaosService({
+      repository: { getLeaderboard: () => [] },
+    }),
+    memoryRepository,
+  });
+  const scopeKey = uniqueGroup();
+
+  const testCases = [
+    { ptKind: 'piada', expected: 'running_gag' },
+    { ptKind: 'mico', expected: 'epic_fail' },
+    { ptKind: 'apelido', expected: 'nickname' },
+    { ptKind: 'bordao', expected: 'catchphrase' },
+    { ptKind: 'bordão', expected: 'catchphrase' },
+    { ptKind: 'rivalidade', expected: 'rivalry' },
+    { ptKind: 'ship', expected: 'ship_lore' },
+    { ptKind: 'fofoca', expected: 'event' },
+  ];
+
+  for (const { ptKind, expected } of testCases) {
+    const res = await executor.execute(
+      { name: 'lore_add', arguments: { summary: `Teste de kind para ${ptKind}`, kind: ptKind } },
+      { scopeKey }
+    );
+    assert.equal(res.ok, true, `Falha ao adicionar kind ${ptKind}`);
+    const fact = memoryRepository.getFact(res.data.id);
+    assert.equal(fact.kind, expected, `Kind ${ptKind} deveria ser mapeado para ${expected}`);
+  }
+});
+
+test('funMemoryRepository: deleteFact com scopeKey respeita isolamento de grupo', () => {
+  const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
+  const scopeA = uniqueGroup();
+  const scopeB = uniqueGroup();
+
+  const factA = memoryRepository.insertFact({ scopeKey: scopeA, summary: 'Fato Grupo A' });
+  const factB = memoryRepository.insertFact({ scopeKey: scopeB, summary: 'Fato Grupo B' });
+
+  // Tentar deletar factA passando scopeB -> deve retornar false e não deletar
+  const delCross = memoryRepository.deleteFact(factA.id, scopeB);
+  assert.equal(delCross, false);
+  assert.ok(memoryRepository.getFact(factA.id));
+
+  // Deletar factA passando scopeA correto -> deve retornar true e deletar
+  const delSameScope = memoryRepository.deleteFact(factA.id, scopeA);
+  assert.equal(delSameScope, true);
+  assert.equal(memoryRepository.getFact(factA.id), null);
+
+  // Deletar factB sem passar scopeKey (modo legado/admin) -> deve deletar
+  const delNoScope = memoryRepository.deleteFact(factB.id);
+  assert.equal(delNoScope, true);
+  assert.equal(memoryRepository.getFact(factB.id), null);
+});
+
+test('persona agent: resposta em texto livre sem envelope JSON é aceita e despachada como texto direto', async () => {
+  const previous = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
+    let capturedOpts = null;
+    const persona = createPersonaService({
+      personaRepository: createFunPersonaRepository({ getDatabase: getDb }),
+      groupRepository: createFunGroupRepository({ getDatabase: getDb }),
+      personaToolExecutor: {
+        execute: async () => ({ ok: true }),
+      },
+      generateZen: async (opts) => {
+        capturedOpts = opts;
+        return 'KKKKKKKKKK EDUARDO, TU VAI DIGITAR “YESTE” ATÉ 2050, É, FILHO DA PUTA? 😭🤖📡';
+      },
+    });
+
+    const sent = [];
+    const scopeKey = uniqueGroup();
+    const result = await persona.tryRespond({
+      scopeKey,
+      authorJid: uniqueJid('5511'),
+      text: 'bot, yeste',
+      messageType: 'text',
+      sock: {
+        user: { id: '5511888888888:0@s.whatsapp.net' },
+        sendMessage: async (_jid, content) => {
+          sent.push(content);
+          return { key: { id: `resp-${sent.length}` } };
+        },
+      },
+      identityMap: createIdentityMap(),
+      funConfig: { ...DEFAULT_FUN_CONFIG, personaToolsEnabled: true },
+      now: 1_000_000,
+    });
+
+    assert.equal(result.responded, true);
+    assert.equal(capturedOpts.jsonOnly, false);
+    assert.equal(sent.length, 1);
+    assert.match(sent[0].text, /EDUARDO, TU VAI DIGITAR “YESTE”/);
+  } finally {
+    if (previous === undefined) process.env.FUN_DISABLE_LIVE_LLM = '1';
+    else process.env.FUN_DISABLE_LIVE_LLM = previous;
+  }
+});
+
+test('persona agent: lore_remove detecta fato recém-removido (race condition de loreReconciliation)', async () => {
+  const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
+  const { createGroupMemoryService } = await import('../fun/services/groupMemoryService.js');
+  const groupMemoryService = createGroupMemoryService({ memoryRepository });
+  const chaos = createChaosService({ repository: { getLeaderboard: () => [] } });
+  const executor = createPersonaToolExecutor({
+    chaosService: chaos,
+    memoryRepository,
+    groupMemoryService,
+  });
+
+  const scopeKey = uniqueGroup();
+  const fact = memoryRepository.insertFact({
+    scopeKey,
+    summary: 'Eduardo sonha em dirigir Bugatti em reta infinita com combustivel infinito',
+    kind: 'running_gag',
+  });
+
+  // Simula loreReconciliationService deletando o fato e registrando remoção recente
+  memoryRepository.deleteFact(fact.id, scopeKey);
+  groupMemoryService.recordRecentRemoval(scopeKey, fact);
+
+  // Persona chama lore_remove por query logo em seguida
+  const resultQuery = await executor.execute(
+    { name: 'lore_remove', arguments: { query: 'Bugatti em reta infinita' } },
+    { scopeKey }
+  );
+  assert.equal(resultQuery.ok, true);
+  assert.match(resultQuery.summary, /Bugatti/i);
+  assert.match(resultQuery.summary, /já removido recentemente|Removeu da lore/i);
+
+  // Persona chama lore_remove por ID do fato já deletado
+  const resultId = await executor.execute(
+    { name: 'lore_remove', arguments: { id: fact.id } },
+    { scopeKey }
+  );
+  assert.equal(resultId.ok, true);
+  assert.match(resultId.summary, /já removido recentemente|Removeu fato/i);
+});
+
+test('persona agent: lore_remove de fato inexistente retorna ok false com summary informativo (sem erro genérico)', async () => {
+  const memoryRepository = createFunMemoryRepository({ getDatabase: getDb });
+  const { createGroupMemoryService } = await import('../fun/services/groupMemoryService.js');
+  const groupMemoryService = createGroupMemoryService({ memoryRepository });
+  const chaos = createChaosService({ repository: { getLeaderboard: () => [] } });
+  const executor = createPersonaToolExecutor({
+    chaosService: chaos,
+    memoryRepository,
+    groupMemoryService,
+  });
+
+  const scopeKey = uniqueGroup();
+  const result = await executor.execute(
+    { name: 'lore_remove', arguments: { query: 'cachorro na bunda' } },
+    { scopeKey }
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, 'not-found');
+  assert.notEqual(result.summary, 'Falha ao remover da lore');
+  assert.match(result.summary, /fato encontrado na lore sobre "cachorro na bunda"/i);
 });
