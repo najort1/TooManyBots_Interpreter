@@ -219,6 +219,8 @@ test('buildFunUserConfig restaura módulos de LLM ao alternar de modo econômico
   // Os módulos desativados no modo econômico DEVEM ser reativados
   assert.equal(aiConfig.imageGenEnabled, true, 'imageGenEnabled deve ser reativado no modo IA');
   assert.equal(aiConfig.selfHealEnabled, true, 'selfHealEnabled deve ser reativado no modo IA');
-  assert.equal(aiConfig.personaSocialHintsEnabled, true, 'personaSocialHintsEnabled deve ser reativado no modo IA');
+  // personaSocialHintsEnabled permanece desativado (experimento): substituído por personaChemistry.
+  assert.equal(aiConfig.personaSocialHintsEnabled, false, 'personaSocialHintsEnabled permanece desativado mesmo no modo IA');
+  assert.equal(aiConfig.personaChemistryEnabled, true, 'personaChemistryEnabled deve ser ativado no modo IA');
   assert.equal(aiConfig.groupEventsEnabled, true, 'groupEventsEnabled deve ser reativado no modo IA');
 });

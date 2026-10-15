@@ -258,6 +258,9 @@ test('funLlmRepository: cálculo de P95 com amostras pequenas e poda de dados an
 });
 
 test('serviços do bot Fun propagam task e scopeKey para chamadas LLM evitando fallback openai genérico', async () => {
+  const prevDisable = process.env.FUN_DISABLE_LIVE_LLM;
+  delete process.env.FUN_DISABLE_LIVE_LLM;
+  try {
   const { createPersonaSocialHintService } = await import('../fun/services/personaSocialHintService.js');
   const { createPersonaOpportunityDetector } = await import('../fun/services/personaOpportunityDetector.js');
   const { createGroupMemoryService } = await import('../fun/services/groupMemoryService.js');
@@ -292,10 +295,10 @@ test('serviços do bot Fun propagam task e scopeKey para chamadas LLM evitando f
       scopeKey: testScope,
       userJid: `user${i}@s.whatsapp.net`,
       text: `mensagem de teste ${i}`,
-      funConfig: { personaSocialHintsBatchSize: 3, personaSocialHintsMinMessages: 3 },
+      funConfig: { personaSocialHintsBatchSize: 3, personaSocialHintsMinMessages: 3, llmFeatures: { socialHints: true } },
     });
   }
-  await hintService.flushScope(testScope, { personaSocialHintsMinMessages: 3 });
+  await hintService.flushScope(testScope, { personaSocialHintsMinMessages: 3, llmFeatures: { socialHints: true } });
 
   const hintCall = capturedCalls.find((c) => c.task === 'socialHints');
   assert.ok(hintCall, 'personaSocialHintService deve enviar task socialHints');
@@ -372,4 +375,9 @@ test('serviços do bot Fun propagam task e scopeKey para chamadas LLM evitando f
   const eventCall = capturedCalls.find((c) => c.task === 'events');
   assert.ok(eventCall, 'eventBatchExtractor deve enviar task events');
   assert.equal(eventCall.scopeKey, testScope, 'eventBatchExtractor deve enviar scopeKey');
+  } finally {
+    if (prevDisable !== undefined) {
+      process.env.FUN_DISABLE_LIVE_LLM = prevDisable;
+    }
+  }
 });
