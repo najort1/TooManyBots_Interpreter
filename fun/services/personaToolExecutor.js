@@ -12,6 +12,34 @@ import { formatDatedFact } from '../utils/factTemporalContext.js';
 
 const VIRTUAL_RUSSIAN_ACTOR = '__persona_virtual_russian__';
 
+const VALID_LORE_KINDS = new Set([
+  'running_gag',
+  'rivalry',
+  'catchphrase',
+  'epic_fail',
+  'ship_lore',
+  'nickname',
+  'event',
+]);
+
+const LORE_KIND_ALIASES = Object.freeze({
+  piada: 'running_gag',
+  mico: 'epic_fail',
+  apelido: 'nickname',
+  bordao: 'catchphrase',
+  'bordão': 'catchphrase',
+  rivalidade: 'rivalry',
+  ship: 'ship_lore',
+  fofoca: 'event',
+});
+
+function stripDiacritics(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
 function clean(value, max = 240) {
   return String(value || '').replace(/[\r\n]+/g, ' ').trim().slice(0, max);
 }
@@ -140,10 +168,21 @@ export function createPersonaToolExecutor({
     }
 
     if (name === 'lore') {
-      const query = clean(args.query || ctx.text, 120).toLowerCase();
-      const tokens = query.normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/\W+/).filter((x) => x.length >= 3);
-      const facts = memoryRepository?.listFacts?.(scopeKey, { limit: 50, minScore: 0 }) || [];
-      const matches = facts.filter((fact) => !tokens.length || tokens.some((token) => String(fact.summary || '').toLowerCase().includes(token))).slice(0, 5);
+      const rawQuery = clean(args.query || '', 120);
+      const repo = memoryRepository || groupMemoryService?.memoryRepository;
+      let matches = [];
+      if (!rawQuery) {
+        matches = repo?.listFacts?.(scopeKey, { limit: 5 }) || [];
+      } else {
+        const normQuery = stripDiacritics(rawQuery);
+        const tokens = normQuery.split(/\W+/).filter((x) => x.length >= 3);
+        const facts = repo?.listFacts?.(scopeKey, { limit: 50, minScore: 0 }) || [];
+        matches = facts.filter((fact) => {
+          const normSummary = stripDiacritics(fact.summary);
+          if (normQuery && normSummary.includes(normQuery)) return true;
+          return tokens.length > 0 && tokens.some((token) => normSummary.includes(token));
+        }).slice(0, 5);
+      }
       return {
         ...base,
         ok: true,
@@ -151,10 +190,214 @@ export function createPersonaToolExecutor({
           ? [
               '🧠 *Lore lembrada*',
               ...matches.map((fact) =>
-                `• ${formatDatedFact(fact, clean(fact.summary, 180), ctx.funConfig?.worldTimezone)}`
+                `• [id: ${fact.id}] ${formatDatedFact(fact, clean(fact.summary, 180), ctx.funConfig?.worldTimezone)}`
               ),
             ].join('\n')
           : 'Não achei um fato de lore confiável sobre isso por aqui.',
+        summary: matches.length
+          ? 'Fatos encontrados na lore:\n' + matches.map((f) => '• [id: ' + f.id + '] ' + clean(f.summary, 120)).join('\n')
+          : 'Nenhum fato encontrado na lore.',
+        data: matches,
+      };
+    }
+
+    if (name === 'lore_add') {
+      const summary = clean(args.summary, 240);
+      if (!summary) {
+        return { ...base, ok: false, reason: 'missing-summary', text: 'Preciso de um resumo do que adicionar à lore.' };
+      }
+      const rawKind = String(args.kind || '').trim().toLowerCase();
+      const kind = LORE_KIND_ALIASES[rawKind] || (VALID_LORE_KINDS.has(rawKind) ? rawKind : 'event');
+      const subjects = [...new Set([
+        ...(Array.isArray(ctx.mentionedJids) ? ctx.mentionedJids : []),
+        ctx.quotedParticipant,
+      ].filter(Boolean))];
+      const repo = memoryRepository || groupMemoryService?.memoryRepository;
+      if (!repo?.insertFact) {
+        return { ...base, ok: false, reason: 'unavailable', text: 'Não consigo acessar a memória do grupo agora.' };
+      }
+      const fact = repo.insertFact({
+        scopeKey,
+        kind,
+        summary,
+        subjects,
+        source: 'persona',
+        now,
+      });
+      if (!fact) {
+        return { ...base, ok: false, reason: 'insert-failed', text: 'Não foi possível adicionar o fato à lore.' };
+      }
+      if (typeof repo.pruneToCapWithMemberQuota === 'function') {
+        repo.pruneToCapWithMemberQuota(scopeKey, ctx.funConfig?.memoryMaxFacts || 120);
+      } else if (typeof repo.pruneToCap === 'function') {
+        repo.pruneToCap(scopeKey, ctx.funConfig?.memoryMaxFacts || 120);
+      }
+      groupMemoryService?.invalidatePersonaCache?.(scopeKey);
+      return {
+        ...base,
+        ok: true,
+        text: `Fato adicionado à lore do grupo (id: ${fact.id}): "${fact.summary}"`,
+        summary: `Adicionou à lore: "${clean(fact.summary, 80)}"`,
+        data: fact,
+      };
+    }
+
+    if (name === 'lore_update') {
+      const repo = memoryRepository || groupMemoryService?.memoryRepository;
+      let targetFact = null;
+      if (args.id) {
+        const found = repo?.getFact?.(args.id);
+        if (!found || found.scopeKey !== scopeKey) {
+          return {
+            ...base,
+            ok: false,
+            reason: 'not-found',
+            text: 'Não encontrei nenhum fato correspondente na lore para atualizar.',
+          };
+        }
+        targetFact = found;
+      } else {
+        const query = clean(args.query, 120);
+        if (!query) {
+          return {
+            ...base,
+            ok: false,
+            reason: 'missing-target',
+            text: 'Informe o ID ou um termo de busca para localizar o fato que deseja atualizar.',
+          };
+        }
+        const matches = groupMemoryService?.findMatchingFacts?.(scopeKey, query) || [];
+        if (matches.length > 0) {
+          targetFact = matches[0];
+        } else if (!groupMemoryService?.findMatchingFacts && repo?.listFacts) {
+          const qNorm = stripDiacritics(query);
+          const all = repo.listFacts(scopeKey, { limit: 100, minScore: 0 }) || [];
+          targetFact = all.find((f) =>
+            stripDiacritics(f.summary).includes(qNorm) ||
+            (f.id && String(f.id).toLowerCase().startsWith(qNorm))
+          ) || null;
+        }
+        if (!targetFact) {
+          return {
+            ...base,
+            ok: false,
+            reason: 'not-found',
+            text: 'Não encontrei nenhum fato correspondente na lore para atualizar.',
+          };
+        }
+      }
+
+      const summary = clean(args.summary, 240);
+      if (!summary) {
+        return { ...base, ok: false, reason: 'missing-summary', text: 'Preciso do novo resumo para atualizar a lore.' };
+      }
+      if (!repo?.updateFactSummary) {
+        return { ...base, ok: false, reason: 'unavailable', text: 'Não consigo atualizar a memória do grupo agora.' };
+      }
+      const updated = repo.updateFactSummary(targetFact.id, scopeKey, summary);
+      if (!updated) {
+        return { ...base, ok: false, reason: 'update-failed', text: 'Não foi possível atualizar o fato na lore.' };
+      }
+      groupMemoryService?.invalidatePersonaCache?.(scopeKey);
+      return {
+        ...base,
+        ok: true,
+        text: `Fato da lore atualizado (id: ${targetFact.id}): "${updated.summary}"`,
+        summary: `Atualizou fato da lore: "${clean(updated.summary, 80)}"`,
+        data: updated,
+      };
+    }
+
+    if (name === 'lore_remove') {
+      const repo = memoryRepository || groupMemoryService?.memoryRepository;
+      if (args.id) {
+        const factId = String(args.id || '').trim();
+        const existing = repo?.getFact?.(factId);
+        if (!existing || existing.scopeKey !== scopeKey) {
+          const recent = groupMemoryService?.findRecentRemoval?.(scopeKey, factId);
+          if (recent) {
+            return {
+              ...base,
+              ok: true,
+              text: `Fato ${factId} já foi removido da lore agora há pouco.`,
+              summary: `Removeu fato ${factId} da lore (já removido recentemente)`,
+            };
+          }
+          return {
+            ...base,
+            ok: false,
+            reason: 'not-found',
+            text: 'Fato não encontrado para remoção.',
+            summary: `Fato ${factId} não consta na lore (já removido ou inexistente)`,
+          };
+        }
+        const deleted = Boolean(repo?.deleteFact?.(factId, scopeKey));
+        if (deleted) {
+          groupMemoryService?.invalidatePersonaCache?.(scopeKey);
+          groupMemoryService?.recordRecentRemoval?.(scopeKey, existing);
+        }
+        return {
+          ...base,
+          ok: deleted,
+          text: deleted ? `Fato ${factId} removido da lore.` : `Fato ${factId} não encontrado para remoção.`,
+          summary: deleted ? `Removeu fato ${factId} da lore` : `Falha ao remover fato ${factId} da lore`,
+        };
+      }
+
+      const query = clean(args.query, 120);
+      if (!query) {
+        return {
+          ...base,
+          ok: false,
+          reason: 'missing-target',
+          text: 'Informe o ID ou um termo de busca para identificar o fato que deseja remover da lore.',
+          summary: 'Busca vazia ao tentar remover da lore',
+        };
+      }
+
+      if (!groupMemoryService?.forgetByQuery) {
+        return { ...base, ok: false, reason: 'unavailable', text: 'Não consigo remover fatos por busca no momento.' };
+      }
+      const result = groupMemoryService.forgetByQuery(scopeKey, query, { maxWipe: 3 });
+      if (result?.ok) {
+        groupMemoryService?.invalidatePersonaCache?.(scopeKey);
+        return {
+          ...base,
+          ok: true,
+          text: `Removido(s) ${result.removed} fato(s) da lore.`,
+          summary: `Removeu ${result.removed} fato(s) da lore`,
+        };
+      }
+
+      if (result?.reason === 'not-found') {
+        const recent = groupMemoryService?.findRecentRemoval?.(scopeKey, query);
+        if (recent) {
+          return {
+            ...base,
+            ok: true,
+            text: `Fato correspondente já foi removido da lore agora mesmo: "${clean(recent.summary, 120)}".`,
+            summary: `Removeu da lore: "${clean(recent.summary, 80)}" (já removido recentemente)`,
+          };
+        }
+        return {
+          ...base,
+          ok: false,
+          reason: 'not-found',
+          text: `Nenhum fato encontrado na lore sobre "${query}" (já não consta ou nunca existiu).`,
+          summary: `Nenhum fato encontrado na lore sobre "${clean(query, 60)}" (já removido ou inexistente)`,
+        };
+      }
+
+      return {
+        ...base,
+        ok: false,
+        reason: result?.reason || 'not-found',
+        text: result?.reason === 'too-broad'
+          ? 'Muitos fatos coincidiram com a busca. Especifique melhor o que remover.'
+          : 'Nenhum fato encontrado para remover da lore.',
+        summary: result?.reason === 'too-broad'
+          ? 'Muitos fatos coincidiram ao tentar remover da lore'
+          : `Nenhum fato encontrado na lore sobre "${clean(query, 60)}" (já removido ou inexistente)`,
       };
     }
 
