@@ -15,6 +15,10 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { loadEnv } from './env.js';
+
+// Inicializa variáveis de ambiente do .env de forma segura
+loadEnv();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FUN_USER_CONFIG_PATH = path.join(__dirname, 'config.user.json');
