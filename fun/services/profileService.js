@@ -7,7 +7,7 @@ import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
-import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 import { isUsablePromptFact } from '../utils/promptFactSanitizer.js';
 
 const EXTRACT_SYSTEM = `Você extrai apenas bio e extras de um texto livre em pt-BR (grupo WhatsApp).
@@ -646,12 +646,13 @@ export function createProfileService({
           try {
             const task = resolveZenTaskParams('extract', funConfig);
             const ep = resolveZenEndpoint(funConfig);
+            const profileModel = resolveLlmModel(funConfig, 'profile');
             const out = await generateZen({
               task: 'profile',
               scopeKey: String(options?.scopeKey || ''),
               userJid: String(options?.userJid || ''),
               baseUrl: ep.baseUrl,
-              model: ep.model,
+              model: profileModel,
               system: EXTRACT_SYSTEM,
               prompt,
               timeoutMs: Math.max(o.timeout, task.timeoutMs),

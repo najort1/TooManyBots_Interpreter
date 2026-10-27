@@ -1,7 +1,7 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
-import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 
 function buildSystemPrompt(maxAbsDelta = 8) {
   const limit = Math.max(1, Number(maxAbsDelta) || 8);
@@ -159,7 +159,7 @@ export function createPersonaChemistryService({
           const raw = await generateZen({
             task: 'chemistry',
             scopeKey: String(scopeKey || ''),
-            baseUrl: ep.baseUrl, model: ep.model,
+            baseUrl: ep.baseUrl, model: resolveLlmModel(funConfig, 'chemistry'),
             system, prompt, timeoutMs: task.timeoutMs, maxTokens: task.maxTokens,
             temperature: task.temperature, apiKey: ep.apiKey, jsonMode: true, jsonOnly: true,
             sendSamplingParams: funConfig.zenSendSamplingParams === true,

@@ -5,6 +5,8 @@ import { handleXpCommand } from './handlers/xp.js';
 import { handleRankCommand } from './handlers/rank.js';
 import { handleRankCoinsCommand } from './handlers/rankCoins.js';
 import { handleRankMessagesCommand } from './handlers/rankMessages.js';
+import { handleAtualizacaoCommand } from './handlers/atualizacao.js';
+import { handleInativosCommand } from './handlers/inativos.js';
 import { handleDailyCommand } from './handlers/daily.js';
 import { handleHelpCommand } from './handlers/help.js';
 import { handlePayCommand } from './handlers/pay.js';
@@ -223,6 +225,7 @@ export async function routeFunCommand(ctx) {
     robberyService,
     roastService,
     newsService,
+    changelogService,
     achievementService,
     cardService,
     qmpService,
@@ -360,6 +363,7 @@ export async function routeFunCommand(ctx) {
     robberyService,
     roastService,
     newsService,
+    changelogService,
     achievementService,
     cardService,
     qmpService,
@@ -416,6 +420,10 @@ export async function routeFunCommand(ctx) {
       return handleRankCoinsCommand(base);
     case FUN_COMMANDS.RANK_MESSAGES:
       return handleRankMessagesCommand(base);
+    case FUN_COMMANDS.ATUALIZACAO:
+      return handleAtualizacaoCommand(base);
+    case FUN_COMMANDS.INATIVOS:
+      return handleInativosCommand(base);
     case FUN_COMMANDS.DAILY:
       return handleDailyCommand(base);
     case FUN_COMMANDS.HELP:

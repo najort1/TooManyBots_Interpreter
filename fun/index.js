@@ -60,6 +60,7 @@ import { createFunCarRepository } from './db/funCarRepository.js';
 import { createFunAccountRepository } from './db/funAccountRepository.js';
 import { createRegistrationService } from './services/registrationService.js';
 import { createGameManager, createGameAuthService } from './games/index.js';
+import { resolveLlmModel } from './llm/llmGovernance.js';
 import { createCarService } from './services/carService.js';
 import { createCarLinkService } from './services/carLinkService.js';
 import { createVisitService } from './services/visitService.js';
@@ -424,7 +425,7 @@ export function createFunModule(deps = {}) {
         debugMode: config.debugMode,
         logger: getLogger?.(),
         baseUrl: endpoint.baseUrl,
-        model: endpoint.model,
+        model: params?.model || resolveLlmModel(config, 'selfHeal'),
         apiKey: endpoint.apiKey,
         sendSamplingParams: config.zenSendSamplingParams,
       });
@@ -579,6 +580,7 @@ export function createFunModule(deps = {}) {
         }
       },
       now: Date.now,
+      getConfig: () => resolveFunConfig(getConfig() || {}),
     });
 
   const imageGenerationRepository =
@@ -630,6 +632,7 @@ export function createFunModule(deps = {}) {
       reactionMediaService,
       personaRecentMessageRepository,
       personaIdentityService,
+      journalMessageRepository,
       getContactDisplayName: resolveContactName,
     });
   const personaTtsService =
@@ -786,6 +789,7 @@ export function createFunModule(deps = {}) {
         robberyService,
         roastService,
         newsService,
+        changelogService,
         journalMessageRepository,
         personaRecentMessageRepository,
         personaFollowupService,
@@ -972,7 +976,10 @@ export function createFunModule(deps = {}) {
       }
     }
 
-    if (personaSocialHintService?.flushDueScopes) {
+    // Pistas sociais e química: varreduras de segurança do world tick.
+    // O trigger é SOMENTE lote de mensagens (40 msgs). Na madrugada (quiet hours),
+    // nenhuma varredura de LLM social roda no relógio autônomo.
+    if (!quiet && personaSocialHintService?.flushDueScopes) {
       try {
         const socialHints = await personaSocialHintService.flushDueScopes(funConfig, now);
         if (socialHints?.results?.length) results.push(...socialHints.results);
@@ -981,7 +988,7 @@ export function createFunModule(deps = {}) {
       }
     }
 
-    if (personaChemistryService?.flushDueScopes) {
+    if (!quiet && personaChemistryService?.flushDueScopes) {
       try {
         const chemistry = await personaChemistryService.flushDueScopes(funConfig, now);
         if (chemistry?.results?.length) results.push(...chemistry.results);
@@ -1502,6 +1509,11 @@ export function createFunModule(deps = {}) {
     return changelogService.listHistory(opts);
   }
 
+  function listLastChangelogBroadcast() {
+    ensureInit();
+    return changelogService.getLastBroadcast();
+  }
+
   async function launchDailyChallengeForWhitelist(opts = {}) {
     const type = String(opts.type || '').trim();
     const validTypes = [
@@ -1598,6 +1610,7 @@ export function createFunModule(deps = {}) {
     tickWorldEvents,
     broadcastChangelog,
     listChangelogHistory,
+    listLastChangelogBroadcast,
     launchDailyChallengeForWhitelist,
     warmupLlm,
     stopLlmKeepAlive,
@@ -1735,6 +1748,13 @@ export {
   logLlmCallError,
 } from './llm/llmLogger.js';
 export { resolveZenTaskParams, ZEN_TASK_DEFAULTS } from './llm/zenTaskParams.js';
+export {
+  DEFAULT_LLM_MODELS,
+  DEFAULT_LLM_FEATURES,
+  LLM_FEATURE_METADATA,
+  normalizeLlmModels,
+  resolveLlmModel,
+} from './llm/llmGovernance.js';
 export {
   recordLlmHit,
   recordLlmCall,

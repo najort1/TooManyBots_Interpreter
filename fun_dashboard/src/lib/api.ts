@@ -12,6 +12,7 @@ import type {
   Faction,
   FunConfig,
   LlmConfigResponse,
+  LlmConfigUpdatePayload,
   LlmAnalyticsResponse,
   FunGroup,
   GroupSettings,
@@ -100,7 +101,7 @@ export const funApi = {
     return request<LlmAnalyticsResponse>(`/api/fun/llm/analytics${qs}`);
   },
 
-  updateLlmConfig: (payload: { zenEnabled?: boolean; llmFeatures?: Record<string, boolean> }) =>
+  updateLlmConfig: (payload: LlmConfigUpdatePayload) =>
     request<LlmConfigResponse>("/api/fun/llm/config", {
       method: "POST",
       body: JSON.stringify(payload),

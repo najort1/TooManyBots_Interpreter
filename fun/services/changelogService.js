@@ -238,6 +238,43 @@ export function createChangelogService({
   }
 
   /**
+   * Última atualização REAL anunciada via dashboard (ignora dry_run e envios
+   * que falharam em todos os grupos). Source do comando /atualizacao.
+   * @returns {{ id, title, version, body, messageText, targetCount, okCount, failCount, dryRun, results, createdAt } | null}
+   */
+  function getLastBroadcast() {
+    ensureSchema();
+    const row = getDatabase()
+      .prepare(
+        `SELECT * FROM ${ANALYTICS}.fun_changelog_broadcasts
+         WHERE dry_run = 0 AND ok_count > 0
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get();
+    if (!row) return null;
+    return {
+      id: row.id,
+      title: String(row.title || ''),
+      version: String(row.version || ''),
+      body: String(row.body || ''),
+      messageText: String(row.message_text || ''),
+      targetCount: Number(row.target_count) || 0,
+      okCount: Number(row.ok_count) || 0,
+      failCount: Number(row.fail_count) || 0,
+      dryRun: Boolean(row.dry_run),
+      results: (() => {
+        try {
+          return JSON.parse(row.results_json || '[]');
+        } catch {
+          return [];
+        }
+      })(),
+      createdAt: Number(row.created_at) || 0,
+    };
+  }
+
+  /**
    * @param {{
    *   title?: string,
    *   version?: string,
@@ -363,5 +400,6 @@ export function createChangelogService({
     resolveTargets,
     broadcast,
     listHistory,
+    getLastBroadcast,
   };
 }

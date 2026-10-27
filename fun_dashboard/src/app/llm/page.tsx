@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import {
   Sparkles,
   Bot,
@@ -13,6 +14,7 @@ import {
   Search,
   ZapOff,
   Activity,
+  Cpu,
 } from "lucide-react";
 import { AppShell, useDashboardScope } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
@@ -316,6 +318,17 @@ export default function LlmPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Link para a tela dedicada de modelos por função */}
+              <div className="mt-3 border-t border-zinc-100 pt-3 dark:border-zinc-800/80">
+                <Link
+                  href="/modelos"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
+                >
+                  <Cpu className="h-3.5 w-3.5" />
+                  Configurar modelos por função →
+                </Link>
+              </div>
             </div>
 
             {/* Barra de Filtros e Ações Rápidas */}
@@ -389,6 +402,7 @@ export default function LlmPage() {
                   masterEnabled={masterOn}
                   disabled={loadingConfig || saving}
                   onToggle={(checked) => handleFeatureToggle(item.id, checked)}
+                  defaultModel={config?.zenModel || ""}
                 />
               ))}
 
@@ -410,11 +424,13 @@ function FeatureCard({
   masterEnabled,
   disabled,
   onToggle,
+  defaultModel,
 }: {
   item: LlmFeatureItem;
   masterEnabled: boolean;
   disabled: boolean;
   onToggle: (checked: boolean) => void;
+  defaultModel: string;
 }) {
   const isFeatureEnabled = item.enabled !== false;
   const isEffectivelyActive = masterEnabled && isFeatureEnabled;
@@ -477,7 +493,7 @@ function FeatureCard({
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-between border-t border-zinc-100 pt-3 dark:border-zinc-800/60">
+      <div className="mt-4 flex items-center justify-between gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800/60">
         <span className="text-[11px] font-mono text-zinc-400 dark:text-zinc-500">
           ID: {item.id}
         </span>
@@ -496,6 +512,27 @@ function FeatureCard({
               ? "Ativo com IA"
               : "Desativado (Fallback)"}
         </Badge>
+      </div>
+
+      {/* Modelo efetivo usado nas chamadas desta função */}
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+        <span className="text-[11px] text-zinc-500 dark:text-zinc-400">
+          Modelo:{" "}
+          <span className="font-mono font-semibold text-zinc-800 dark:text-zinc-200">
+            {item.effectiveModel || defaultModel || "—"}
+          </span>
+          {item.modelOverride ? (
+            <span className="ml-1.5 text-emerald-600 dark:text-emerald-400">(específico)</span>
+          ) : (
+            <span className="ml-1.5 text-zinc-400 dark:text-zinc-500">(padrão)</span>
+          )}
+        </span>
+        <Link
+          href="/modelos"
+          className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-600 hover:text-emerald-700 dark:text-emerald-400 dark:hover:text-emerald-300"
+        >
+          Configurar →
+        </Link>
       </div>
     </div>
   );

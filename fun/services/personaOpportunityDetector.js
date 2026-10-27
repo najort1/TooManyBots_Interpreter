@@ -2,6 +2,7 @@ import { sanitizeFlavor, looksLikeScoreboardEcho } from '../llm/flavorService.js
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 import { STICKER_SLUGS } from './personaStickerCatalog.js';
 import { EMOJI_RE, looksLikeRawJson } from './personaToolProtocol.js';
 import { isUsablePromptFact } from '../utils/promptFactSanitizer.js';
@@ -474,7 +475,12 @@ export function createPersonaOpportunityDetector({
     }
 
     const isLiveLlmBlocked = process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete;
-    if (funConfig.personaAutonomyLlmEnabled === false || funConfig.zenEnabled === false || isLiveLlmBlocked) {
+    if (
+      funConfig.personaAutonomyLlmEnabled === false ||
+      funConfig.zenEnabled === false ||
+      !isLlmFeatureEnabled(funConfig, 'personaOpportunity') ||
+      isLiveLlmBlocked
+    ) {
       buffer.contextTail = buffer.messages.slice(-contextMessages);
       buffer.messages = [];
       buffer.lastFlushAt = currentNow;
@@ -490,6 +496,7 @@ export function createPersonaOpportunityDetector({
     const commentMaxChars = Math.max(40, Math.min(280, Number(funConfig.personaAutonomyCommentMaxChars) || 140));
     const zen = resolveZenTaskParams('persona_opportunity', funConfig);
     const endpoint = resolveZenEndpoint(funConfig);
+    const opportunityModel = resolveLlmModel(funConfig, 'personaOpportunity');
     const prompt = buildUserPrompt(buildBatchPromptContext({ batch, contextCount, responseContextPack, funConfig, scopeKey: scope, personaSocialHintService }), true);
 
     console.log(`[fun/autonomy] Avaliando lote no LLM para ${scope}: ${batch.length} msgs (${contextCount} contexto, ${snapshot.length} novas)...`);
@@ -499,7 +506,7 @@ export function createPersonaOpportunityDetector({
         task: 'personaOpportunity',
         scopeKey: String(scope || ''),
         baseUrl: endpoint.baseUrl,
-        model: endpoint.model,
+        model: opportunityModel,
         apiKey: endpoint.apiKey,
         system: buildSystemPrompt(commentMaxChars, true, contextCount),
         prompt,
@@ -622,7 +629,12 @@ export function createPersonaOpportunityDetector({
       return { eligible: false, reason: 'no-opportunity-candidate', score: preflight.score || 0, action: null };
     }
     const isLiveLlmBlocked = process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete;
-    if (funConfig.personaAutonomyLlmEnabled === false || funConfig.zenEnabled === false || isLiveLlmBlocked) {
+    if (
+      funConfig.personaAutonomyLlmEnabled === false ||
+      funConfig.zenEnabled === false ||
+      !isLlmFeatureEnabled(funConfig, 'personaOpportunity') ||
+      isLiveLlmBlocked
+    ) {
       return { eligible: false, reason: 'llm-disabled', score: preflight.score || 0, action: null };
     }
 
@@ -630,6 +642,7 @@ export function createPersonaOpportunityDetector({
 
     const zen = resolveZenTaskParams('persona_opportunity', funConfig);
     const endpoint = resolveZenEndpoint(funConfig);
+    const opportunityModel = resolveLlmModel(funConfig, 'personaOpportunity');
     const prompt = buildUserPrompt(buildPromptContext({ text, authorLabel, responseContextPack, funConfig, scopeKey, personaSocialHintService }));
 
     console.log(`[fun/autonomy] Avaliando mensagem única no LLM para ${scopeKey}: "${String(text || '').slice(0, 50)}"...`);
@@ -640,7 +653,7 @@ export function createPersonaOpportunityDetector({
         scopeKey: String(scopeKey || ''),
         userJid: String(authorJid || ''),
         baseUrl: endpoint.baseUrl,
-        model: endpoint.model,
+        model: opportunityModel,
         apiKey: endpoint.apiKey,
         system: buildSystemPrompt(commentMaxChars),
         prompt,

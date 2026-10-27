@@ -6,7 +6,7 @@ import {
   fingerprintLine,
 } from './zenTaskParams.js';
 import { recordLlmHit } from './llmMetrics.js';
-import { isLlmFeatureEnabled } from './llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from './llmGovernance.js';
 import { withRetries, BREAK } from '../utils/retry.js';
 
 /**
@@ -1083,12 +1083,20 @@ export function createFlavorService(deps = {}) {
 
   function zenOn(cfg, scenario = '') {
     if (!liveLlmAllowed && generateZen === openaiChatComplete) return false;
-    const feature = scenario === 'group_times'
-      ? 'groupNews'
-      : scenario === 'level_up'
-        ? 'levelUp'
-        : 'flavor';
-    return isLlmFeatureEnabled(cfg, feature);
+    if (scenario === 'group_times') {
+      return isLlmFeatureEnabled(cfg, 'groupNews');
+    }
+    if (scenario === 'level_up') {
+      return isLlmFeatureEnabled(cfg, 'levelUp');
+    }
+    if (scenario === 'ship' || scenario.startsWith('marry_')) {
+      return (
+        isLlmFeatureEnabled(cfg, 'chemistry') ||
+        isLlmFeatureEnabled(cfg, 'persona') ||
+        isLlmFeatureEnabled(cfg, 'flavor')
+      );
+    }
+    return isLlmFeatureEnabled(cfg, 'flavor');
   }
 
   function isEnabled(cfg, scenario = '') {
@@ -1387,6 +1395,9 @@ ${banHint}`.trim();
     const taskName = assault ? 'assault' : chaos ? 'chaos' : 'flavor';
     const task = resolveZenTaskParams(taskName, cfg);
     const ep = resolveZenSettings(cfg);
+    // Feature dona do modelo: `group_times` → groupNews, `level_up` → levelUp.
+    const featureKey = key === 'group_times' ? 'groupNews' : key === 'level_up' ? 'levelUp' : 'flavor';
+    const effectiveModel = resolveLlmModel(cfg, featureKey);
     const scopeKey = scopeKeyOf(vars);
     const enriched = { ...vars };
     const { prompt, system, maxChars, maxTokens } = buildPromptParts(cfg, key, enriched, simple, {
@@ -1429,7 +1440,7 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
         debugMode: cfg.debugMode,
         logger: getLogger?.(),
         baseUrl: ep.baseUrl,
-        model: ep.model,
+        model: effectiveModel,
         system: jsonSystem,
         prompt: assault ? assaultPrompt : prompt,
         timeoutMs,
@@ -1461,15 +1472,15 @@ Invente o gênero e o título. NÃO invente coins/saldo/%. ${
               skipOverlap: false,
             });
       if (assault && clean && overlapsRecent(clean.slice(0, 120), recentBanList(cfg, scopeKey))) {
-        return { ok: false, reason: 'zen-empty', model: ep.model };
+        return { ok: false, reason: 'zen-empty', model: effectiveModel };
       }
-      if (!accepted) return { ok: false, reason: 'zen-empty', model: ep.model };
-      return { ok: true, text: accepted, provider: 'zen', model: ep.model };
+      if (!accepted) return { ok: false, reason: 'zen-empty', model: effectiveModel };
+      return { ok: true, text: accepted, provider: 'zen', model: effectiveModel };
     } catch (err) {
       return {
         ok: false,
         reason: err?.message || 'zen-fail',
-        model: ep.model,
+        model: effectiveModel,
         err,
       };
     }

@@ -121,6 +121,10 @@ export const FUN_COMMANDS = Object.freeze({
   CADASTRAR: 'cadastrar',
   // Evento diário de jogos multiplayer de panelinhas
   JOGO_DIARIO: 'jogo_diario',
+  // Última atualização anunciada via dashboard (changelog broadcasts)
+  ATUALIZACAO: 'atualizacao',
+  // Ranking de quem MENOS fala no grupo
+  INATIVOS: 'inativos',
   // Expansão Social 4D: Vínculos, Recompensas e Justiça Comunitária
   RELACAO: 'relacao',
   BOUNTY: 'bounty',
@@ -596,6 +600,11 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   evento_jogo: FUN_COMMANDS.JOGO_DIARIO,
   eventojogo: FUN_COMMANDS.JOGO_DIARIO,
   jogos: FUN_COMMANDS.JOGO_DIARIO,
+  // Última atualização anunciada via dashboard
+  atualizacao: FUN_COMMANDS.ATUALIZACAO,
+  // Ranking de inativos (quem menos fala)
+  inativos: FUN_COMMANDS.INATIVOS,
+  quietos: FUN_COMMANDS.INATIVOS,
 });
 
 export const ACTION_TYPE = Object.freeze({
@@ -654,6 +663,7 @@ export const PERSONA_CONTEXT_TURNS = 40;
 /** Features com suporte a LLM no bot Fun (controle granular de ativação). */
 export const DEFAULT_LLM_FEATURES = Object.freeze({
   persona: true,
+  personaOpportunity: true,
   memory: true,
   socialHints: false,
   loreReconciliation: true,
@@ -669,6 +679,33 @@ export const DEFAULT_LLM_FEATURES = Object.freeze({
   selfHeal: false,
   profile: true,
   chemistry: true,
+});
+
+/**
+ * Overrides de modelo Zen por funcionalidade LLM.
+ *
+ * Cada chave corresponde a uma tarefa que chama a LLM. Valor vazio (`''`) = herda
+ * o `zenModel` global. A resolução real fica em `fun/llm/llmGovernance.js`
+ * (`resolveLlmModel`), que ainda preserva o legado `qmpZenModel`.
+ */
+export const DEFAULT_LLM_MODELS = Object.freeze({
+  persona: '',
+  personaOpportunity: '',
+  memory: '',
+  socialHints: '',
+  chemistry: '',
+  loreReconciliation: '',
+  flavor: '',
+  groupNews: '',
+  levelUp: '',
+  market: '',
+  dailyChallenge: '',
+  tarot: '',
+  qmp: '',
+  quizRoyale: '',
+  events: '',
+  selfHeal: '',
+  profile: '',
 });
 
 /** Defaults do bot Fun standalone (não herda config do TMB). */
@@ -795,6 +832,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // OpenCode Zen Proxy (OpenAI-compatible)
   zenEnabled: true,
   llmFeatures: DEFAULT_LLM_FEATURES,
+  llmModels: DEFAULT_LLM_MODELS,
   /** Proxy OpenAI-compatible Zen padronizado para todas as tarefas de chat. */
   zenBaseUrl: 'http://localhost:20128/v1',
   zenModel: 'bot-zap',
@@ -1185,9 +1223,9 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   loreReconciliationAckMode: 'react',
   loreReconciliationAckEmoji: '🗑️',
   // Inferência social assíncrona por lote para a persona.
-  // Desativado no experimento: substituído pelo personaChemistry (ver abaixo).
+  // Trigger é SOMENTE contagem — sem timer de flush por tempo (lote de 40 msgs).
   personaSocialHintsEnabled: false,
-  personaSocialHintsBatchSize: 50,
+  personaSocialHintsBatchSize: 40,
   personaSocialHintsFlushIntervalMs: 10 * 60_000,
   personaSocialHintsMinMessages: 8,
   personaSocialHintsMaxChars: 600,
@@ -1196,7 +1234,7 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // Química social por lote: LLM ajusta afeto/rivalidade/intimidade/caos a cada
   // N mensagens do grupo. Trigger é SOMENTE contagem — sem timer de flush por tempo.
   personaChemistryEnabled: true,
-  personaChemistryBatchSize: 50,
+  personaChemistryBatchSize: 40,
   personaChemistryMaxAbsDelta: 8,
   // 10 Minutos de Crime — evento diário de caos
   chaosEventEnabled: true,

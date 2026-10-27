@@ -5,9 +5,10 @@
  * permitindo ligar/desligar IA de forma global ou cirúrgica pelo dashboard.
  */
 
-import { DEFAULT_LLM_FEATURES } from '../constants.js';
+import { DEFAULT_LLM_FEATURES, DEFAULT_LLM_MODELS } from '../constants.js';
+import { resolveZenEndpoint } from './zenEndpoint.js';
 
-export { DEFAULT_LLM_FEATURES };
+export { DEFAULT_LLM_FEATURES, DEFAULT_LLM_MODELS };
 
 export const LLM_FEATURE_METADATA = Object.freeze({
   persona: {
@@ -16,6 +17,14 @@ export const LLM_FEATURE_METADATA = Object.freeze({
     category: 'Chat & Social',
     description: 'Respostas conversacionais e interação inteligente do bot no grupo.',
     fallback: 'Não responde ou usa resposta pré-configurada sem acionar IA.',
+  },
+  personaOpportunity: {
+    id: 'personaOpportunity',
+    name: 'Intervenção Autônoma da Persona',
+    category: 'Chat & Social',
+    description:
+      'Avaliação de lotes de mensagens para decidir quando a persona entra espontaneamente na conversa.',
+    fallback: 'Usa apenas gatilhos determinísticos (menção direta ou reply ao bot).',
   },
   memory: {
     id: 'memory',
@@ -146,6 +155,63 @@ export function normalizeLlmFeatures(rawInput) {
 }
 
 /**
+ * Normaliza o mapa de overrides de modelo por funcionalidade.
+ *
+ * Chaves desconhecidas são descartadas e valores inválidos caem para `''`
+ * (= herda o `zenModel` global).
+ *
+ * @param {object} [rawInput]
+ * @returns {Record<string, string>}
+ */
+export function normalizeLlmModels(rawInput) {
+  const raw = rawInput && typeof rawInput === 'object' && !Array.isArray(rawInput) ? rawInput : {};
+  const normalized = {};
+
+  for (const key of Object.keys(DEFAULT_LLM_MODELS)) {
+    if (Object.hasOwn(raw, key) && typeof raw[key] === 'string') {
+      normalized[key] = raw[key].trim().slice(0, 160);
+    } else {
+      normalized[key] = DEFAULT_LLM_MODELS[key];
+    }
+  }
+
+  return normalized;
+}
+
+/**
+ * Resolve o modelo efetivo de uma funcionalidade LLM.
+ *
+ * Ordem de precedência:
+ * 1. Override por funcionalidade (`funConfig.llmModels[featureKey]`).
+ * 2. Compatibilidade legada do QMP (`funConfig.qmpZenModel`).
+ * 3. Modelo global do endpoint Zen (`zenModel`).
+ *
+ * @param {object} [funConfig]
+ * @param {string} [featureKey] Identificador da funcionalidade (ex: 'persona').
+ * @returns {string}
+ */
+export function resolveLlmModel(funConfig = {}, featureKey = '') {
+  const cfg = funConfig && typeof funConfig === 'object' ? funConfig : {};
+  const ep = resolveZenEndpoint(cfg);
+
+  if (featureKey) {
+    const override = String(cfg?.llmModels?.[featureKey] ?? '').trim();
+    if (override) {
+      return override.slice(0, 160);
+    }
+  }
+
+  if (featureKey === 'qmp') {
+    const legacyQmpModel = String(cfg?.qmpZenModel ?? '').trim();
+    if (legacyQmpModel) {
+      return legacyQmpModel.slice(0, 160);
+    }
+  }
+
+  return ep.model;
+}
+
+/**
  * Verifica se o LLM está habilitado para uma determinada funcionalidade.
  *
  * Regra:
@@ -183,20 +249,29 @@ export function isLlmFeatureEnabled(funConfig = {}, featureKey = '') {
 export function getLlmFeaturesStatus(funConfig = {}) {
   const masterEnabled = funConfig.zenEnabled !== false;
   const features = normalizeLlmFeatures(funConfig.llmFeatures);
+  const models = normalizeLlmModels(funConfig.llmModels);
+  const defaultModel = resolveZenEndpoint(funConfig).model;
 
   const list = Object.entries(LLM_FEATURE_METADATA).map(([key, meta]) => {
     const featureEnabled = features[key] !== false;
     const effectiveActive = masterEnabled && featureEnabled;
+    const legacyOverride = key === 'qmp' ? String(funConfig?.qmpZenModel ?? '').trim() : '';
     return {
       ...meta,
       enabled: featureEnabled,
       active: effectiveActive,
+      modelOverride: models[key] || legacyOverride,
+      effectiveModel: resolveLlmModel(funConfig, key),
+      defaultModel,
     };
   });
 
   return {
     masterEnabled,
+    defaultModel,
     features,
+    models,
+    llmModels: models,
     items: list,
   };
 }

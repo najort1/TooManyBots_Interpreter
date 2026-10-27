@@ -32,6 +32,9 @@ test('journal messages: persiste, ordena, isola grupo e deduplica message id', (
   const rows = repository.listBetween(one, { since: base - 1, until: base + 10_000 });
   assert.deepEqual(rows.map((row) => row.messageId), ['a', 'b']);
   assert.equal(rows.some((row) => row.scopeKey === two), false);
+
+  const rowsDesc = repository.listBetween(one, { since: base - 1, until: base + 10_000, order: 'desc' });
+  assert.deepEqual(rowsDesc.map((row) => row.messageId), ['b', 'a']);
 });
 
 test('journal messages: rejeita comando e dados sensíveis', () => {

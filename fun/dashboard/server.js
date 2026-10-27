@@ -8,7 +8,8 @@ import { URL } from 'url';
 import { getDefaultOutboundGuard } from '../../engine/outboundGuard.js';
 import { normalizeFunConfig, saveFunUserConfig } from '../config.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
-import { getLlmFeaturesStatus, normalizeLlmFeatures } from '../llm/llmGovernance.js';
+import { getLlmFeaturesStatus, normalizeLlmFeatures, normalizeLlmModels, resolveLlmModel, DEFAULT_LLM_MODELS } from '../llm/llmGovernance.js';
+import { listProviders, detectProviderFromUrl } from '../llm/providers.js';
 import { createHouseRealtimeHub } from '../services/houseRealtimeService.js';
 import { getPublicBaseUrl } from '../utils/publicUrl.js';
 import { createGameRoutes, DEFAULT_GAME_TEST_KEY } from '../games/routes.js';
@@ -110,6 +111,79 @@ export function startFunDashboardServer(deps = {}) {
 
   if (!funModule?._services) {
     throw new Error('[fun/dashboard] funModule com _services é obrigatório');
+  }
+
+  /**
+   * Payload único de leitura da configuração de LLM (GET + resposta dos POSTs).
+   * Inclui sugestões de modelo deduplicadas do provider ativo e dos demais.
+   */
+  function buildLlmConfigPayload(cfg) {
+    const zenEndpoint = resolveZenEndpoint(cfg);
+    const status = getLlmFeaturesStatus(cfg);
+    const activeProvider = detectProviderFromUrl(zenEndpoint.baseUrl);
+
+    const suggestedModels = [];
+    const seen = new Set();
+    const pushModel = (id, name, providerId, providerName, source) => {
+      const clean = String(id || '').trim();
+      if (!clean || seen.has(clean)) return;
+      seen.add(clean);
+      suggestedModels.push({
+        id: clean,
+        name: String(name || clean).trim() || clean,
+        providerId: String(providerId || '').trim(),
+        providerName: String(providerName || '').trim(),
+        source,
+      });
+    };
+
+    pushModel(zenEndpoint.model, zenEndpoint.model, activeProvider, '', 'default');
+
+    for (const provider of listProviders()) {
+      for (const model of provider.curatedModels || []) {
+        pushModel(model?.id, model?.name, provider.id, provider.name, 'catalog');
+      }
+    }
+
+    for (const [featureKey, model] of Object.entries(status.llmModels || {})) {
+      const override = String(model || '').trim();
+      if (override) pushModel(override, `Configurado em ${featureKey}`, activeProvider, '', 'configured');
+    }
+
+    return {
+      ok: true,
+      zenEnabled: cfg.zenEnabled !== false,
+      zenBaseUrl: zenEndpoint.baseUrl,
+      zenModel: zenEndpoint.model,
+      activeProvider,
+      llmFeatures: status.features,
+      llmModels: status.llmModels,
+      items: status.items,
+      suggestedModels,
+      masterEnabled: status.masterEnabled,
+    };
+  }
+
+  /**
+   * Merge parcial de `llmModels` sobre os overrides já gravados.
+   * `null`/`""` limpa o override (volta a herdar o `zenModel` global).
+   */
+  function mergeLlmModels(currentModels, incoming) {
+    if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) {
+      return currentModels;
+    }
+    const merged = { ...(currentModels || {}) };
+    for (const key of Object.keys(DEFAULT_LLM_MODELS)) {
+      if (!Object.hasOwn(incoming, key)) continue;
+      const raw = incoming[key];
+      if (raw === null || raw === undefined) {
+        merged[key] = '';
+        continue;
+      }
+      const text = typeof raw === 'string' ? raw.trim() : String(raw ?? '').trim();
+      merged[key] = text.slice(0, 160);
+    }
+    return merged;
   }
 
   const {
@@ -1170,18 +1244,7 @@ export function startFunDashboardServer(deps = {}) {
       }
 
       if (req.method === 'GET' && path === '/api/fun/llm/config') {
-        const cfg = getConfig();
-        const zenEndpoint = resolveZenEndpoint(cfg);
-        const status = getLlmFeaturesStatus(cfg);
-        sendJson(res, 200, {
-          ok: true,
-          zenEnabled: cfg.zenEnabled !== false,
-          zenBaseUrl: zenEndpoint.baseUrl,
-          zenModel: zenEndpoint.model,
-          llmFeatures: status.features,
-          items: status.items,
-          masterEnabled: status.masterEnabled,
-        });
+        sendJson(res, 200, buildLlmConfigPayload(getConfig()));
         return;
       }
 
@@ -1193,11 +1256,29 @@ export function startFunDashboardServer(deps = {}) {
           ? { ...(current.llmFeatures || {}), ...body.llmFeatures }
           : current.llmFeatures;
 
-        const next = normalizeFunConfig({
+        const nextModels = mergeLlmModels(
+          normalizeLlmModels(current.llmModels),
+          body.llmModels
+        );
+
+        const payload = {
           ...current,
           ...(Object.hasOwn(body, 'zenEnabled') ? { zenEnabled: Boolean(body.zenEnabled) } : {}),
           llmFeatures: nextFeatures,
-        });
+          llmModels: nextModels,
+        };
+
+        if (typeof body.zenModel === 'string' && body.zenModel.trim()) {
+          payload.zenModel = body.zenModel.trim().slice(0, 160);
+        }
+
+        // Limpar o override do QMP também zera o legado `qmpZenModel`,
+        // senão o valor antigo continuaria vencendo a herança do `zenModel`.
+        if (Object.hasOwn(body.llmModels || {}, 'qmp') && !String(nextModels?.qmp || '').trim()) {
+          payload.qmpZenModel = '';
+        }
+
+        const next = normalizeFunConfig(payload);
 
         saveConfig(next);
         if (typeof updateConfig === 'function') {
@@ -1211,16 +1292,8 @@ export function startFunDashboardServer(deps = {}) {
           details: { zenEnabled: next.zenEnabled },
         });
 
-        const zenEndpoint = resolveZenEndpoint(next);
-        const status = getLlmFeaturesStatus(next);
         sendJson(res, 200, {
-          ok: true,
-          zenEnabled: next.zenEnabled !== false,
-          zenBaseUrl: zenEndpoint.baseUrl,
-          zenModel: zenEndpoint.model,
-          llmFeatures: status.features,
-          items: status.items,
-          masterEnabled: status.masterEnabled,
+          ...buildLlmConfigPayload(next),
           persisted: true,
           appliedImmediately: true,
         });
@@ -1231,13 +1304,28 @@ export function startFunDashboardServer(deps = {}) {
         if (!requireAdmin(req, res)) return;
         const body = await readBody(req);
         const current = getConfig();
-        const next = normalizeFunConfig({
+        const payload = {
           ...current,
           ...body,
           ...(body.llmFeatures && typeof body.llmFeatures === 'object'
             ? { llmFeatures: { ...(current.llmFeatures || {}), ...body.llmFeatures } }
             : {}),
-        });
+          ...(body.llmModels && typeof body.llmModels === 'object' && !Array.isArray(body.llmModels)
+            ? { llmModels: mergeLlmModels(normalizeLlmModels(current.llmModels), body.llmModels) }
+            : {}),
+        };
+
+        // Mesma regra da rota /api/fun/llm/config: limpar o override do QMP
+        // também zera o legado `qmpZenModel`, senão ele continuaria vencendo
+        // a herança do `zenModel` global.
+        if (
+          Object.hasOwn(body.llmModels || {}, 'qmp') &&
+          !String(payload.llmModels?.qmp || '').trim()
+        ) {
+          payload.qmpZenModel = '';
+        }
+
+        const next = normalizeFunConfig(payload);
         saveConfig(next);
         if (typeof updateConfig === 'function') {
           updateConfig(next);

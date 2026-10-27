@@ -155,11 +155,12 @@ export async function handleShipCommand({
     `*${name(a)}* × *${name(b)}*`,
     `${bar} *${percent}%*`,
     archetypeLabel ? `*Arquétipo:* ${archetypeLabel}` : label,
-    diagnosis ? `_${diagnosis}_` : null,
     extra,
     fl,
   ].filter(Boolean);
 
   await reply(messageLines.join('\n'));
+  // diagnosis é mantido em result para consumidores programáticos/APIs,
+  // mesmo não sendo exibido em messageLines (onde usamos flavor text dinâmico de LLM).
   return { handled: true, result: { ok: true, percent, label, diagnosis } };
 }

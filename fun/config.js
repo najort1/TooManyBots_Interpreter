@@ -3,9 +3,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { normalizeBoolean, normalizeInt, toText } from '../utils/normalization.js';
 import { DEFAULT_FUN_CONFIG } from './constants.js';
-import { normalizeLlmFeatures, isLlmFeatureEnabled } from './llm/llmGovernance.js';
+import { normalizeLlmFeatures, isLlmFeatureEnabled, normalizeLlmModels, resolveLlmModel } from './llm/llmGovernance.js';
 
-export { isLlmFeatureEnabled, normalizeLlmFeatures };
+export { isLlmFeatureEnabled, normalizeLlmFeatures, normalizeLlmModels, resolveLlmModel };
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -285,6 +285,7 @@ export function normalizeFunConfig(input) {
       : DEFAULT_FUN_CONFIG.eventCrossWeight,
     zenEnabled: normalizeBoolean(raw.zenEnabled, DEFAULT_FUN_CONFIG.zenEnabled),
     llmFeatures: normalizeLlmFeatures(raw.llmFeatures),
+    llmModels: normalizeLlmModels(raw.llmModels),
     zenBaseUrl: toText(raw.zenBaseUrl, DEFAULT_FUN_CONFIG.zenBaseUrl) || DEFAULT_FUN_CONFIG.zenBaseUrl,
     zenModel: toText(raw.zenModel, DEFAULT_FUN_CONFIG.zenModel) || DEFAULT_FUN_CONFIG.zenModel,
     zenTimeoutMs: normalizeInt(raw.zenTimeoutMs, DEFAULT_FUN_CONFIG.zenTimeoutMs, {
@@ -1705,10 +1706,18 @@ export function saveFunUserConfig(input, options = {}) {
     }
   }
 
+  // Preserva overrides de modelo por funcionalidade já gravados quando o
+  // update é parcial (o dashboard envia apenas as chaves alteradas).
+  const mergedLlmModels =
+    rawInput.llmModels && typeof rawInput.llmModels === 'object' && !Array.isArray(rawInput.llmModels)
+      ? { ...(existing.llmModels || {}), ...rawInput.llmModels }
+      : existing.llmModels;
+
   const merged = {
     ...existing,
     ...rawInput,
     groupWhitelistJids: effectiveGroupWhitelist || [],
+    ...(mergedLlmModels ? { llmModels: mergedLlmModels } : {}),
   };
 
   const normalized = normalizeFunConfig(merged);

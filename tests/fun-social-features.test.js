@@ -130,7 +130,7 @@ test('handleShipCommand: calcula ship dinâmico a partir do histórico e laços 
 
   // Inicialmente sem histórico: deve retornar potencial neutro
   const messagesInitial = [];
-  await handleShipCommand({
+  const resInitial = await handleShipCommand({
     userJid: a,
     scopeKey,
     relationshipService: { ship: () => ({ ok: true, percent: 50 }) },
@@ -140,7 +140,9 @@ test('handleShipCommand: calcula ship dinâmico a partir do histórico e laços 
     reply: async (msg) => { messagesInitial.push(msg); },
     getContactDisplayName: (j) => (j === a ? 'Alice' : 'Bob'),
   });
-  assert.match(messagesInitial[0], /folha em branco|incógnita/i);
+  assert.match(messagesInitial[0], /💘 \*Ship\*[\s\S]*\*(?:Alice|@[^ *]+)\* × \*(?:Bob|@[^ *]+)\*[\s\S]*\*Arquétipo:\* Desconhecidos/i);
+  assert.doesNotMatch(messagesInitial[0], /folha em branco|incógnita/i);
+  assert.match(resInitial?.result?.diagnosis || '', /folha em branco|incógnita/i);
 
   // Agora acumula histórico de afeto intenso entre A e B nos últimos dias
   const now = Date.now();
@@ -165,6 +167,90 @@ test('handleShipCommand: calcula ship dinâmico a partir do histórico e laços 
 
   assert.ok(messagesTrained.length > 0);
   assert.match(messagesTrained[0], /Chamego Doce|Inseparáveis|Sintonia/i);
+});
+
+test('handleShipCommand: integra com flavorService LLM e degrada com segurança se falhar', async () => {
+  const bondRepo = createFunBondRepository({ getDatabase: getDb });
+  const bondService = createBondService({ bondRepository: bondRepo });
+
+  const scopeKey = uniqueGroup();
+  const a = uniqueJid();
+  const b = uniqueJid();
+
+  let capturedScenario = null;
+  let capturedVars = null;
+  const flavorService = {
+    italicLine: async (scenario, vars) => {
+      capturedScenario = scenario;
+      capturedVars = vars;
+      return '_comentário gerado pela llm_';
+    },
+  };
+
+  const messagesWithLlm = [];
+  await handleShipCommand({
+    userJid: a,
+    scopeKey,
+    relationshipService: { ship: () => ({ ok: true, percent: 50 }) },
+    bondService,
+    flavorService,
+    args: [`@${b.split('@')[0]}`],
+    mentionedJids: [b],
+    reply: async (msg) => { messagesWithLlm.push(msg); },
+    getContactDisplayName: (j) => (j === a ? 'Alice' : 'Bob'),
+  });
+
+  assert.equal(messagesWithLlm.length, 1);
+  assert.ok(
+    messagesWithLlm[0].endsWith('_comentário gerado pela llm_'),
+    'A mensagem de ship deve terminar com o comentário gerado pela LLM'
+  );
+  assert.equal(capturedScenario, 'ship');
+  assert.equal(capturedVars?.a, 'Alice');
+  assert.equal(capturedVars?.b, 'Bob');
+  assert.equal(capturedVars?.percent, 50);
+  assert.equal(capturedVars?.label, 'Desconhecidos');
+
+  // Degradação elegante quando flavorService lança erro
+  const throwingFlavorService = {
+    italicLine: async () => {
+      throw new Error('LLM timeout');
+    },
+  };
+  const messagesError = [];
+  await handleShipCommand({
+    userJid: a,
+    scopeKey,
+    relationshipService: { ship: () => ({ ok: true, percent: 50 }) },
+    bondService,
+    flavorService: throwingFlavorService,
+    args: [`@${b.split('@')[0]}`],
+    mentionedJids: [b],
+    reply: async (msg) => { messagesError.push(msg); },
+    getContactDisplayName: (j) => (j === a ? 'Alice' : 'Bob'),
+  });
+
+  assert.equal(messagesError.length, 1);
+  assert.doesNotMatch(messagesError[0], /undefined/);
+  assert.ok(!messagesError[0].endsWith('\n'), 'Não deve ter quebra de linha vazia sobrando no final');
+  assert.ok(!messagesError[0].includes('\n\n\n'), 'Não deve conter linhas em branco consecutivas órfãs');
+
+  // Degradação elegante quando flavorService é ausente
+  const messagesNoFlavor = [];
+  await handleShipCommand({
+    userJid: a,
+    scopeKey,
+    relationshipService: { ship: () => ({ ok: true, percent: 50 }) },
+    bondService,
+    args: [`@${b.split('@')[0]}`],
+    mentionedJids: [b],
+    reply: async (msg) => { messagesNoFlavor.push(msg); },
+    getContactDisplayName: (j) => (j === a ? 'Alice' : 'Bob'),
+  });
+
+  assert.equal(messagesNoFlavor.length, 1);
+  assert.doesNotMatch(messagesNoFlavor[0], /undefined/);
+  assert.ok(!messagesNoFlavor[0].endsWith('\n'));
 });
 
 test('handleRelacaoCommand: exibe status do vínculo 4D com barras visuais e arquétipo', async () => {

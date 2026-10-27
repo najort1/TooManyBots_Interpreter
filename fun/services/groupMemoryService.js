@@ -8,7 +8,7 @@ import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
-import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 import {
   buildFactTemporalContext,
   formatDatedFact,
@@ -771,6 +771,7 @@ export function createGroupMemoryService({
         personaText: hit.text,
         factCount: hit.factCount,
         updatedAt: hit.updatedAt,
+        model: hit.model || '',
         fromCache: true,
       };
     }
@@ -780,8 +781,9 @@ export function createGroupMemoryService({
       factCount: row.factCount || 0,
       updatedAt: row.updatedAt || 0,
       at: Date.now(),
+      model: '',
     });
-    return { ...row, fromCache: false };
+    return { ...row, model: '', fromCache: false };
   }
 
   /**
@@ -1480,11 +1482,12 @@ export function createGroupMemoryService({
         try {
           const task = resolveZenTaskParams('extract', funConfig);
           const ep = resolveZenEndpoint(funConfig);
+          const memoryModel = resolveLlmModel(funConfig, 'memory');
           const raw = await generateZen({
             task: 'memory',
             scopeKey: String(scopeKey || ''),
             baseUrl: ep.baseUrl,
-            model: ep.model,
+            model: memoryModel,
             system: EXTRACT_SYSTEM,
             prompt,
             timeoutMs: Math.max(o.extractTimeout, task.timeoutMs, 45_000),
@@ -1536,6 +1539,14 @@ export function createGroupMemoryService({
       limit: Math.max(15, Math.min(60, o.personaBullets * 4)),
       minScore: o.minScore,
     });
+    /** Modelo efetivo do resumo: mudança de modelo força regeneração do cache. */
+    const personaModel = resolveLlmModel(funConfig, 'persona');
+    const cachedForModel = personaCache.get(String(scopeKey || ''));
+    const modelChanged =
+      cachedForModel && cachedForModel.model && cachedForModel.model !== personaModel;
+    if (modelChanged) {
+      invalidatePersonaCache(scopeKey);
+    }
     if (!facts.length) {
       memoryRepository.setPersona(scopeKey, '', 0);
       invalidatePersonaCache(scopeKey);
@@ -1560,7 +1571,7 @@ export function createGroupMemoryService({
             task: 'persona',
             scopeKey: String(scopeKey || ''),
             baseUrl: ep.baseUrl,
-            model: ep.model,
+            model: personaModel,
             system: buildPersonaSystem(o.personaBullets),
             prompt: `${buildFactTemporalContext({ now, timeZone: o.timeZone })}\nFatos do grupo:\n${list}\n\nResuma o clima em ${o.personaBullets} bullets (≤${o.personaMax} chars). NÃO invente fatos novos. Só os bullets:`,
             timeoutMs: Math.max(o.extractTimeout, task.timeoutMs),
@@ -1596,6 +1607,8 @@ export function createGroupMemoryService({
       factCount: facts.length,
       updatedAt: now,
       at: Date.now(),
+      /** Modelo efetivo usado neste resumo — mudança de modelo invalida o cache. */
+      model: personaModel,
     });
     return { ok: true, text };
   }

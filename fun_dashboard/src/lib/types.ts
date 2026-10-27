@@ -197,6 +197,20 @@ export type LlmFeatureItem = {
   fallback: string;
   enabled: boolean;
   active: boolean;
+  /** Modelo fixado manualmente para esta função; vazio/undefined = herda o padrão global. */
+  modelOverride?: string;
+  /** Modelo que será efetivamente usado na chamada (override ou padrão global). */
+  effectiveModel?: string;
+  /** Modelo padrão global usado quando não há override. */
+  defaultModel?: string;
+};
+
+export type LlmSuggestedModel = {
+  id: string;
+  name: string;
+  providerId?: string;
+  providerName?: string;
+  source?: string;
 };
 
 export type LlmConfigResponse = {
@@ -204,11 +218,21 @@ export type LlmConfigResponse = {
   zenEnabled: boolean;
   zenBaseUrl: string;
   zenModel: string;
+  activeProvider?: string;
   llmFeatures: Record<string, boolean>;
+  llmModels?: Record<string, string>;
   items: LlmFeatureItem[];
+  suggestedModels?: LlmSuggestedModel[];
   masterEnabled: boolean;
   persisted?: boolean;
   appliedImmediately?: boolean;
+};
+
+export type LlmConfigUpdatePayload = {
+  zenEnabled?: boolean;
+  zenModel?: string;
+  llmFeatures?: Record<string, boolean>;
+  llmModels?: Record<string, string>;
 };
 
 export type LlmDailyMetric = {

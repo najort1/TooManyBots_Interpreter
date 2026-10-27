@@ -29,6 +29,10 @@ export function createRankService({ repository } = {}) {
     return repository.getUserMessagesRankPosition(userJid, scopeKey);
   }
 
+  function getInactiveMembers(scopeKey, options = {}) {
+    return repository.getInactiveMembers(scopeKey, options);
+  }
+
   function getProfile(userJid, scopeKey) {
     const position = repository.getUserRankPosition(userJid, scopeKey);
     const stats =
@@ -57,6 +61,7 @@ export function createRankService({ repository } = {}) {
     getUserRankPosition,
     getUserCoinsRankPosition,
     getUserMessagesRankPosition,
+    getInactiveMembers,
     getProfile,
   };
 }

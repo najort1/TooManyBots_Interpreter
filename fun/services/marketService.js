@@ -9,7 +9,7 @@ import { ollamaGenerate } from '../llm/ollamaClient.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { recordLlmHit, inventTemplateAlert } from '../llm/llmMetrics.js';
-import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 import {
   COLLECTIBLES,
   getCollectible,
@@ -563,6 +563,7 @@ export function createMarketService({
       let source = '';
       let lastErr = null;
       const ep = resolveZenEndpoint(funConfig);
+      const model = resolveLlmModel(funConfig, 'market');
       for (let attempt = 1; attempt <= totalTries; attempt += 1) {
         try {
           const raw = await generateZen({
@@ -570,7 +571,7 @@ export function createMarketService({
             scopeKey: String(scopeKey || ''),
             userJid: String(targetJid || ''),
             baseUrl: ep.baseUrl,
-            model: ep.model,
+            model,
             system: inventSystem,
             prompt,
             timeoutMs: inventTimeoutMs,
@@ -588,7 +589,7 @@ export function createMarketService({
             log?.info?.(
               {
                 source,
-                model: ep.model,
+                model,
                 title: parsed.title,
                 attempt,
                 timeoutMs: inventTimeoutMs,
@@ -604,7 +605,7 @@ export function createMarketService({
           }
           log?.warn?.(
             {
-              model: ep.model,
+              model,
               attempt,
               preview: String(raw || '').slice(0, 160),
             },
@@ -690,11 +691,12 @@ export function createMarketService({
     if (!isLlmFeatureEnabled(funConfig, 'market')) return null;
     const task = resolveZenTaskParams('journalist', funConfig);
     const ep = resolveZenEndpoint(funConfig);
+    const model = resolveLlmModel(funConfig, 'market');
     try {
       const raw = await generateZen({
         task: 'journalist',
         baseUrl: ep.baseUrl,
-        model: ep.model,
+        model,
         system: JOURNALIST_SYSTEM,
         prompt: buildJournalistUserPrompt(facts),
         timeoutMs: task.timeoutMs,

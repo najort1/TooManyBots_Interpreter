@@ -7,7 +7,7 @@ import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
-import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 import { getWeekKey } from '../db/funSocialRepository.js';
 
 /** Normal / leve — dinâmica casual de festa e cartas de grupo (impossível violar safety, foco em humor cotidiano). */
@@ -435,8 +435,11 @@ export function createQmpService({
         : 0.42,
       inventRetries: Math.max(1, Math.min(8, Math.floor(numOr(funConfig.qmpInventRetries, 4)))),
       ...resolveZenTaskParams('qmp', funConfig),
-      /** Override explícito de modelo; parâmetros continuam sob autoridade Zen. */
-      zenModel: String(funConfig.qmpZenModel || '').trim(),
+      /**
+       * Modelo efetivo do QMP: override `llmModels.qmp` → legado `qmpZenModel`
+       * → `zenModel` global. Parâmetros continuam sob autoridade Zen.
+       */
+      zenModel: resolveLlmModel(funConfig, 'qmp'),
     };
   }
 

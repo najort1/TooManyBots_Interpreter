@@ -175,6 +175,10 @@ export const config = {
     "/groups/:path*",
     "/settings/:path*",
     "/selfheal/:path*",
+    "/llm",
+    "/llm/:path*",
+    "/modelos",
+    "/modelos/:path*",
     "/api/fun/:path*",
   ],
 };

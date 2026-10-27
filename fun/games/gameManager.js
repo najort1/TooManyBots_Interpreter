@@ -50,6 +50,7 @@ export function createGameManager({
   funConfig = {},
   sendGroupMessage = async () => {},
   now = Date.now,
+  getConfig = null,
 } = {}) {
   /** @type {Map<string, object>} */
   const rooms = new Map();
@@ -62,7 +63,7 @@ export function createGameManager({
 
   // Registra os motores padrões dos jogos
   registerEngineFactory(GAME_TYPES.QUIZ_ROYALE, (room) => {
-    return createQuizRoyaleEngine(room, { funConfig, now, gameManager: { finishGame, broadcast } });
+    return createQuizRoyaleEngine(room, { funConfig, now, getConfig, gameManager: { finishGame, broadcast } });
   });
 
   registerEngineFactory(GAME_TYPES.GRID_CTF, (room) => {

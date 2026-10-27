@@ -1,7 +1,7 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
-import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 import { looseParseFacts } from '../services/groupMemoryService.js';
 import { createEventFingerprint, zonedLocalDateTimeToMs } from './eventTime.js';
 
@@ -175,7 +175,7 @@ export function createEventExtractorService({ generateZen = openaiChatComplete, 
         scopeKey: String(scopeKey || ''),
         userJid: String(userJid || ''),
         baseUrl: endpoint.baseUrl,
-        model: endpoint.model,
+        model: resolveLlmModel(funConfig, 'events'),
         apiKey: endpoint.apiKey,
         system: buildSystem(referenceAt, timeZone),
         prompt: buildPrompt({ text: messageText, quotedText, mentionedJids, fragmentText }),

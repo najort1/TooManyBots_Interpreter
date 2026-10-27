@@ -7,7 +7,7 @@ import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { recordLlmHit } from '../llm/llmMetrics.js';
-import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 import {
   drawTarotCards,
   formatTarotDraw,
@@ -204,12 +204,13 @@ export function createTarotService({
         try {
           const task = resolveZenTaskParams('tarot', funConfig);
           const ep = resolveZenEndpoint(funConfig);
+          const tarotModel = resolveLlmModel(funConfig, 'tarot');
           const raw = await generateZen({
             task: 'tarot',
             scopeKey: String(scopeKey || ''),
             userJid: String(userJid || ''),
             baseUrl: ep.baseUrl,
-            model: ep.model,
+            model: tarotModel,
             system,
             prompt,
             timeoutMs: Math.max(o.timeoutMs, task.timeoutMs),

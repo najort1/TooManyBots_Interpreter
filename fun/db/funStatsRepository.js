@@ -427,6 +427,48 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     }));
   }
 
+  /**
+   * Ranking de quem MENOS fala no scope, mais-inativo-primeiro.
+   * Ordena por message_count ASC (inclui quem nunca falou, message_count = 0);
+   * empate resolvido por last_xp_at ASC — quem não dá sinal de vida há mais tempo vem primeiro.
+   * @returns {Array<{ rank: number } & ReturnType<mapStatsRow>>}
+   */
+  function getInactiveMembers(scopeKey, { limit = 10, excludeJids = [] } = {}) {
+    ensureFunSchema();
+    const db = getDatabase();
+    const s = String(scopeKey || '');
+    const lim = Math.max(1, Math.min(50, Math.floor(Number(limit) || 10)));
+    const cleanExclude = Array.isArray(excludeJids)
+      ? Array.from(new Set(excludeJids.map((j) => String(j || '').trim()).filter(Boolean)))
+      : [];
+
+    let excludeClause = '';
+    const params = [s];
+
+    if (cleanExclude.length > 0) {
+      const placeholders = cleanExclude.map(() => '?').join(', ');
+      excludeClause = ` AND user_jid NOT IN (${placeholders})`;
+      params.push(...cleanExclude);
+    }
+
+    params.push(lim);
+
+    const rows = db
+      .prepare(
+        `SELECT * FROM ${ANALYTICS_SCHEMA}.fun_user_stats
+         WHERE scope_key = ?
+           AND user_jid NOT LIKE '5511999%@s.whatsapp.net'${excludeClause}
+         ORDER BY message_count ASC, last_xp_at ASC
+         LIMIT ?`
+      )
+      .all(...params);
+
+    return rows.map((row, index) => ({
+      rank: index + 1,
+      ...mapStatsRow(row),
+    }));
+  }
+
   function getUserMessagesRankPosition(userJid, scopeKey) {
     ensureFunSchema();
     const db = getDatabase();
@@ -1136,6 +1178,7 @@ export function createFunStatsRepository({ getDatabase = getDb } = {}) {
     getUserRankPosition,
     getUserCoinsRankPosition,
     getUserMessagesRankPosition,
+    getInactiveMembers,
     transferCoins,
     addCoins,
     addCoinsAllowNegative,

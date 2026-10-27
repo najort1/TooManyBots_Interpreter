@@ -1,7 +1,7 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
-import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 import { createEventFingerprint, zonedLocalDateTimeToMs } from './eventTime.js';
 
 const ACTIONS = new Set(['create', 'update', 'cancel', 'ignore']);
@@ -248,7 +248,7 @@ export function createEventBatchExtractor({ generateZen = openaiChatComplete, ge
           scopeKey: String(scopeKey || ''),
           userJid: String(batch[0]?.authorJid || batch[0]?.userJid || ''),
           baseUrl: endpoint.baseUrl,
-          model: endpoint.model,
+          model: resolveLlmModel(funConfig, 'events'),
           apiKey: endpoint.apiKey,
           system: buildSystem({ referenceAt, timeZone, contextCount }),
           prompt,

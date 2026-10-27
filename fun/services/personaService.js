@@ -21,7 +21,7 @@ import { sanitizeFlavor, looksLikeScoreboardEcho } from '../llm/flavorService.js
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
-import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 import { PERSONA_CONTEXT_TURNS, PERSONA_DERIVE_INTERVAL_MS, PERSONA_TOKEN_HALF_LIFE_MS, PERSONA_TOP_TOKENS } from '../constants.js';
 import {
   buildPersonaToolManifest,
@@ -382,6 +382,9 @@ export function createPersonaService({
   }
 
   async function runPersonaToolLoop({ initialCall, system, prompt, endpoint, zen, timeoutMs, funConfig, agentContext, scopeKey, text, maxChars, audioEnabled = false }) {
+    // Modelo explícito do loop: mesma autoridade do `personaModel` de `generateResponse`
+    // (override `llmModels.persona` → zenModel global), preservando o endpoint recebido.
+    const loopModel = resolveLlmModel(funConfig, 'persona') || endpoint?.model;
     const isUnlimited = funConfig?.personaAgentUnlimitedTools !== false;
     const maxCalls = isUnlimited
       ? Infinity
@@ -463,7 +466,7 @@ export function createPersonaService({
         scopeKey: String(scopeKey || ''),
         userJid: String(agentContext?.authorJid || ''),
         baseUrl: endpoint.baseUrl,
-        model: endpoint.model,
+        model: loopModel,
         prompt: `${prompt}\n\nResultados reais das ferramentas:\n${traceText}\n\nEscolha a próxima tool somente se ela for necessária, ou responda com reply/actions. Não invente dados nem diga que uma tool falhou executou com sucesso.`,
         system: `${system}\n\n${buildPersonaToolManifest({ audioEnabled })}`,
         timeoutMs: Number.isFinite(remainingMs) ? Math.min(timeoutMs, remainingMs) : timeoutMs,
@@ -680,6 +683,7 @@ export function createPersonaService({
 
     const zen = resolveZenTaskParams('persona', funConfig);
     const ep = resolveZenEndpoint(funConfig);
+    const personaModel = resolveLlmModel(funConfig, 'persona');
     const retries = Number(funConfig?.zenMaxRetries);
     const totalTries = Math.max(1, Math.min(8, Number.isFinite(retries) ? Math.floor(retries) + 1 : 4));
 
@@ -700,7 +704,7 @@ export function createPersonaService({
           scopeKey: String(scopeKey || ''),
           userJid: String(authorJid || ''),
           baseUrl: ep.baseUrl,
-          model: ep.model,
+          model: personaModel,
           prompt,
           images,
           audios,
@@ -757,7 +761,7 @@ export function createPersonaService({
               initialCall: decision.envelope,
               system,
               prompt,
-              endpoint: ep,
+              endpoint: { ...ep, model: personaModel },
               zen,
               timeoutMs: Math.min(o.timeoutMs, zen.timeoutMs || 15_000),
               funConfig,
@@ -860,12 +864,13 @@ export function createPersonaService({
 
     const zen = resolveZenTaskParams('persona', funConfig);
     const endpoint = resolveZenEndpoint(funConfig);
+    const personaModel = resolveLlmModel(funConfig, 'persona');
     try {
       const raw = await generateZen({
         task: 'persona',
         scopeKey: scope,
         baseUrl: endpoint.baseUrl,
-        model: endpoint.model,
+        model: personaModel,
         apiKey: endpoint.apiKey,
         system,
         prompt,
@@ -916,6 +921,7 @@ export function createPersonaService({
     const prompt = buildPersonaFollowupPrompt({ candidates, maxChars: o.maxChars });
     const zen = resolveZenTaskParams('persona', ctx.funConfig || {});
     const endpoint = resolveZenEndpoint(ctx.funConfig || {});
+    const personaModel = resolveLlmModel(ctx.funConfig || {}, 'persona');
 
     inFlightScopes.add(scopeKey);
     try {
@@ -923,7 +929,7 @@ export function createPersonaService({
         task: 'persona',
         scopeKey: String(scopeKey || ''),
         baseUrl: endpoint.baseUrl,
-        model: endpoint.model,
+        model: personaModel,
         apiKey: endpoint.apiKey,
         system,
         prompt,

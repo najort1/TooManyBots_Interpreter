@@ -42,6 +42,7 @@ export const PERSONA_TOOL_DEFINITIONS = Object.freeze({
   lore_update: { description: 'Altera ou corrige um fato existente da lore do grupo por id ou query.', schema: { summary: { type: 'string', max: 240 }, id: { type: 'string', max: 64 }, query: { type: 'string', max: 120 } }, readOnly: false, fullOutput: false },
   lore_remove: { description: 'Remove ou apaga um fato da lore do grupo por id ou query.', schema: { id: { type: 'string', max: 64 }, query: { type: 'string', max: 120 } }, readOnly: false, fullOutput: false },
   recent_conversation: { description: 'Consulta a conversa recente da persona.', schema: { query: { type: 'string', max: 120 } }, readOnly: true, fullOutput: false },
+  search_messages: { description: 'Busca mensagens humanas recentes do grupo (janela do jornal, ~3 dias) por termo ou autor.', schema: { query: { type: 'string', max: 120 }, author: { type: 'enum', values: TARGETS }, limit: { type: 'string', max: 16 } }, readOnly: true, fullOutput: false },
   group_identity: { description: 'Consulta minha identidade e lore ativa neste grupo.', schema: {}, readOnly: true, fullOutput: false },
   daily_challenge_status: { description: 'Consulta o desafio diário ativo no grupo.', schema: {}, readOnly: true, fullOutput: false },
   start_russian: { description: 'Abre uma roleta russa fictícia e faz minha primeira puxada virtual.', schema: {}, sideEffect: true, claimTokens: ['russian_pull'], fullOutput: true },
@@ -122,9 +123,12 @@ function validateArguments(name, rawArguments) {
   for (const key of Object.keys(args)) if (!Object.hasOwn(schema, key)) return { ok: false, reason: 'unknown-argument' };
   const sanitized = {};
   for (const [key, rule] of Object.entries(schema)) {
-    const value = args[key];
+    let value = args[key];
     if (value == null) continue;
     if (rule.type === 'string') {
+      if (key === 'limit' && typeof value === 'number') {
+        value = String(value);
+      }
       if (typeof value !== 'string') return { ok: false, reason: `invalid-${key}` };
       sanitized[key] = value.trim().slice(0, rule.max || 500);
     } else if (rule.type === 'enum') {

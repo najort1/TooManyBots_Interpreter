@@ -18,9 +18,7 @@ const cfg = {
   zenEnabled: true,
   personaSocialHintsEnabled: true,
   llmFeatures: { socialHints: true },
-  personaSocialHintsBatchSize: 8,
-  personaSocialHintsMinMessages: 3,
-  personaSocialHintsFlushIntervalMs: 10 * 60_000,
+  personaSocialHintsBatchSize: 3,
   personaSocialHintsMaxChars: 160,
 };
 
@@ -117,7 +115,7 @@ test('pistas sociais: salva JSON embrulhado após retry e evita eco no mesmo sco
   assert.equal(second.filteredDuplicates, 1);
 });
 
-test('pistas sociais: observação agenda lote sem aguardar LLM', async () => {
+test('pistas sociais: trigger é SOMENTE contagem — abaixo do lote nunca agenda nem por tempo', async () => {
   let resolveLlm;
   const pending = new Promise((resolve) => { resolveLlm = resolve; });
   const service = createPersonaSocialHintService({
@@ -125,11 +123,19 @@ test('pistas sociais: observação agenda lote sem aguardar LLM', async () => {
     generateZen: () => pending,
   });
   const scope = uniqueGroup();
+  // 1ª msg
   const first = service.observeMessage({ scopeKey: scope, userJid: alice, text: 'texto um', funConfig: cfg, now: 1 });
-  const second = service.observeMessage({ scopeKey: scope, userJid: alice, text: 'texto dois', funConfig: cfg, now: 2 });
-  const third = service.observeMessage({ scopeKey: scope, userJid: alice, text: 'texto três', funConfig: cfg, now: 10 * 60_000 + 1 });
+  // 2ª msg, mesmo simulando 10 horas depois no futuro, NUNCA agenda por tempo
+  const second = service.observeMessage({ scopeKey: scope, userJid: alice, text: 'texto dois', funConfig: cfg, now: 10 * 3600_000 });
   assert.equal(first.flushScheduled, false);
   assert.equal(second.flushScheduled, false);
+
+  // Varredura do relógio do mundo (flushDueScopes) também não dispara abaixo do batchSize
+  const swept = await service.flushDueScopes(cfg, 20 * 3600_000);
+  assert.equal(swept.flushed, 0);
+
+  // 3ª msg atinge exatamente o batchSize (3) e agenda
+  const third = service.observeMessage({ scopeKey: scope, userJid: alice, text: 'texto três', funConfig: cfg, now: 10 * 3600_000 + 1 });
   assert.equal(third.flushScheduled, true);
   resolveLlm('{"hints":[]}');
 });

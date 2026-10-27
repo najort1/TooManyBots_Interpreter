@@ -8,7 +8,7 @@
 
 import { resolveZenEndpoint } from '../../llm/zenEndpoint.js';
 import { openaiChatComplete } from '../../llm/openaiClient.js';
-import { isLlmFeatureEnabled } from '../../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../../llm/llmGovernance.js';
 
 export const QUIZ_PHASES = Object.freeze({
   IDLE: 'idle',
@@ -295,17 +295,23 @@ export async function generateQuizQuestions({
   random = Math.random,
   scopeKey = '',
   userJid = '',
+  getConfig = null,
 } = {}) {
+  // `getConfig` (opcional) permite releitura da config viva: o dono da sala pode
+  // trocar `llmModels.quizRoyale` no dashboard no meio de uma partida.
+  const liveConfig = typeof getConfig === 'function' ? getConfig() || funConfig : funConfig;
+  const effectiveConfig = liveConfig && typeof liveConfig === 'object' ? liveConfig : funConfig;
   const targetCount = Math.min(
     QUIZ_CONSTANTS.MAX_ROUNDS,
     Math.max(QUIZ_CONSTANTS.MIN_ROUNDS, Math.floor(Number(count) || QUIZ_CONSTANTS.DEFAULT_TOTAL_ROUNDS))
   );
 
   // Se o LLM estiver desativado pelo master/feature ou no ambiente de teste, usa fallback
-  const isLlmDisabled = !isLlmFeatureEnabled(funConfig, 'quizRoyale') || (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete);
+  const isLlmDisabled = !isLlmFeatureEnabled(effectiveConfig, 'quizRoyale') || (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete);
 
   if (!isLlmDisabled && typeof generateZen === 'function') {
-    const { baseUrl, model, apiKey } = resolveZenEndpoint(funConfig);
+    const { baseUrl, apiKey } = resolveZenEndpoint(effectiveConfig);
+    const model = resolveLlmModel(effectiveConfig, 'quizRoyale');
 
     const systemPrompt = [
       'Você é o mestre de quiz supremo de um bot de WhatsApp brasileiro altamente animado e divertido.',
@@ -341,7 +347,7 @@ export async function generateQuizQuestions({
         temperature: 0.9,
         jsonMode: true,
         jsonOnly: true,
-        sendSamplingParams: funConfig?.zenSendSamplingParams === true,
+        sendSamplingParams: effectiveConfig?.zenSendSamplingParams === true,
       });
 
       if (rawResponse) {
@@ -397,6 +403,7 @@ export function createQuizRoyaleEngine(room, {
   generateZen = openaiChatComplete,
   random = Math.random,
   gameManager = null,
+  getConfig = null,
   totalRounds = QUIZ_CONSTANTS.DEFAULT_TOTAL_ROUNDS,
   questionDurationMs = QUIZ_CONSTANTS.QUESTION_DURATION_MS,
   revealDurationMs = QUIZ_CONSTANTS.REVEAL_DURATION_MS,
@@ -522,6 +529,7 @@ export function createQuizRoyaleEngine(room, {
         funConfig,
         generateZen,
         random,
+        getConfig,
       });
     } catch (err) {
       console.error('[quizRoyaleEngine] Erro crítico ao carregar perguntas:', err);

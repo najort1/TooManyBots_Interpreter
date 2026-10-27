@@ -33,6 +33,12 @@ const LORE_KIND_ALIASES = Object.freeze({
   fofoca: 'event',
 });
 
+const STOPWORDS = new Set([
+  'que', 'com', 'nao', 'não', 'por', 'pra', 'para', 'mas', 'uma', 'uns', 'umas',
+  'tem', 'foi', 'vai', 'ele', 'ela', 'eles', 'elas', 'meu', 'minha', 'seu', 'sua',
+  'isso', 'esse', 'essa', 'este', 'esta', 'aqui', 'onde', 'como',
+]);
+
 function stripDiacritics(value) {
   return String(value || '')
     .normalize('NFD')
@@ -87,6 +93,7 @@ export function createPersonaToolExecutor({
   reactionMediaService = null,
   personaRecentMessageRepository = null,
   personaIdentityService = null,
+  journalMessageRepository = null,
   getContactDisplayName = null,
 } = {}) {
   if (!chaosService) throw new Error('[fun/personaToolExecutor] chaosService required');
@@ -152,6 +159,90 @@ export function createPersonaToolExecutor({
           : 'Não achei conversa recente sobre isso.',
         summary: matches.length ? `Encontrei ${matches.length} mensagens recentes.` : 'Nenhuma mensagem recente encontrada.',
         data: matches,
+      };
+    }
+
+    if (name === 'search_messages') {
+      const query = clean(args.query || '', 120);
+      const authorMode = ['author', 'mentioned', 'quoted'].includes(String(args.author || ''))
+        ? String(args.author)
+        : '';
+      if (!query && !authorMode) {
+        return {
+          ...base,
+          reason: 'missing-criteria',
+          text: 'Me dá pelo menos um critério: um termo de busca ou um alvo (minha menção, reply ou você).',
+        };
+      }
+      if (!journalMessageRepository?.listBetween) {
+        return {
+          ...base,
+          reason: 'unavailable',
+          text: 'Não consegui folhear o arquivo de conversas do grupo agora.',
+        };
+      }
+      const retentionDays = Math.max(
+        1,
+        Number(ctx.funConfig?.groupNewsMessageRetentionDays) || 3
+      );
+      const since = now - retentionDays * 24 * 60 * 60_000;
+      // Busca honesta pelo máximo da janela; o filtro de humanos/termo é em JS,
+      // porque a fonte é o mesmo jornal que poda mensagens antigas por retenção.
+      const window = journalMessageRepository.listBetween(scopeKey, { since, until: now + 1, limit: 300, order: 'desc' });
+      const humanMessages = window.filter((message) => String(message.source || '') === 'human');
+
+      let targetJid = '';
+      if (authorMode) {
+        targetJid = resolveTarget(ctx, authorMode);
+        if (!targetJid) {
+          return {
+            ...base,
+            reason: 'missing-target',
+            text: 'Não identifiquei o autor: mencione a pessoa, responda a mensagem dela ou peça sobre você.',
+          };
+        }
+      }
+
+      const queryNorm = stripDiacritics(query);
+      const queryTokens = queryNorm.split(/\W+/).filter((token) => token.length >= 3 && !STOPWORDS.has(token));
+      const matches = humanMessages.filter((message) => {
+        if (targetJid && String(message.authorJid || '') !== targetJid) return false;
+        if (!queryNorm) return true;
+        const textNorm = stripDiacritics(message.text);
+        if (textNorm.includes(queryNorm)) return true;
+        return queryTokens.length > 0 && queryTokens.every((token) => textNorm.includes(token));
+      });
+
+      const userLimit = Math.max(1, Math.min(20, Math.floor(Number(args.limit)) || 10));
+      const recent = matches.slice(0, userLimit);
+      const displayName = (jid) =>
+        clean(ctx.getContactDisplayName?.(jid) || getContactDisplayName?.(jid) || jid, 60);
+      const data = recent.map((message) => ({
+        authorJid: message.authorJid,
+        authorLabel: displayName(message.authorJid),
+        text: clean(message.text, 400),
+        occurredAt: Number(message.occurredAt) || 0,
+      }));
+
+      if (!data.length) {
+        return {
+          ...base,
+          ok: false,
+          reason: 'no-results',
+          text: `Não achei nada com esse critério na janela de ~${retentionDays} dias do jornal do grupo.`,
+          summary: `Nada encontrado na janela de ~${retentionDays} dias com esse critério.`,
+          data: [],
+        };
+      }
+
+      return {
+        ...base,
+        ok: true,
+        text: data
+          .map((item) => `${clean(item.authorLabel, 60)}: ${clean(item.text, 400)}`)
+          .join('\n'),
+        summary: `Encontrei ${matches.length} mensagens de humanos na janela de ~${retentionDays} dias (mostro até ${data.length}).`,
+        data,
       };
     }
 

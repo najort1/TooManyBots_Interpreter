@@ -100,14 +100,18 @@ export function createFunJournalMessageRepository({ getDatabase = getDb } = {}) 
     };
   }
 
-  function listBetween(scopeKey, { since = 0, until = Number.MAX_SAFE_INTEGER, limit = 1200 } = {}) {
+  function listBetween(scopeKey, { since = 0, until = Number.MAX_SAFE_INTEGER, limit = 1200, order = 'asc' } = {}) {
     ensure();
     const safeLimit = Math.max(1, Math.min(5000, Math.floor(Number(limit) || 1200)));
+    const isDesc = String(order).toLowerCase() === 'desc';
+    const orderByClause = isDesc
+      ? 'ORDER BY occurred_at DESC, message_id DESC'
+      : 'ORDER BY occurred_at ASC, message_id ASC';
     return getDatabase()
       .prepare(
         `SELECT * FROM ${ANALYTICS_SCHEMA}.fun_journal_messages
          WHERE scope_key = ? AND occurred_at >= ? AND occurred_at < ?
-         ORDER BY occurred_at ASC, message_id ASC
+         ${orderByClause}
          LIMIT ?`
       )
       .all(

@@ -13,6 +13,7 @@ import {
   Puzzle,
   ShieldCheck,
   Sparkles,
+  Cpu,
   Terminal,
   TrendingUp,
   ExternalLink,
@@ -60,6 +61,7 @@ const NAV_SECTIONS: NavSection[] = [
     title: "SISTEMA & IA",
     items: [
       { href: "/llm", label: "IA & LLM", icon: Sparkles },
+      { href: "/modelos", label: "Modelos LLM", icon: Cpu },
       { href: "/selfheal", label: "Auto-aprimorar", icon: ShieldCheck },
       { href: "/changelog", label: "Changelog", icon: Megaphone },
       { href: "/settings", label: "Config", icon: Settings2 },

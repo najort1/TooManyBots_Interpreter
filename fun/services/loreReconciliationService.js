@@ -1,7 +1,7 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
-import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 import {
   buildFactTemporalContext,
   formatDatedFact,
@@ -220,7 +220,7 @@ export function createLoreReconciliationService({
         task: 'loreReconciliation',
         scopeKey: String(scopeKey || ''),
         baseUrl: endpoint.baseUrl,
-        model: endpoint.model,
+        model: resolveLlmModel(funConfig, 'loreReconciliation'),
         apiKey: endpoint.apiKey,
         timeoutMs: Math.min(Math.max(5_000, Number(funConfig.loreReconciliationTimeoutMs) || 35_000), task.timeoutMs),
         maxTokens: task.maxTokens,

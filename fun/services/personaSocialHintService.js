@@ -1,7 +1,7 @@
 import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams, fingerprintLine } from '../llm/zenTaskParams.js';
-import { isLlmFeatureEnabled } from '../llm/llmGovernance.js';
+import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
 
 const SYSTEM = `Você infere APENAS pistas sociais leves e temporárias de participantes de um grupo de WhatsApp.
 Responda SOMENTE JSON válido: {"hints":[{"participants":[0],"hint":"...","confidence":0-100,"socialSignal":"positive|neutral|negative"}]}.
@@ -74,9 +74,7 @@ export function createPersonaSocialHintService({
   function opts(funConfig = {}) {
     return {
       enabled: funConfig.personaSocialHintsEnabled !== false && isLlmFeatureEnabled(funConfig, 'socialHints'),
-      batchSize: Math.max(8, Math.min(200, Number(funConfig.personaSocialHintsBatchSize) || 50)),
-      flushMs: Math.max(60_000, Number(funConfig.personaSocialHintsFlushIntervalMs) || 10 * 60_000),
-      minMessages: Math.max(3, Math.min(100, Number(funConfig.personaSocialHintsMinMessages) || 8)),
+      batchSize: Math.max(1, Math.min(200, Number(funConfig.personaSocialHintsBatchSize ?? funConfig.personaSocialHintsMinMessages) || 40)),
       maxChars: Math.max(120, Math.min(2000, Number(funConfig.personaSocialHintsMaxChars) || 600)),
     };
   }
@@ -88,7 +86,15 @@ export function createPersonaSocialHintService({
 
   function bufferFor(scopeKey) {
     const key = String(scopeKey || '');
-    if (!buffers.has(key)) buffers.set(key, { messages: [], lastFlushAt: 0, flushing: false });
+    if (!buffers.has(key)) {
+      buffers.set(key, {
+        messages: [],
+        flushingPromise: null,
+        get flushing() {
+          return Boolean(this.flushingPromise);
+        },
+      });
+    }
     return buffers.get(key);
   }
 
@@ -124,15 +130,18 @@ export function createPersonaSocialHintService({
     const body = String(text || '').trim();
     if (!body || body.startsWith(funConfig.prefix || '/')) return { observed: false, reason: 'skip' };
     const buffer = bufferFor(scopeKey);
-    if (!buffer.messages.length && !buffer.lastFlushAt) buffer.lastFlushAt = Number(now) || Date.now();
     buffer.messages.push({
       userJid: String(userJid || ''),
       name: displayName(userJid),
       text: body.slice(0, 400),
       at: Number(now) || Date.now(),
     });
-    if (buffer.messages.length > o.batchSize) buffer.messages = buffer.messages.slice(-o.batchSize);
-    if (!buffer.flushing && buffer.messages.length >= o.minMessages && (buffer.messages.length >= o.batchSize || Number(now) - buffer.lastFlushAt >= o.flushMs)) {
+    const maxBuffered = o.batchSize * 3;
+    if (buffer.messages.length > maxBuffered) {
+      buffer.messages = buffer.messages.slice(-maxBuffered);
+    }
+    // Trigger ÚNICO: contagem de mensagens (batchSize). SEM timer — abaixo do lote, nunca avalia.
+    if (!buffer.flushing && buffer.messages.length >= o.batchSize) {
       void flushScope(scopeKey, funConfig, now).catch((err) => getLogger?.()?.warn?.({ err: { message: err?.message }, scopeKey }, 'Fun persona social hints failed'));
       return { observed: true, flushScheduled: true };
     }
@@ -143,65 +152,75 @@ export function createPersonaSocialHintService({
     const o = opts(funConfig);
     const buffer = bufferFor(scopeKey);
     if (!o.enabled) return { ok: false, reason: 'disabled' };
-    if (buffer.flushing) return { ok: false, reason: 'busy' };
-    if (buffer.messages.length < o.minMessages) return { ok: false, reason: 'too-few' };
-    buffer.flushing = true;
-    const batch = buffer.messages.splice(0, buffer.messages.length);
-    buffer.lastFlushAt = Number(now) || Date.now();
-    try {
-      if (!isLlmFeatureEnabled(funConfig, 'socialHints') || (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete)) {
-        return { ok: true, saved: 0, batchSize: batch.length, reason: 'llm-disabled' };
-      }
-      const task = resolveZenTaskParams('extract', funConfig);
-      const ep = resolveZenEndpoint(funConfig);
-      const prompt = batch
-        .map((message, index) => `[${index}]${formatPromptTimestamp(message.at)} ${message.name}: ${message.text}`)
-        .join('\n');
+    if (buffer.flushingPromise) return buffer.flushingPromise;
+    if (buffer.messages.length < o.batchSize) return { ok: false, reason: 'too-few' };
 
-      let hints = [];
-      const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
-      let lastError = null;
-      for (let attempt = 1; attempt <= totalTries; attempt += 1) {
-        try {
-          const raw = await generateZen({
-            task: 'socialHints',
-            scopeKey: String(scopeKey || ''),
-            baseUrl: ep.baseUrl, model: ep.model,
-            system: SYSTEM, prompt, timeoutMs: task.timeoutMs, maxTokens: task.maxTokens,
-            temperature: task.temperature, apiKey: ep.apiKey, jsonMode: true, jsonOnly: true,
-            sendSamplingParams: funConfig.zenSendSamplingParams === true,
-          });
-          hints = parseHints(raw, batch, o.maxChars);
-          if (hints.length || attempt === totalTries) break;
-        } catch (err) {
-          lastError = err;
-          getLogger?.()?.debug?.(
-            { err: { message: err?.message || 'persona-social-hints' }, attempt, scopeKey },
-            'Fun persona social hints zen fail'
-          );
+    const flushTask = (async () => {
+      const batch = buffer.messages.splice(0, o.batchSize);
+      try {
+        if (!isLlmFeatureEnabled(funConfig, 'socialHints') || (process.env.FUN_DISABLE_LIVE_LLM === '1' && generateZen === openaiChatComplete)) {
+          return { ok: true, saved: 0, batchSize: batch.length, reason: 'llm-disabled' };
         }
+        const task = resolveZenTaskParams('extract', funConfig);
+        const ep = resolveZenEndpoint(funConfig);
+        const prompt = batch
+          .map((message, index) => `[${index}]${formatPromptTimestamp(message.at)} ${message.name}: ${message.text}`)
+          .join('\n');
+
+        let hints = [];
+        const totalTries = Math.max(1, Math.min(8, Math.floor(Number(funConfig.zenMaxRetries) || 3) + 1));
+        let lastError = null;
+        for (let attempt = 1; attempt <= totalTries; attempt += 1) {
+          try {
+            const raw = await generateZen({
+              task: 'socialHints',
+              scopeKey: String(scopeKey || ''),
+              baseUrl: ep.baseUrl, model: resolveLlmModel(funConfig, 'socialHints'),
+              system: SYSTEM, prompt, timeoutMs: task.timeoutMs, maxTokens: task.maxTokens,
+              temperature: task.temperature, apiKey: ep.apiKey, jsonMode: true, jsonOnly: true,
+              sendSamplingParams: funConfig.zenSendSamplingParams === true,
+            });
+            hints = parseHints(raw, batch, o.maxChars);
+            if (hints.length || attempt === totalTries) break;
+          } catch (err) {
+            lastError = err;
+            getLogger?.()?.debug?.(
+              { err: { message: err?.message || 'persona-social-hints' }, attempt, scopeKey },
+              'Fun persona social hints zen fail'
+            );
+          }
+        }
+        if (!hints.length && lastError) throw lastError;
+        const freshHints = filterRecentHints(scopeKey, hints);
+        return {
+          ok: true,
+          saved: repository.upsertHints(scopeKey, freshHints, now),
+          batchSize: batch.length,
+          retries: totalTries,
+          filteredDuplicates: hints.length - freshHints.length,
+        };
+      } finally {
+        buffer.flushingPromise = null;
       }
-      if (!hints.length && lastError) throw lastError;
-      const freshHints = filterRecentHints(scopeKey, hints);
-      return {
-        ok: true,
-        saved: repository.upsertHints(scopeKey, freshHints, now),
-        batchSize: batch.length,
-        retries: totalTries,
-        filteredDuplicates: hints.length - freshHints.length,
-      };
-    } finally {
-      buffer.flushing = false;
-    }
+    })();
+
+    buffer.flushingPromise = flushTask;
+    return flushTask;
   }
 
+  /**
+   * Varre todos os buffers e faz flush dos que estão due.
+   * Rede de segurança do world tick: só avalia buffer que JÁ bateu o batchSize
+   * mas não conseguiu avaliar no observe (ex.: flush anterior ainda em andamento).
+   * NÃO avalia por tempo/idade.
+   */
   async function flushDueScopes(funConfig = {}, now = Date.now()) {
     const o = opts(funConfig);
     if (!o.enabled) return { ok: false, reason: 'disabled', flushed: 0, results: [] };
     const results = [];
     let flushed = 0;
     for (const [scopeKey, buffer] of buffers.entries()) {
-      if (buffer.flushing || buffer.messages.length < o.minMessages || Number(now) - buffer.lastFlushAt < o.flushMs) continue;
+      if (!buffer || buffer.flushing || buffer.messages.length < o.batchSize) continue;
       try {
         const result = await flushScope(scopeKey, funConfig, now);
         results.push({ scopeKey, kind: 'persona-social-hints', ...result });
