@@ -275,9 +275,10 @@ export function InterventionPanel({
           <button
             type="button"
             onClick={() => setFeedback(null)}
+            aria-label="Fechar aviso"
             className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
           >
-            <X className="h-4 w-4" />
+            <X className="h-4 w-4" aria-hidden="true" />
           </button>
         </div>
       ) : null}
@@ -339,7 +340,7 @@ export function InterventionPanel({
                 </div>
               </div>
               <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[11px] text-zinc-400 dark:text-zinc-500">Atalhos rápidos:</span>
+                <span className="text-[11px] text-zinc-600 dark:text-zinc-500">Atalhos rápidos:</span>
                 {[1000, 5000, 25000, 100000].map((preset) => (
                   <button
                     key={preset}
@@ -392,7 +393,7 @@ export function InterventionPanel({
                   </div>
                   {currentJackpot > 0 ? (
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px] text-zinc-400 dark:text-zinc-500">Porcentagem do pote:</span>
+                      <span className="text-[11px] text-zinc-600 dark:text-zinc-500">Porcentagem do pote:</span>
                       {[0.25, 0.5, 0.75].map((pct) => {
                         const calculated = Math.floor(currentJackpot * pct);
                         return (
@@ -633,9 +634,10 @@ export function InterventionPanel({
                 type="button"
                 onClick={() => setConfirmOpen(false)}
                 disabled={submitting}
+                aria-label="Fechar confirmação de intervenção"
                 className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
               >
-                <X className="h-5 w-5" />
+                <X className="h-5 w-5" aria-hidden="true" />
               </button>
             </header>
 

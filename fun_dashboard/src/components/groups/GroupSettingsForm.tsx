@@ -1,13 +1,25 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { Swords } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ChevronDown,
+  ChevronRight,
+  MessageSquare,
+  ShieldAlert,
+  Swords,
+} from "lucide-react";
 import { funApi } from "@/lib/api";
 import type { CommandCategory, CommandItem, GroupSettings } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorCard } from "@/components/ui/states";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { useApiQuery } from "@/hooks/useApiQuery";
 import { useDashboardScope } from "@/components/layout/AppShell";
 import { SpawnGameModal } from "@/components/games/SpawnGameModal";
 
@@ -45,69 +57,69 @@ export function GroupSettingsForm({ groupJid }: Props) {
 
   const { groups } = useDashboardScope();
   const [spawnModalOpen, setSpawnModalOpen] = useState(false);
+  const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
   const [source, setSource] = useState<"override" | "defaults">("defaults");
   const [status, setStatus] = useState("");
-  const [loading, setLoading] = useState(false);
 
+  const { data, loading: queryLoading, refreshing, error, reload } = useApiQuery(
+    useCallback(
+      () =>
+        Promise.all([
+          funApi.groupSettings(groupJid),
+          funApi.commandCatalog().catch(() => ({
+            categories: [],
+            commands: [],
+            defaultDisabled: [],
+          })),
+        ]),
+      [groupJid]
+    ),
+    [groupJid]
+  );
+  // entradas ficam desabilitadas durante carga inicial e troca de grupo (como antes)
+  const loading = queryLoading || refreshing;
+
+  // mesmo efeito de carregamento de antes — mapeia settings + catálogo para o form
   useEffect(() => {
-    if (!groupJid) return;
-    let cancelled = false;
-    setLoading(true);
+    if (!data) return;
+    const [settingsData, catData] = data;
+
+    setCategories(catData.categories || []);
+    setCommands(catData.commands || []);
+    setDefaultDisabled(catData.defaultDisabled || []);
+
+    const base = settingsData.settings || settingsData.defaults || {};
+    const resolvedDisabled = Array.isArray(base.disabledCommands)
+      ? base.disabledCommands
+      : (catData.defaultDisabled || []);
+
+    setForm({
+      enabled: base.enabled !== false,
+      xpMin: Number(base.xpMin ?? 15),
+      xpMax: Number(base.xpMax ?? 25),
+      cooldownMs: Number(base.cooldownMs ?? 60000),
+      rankLimit: Number(base.rankLimit ?? 10),
+      dailyXp: Number(base.dailyXp ?? 150),
+      dailyCoins: Number(base.dailyCoins ?? 50),
+      levelUpAnnounce: base.levelUpAnnounce !== false,
+      personaEnabled: base.personaEnabled !== false,
+      worldEventsEnabled: base.worldEventsEnabled !== false,
+      journalAutoEnabled: base.journalAutoEnabled !== false,
+      marketAutoEnabled: base.marketAutoEnabled !== false,
+      happyHourAutoEnabled: base.happyHourAutoEnabled !== false,
+      chaosAutoEnabled: base.chaosAutoEnabled !== false,
+      weeklyRestockAutoEnabled: base.weeklyRestockAutoEnabled !== false,
+      disabledCommands: resolvedDisabled,
+      permitirNsfw: base.permitirNsfw === true,
+    });
+
+    setSource(settingsData.settings ? "override" : "defaults");
+    setStatus(settingsData.settings ? "Override do grupo" : "Defaults (sem override)");
+  }, [data]);
+
+  // troca de grupo: limpa o status enquanto o novo carrega (comportamento anterior)
+  useEffect(() => {
     setStatus("Carregando…");
-
-    Promise.all([
-      funApi.groupSettings(groupJid),
-      funApi.commandCatalog().catch(() => ({
-        categories: [],
-        commands: [],
-        defaultDisabled: [],
-      })),
-    ])
-      .then(([data, catData]) => {
-        if (cancelled) return;
-
-        setCategories(catData.categories || []);
-        setCommands(catData.commands || []);
-        setDefaultDisabled(catData.defaultDisabled || []);
-
-        const base = data.settings || data.defaults || {};
-        const resolvedDisabled = Array.isArray(base.disabledCommands)
-          ? base.disabledCommands
-          : (catData.defaultDisabled || []);
-
-        setForm({
-          enabled: base.enabled !== false,
-          xpMin: Number(base.xpMin ?? 15),
-          xpMax: Number(base.xpMax ?? 25),
-          cooldownMs: Number(base.cooldownMs ?? 60000),
-          rankLimit: Number(base.rankLimit ?? 10),
-          dailyXp: Number(base.dailyXp ?? 150),
-          dailyCoins: Number(base.dailyCoins ?? 50),
-          levelUpAnnounce: base.levelUpAnnounce !== false,
-          personaEnabled: base.personaEnabled !== false,
-          worldEventsEnabled: base.worldEventsEnabled !== false,
-          journalAutoEnabled: base.journalAutoEnabled !== false,
-          marketAutoEnabled: base.marketAutoEnabled !== false,
-          happyHourAutoEnabled: base.happyHourAutoEnabled !== false,
-          chaosAutoEnabled: base.chaosAutoEnabled !== false,
-          weeklyRestockAutoEnabled: base.weeklyRestockAutoEnabled !== false,
-          disabledCommands: resolvedDisabled,
-          permitirNsfw: base.permitirNsfw === true,
-        });
-
-        setSource(data.settings ? "override" : "defaults");
-        setStatus(data.settings ? "Override do grupo" : "Defaults (sem override)");
-      })
-      .catch((err) => {
-        if (!cancelled) setStatus(err instanceof Error ? err.message : "Erro");
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
   }, [groupJid]);
 
   async function save() {
@@ -208,6 +220,21 @@ export function GroupSettingsForm({ groupJid }: Props) {
     }));
   }
 
+  async function triggerPurge() {
+    setPurgeConfirmOpen(false);
+    try {
+      setStatus("Disparando PURGA...");
+      const res = await funApi.triggerChaosEvent(groupJid);
+      if (res.ok) {
+        setStatus("PURGA disparada com sucesso!");
+      } else {
+        setStatus("Falha ao disparar PURGA.");
+      }
+    } catch (err) {
+      setStatus(err instanceof Error ? err.message : "Erro ao disparar");
+    }
+  }
+
   const filteredCommands = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     return commands.filter((cmd) => {
@@ -227,8 +254,41 @@ export function GroupSettingsForm({ groupJid }: Props) {
   const enabledCommandsCount = commands.filter((c) => !disabledSet.has(c.id)).length;
   const disabledCommandsCount = totalCommandsCount - enabledCommandsCount;
 
+  if (error && !data) {
+    return (
+      <Card className="p-4">
+        <ErrorCard message={error.message} onRetry={() => void reload()} />
+        <SpawnGameModal
+          open={spawnModalOpen}
+          onClose={() => setSpawnModalOpen(false)}
+          groups={groups}
+          currentScope={groupJid}
+        />
+      </Card>
+    );
+  }
+
+  if (!data) {
+    return (
+      <Card className="p-4" aria-busy="true">
+        <Skeleton className="h-4 w-40" />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-14 w-full" />
+          ))}
+        </div>
+        <SpawnGameModal
+          open={spawnModalOpen}
+          onClose={() => setSpawnModalOpen(false)}
+          groups={groups}
+          currentScope={groupJid}
+        />
+      </Card>
+    );
+  }
+
   return (
-    <div className="rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 p-4">
+    <Card className="p-4">
       <div className="mb-4 flex items-center justify-between gap-2">
         <div>
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Settings do grupo</h2>
@@ -236,9 +296,9 @@ export function GroupSettingsForm({ groupJid }: Props) {
             Sobrescreve XP, cooldown, daily, comandos habilitados e eventos do mundo neste grupo.
           </p>
         </div>
-        <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+        <Badge tone={source === "override" ? "warn" : "neutral"}>
           {source === "override" ? "override" : "defaults"}
-        </span>
+        </Badge>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -265,7 +325,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
             <option value="1">Ligado</option>
             <option value="0">Desligado</option>
           </Select>
-          <span className="mt-1 block text-[11px] leading-snug text-zinc-400 dark:text-zinc-500">
+          <span className="mt-1 block text-[11px] leading-snug text-zinc-600 dark:text-zinc-500">
             Faz o bot responder como membro quando citado por &quot;bot&quot; ou @.
           </span>
         </label>
@@ -280,7 +340,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
             <option value="1">Ligado</option>
             <option value="0">Desligado</option>
           </Select>
-          <span className="mt-1 block text-[11px] leading-snug text-zinc-400 dark:text-zinc-500">
+          <span className="mt-1 block text-[11px] leading-snug text-zinc-600 dark:text-zinc-500">
             Fallback global para eventos. Controle granular abaixo.
           </span>
         </label>
@@ -348,61 +408,55 @@ export function GroupSettingsForm({ groupJid }: Props) {
 
       <hr className="my-4 border-zinc-100 dark:border-zinc-800" />
 
-      {/* Seção de Controle Granular de Comandos */}
-      <div className="space-y-3">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-3">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <h3 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                Controle de Comandos & Funções do Bot
+                Controle de Comandos &amp; Funções do Bot
               </h3>
               <Badge tone={disabledCommandsCount === 0 ? "success" : enabledCommandsCount === 0 ? "danger" : "warn"}>
                 {enabledCommandsCount}/{totalCommandsCount} ativos
               </Badge>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={enableAllCommands}
+                disabled={loading}
+                title="Habilita todos os comandos do bot neste grupo"
+              >
+                Ativar Todos
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={disableAllCommands}
+                disabled={loading}
+                title="Desativa todos os comandos do bot neste grupo"
+              >
+                Desativar Todos
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={resetToDefaults}
+                disabled={loading}
+                title="Restaura a configuração padrão (tudo liberado exceto NSFW)"
+              >
+                Padrão
+              </Button>
             </div>
             <p className="mt-0.5 text-xs text-zinc-500 dark:text-zinc-400">
               Controle tudo o que pode ou não ser usado neste grupo. Ao desativar, o bot responde com a mensagem genérica.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={enableAllCommands}
-              disabled={loading}
-              title="Habilita todos os comandos do bot neste grupo"
-            >
-              Ativar Todos
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={disableAllCommands}
-              disabled={loading}
-              title="Desativa todos os comandos do bot neste grupo"
-            >
-              Desativar Todos
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={resetToDefaults}
-              disabled={loading}
-              title="Restaura a configuração padrão (tudo liberado exceto NSFW)"
-            >
-              Padrão
-            </Button>
-          </div>
-        </div>
-
         {/* Card Informativo com a mensagem genérica exibida no WhatsApp */}
         <div className="rounded-md border border-zinc-200 bg-zinc-50/70 p-3 text-xs dark:border-zinc-800 dark:bg-zinc-800/40">
           <div className="flex items-start gap-2.5">
-            <span className="text-base">💬</span>
+            <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-zinc-500 dark:text-zinc-400" aria-hidden="true" />
             <div className="space-y-1">
               <p className="font-medium text-zinc-800 dark:text-zinc-200">
                 Mensagem de resposta quando desabilitado:
@@ -417,7 +471,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
         {/* Card Informativo sobre NSFW */}
         <div className="rounded-md border border-amber-200 bg-amber-50/70 p-3 text-xs text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-300">
           <div className="flex items-start gap-2.5">
-            <span className="text-base">🔞</span>
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
             <div className="space-y-1.5 flex-1">
               <div className="flex items-center justify-between gap-2">
                 <p className="font-semibold text-amber-950 dark:text-amber-200">
@@ -511,8 +565,18 @@ export function GroupSettingsForm({ groupJid }: Props) {
                           <span className="text-xs font-semibold text-zinc-900 dark:text-zinc-50">
                             {cat.name}
                           </span>
-                          <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
-                            {isCollapsed ? "▸ expandir" : "▾ recolher"}
+                          <span className="inline-flex items-center gap-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">
+                            {isCollapsed ? (
+                              <>
+                                <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                                expandir
+                              </>
+                            ) : (
+                              <>
+                                <ChevronDown className="h-3 w-3" aria-hidden="true" />
+                                recolher
+                              </>
+                            )}
                           </span>
                         </div>
                         <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
@@ -572,21 +636,18 @@ export function GroupSettingsForm({ groupJid }: Props) {
                                       </Badge>
                                     )}
                                   </div>
-                                  <div className="text-[11px] font-mono text-zinc-400 dark:text-zinc-500">
+                                  <div className="text-[11px] font-mono text-zinc-600 dark:text-zinc-500">
                                     {cmd.examples.join(", ")}
                                   </div>
                                 </div>
 
-                                <label className="relative inline-flex items-center cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    className="sr-only peer"
-                                    checked={enabled}
-                                    disabled={loading}
-                                    onChange={(e) => toggleCommand(cmd.id, e.target.checked)}
-                                  />
-                                  <div className="w-9 h-5 bg-zinc-300 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:bg-zinc-700 dark:after:border-zinc-600 peer-checked:bg-emerald-600" />
-                                </label>
+                                <Switch
+                                  size="sm"
+                                  checked={enabled}
+                                  disabled={loading}
+                                  onCheckedChange={(checked) => toggleCommand(cmd.id, checked)}
+                                  aria-label={`${enabled ? "Desativar" : "Ativar"} comando ${cmd.name}`}
+                                />
                               </div>
 
                               <p className="mt-1.5 text-[11px] leading-relaxed text-zinc-600 dark:text-zinc-400">
@@ -594,22 +655,13 @@ export function GroupSettingsForm({ groupJid }: Props) {
                               </p>
                             </div>
 
-                            <div className="mt-2 pt-1.5 border-t border-zinc-100 dark:border-zinc-800/60 flex items-center justify-between text-[10px]">
-                              <span
-                                className={
-                                  enabled
-                                    ? "text-emerald-600 dark:text-emerald-400 font-medium"
-                                    : "text-zinc-400 dark:text-zinc-500"
-                                }
-                              >
-                                {enabled ? "● Habilitado" : "○ Desabilitado"}
-                              </span>
-                              {!enabled && (
-                                <span className="text-zinc-400 italic">
+                            {!enabled && (
+                              <div className="mt-2 pt-1.5 border-t border-zinc-100 dark:border-zinc-800/60 flex items-center justify-between text-[10px]">
+                                <span className="text-zinc-600 italic dark:text-zinc-400">
                                   Bloqueado no grupo
                                 </span>
-                              )}
-                            </div>
+                              </div>
+                            )}
                           </div>
                         );
                       })}
@@ -628,7 +680,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
         <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
           Eventos autônomos
         </h3>
-        <p className="mb-2 text-[11px] leading-snug text-zinc-400 dark:text-zinc-500">
+        <p className="mb-2 text-[11px] leading-snug text-zinc-600 dark:text-zinc-500">
           Controle granular de cada tipo de evento automático do relógio do mundo.
         </p>
 
@@ -671,7 +723,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
         <h3 className="text-xs font-semibold text-zinc-700 dark:text-zinc-300">
           Ações Manuais
         </h3>
-        <p className="mb-3 text-[11px] leading-snug text-zinc-400 dark:text-zinc-500">
+        <p className="mb-3 text-[11px] leading-snug text-zinc-600 dark:text-zinc-500">
           Forçar disparo de eventos (bloqueia o disparo automático no resto do dia).
         </p>
 
@@ -690,25 +742,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
           <Button
             variant="secondary"
             size="sm"
-            onClick={async () => {
-              if (
-                !confirm(
-                  "Tem certeza que deseja iniciar a PURGA neste grupo agora? Isso ignorará o horário configurado."
-                )
-              )
-                return;
-              try {
-                setStatus("Disparando PURGA...");
-                const res = await funApi.triggerChaosEvent(groupJid);
-                if (res.ok) {
-                  setStatus("PURGA disparada com sucesso!");
-                } else {
-                  setStatus("Falha ao disparar PURGA.");
-                }
-              } catch (err) {
-                setStatus(err instanceof Error ? err.message : "Erro ao disparar");
-              }
-            }}
+            onClick={() => setPurgeConfirmOpen(true)}
             disabled={loading || !groupJid}
           >
             Disparar PURGA Manualmente
@@ -723,6 +757,16 @@ export function GroupSettingsForm({ groupJid }: Props) {
         <span className="text-xs text-zinc-500 dark:text-zinc-400">{status}</span>
       </div>
 
+      <ConfirmDialog
+        open={purgeConfirmOpen}
+        onClose={() => setPurgeConfirmOpen(false)}
+        onConfirm={() => void triggerPurge()}
+        title="Disparar PURGA"
+        description="Tem certeza que deseja iniciar a PURGA neste grupo agora? Isso ignorará o horário configurado."
+        confirmLabel="Disparar PURGA"
+        tone="danger"
+      />
+
       <SpawnGameModal
         open={spawnModalOpen}
         onClose={() => setSpawnModalOpen(false)}
@@ -734,7 +778,7 @@ export function GroupSettingsForm({ groupJid }: Props) {
           }
         }}
       />
-    </div>
+    </Card>
   );
 }
 

@@ -26,14 +26,28 @@ import {
 import { AppShell, useDashboardScope } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ErrorCard } from "@/components/ui/states";
 import { Input } from "@/components/ui/input";
 import { funApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { shortJid } from "@/lib/format";
+import { groupLabel, shortJid } from "@/lib/format";
 import type { LogDomain, LogLevel, SystemLogEntry } from "@/lib/types";
 
 type LevelFilter = "all" | LogLevel;
 type DomainFilter = "all" | LogDomain;
+
+/** JID de grupo WhatsApp (@g.us ou só dígitos) — valores externos ficam como estão. */
+function isGroupJid(value: string): boolean {
+  return value.endsWith("@g.us") || /^\d{8,}$/.test(value);
+}
+
+/** Rótulo amigável para um scope: nome curto do grupo quando for um JID. */
+function scopeDisplayName(value: string, map: Map<string, string>): string {
+  const mapped = map.get(value);
+  if (mapped) return mapped;
+  return isGroupJid(value) ? groupLabel(value) : shortJid(value);
+}
 
 const LEVEL_CONFIG: Record<
   LogLevel,
@@ -149,10 +163,15 @@ export default function LogsPage() {
   const groupNameMap = useMemo(() => {
     const map = new Map<string, string>();
     for (const g of groups) {
-      if (g.jid) map.set(g.jid, g.name || shortJid(g.jid));
+      if (g.jid) map.set(g.jid, groupLabel(g.jid, g.name));
     }
     return map;
   }, [groups]);
+
+  // Rótulo do escopo selecionado no chip "Escopo:" (global fica como está)
+  const selectedScopeLabel = scope
+    ? scopeDisplayName(scope, groupNameMap)
+    : "Global (Todos os grupos)";
 
   // Initial fetch when scope changes
   const fetchInitial = useCallback(async () => {
@@ -341,13 +360,21 @@ export default function LogsPage() {
       title="Logs Operacionais"
       subtitle="Terminal de observabilidade e telemetria em tempo real"
       allowAllGroups={true}
+      wide={true}
       onRefresh={() => void fetchInitial()}
       refreshing={isInitialLoading}
       status={error}
     >
-      <div className="mx-auto flex max-w-7xl flex-col gap-4">
+      <div className="flex flex-col gap-4">
+        {/* Falha de carga inicial (buffer vazio): cartão de erro com retry */}
+        {error && logs.length === 0 ? (
+          <ErrorCard
+            message={error}
+            onRetry={() => void fetchInitial()}
+          />
+        ) : null}
         {/* Top Control Bar: Status, Stats, Live indicator, and Action Buttons */}
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-200 bg-white p-3.5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <Card className="flex flex-wrap items-center justify-between gap-3 p-3.5 shadow-sm">
           <div className="flex flex-wrap items-center gap-2.5">
             {/* Live Indicator Button */}
             <button
@@ -381,7 +408,7 @@ export default function LogsPage() {
             {/* Scope Badge */}
             <Badge tone="neutral" className="gap-1.5 py-1 text-xs">
               <span className="font-semibold text-zinc-500 dark:text-zinc-400">Escopo:</span>
-              <span>{scope ? groupNameMap.get(scope) || shortJid(scope) : "Global (Todos os grupos)"}</span>
+              <span>{selectedScopeLabel}</span>
             </Badge>
 
             {/* Buffer & Capacity Badges */}
@@ -453,10 +480,10 @@ export default function LogsPage() {
               <span className="hidden sm:inline">Limpar</span>
             </Button>
           </div>
-        </div>
+        </Card>
 
         {/* Filter Cards: Levels, Domains, and Instant Search */}
-        <div className="flex flex-col gap-3 rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <Card className="flex flex-col gap-3 p-4 shadow-sm">
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-12 lg:items-center">
             {/* Instant Search Bar */}
             <div className="relative lg:col-span-4">
@@ -541,7 +568,7 @@ export default function LogsPage() {
 
           {/* Quick Domain Filter Chips Bar */}
           <div className="flex flex-wrap items-center gap-1.5 border-t border-zinc-100 pt-2.5 dark:border-zinc-800/80">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400 dark:text-zinc-500 mr-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-zinc-600 dark:text-zinc-500 mr-1">
               Atalhos:
             </span>
             {DOMAIN_OPTIONS.map((opt) => {
@@ -566,7 +593,7 @@ export default function LogsPage() {
               );
             })}
           </div>
-        </div>
+        </Card>
 
         {/* Modern Dark Terminal Console */}
         <div className="flex flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 shadow-2xl">
@@ -683,7 +710,7 @@ export default function LogsPage() {
                             className="inline-block rounded border border-zinc-800 bg-zinc-900 px-1 text-[10px] text-zinc-400"
                             title={`Grupo: ${entry.scope}`}
                           >
-                            @{groupNameMap.get(entry.scope) || shortJid(entry.scope)}
+                            @{scopeDisplayName(entry.scope, groupNameMap)}
                           </span>
                         )}
 

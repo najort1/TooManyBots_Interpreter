@@ -18,8 +18,11 @@ import {
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ErrorCard } from "@/components/ui/states";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
 import { funApi } from "@/lib/api";
 import type {
   LlmConfigResponse,
@@ -260,7 +263,7 @@ export default function ModelosPage() {
       refreshing={loading}
       status={error}
     >
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="space-y-6">
         {/* Banner de sucesso */}
         {success && (
           <div className="flex items-center gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2.5 text-sm font-medium text-emerald-700 dark:text-emerald-300">
@@ -269,38 +272,45 @@ export default function ModelosPage() {
           </div>
         )}
 
-        {/* Banner de erro */}
-        {error && !loading && (
+        {/* Banner de erro (salvamentos com config já carregada) */}
+        {error && !loading && config && (
           <div className="flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm font-medium text-red-700 dark:text-red-300">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-600 dark:text-red-400" />
             <span>{error}</span>
           </div>
         )}
 
-        {/* Estado: carregando */}
-        {loading && (
-          <div className="flex items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white p-10 text-sm text-zinc-500 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-400">
+        {/* Estado: carregando (primeira carga) */}
+        {loading && !config && <ModelosSkeleton />}
+
+        {/* Estado: carregando (refresh com dados já na tela) */}
+        {loading && config && (
+          <Card className="flex items-center justify-center gap-2 p-10 text-sm text-zinc-500 dark:text-zinc-400">
             <RotateCw className="h-4 w-4 animate-spin" />
             Carregando funções e modelos...
-          </div>
+          </Card>
         )}
 
         {/* Estado: erro fatal (sem config) */}
         {!loading && !config && (
-          <div className="rounded-xl border border-dashed border-zinc-200 p-8 text-center dark:border-zinc-800">
-            <p className="text-sm text-zinc-500 dark:text-zinc-400">
-              Não foi possível carregar a configuração de modelos.
-            </p>
-            <Button className="mt-3" variant="secondary" size="sm" onClick={() => void loadConfig()}>
-              Tentar novamente
-            </Button>
-          </div>
+          error ? (
+            <ErrorCard message={error} onRetry={() => void loadConfig()} />
+          ) : (
+            <div className="rounded-xl border border-dashed border-zinc-200 p-8 text-center dark:border-zinc-800">
+              <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                Não foi possível carregar a configuração de modelos.
+              </p>
+              <Button className="mt-3" variant="secondary" size="sm" onClick={() => void loadConfig()}>
+                Tentar novamente
+              </Button>
+            </div>
+          )
         )}
 
         {config && (
           <>
             {/* Bloco 1 — Modelo Padrão Global & Status do Endpoint */}
-            <section className="rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <Card className="p-6 shadow-sm">
               <div className="flex items-start gap-3">
                 <div
                   className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
@@ -377,7 +387,7 @@ export default function ModelosPage() {
                 <div className="mt-1.5 flex flex-col gap-2 sm:flex-row sm:items-center">
                   <Input
                     id="global-model"
-                    list="global-model-suggestions"
+                    list="model-suggestions"
                     value={globalDraft}
                     onChange={(e) => setGlobalDraft(e.target.value)}
                     placeholder="ex.: bot-zap"
@@ -386,7 +396,7 @@ export default function ModelosPage() {
                     className="font-mono text-sm sm:max-w-sm"
                     disabled={saving}
                   />
-                  <datalist id="global-model-suggestions">
+                  <datalist id="model-suggestions">
                     {suggestedModels.map((model) => (
                       <option key={model.id} value={model.id}>
                         {model.name}
@@ -413,16 +423,13 @@ export default function ModelosPage() {
                   </div>
                 </div>
                 <p className="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-                  Sugestões disponíveis:{" "}
-                  {suggestedModels.length > 0
-                    ? suggestedModels.map((m) => m.id).join(", ")
-                    : "nenhuma (digite livremente)"}
+                  Use ↑ para ver sugestões · {suggestedModels.length} modelos disponíveis
                 </p>
               </form>
-            </section>
+            </Card>
 
             {/* Bloco 2 — Ação Rápida em Lote */}
-            <section className="rounded-xl border border-zinc-200 bg-white p-5 dark:border-zinc-800 dark:bg-zinc-900">
+            <Card className="p-5">
               <div className="flex items-center gap-2">
                 <Layers className="h-4 w-4 text-zinc-400" />
                 <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
@@ -446,7 +453,7 @@ export default function ModelosPage() {
                 </label>
                 <Input
                   id="batch-model"
-                  list="batch-model-suggestions"
+                  list="model-suggestions"
                   value={batchModel}
                   onChange={(e) => setBatchModel(e.target.value)}
                   placeholder="modelo-x (ex.: gpt-4o-mini, deepseek/deepseek-chat, glm-5)"
@@ -455,13 +462,6 @@ export default function ModelosPage() {
                   className="font-mono text-sm sm:max-w-md"
                   disabled={saving || loading}
                 />
-                <datalist id="batch-model-suggestions">
-                  {suggestedModels.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {model.name}
-                    </option>
-                  ))}
-                </datalist>
                 <div className="flex flex-wrap gap-2">
                   <Button
                     type="submit"
@@ -481,7 +481,7 @@ export default function ModelosPage() {
                   </Button>
                 </div>
               </form>
-            </section>
+            </Card>
 
             {/* Bloco 3 — Busca e Filtros */}
             <section className="flex flex-col gap-3">
@@ -631,7 +631,7 @@ function FunctionModelCard({
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">{item.name}</h3>
-          <span className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+          <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-500">
             {item.category}
           </span>
         </div>
@@ -666,7 +666,7 @@ function FunctionModelCard({
             </span>
           </span>
         </div>
-        <p className="mt-1 text-[11px] font-mono text-zinc-400 dark:text-zinc-500">
+        <p className="mt-1 text-[11px] font-mono text-zinc-600 dark:text-zinc-500">
           ID: {item.id}
         </p>
       </div>
@@ -758,6 +758,35 @@ function FunctionModelCard({
           )}
         </div>
       </form>
+    </div>
+  );
+}
+
+function ModelosSkeleton() {
+  return (
+    <div className="space-y-6" aria-busy="true">
+      <Card className="p-6">
+        <div className="flex items-start gap-3">
+          <Skeleton className="h-10 w-10 rounded-xl" />
+          <div className="flex-1 space-y-2">
+            <Skeleton className="h-5 w-48" />
+            <Skeleton className="h-4 w-72" />
+          </div>
+        </div>
+        <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-16 w-full" />
+          ))}
+        </div>
+      </Card>
+      <Card className="p-5">
+        <Skeleton className="h-4 w-40" />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-20 w-full" />
+          ))}
+        </div>
+      </Card>
     </div>
   );
 }

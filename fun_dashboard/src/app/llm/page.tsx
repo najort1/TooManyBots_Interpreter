@@ -19,9 +19,14 @@ import {
 import { AppShell, useDashboardScope } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ErrorCard } from "@/components/ui/states";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsPanel } from "@/components/ui/tabs";
 import { funApi } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import type { LlmConfigResponse, LlmFeatureItem, LlmAnalyticsResponse } from "@/lib/types";
 import { LlmAnalyticsView } from "@/components/llm/LlmAnalyticsView";
 
@@ -194,51 +199,42 @@ export default function LlmPage() {
       scopeOverride={selectedScope}
       onScopeOverrideChange={setSelectedScope}
     >
-      <div className="mx-auto max-w-5xl space-y-6">
+      <div className="space-y-6">
         {/* Switcher de Abas: Métricas vs Governança */}
-        <div className="flex border-b border-zinc-200 dark:border-zinc-800">
-          <button
-            type="button"
-            onClick={() => setActiveTab("analytics")}
-            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors ${
-              activeTab === "analytics"
-                ? "border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400"
-                : "border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-            }`}
-          >
-            <Activity className="h-4 w-4" />
-            Telemetria & Métricas de IA
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab("config")}
-            className={`flex items-center gap-2 border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors ${
-              activeTab === "config"
-                ? "border-emerald-600 text-emerald-600 dark:border-emerald-400 dark:text-emerald-400"
-                : "border-transparent text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
-            }`}
-          >
-            <Settings2 className="h-4 w-4" />
-            Governança & Feature Flags
-          </button>
-        </div>
+        <Tabs
+          tabs={[
+            { id: "analytics", label: "Telemetria & Métricas de IA", icon: Activity },
+            { id: "config", label: "Governança & Feature Flags", icon: Settings2 },
+          ]}
+          active={activeTab}
+          onChange={(id) => setActiveTab(id as "analytics" | "config")}
+        />
 
         {/* Aba 1: Telemetria & Métricas de IA */}
-        {activeTab === "analytics" && (
-          <LlmAnalyticsView
-            data={analyticsData}
-            loading={analyticsLoading}
-            days={days}
-            onDaysChange={setDays}
-            onRefresh={() => void loadAnalytics()}
-            scope={selectedScope}
-            onScopeChange={setSelectedScope}
-            groups={scopeState.groups}
-          />
-        )}
+        <TabsPanel id="analytics" active={activeTab}>
+          {error && !analyticsData && !analyticsLoading ? (
+            <ErrorCard
+              message={error}
+              onRetry={() => void loadAnalytics()}
+            />
+          ) : analyticsLoading && !analyticsData ? (
+            <AnalyticsSkeleton />
+          ) : (
+            <LlmAnalyticsView
+              data={analyticsData}
+              loading={analyticsLoading}
+              days={days}
+              onDaysChange={setDays}
+              onRefresh={() => void loadAnalytics()}
+              scope={selectedScope}
+              onScopeChange={setSelectedScope}
+              groups={scopeState.groups}
+            />
+          )}
+        </TabsPanel>
 
         {/* Aba 2: Governança & Feature Flags */}
-        {activeTab === "config" && (
+        <TabsPanel id="config" active={activeTab}>
           <div className="space-y-6">
             {/* Banner de Feedback de Salvamento */}
             {saveSuccess && (
@@ -249,7 +245,7 @@ export default function LlmPage() {
             )}
 
             {/* Hero Card: Master Switch */}
-            <div className="relative overflow-hidden rounded-xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+            <Card className="relative overflow-hidden p-6 shadow-sm">
               <div className="flex flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-start gap-4">
                   <div
@@ -329,7 +325,7 @@ export default function LlmPage() {
                   Configurar modelos por função →
                 </Link>
               </div>
-            </div>
+            </Card>
 
             {/* Barra de Filtros e Ações Rápidas */}
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -413,7 +409,7 @@ export default function LlmPage() {
               )}
             </div>
           </div>
-        )}
+        </TabsPanel>
       </div>
     </AppShell>
   );
@@ -444,12 +440,13 @@ function FeatureCard({
   const Icon = categoryIcons[item.category] || Bot;
 
   return (
-    <div
-      className={`flex flex-col justify-between rounded-xl border p-5 transition-all ${
+    <Card
+      className={cn(
+        "flex flex-col justify-between p-5 transition-all",
         isEffectivelyActive
-          ? "border-zinc-200 bg-white shadow-sm dark:border-zinc-800 dark:bg-zinc-900"
+          ? "shadow-sm"
           : "border-zinc-200/60 bg-zinc-50/70 opacity-80 dark:border-zinc-800/60 dark:bg-zinc-900/50"
-      }`}
+      )}
     >
       <div>
         <div className="flex items-start justify-between gap-3">
@@ -465,7 +462,7 @@ function FeatureCard({
             </div>
             <div>
               <h3 className="font-semibold text-zinc-900 dark:text-zinc-100">{item.name}</h3>
-              <span className="text-[11px] font-medium text-zinc-400 dark:text-zinc-500">
+              <span className="text-[11px] font-medium text-zinc-600 dark:text-zinc-500">
                 {item.category}
               </span>
             </div>
@@ -494,7 +491,7 @@ function FeatureCard({
       </div>
 
       <div className="mt-4 flex items-center justify-between gap-3 border-t border-zinc-100 pt-3 dark:border-zinc-800/60">
-        <span className="text-[11px] font-mono text-zinc-400 dark:text-zinc-500">
+        <span className="text-[11px] font-mono text-zinc-600 dark:text-zinc-500">
           ID: {item.id}
         </span>
         <Badge
@@ -524,7 +521,7 @@ function FeatureCard({
           {item.modelOverride ? (
             <span className="ml-1.5 text-emerald-600 dark:text-emerald-400">(específico)</span>
           ) : (
-            <span className="ml-1.5 text-zinc-400 dark:text-zinc-500">(padrão)</span>
+            <span className="ml-1.5 text-zinc-600 dark:text-zinc-500">(padrão)</span>
           )}
         </span>
         <Link
@@ -533,6 +530,31 @@ function FeatureCard({
         >
           Configurar →
         </Link>
+      </div>
+    </Card>
+  );
+}
+
+function AnalyticsSkeleton() {
+  return (
+    <div className="space-y-6" aria-busy="true">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Card key={i} className="p-4">
+            <Skeleton className="h-3 w-20" />
+            <Skeleton className="mt-2 h-7 w-16" />
+            <Skeleton className="mt-2 h-3 w-24" />
+          </Card>
+        ))}
+      </div>
+      <Card className="p-5">
+        <Skeleton className="h-4 w-56" />
+        <Skeleton className="mt-5 h-52 w-full" />
+      </Card>
+      <div className="grid gap-6 lg:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <Card key={i} className="h-64 p-5" />
+        ))}
       </div>
     </div>
   );

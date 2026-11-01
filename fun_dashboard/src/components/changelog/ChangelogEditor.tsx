@@ -185,7 +185,7 @@ export function ChangelogEditor({
             {t.icon}
           </Button>
         ))}
-        <span className="ml-1 hidden text-[10px] text-zinc-400 sm:inline">
+        <span className="ml-1 hidden text-[10px] text-zinc-600 dark:text-zinc-400 sm:inline">
           WhatsApp: *negrito* _itálico_ ~riscado~
         </span>
       </div>
@@ -206,7 +206,7 @@ export function ChangelogEditor({
         ].join("\n")}
         spellCheck
       />
-      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-400">
+      <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
         <span>
           Parágrafos livres · lista só com{" "}
           <code className="rounded bg-zinc-100 px-1 dark:bg-zinc-800">-</code>{" "}

@@ -4,6 +4,8 @@ import { useCallback, useEffect, useState } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import { funApi } from "@/lib/api";
 import type {
   DailyChallengeLaunchResult,
@@ -40,6 +42,7 @@ export default function DesafiosPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<DailyChallengeLaunchResult | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -59,10 +62,12 @@ export default function DesafiosPage() {
     void load();
   }, [load]);
 
-  const launch = async () => {
-    if (!window.confirm(`Lançar este desafio e substituir o desafio ativo em todos os ${groups} grupo(s) da whitelist?`)) {
-      return;
-    }
+  const launch = () => {
+    setConfirmOpen(true);
+  };
+
+  const doLaunch = async () => {
+    setConfirmOpen(false);
     setBusy(true);
     setError(null);
     setResult(null);
@@ -85,8 +90,8 @@ export default function DesafiosPage() {
       refreshing={loading}
       status={error}
     >
-      <div className="mx-auto grid max-w-4xl gap-4 lg:grid-cols-5">
-        <section className="space-y-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 lg:col-span-3">
+      <div className="grid gap-4 lg:grid-cols-5">
+        <Card className="space-y-4 p-4 lg:col-span-3">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Novo desafio diário</h2>
             <Badge tone={whatsappReady ? "success" : "neutral"}>
@@ -121,14 +126,14 @@ export default function DesafiosPage() {
             ))}
           </fieldset>
 
-          <Button type="button" disabled={disabled} onClick={() => void launch()}>
+          <Button type="button" disabled={disabled} onClick={launch}>
             {busy ? "Lançando…" : `Lançar em ${groups} grupo(s)`}
           </Button>
           {!whatsappReady ? <p className="text-xs text-amber-700 dark:text-amber-400">Conecte o WhatsApp para lançar o desafio.</p> : null}
           {groups === 0 ? <p className="text-xs text-amber-700 dark:text-amber-400">Nenhum grupo @g.us está na whitelist.</p> : null}
-        </section>
+        </Card>
 
-        <section className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 lg:col-span-2">
+        <Card className="p-4 lg:col-span-2">
           <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Resultado do último lançamento</h2>
           {!result ? (
             <p className="mt-3 text-xs text-zinc-500">Ainda não houve lançamento nesta sessão.</p>
@@ -147,8 +152,18 @@ export default function DesafiosPage() {
               ) : <p>Todos os grupos receberam o desafio.</p>}
             </div>
           )}
-        </section>
+        </Card>
       </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={() => void doLaunch()}
+        title="Lançar desafio diário"
+        description={`Lançar este desafio e substituir o desafio ativo em todos os ${groups} grupo(s) da whitelist?`}
+        confirmLabel="Lançar"
+        tone="danger"
+      />
     </AppShell>
   );
 }

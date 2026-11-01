@@ -164,7 +164,7 @@ export function GiniMeter({ gini, activePlayers, totalMembers, passiveMembers }:
         </div>
 
         {/* Legenda de Escala da Régua */}
-        <div className="flex justify-between text-[11px] text-zinc-400 dark:text-zinc-500 px-0.5 pt-1">
+        <div className="flex justify-between text-[11px] text-zinc-600 dark:text-zinc-500 px-0.5 pt-1">
           <span>0.0 (Igualdade)</span>
           <span className="hidden sm:inline">0.3 (Saudável)</span>
           <span className="font-semibold text-amber-500">0.58 (Ação do Regulador)</span>

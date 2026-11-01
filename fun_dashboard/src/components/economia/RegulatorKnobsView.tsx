@@ -175,7 +175,7 @@ export function RegulatorKnobsView({ regulator }: Props) {
                   <span className="text-lg font-bold tracking-tight text-zinc-900 tabular-nums dark:text-zinc-50">
                     {knob.format(val)}
                   </span>
-                  <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+                  <span className="text-[11px] text-zinc-600 dark:text-zinc-500">
                     pad: {knob.format(knob.defaultVal)}
                   </span>
                 </div>
@@ -192,7 +192,7 @@ export function RegulatorKnobsView({ regulator }: Props) {
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <div className="flex justify-between text-[10px] text-zinc-400 dark:text-zinc-500">
+                <div className="flex justify-between text-[10px] text-zinc-600 dark:text-zinc-500">
                   <span>{knob.format(knob.min)}</span>
                   <span>{knob.format(knob.max)}</span>
                 </div>
@@ -215,7 +215,7 @@ export function RegulatorKnobsView({ regulator }: Props) {
               Sementes Narrativas Agendadas ({narrativeSeeds.length})
             </h4>
           </div>
-          <span className="text-[11px] text-zinc-400 dark:text-zinc-500">
+          <span className="text-[11px] text-zinc-600 dark:text-zinc-500">
             Orientam os eventos automáticos do bot
           </span>
         </div>

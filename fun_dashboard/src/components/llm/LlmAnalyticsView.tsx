@@ -24,8 +24,9 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { formatNumber, formatWhen } from "@/lib/format";
+import { formatNumber, formatWhen, groupLabel, groupSubLabel } from "@/lib/format";
 import type {
   LlmAnalyticsResponse,
   LlmCallLog,
@@ -174,7 +175,7 @@ export function LlmAnalyticsView({
               <option value="">🌐 Todos os grupos (Global)</option>
               {groups?.map((g) => (
                 <option key={g.jid} value={g.jid}>
-                  {g.name || g.jid}
+                  {groupLabel(g.jid, g.name)}
                 </option>
               ))}
             </select>
@@ -242,7 +243,7 @@ export function LlmAnalyticsView({
       {/* KPI Cards: Resumo Executivo */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {/* Card 1: Chamadas Totais */}
-        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <Card className="p-4 shadow-sm">
           <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
             <span className="text-xs font-medium">Chamadas de IA</span>
             <Activity className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
@@ -257,10 +258,10 @@ export function LlmAnalyticsView({
             <span>·</span>
             <span>{summary?.errorCalls || 0} falhas</span>
           </div>
-        </div>
+        </Card>
 
         {/* Card 2: Tokens Consumidos */}
-        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <Card className="p-4 shadow-sm">
           <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
             <span className="text-xs font-medium">Volume de Tokens</span>
             <Coins className="h-4 w-4 text-amber-500" />
@@ -273,10 +274,10 @@ export function LlmAnalyticsView({
             {formatTokens(summary?.completionTokens || 0)} (méd.{" "}
             {summary?.avgTokensPerCall || 0}/req)
           </div>
-        </div>
+        </Card>
 
         {/* Card 3: Tempo de Execução (Latência) */}
-        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <Card className="p-4 shadow-sm">
           <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
             <span className="text-xs font-medium">Tempo de Execução</span>
             <Timer className="h-4 w-4 text-cyan-600 dark:text-cyan-400" />
@@ -288,10 +289,10 @@ export function LlmAnalyticsView({
             P95: {formatDuration(summary?.p95DurationMs || 0)} · Total:{" "}
             {(Math.max(0, summary?.totalDurationMs || 0) / 60_000).toFixed(1)} min
           </div>
-        </div>
+        </Card>
 
         {/* Card 4: Custo / Economia */}
-        <div className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <Card className="p-4 shadow-sm">
           <div className="flex items-center justify-between text-zinc-500 dark:text-zinc-400">
             <span className="text-xs font-medium">Custo / Economia</span>
             <DollarSign className="h-4 w-4 text-violet-600 dark:text-violet-400" />
@@ -302,11 +303,11 @@ export function LlmAnalyticsView({
           <div className="mt-1 text-[11px] text-zinc-500 dark:text-zinc-400">
             Fallback: {summary?.fallbackCalls || 0} reqs sem custo
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Gráfico 1: Séries Temporais Diárias (Chamadas & Tokens) */}
-      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      <Card className="p-5 shadow-sm">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">
@@ -350,12 +351,12 @@ export function LlmAnalyticsView({
             height={220}
           />
         </div>
-      </div>
+      </Card>
 
       {/* Grid: 2 Colunas (Qual função mais chama IA + Horários de Pico) */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Coluna 1: Qual função mais chama IA */}
-        <div className="flex flex-col rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <Card className="flex flex-col p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">
@@ -370,7 +371,7 @@ export function LlmAnalyticsView({
 
           <div className="mt-4 flex-1 space-y-3">
             {byTask.length === 0 ? (
-              <div className="flex h-44 items-center justify-center text-xs text-zinc-400">
+              <div className="flex h-44 items-center justify-center text-xs text-zinc-600 dark:text-zinc-400">
                 Nenhum registro de chamada de IA no período selecionado.
               </div>
             ) : (
@@ -379,10 +380,10 @@ export function LlmAnalyticsView({
               ))
             )}
           </div>
-        </div>
+        </Card>
 
         {/* Coluna 2: Horários de Pico (0h às 23h) */}
-        <div className="flex flex-col rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <Card className="flex flex-col p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">
@@ -392,19 +393,19 @@ export function LlmAnalyticsView({
                 Faixas do dia em que os grupos mais demandam o modelo (0h às 23h)
               </p>
             </div>
-            <Clock className="h-4 w-4 text-zinc-400" />
+            <Clock className="h-4 w-4 text-zinc-600 dark:text-zinc-400" />
           </div>
 
           <div className="mt-4 flex-1">
             <HourlyPeakChart hours={byHour} />
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Grid: Provedores & Modelos + Grupos WhatsApp */}
       <div className="grid gap-6 sm:grid-cols-2">
         {/* Provedores & Modelos */}
-        <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <Card className="p-5 shadow-sm">
           <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">
             Provedores & Modelos Ativos
           </h3>
@@ -465,10 +466,10 @@ export function LlmAnalyticsView({
               </div>
             </div>
           </div>
-        </div>
+        </Card>
 
         {/* Grupos de WhatsApp que mais usam IA */}
-        <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+        <Card className="p-5 shadow-sm">
           <div className="flex items-center justify-between">
             <div>
               <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">
@@ -478,45 +479,53 @@ export function LlmAnalyticsView({
                 Grupos na whitelist com maior volume de interações com IA
               </p>
             </div>
-            <Users className="h-4 w-4 text-zinc-400" />
+            <Users className="h-4 w-4 text-zinc-600 dark:text-zinc-400" />
           </div>
 
           <div className="mt-4 space-y-2.5">
             {byGroup.length === 0 ? (
-              <div className="py-8 text-center text-xs text-zinc-400">
+              <div className="py-8 text-center text-xs text-zinc-600 dark:text-zinc-400">
                 Nenhum grupo com chamadas registradas no período.
               </div>
             ) : (
-              byGroup.slice(0, 5).map((g) => (
-                <div
-                  key={g.scopeKey}
-                  className="flex items-center justify-between rounded-lg border border-zinc-100 bg-zinc-50/70 p-2.5 text-xs dark:border-zinc-800/80 dark:bg-zinc-800/40"
-                >
-                  <div className="min-w-0 pr-2">
-                    <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">
-                      {g.groupName || g.scopeKey}
+              byGroup.slice(0, 5).map((g) => {
+                const numericSub = groupSubLabel(g.scopeKey);
+                const title = numericSub
+                  ? groupLabel(g.scopeKey, g.groupName)
+                  : g.groupName || g.scopeKey;
+                return (
+                  <div
+                    key={g.scopeKey}
+                    className="flex items-center justify-between rounded-lg border border-zinc-100 bg-zinc-50/70 p-2.5 text-xs dark:border-zinc-800/80 dark:bg-zinc-800/40"
+                  >
+                    <div className="min-w-0 pr-2">
+                      <div className="truncate font-medium text-zinc-900 dark:text-zinc-100">
+                        {title}
+                      </div>
+                      {numericSub ? (
+                        <div className="truncate font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
+                          {numericSub}
+                        </div>
+                      ) : null}
                     </div>
-                    <div className="truncate font-mono text-[10px] text-zinc-400">
-                      {g.scopeKey}
+                    <div className="shrink-0 text-right">
+                      <div className="font-semibold text-zinc-900 dark:text-zinc-100 tabular-nums">
+                        {g.calls} calls
+                      </div>
+                      <div className="text-[10px] text-zinc-500 dark:text-zinc-400">
+                        {formatTokens(g.totalTokens)} tok · {formatDuration(g.avgDurationMs)}
+                      </div>
                     </div>
                   </div>
-                  <div className="shrink-0 text-right">
-                    <div className="font-semibold text-zinc-900 dark:text-zinc-100 tabular-nums">
-                      {g.calls} calls
-                    </div>
-                    <div className="text-[10px] text-zinc-500 dark:text-zinc-400">
-                      {formatTokens(g.totalTokens)} tok · {formatDuration(g.avgDurationMs)}
-                    </div>
-                  </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
-        </div>
+        </Card>
       </div>
 
       {/* Tabela de Auditoria das Últimas Chamadas (Audit Trail) */}
-      <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+      <Card className="p-5 shadow-sm">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h3 className="font-semibold text-zinc-900 dark:text-zinc-50">
@@ -529,7 +538,7 @@ export function LlmAnalyticsView({
 
           <div className="flex flex-wrap items-center gap-2">
             <div className="relative w-full sm:w-56">
-              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-zinc-400" />
+              <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-zinc-600 dark:text-zinc-400" />
               <Input
                 placeholder="Filtrar chamadas..."
                 value={auditSearch}
@@ -565,7 +574,7 @@ export function LlmAnalyticsView({
         <div className="mt-4 overflow-x-auto">
           <table className="w-full text-left text-xs">
             <thead>
-              <tr className="border-b border-zinc-100 text-zinc-400 dark:border-zinc-800 dark:text-zinc-500">
+              <tr className="border-b border-zinc-100 text-zinc-600 dark:border-zinc-800 dark:text-zinc-500">
                 <th className="py-2.5 pr-3 font-medium">Horário</th>
                 <th className="px-3 py-2.5 font-medium">Função</th>
                 <th className="px-3 py-2.5 font-medium">Provedor / Modelo</th>
@@ -578,7 +587,7 @@ export function LlmAnalyticsView({
             <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
               {filteredLogs.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center text-zinc-400">
+                  <td colSpan={7} className="py-8 text-center text-zinc-600 dark:text-zinc-400">
                     Nenhuma chamada encontrada com os filtros aplicados.
                   </td>
                 </tr>
@@ -601,7 +610,7 @@ export function LlmAnalyticsView({
                     >
                       <td className="py-3 pr-3 text-zinc-500 dark:text-zinc-400 whitespace-nowrap">
                         <div>{new Date(log.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</div>
-                        <div className="text-[10px] text-zinc-400 dark:text-zinc-500">
+                        <div className="text-[10px] text-zinc-600 dark:text-zinc-500">
                           {formatWhen(log.createdAt)}
                         </div>
                       </td>
@@ -609,7 +618,7 @@ export function LlmAnalyticsView({
                         <div className="font-semibold text-zinc-900 dark:text-zinc-100">
                           {taskMeta.label}
                         </div>
-                        <div className="font-mono text-[10px] text-zinc-400">
+                        <div className="font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
                           {log.task}
                         </div>
                       </td>
@@ -617,7 +626,7 @@ export function LlmAnalyticsView({
                         <div className="font-mono text-zinc-800 dark:text-zinc-200">
                           {log.model}
                         </div>
-                        <div className="text-[10px] text-zinc-400">
+                        <div className="text-[10px] text-zinc-600 dark:text-zinc-400">
                           via {log.provider}
                         </div>
                       </td>
@@ -638,7 +647,7 @@ export function LlmAnalyticsView({
                         <span className="font-semibold text-zinc-800 dark:text-zinc-200">
                           {log.totalTokens}
                         </span>
-                        <div className="text-[10px] text-zinc-400">
+                        <div className="text-[10px] text-zinc-600 dark:text-zinc-400">
                           {log.promptTokens} in / {log.completionTokens} out
                         </div>
                       </td>
@@ -684,7 +693,7 @@ export function LlmAnalyticsView({
             onClose={() => setExpandedLogId(null)}
           />
         )}
-      </div>
+      </Card>
     </div>
   );
 }
@@ -707,7 +716,7 @@ function TaskBarItem({ item }: { item: LlmTaskMetric }) {
           <span className="truncate font-medium text-zinc-900 dark:text-zinc-100">
             {meta.label}
           </span>
-          <span className="hidden sm:inline text-[10px] text-zinc-400">
+          <span className="hidden sm:inline text-[10px] text-zinc-600 dark:text-zinc-400">
             ({meta.category})
           </span>
         </div>
@@ -763,7 +772,7 @@ function DailyUsageChart({
   if (pts.length === 0) {
     return (
       <div
-        className="flex items-center justify-center text-xs text-zinc-400"
+        className="flex items-center justify-center text-xs text-zinc-600 dark:text-zinc-400"
         style={{ height }}
       >
         Sem dados para os dias selecionados.
@@ -830,7 +839,7 @@ function DailyUsageChart({
                 x={padLeft - 6}
                 y={y + 3}
                 textAnchor="end"
-                className="fill-zinc-400 text-[10px] tabular-nums"
+                className="fill-zinc-500 text-[10px] tabular-nums"
               >
                 {metric === "tokens" ? formatTokens(valLabel) : valLabel}
               </text>
@@ -882,7 +891,7 @@ function DailyUsageChart({
                   x={x}
                   y={height - 8}
                   textAnchor="middle"
-                  className="fill-zinc-400 text-[10px] tabular-nums"
+                  className="fill-zinc-500 text-[10px] tabular-nums"
                 >
                   {p.date.slice(5)}
                 </text>
@@ -951,7 +960,7 @@ function HourlyPeakChart({
 
   if (!hasCalls) {
     return (
-      <div className="flex h-36 items-center justify-center text-xs text-zinc-400">
+      <div className="flex h-36 items-center justify-center text-xs text-zinc-600 dark:text-zinc-400">
         Nenhuma chamada registrada nas 24h do período selecionado.
       </div>
     );
@@ -988,7 +997,7 @@ function HourlyPeakChart({
 
               {/* Rótulo da hora a cada 3h */}
               {h.hour % 3 === 0 && (
-                <span className="mt-1.5 text-[9px] text-zinc-400 tabular-nums">
+                <span className="mt-1.5 text-[9px] text-zinc-600 dark:text-zinc-400 tabular-nums">
                   {h.hour}h
                 </span>
               )}

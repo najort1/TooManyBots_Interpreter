@@ -91,6 +91,12 @@ export const funApi = {
 
   config: () => request<FunConfig>("/api/fun/config"),
 
+  updateConfig: (body: Partial<FunConfig>) =>
+    request<FunConfig>("/api/fun/config", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
   llmConfig: () => request<LlmConfigResponse>("/api/fun/llm/config"),
 
   llmAnalytics: (params?: { scope?: string; days?: number }) => {

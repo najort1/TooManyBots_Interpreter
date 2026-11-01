@@ -1,3 +1,4 @@
+import { Card } from "@/components/ui/card";
 import { displayPlayer, formatNumber } from "@/lib/format";
 import type { RankEntry } from "@/lib/types";
 
@@ -10,14 +11,14 @@ type Props = {
 export function RankingTable({ entries, kind, empty = "Nada por aqui ainda." }: Props) {
   if (!entries.length) {
     return (
-      <div className="rounded-lg border border-dashed border-zinc-200 bg-white px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-400">
+      <Card className="border-dashed border-zinc-200 px-4 py-10 text-center text-sm text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
         {empty}
-      </div>
+      </Card>
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+    <Card className="overflow-hidden">
       <table className="w-full text-left text-sm">
         <thead className="border-b border-zinc-100 bg-zinc-50/80 text-xs font-medium text-zinc-500 dark:border-zinc-800 dark:bg-zinc-950/60 dark:text-zinc-400">
           <tr>
@@ -104,6 +105,6 @@ export function RankingTable({ entries, kind, empty = "Nada por aqui ainda." }: 
           ))}
         </tbody>
       </table>
-    </div>
+    </Card>
   );
 }

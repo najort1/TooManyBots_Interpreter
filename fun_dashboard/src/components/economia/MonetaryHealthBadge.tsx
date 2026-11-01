@@ -15,7 +15,7 @@ import {
   Info,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { formatCoins, formatNumber, formatPct } from "@/lib/format";
+import { formatCoins, formatNumber, formatPctGrouped } from "@/lib/format";
 import type { EconomyMetrics } from "@/lib/types";
 import { cn } from "@/lib/cn";
 
@@ -180,7 +180,7 @@ export function MonetaryHealthBadge({ metrics }: Props) {
               ) : (
                 <ArrowDownRight className="h-4 w-4" aria-hidden="true" />
               )}
-              {formatPct(baselineDiffPct)}
+              {formatPctGrouped(baselineDiffPct)}
             </span>
           </div>
         </div>
@@ -261,7 +261,7 @@ export function MonetaryHealthBadge({ metrics }: Props) {
           <div className="mt-1.5 text-xl font-bold tracking-tight text-zinc-900 tabular-nums dark:text-zinc-50">
             {formatCoins(circulatingCoins)}
           </div>
-          <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+          <div className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">
             {formatNumber(activePlayers)} players com saldo
           </div>
         </div>
@@ -284,7 +284,7 @@ export function MonetaryHealthBadge({ metrics }: Props) {
           >
             {mintSink24h.net > 0 ? `+${formatCoins(mintSink24h.net)}` : formatCoins(mintSink24h.net)}
           </div>
-          <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+          <div className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">
             +{formatCoins(mintSink24h.minted)} / -{formatCoins(mintSink24h.sunk)}
           </div>
         </div>
@@ -298,7 +298,7 @@ export function MonetaryHealthBadge({ metrics }: Props) {
           <div className="mt-1.5 text-xl font-bold tracking-tight text-zinc-900 tabular-nums dark:text-zinc-50">
             {formatCoins(jackpot)}
           </div>
-          <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+          <div className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">
             Pote acumulado
           </div>
         </div>
@@ -312,7 +312,7 @@ export function MonetaryHealthBadge({ metrics }: Props) {
           <div className="mt-1.5 text-xl font-bold tracking-tight text-zinc-900 tabular-nums dark:text-zinc-50">
             {formatCoins(factionsVaultTotal)}
           </div>
-          <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+          <div className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">
             {factionsCount} {factionsCount === 1 ? "facção" : "facções"} ativas
           </div>
         </div>
@@ -326,7 +326,7 @@ export function MonetaryHealthBadge({ metrics }: Props) {
           <div className="mt-1.5 text-xl font-bold tracking-tight text-zinc-900 tabular-nums dark:text-zinc-50">
             {formatCoins(investedValue)}
           </div>
-          <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+          <div className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">
             Itens & inventários
           </div>
         </div>
@@ -340,7 +340,7 @@ export function MonetaryHealthBadge({ metrics }: Props) {
           <div className="mt-1.5 text-xl font-bold tracking-tight text-zinc-900 tabular-nums dark:text-zinc-50">
             {formatNumber(total)}
           </div>
-          <div className="mt-0.5 text-[11px] text-zinc-400 dark:text-zinc-500">
+          <div className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-500">
             {formatNumber(passive)} apenas no chat
           </div>
         </div>

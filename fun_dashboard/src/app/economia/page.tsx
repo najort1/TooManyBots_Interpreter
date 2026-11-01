@@ -86,7 +86,7 @@ export default function EconomiaPage() {
           </Button>
         </div>
       ) : loading && !data ? (
-        <div className="mx-auto flex max-w-6xl flex-col gap-6 animate-pulse">
+        <div className="flex flex-col gap-6 animate-pulse">
           <div className="h-40 rounded-xl bg-zinc-200 dark:bg-zinc-800" />
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-6">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -100,7 +100,7 @@ export default function EconomiaPage() {
           <div className="h-80 rounded-xl bg-zinc-200 dark:bg-zinc-800" />
         </div>
       ) : data ? (
-        <div className="mx-auto flex max-w-6xl flex-col gap-6">
+        <div className="flex flex-col gap-6">
           {/* Indicador e Badge de Saúde Monetária + KPIs */}
           <MonetaryHealthBadge metrics={data} />
 

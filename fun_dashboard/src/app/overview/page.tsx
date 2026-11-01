@@ -8,12 +8,17 @@ import {
   Activity,
   Coins,
   ArrowRight,
+  Users,
 } from "lucide-react";
 import { AppShell, useDashboardScope } from "@/components/layout/AppShell";
 import { MetricStrip } from "@/components/metrics/MetricStrip";
 import { RankingTable } from "@/components/ranking/RankingTable";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardHeader } from "@/components/ui/card";
+import { EmptyState, ErrorCard } from "@/components/ui/states";
+import { KeyValue } from "@/components/ui/kv";
+import { Skeleton } from "@/components/ui/skeleton";
 import { SpawnGameModal } from "@/components/games/SpawnGameModal";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { funApi } from "@/lib/api";
@@ -91,8 +96,12 @@ function OverviewBody() {
     >
       {!scope ? (
         <EmptyApi />
+      ) : error && !data ? (
+        <ErrorCard message={error} onRetry={() => void load()} />
+      ) : loading && !data ? (
+        <OverviewSkeleton />
       ) : (
-        <div className="mx-auto flex max-w-5xl flex-col gap-5">
+        <div className="flex flex-col gap-5">
           {/* Métricas Executivas no Topo */}
           <MetricStrip
             items={[
@@ -122,24 +131,21 @@ function OverviewBody() {
           {/* Cards Dedicados: Status Operacional & Economia */}
           <div className="grid gap-4 md:grid-cols-2">
             {/* Card de Status Operacional do Bot */}
-            <section className="flex flex-col justify-between rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+            <Card className="flex flex-col justify-between p-4">
               <div>
-                <div className="flex items-center justify-between gap-2 border-b border-zinc-100 pb-3 dark:border-zinc-800">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                      <Activity className="h-4 w-4" aria-hidden />
-                    </div>
-                    <div>
-                      <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                        Status Operacional
-                      </h2>
-                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                        WhatsApp e vazão de saída
-                      </p>
-                    </div>
-                  </div>
-                  <div>
-                    {botStatus?.socketReady ? (
+                <CardHeader
+                  className="items-center border-b border-zinc-100 pb-3 dark:border-zinc-800"
+                  title={
+                    <span className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                        <Activity className="h-4 w-4" aria-hidden />
+                      </span>
+                      Status Operacional
+                    </span>
+                  }
+                  description="WhatsApp e vazão de saída"
+                  action={
+                    botStatus?.socketReady ? (
                       <Badge tone="success" className="gap-1.5">
                         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                         Conectado
@@ -149,47 +155,40 @@ function OverviewBody() {
                         <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
                         Desconectado
                       </Badge>
-                    )}
-                  </div>
-                </div>
+                    )
+                  }
+                />
 
                 <div className="mt-3 space-y-1.5 text-sm">
-                  <Row
+                  <KeyValue
                     label="Uptime do bot"
-                    value={
-                      botStatus?.uptimeSeconds != null
-                        ? formatUptime(botStatus.uptimeSeconds)
-                        : "—"
-                    }
-                  />
-                  <Row
+                  >
+                    {botStatus?.uptimeSeconds != null
+                      ? formatUptime(botStatus.uptimeSeconds)
+                      : "—"}
+                  </KeyValue>
+                  <KeyValue
                     label="Envios (1 min)"
-                    value={
-                      data?.outbound
-                        ? `${data.outbound.globalLastMinute}/${data.outbound.maxPerMinute ?? "—"}`
-                        : "—"
-                    }
-                  />
-                  <Row
+                  >
+                    {data?.outbound
+                      ? `${data.outbound.globalLastMinute}/${data.outbound.maxPerMinute ?? "—"}`
+                      : "—"}
+                  </KeyValue>
+                  <KeyValue
                     label="Envios (1 h)"
-                    value={
-                      data?.outbound
-                        ? `${data.outbound.globalLastHour}/${data.outbound.maxPerHour ?? "—"}`
-                        : "—"
-                    }
-                  />
-                  <Row
-                    label="Bloqueios guard (drops)"
-                    value={formatNumber(data?.outbound?.dropped ?? 0)}
-                  />
-                  <Row
-                    label="Evento em andamento"
-                    value={
-                      data?.event?.active
-                        ? `${data.event.eventType} (${data.event.multiplier}x) · ${formatEndsIn(data.event.endsAt)}`
-                        : "Nenhum ativo"
-                    }
-                  />
+                  >
+                    {data?.outbound
+                      ? `${data.outbound.globalLastHour}/${data.outbound.maxPerHour ?? "—"}`
+                      : "—"}
+                  </KeyValue>
+                  <KeyValue label="Bloqueios guard (drops)">
+                    {formatNumber(data?.outbound?.dropped ?? 0)}
+                  </KeyValue>
+                  <KeyValue label="Evento em andamento">
+                    {data?.event?.active
+                      ? `${data.event.eventType} (${data.event.multiplier}x) · ${formatEndsIn(data.event.endsAt)}`
+                      : "Nenhum ativo"}
+                  </KeyValue>
                 </div>
               </div>
 
@@ -201,7 +200,7 @@ function OverviewBody() {
                   <Badge tone={data?.features.ollama ? "success" : "neutral"}>
                     Ollama {data?.features.ollama ? "on" : "off"}
                   </Badge>
-                  <Badge tone={data?.features.tarot ? "ink" : "neutral"}>
+                  <Badge tone={data?.features.tarot ? "success" : "neutral"}>
                     Tarot {data?.features.tarot ? "on" : "off"}
                   </Badge>
                   <Badge tone="neutral">
@@ -209,47 +208,39 @@ function OverviewBody() {
                   </Badge>
                 </div>
               </div>
-            </section>
+            </Card>
 
             {/* Card de Saúde da Economia */}
-            <section className="flex flex-col justify-between rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+            <Card className="flex flex-col justify-between p-4">
               <div>
-                <div className="flex items-center justify-between gap-2 border-b border-zinc-100 pb-3 dark:border-zinc-800">
-                  <div className="flex items-center gap-2">
-                    <div className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-                      <Coins className="h-4 w-4" aria-hidden />
-                    </div>
-                    <div>
-                      <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
-                        Saúde da Economia
-                      </h2>
-                      <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                        Concentração monetária e estabilidade
-                      </p>
-                    </div>
-                  </div>
-                  <div>
+                <CardHeader
+                  className="items-center border-b border-zinc-100 pb-3 dark:border-zinc-800"
+                  title={
+                    <span className="flex items-center gap-2">
+                      <span className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
+                        <Coins className="h-4 w-4" aria-hidden />
+                      </span>
+                      Saúde da Economia
+                    </span>
+                  }
+                  description="Concentração monetária e estabilidade"
+                  action={
                     <Badge tone={getEconomyBadgeTone(economy?.healthStatus)}>
                       {economy?.healthLabel || "Estável"}
                     </Badge>
-                  </div>
-                </div>
+                  }
+                />
 
                 <div className="mt-3 space-y-1.5 text-sm">
-                  <Row
-                    label="Total em circulação"
-                    value={formatCoins(economy?.circulatingCoins ?? 0)}
-                  />
-                  <Row
-                    label="Âncora monetária (base)"
-                    value={formatCoins(economy?.baselineCoins ?? 0)}
-                  />
-                  <Row
-                    label="Índice Gini"
-                    value={
-                      economy?.gini != null ? Number(economy.gini).toFixed(3) : "0.000"
-                    }
-                  />
+                  <KeyValue label="Total em circulação">
+                    {formatCoins(economy?.circulatingCoins ?? 0)}
+                  </KeyValue>
+                  <KeyValue label="Âncora monetária (base)">
+                    {formatCoins(economy?.baselineCoins ?? 0)}
+                  </KeyValue>
+                  <KeyValue label="Índice Gini">
+                    {economy?.gini != null ? Number(economy.gini).toFixed(3) : "0.000"}
+                  </KeyValue>
 
                   {/* Barra visual de Desigualdade Gini */}
                   <div className="pt-1">
@@ -280,10 +271,9 @@ function OverviewBody() {
                     </div>
                   </div>
 
-                  <Row
-                    label="Jogadores no grupo"
-                    value={`${formatNumber(data?.players ?? 0)} registrados`}
-                  />
+                  <KeyValue label="Jogadores no grupo">
+                    {`${formatNumber(data?.players ?? 0)} registrados`}
+                  </KeyValue>
                 </div>
               </div>
 
@@ -299,11 +289,11 @@ function OverviewBody() {
                   <ArrowRight className="h-3 w-3" />
                 </Link>
               </div>
-            </section>
+            </Card>
           </div>
 
           {/* Banner de Ação de Jogos de Panelinha */}
-          <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900">
                 <Swords className="h-5 w-5" aria-hidden="true" />
@@ -335,15 +325,21 @@ function OverviewBody() {
 
             <div className="flex flex-wrap items-center gap-2">
               {activeGameData?.active && activeGameData.gameLink ? (
-                <a
-                  href={activeGameData.gameLink}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white shadow-sm hover:bg-emerald-500 dark:bg-emerald-500 dark:hover:bg-emerald-400"
+                <Button
+                  variant="primary"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={() =>
+                    window.open(activeGameData.gameLink ?? undefined, "_blank", "noopener,noreferrer")
+                  }
                 >
+                  <span
+                    aria-hidden
+                    className="mr-2 inline-block size-2 animate-pulse rounded-full bg-emerald-500"
+                  />
                   <ExternalLink className="h-3.5 w-3.5" />
                   Entrar na Sala Ativa
-                </a>
+                </Button>
               ) : null}
 
               <Button
@@ -356,7 +352,7 @@ function OverviewBody() {
                 {activeGameData?.active ? "Novo Jogo / Forçar" : "Spawnar Jogo de Panelinha"}
               </Button>
             </div>
-          </div>
+          </Card>
 
           {/* Tabelas de Ranking: Top XP e Top Coins */}
           <div className="grid gap-4 md:grid-cols-2">
@@ -408,22 +404,55 @@ function OverviewBody() {
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function OverviewSkeleton() {
   return (
-    <div className="flex items-start justify-between gap-3 border-b border-zinc-100 py-1.5 last:border-0 dark:border-zinc-800">
-      <span className="text-zinc-500 dark:text-zinc-400">{label}</span>
-      <span className="text-right font-medium text-zinc-900 dark:text-zinc-50">{value}</span>
+    <div className="flex flex-col gap-5" aria-busy="true">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Card key={i} className="p-4">
+            <Skeleton className="h-3 w-24" />
+            <Skeleton className="mt-2.5 h-7 w-20" />
+            <Skeleton className="mt-2.5 h-3 w-28" />
+          </Card>
+        ))}
+      </div>
+      <div className="grid gap-4 md:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <Card key={i} className="p-4">
+            <Skeleton className="h-4 w-40" />
+            <div className="mt-4 space-y-2.5">
+              {Array.from({ length: 5 }).map((_, j) => (
+                <Skeleton key={j} className="h-4 w-full" />
+              ))}
+            </div>
+          </Card>
+        ))}
+      </div>
+      <Card className="p-4">
+        <Skeleton className="h-10 w-full" />
+      </Card>
+      <div className="grid gap-4 md:grid-cols-2">
+        {Array.from({ length: 2 }).map((_, i) => (
+          <div key={i} className="space-y-2">
+            <Skeleton className="h-4 w-24" />
+            <Card className="h-40" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
 function EmptyApi() {
   return (
-    <div className="mx-auto max-w-lg rounded-lg border border-dashed border-zinc-200 bg-white px-6 py-12 text-center dark:border-zinc-700 dark:bg-zinc-900">
-      <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">Sem grupo selecionado</h2>
-      <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-        Suba o bot Fun e garanta a whitelist para visualizar o dashboard executivo.
-      </p>
+    <div className="mx-auto max-w-lg">
+      <Card className="border-dashed">
+        <EmptyState
+          icon={Users}
+          title="Sem grupo selecionado"
+          description="Suba o bot Fun e garanta a whitelist para visualizar o dashboard executivo."
+        />
+      </Card>
     </div>
   );
 }

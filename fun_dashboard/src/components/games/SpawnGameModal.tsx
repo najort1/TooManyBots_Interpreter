@@ -14,6 +14,7 @@ import {
   Copy,
   ExternalLink,
   Loader2,
+  Megaphone,
   Sparkles,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -35,7 +36,6 @@ export type SpawnGameModalProps = {
 const GAMES: Array<{
   type: PanelinhaGameType;
   title: string;
-  emoji: string;
   badge: string;
   icon: typeof Brain;
   description: string;
@@ -47,7 +47,6 @@ const GAMES: Array<{
   {
     type: "quiz_royale",
     title: "Quiz Royale das Panelinhas",
-    emoji: "🧠",
     badge: "Perguntas & Respostas",
     icon: Brain,
     description: "Batalha de perguntas e respostas com temas dinâmicos gerados por IA!",
@@ -59,7 +58,6 @@ const GAMES: Array<{
   {
     type: "grid_ctf",
     title: "Grande Golpe (Assalto ao Cofre)",
-    emoji: "🚩",
     badge: "Invasão & Emboscadas",
     icon: Flag,
     description: "Batalha tática em 3 rotas (Norte, Centro, Sul) com invasores e guardiões!",
@@ -71,7 +69,6 @@ const GAMES: Array<{
   {
     type: "king_of_the_hill",
     title: "Rei das Três Colinas (Guerra)",
-    emoji: "👑",
     badge: "Controle de Território",
     icon: Crown,
     description: "Disputa simultânea pelas colinas Alfa, Bravo e Charlie com bombas e potes acumulados!",
@@ -270,7 +267,8 @@ export function SpawnGameModal({
 
                   {announce ? (
                     <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
-                      📢 O anúncio com o link e instruções foi enviado no WhatsApp do grupo.
+                      <Megaphone className="mr-1 inline h-3.5 w-3.5" aria-hidden="true" />
+                      O anúncio com o link e instruções foi enviado no WhatsApp do grupo.
                     </p>
                   ) : null}
                 </div>
@@ -341,6 +339,7 @@ export function SpawnGameModal({
             <div className="grid gap-2.5 sm:grid-cols-3">
               {GAMES.map((game) => {
                 const isSelected = selectedGame === game.type;
+                const GameIcon = game.icon;
 
                 return (
                   <button
@@ -359,8 +358,15 @@ export function SpawnGameModal({
                     )}
                   >
                     <div className="flex w-full items-center justify-between gap-1.5">
-                      <span className="text-2xl" role="img" aria-label={game.title}>
-                        {game.emoji}
+                      <span
+                        className={cn(
+                          "flex h-8 w-8 items-center justify-center rounded-lg",
+                          isSelected
+                            ? "bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900"
+                            : "bg-zinc-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300"
+                        )}
+                      >
+                        <GameIcon className="h-5 w-5" aria-hidden="true" />
                       </span>
                       <Badge tone={isSelected ? "ink" : "neutral"} className="text-[10px]">
                         {game.minPlayers}-{game.maxPlayers} players
@@ -417,10 +423,10 @@ export function SpawnGameModal({
                 disabled={loading}
                 className="mt-1"
               >
-                <option value="500">💰 500 moedas</option>
-                <option value="1000">💰 1.000 moedas (padrão)</option>
-                <option value="2000">💰 2.000 moedas</option>
-                <option value="5000">💰 5.000 moedas (especial)</option>
+                <option value="500">500 moedas</option>
+                <option value="1000">1.000 moedas (padrão)</option>
+                <option value="2000">2.000 moedas</option>
+                <option value="5000">5.000 moedas (especial)</option>
               </Select>
             </div>
 

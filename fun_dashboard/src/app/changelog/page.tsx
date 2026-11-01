@@ -5,8 +5,12 @@ import { AppShell } from "@/components/layout/AppShell";
 import { ChangelogEditor } from "@/components/changelog/ChangelogEditor";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
+import { ErrorCard } from "@/components/ui/states";
 import { Input } from "@/components/ui/input";
 import { funApi } from "@/lib/api";
+import { groupLabel, groupSubLabel } from "@/lib/format";
 import type {
   ChangelogBroadcastResult,
   ChangelogGroup,
@@ -28,6 +32,7 @@ function ChangelogBody() {
     null
   );
   const [preview, setPreview] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -101,8 +106,13 @@ function ChangelogBody() {
       refreshing={loading}
       status={error}
     >
-      <div className="mx-auto grid max-w-5xl gap-4 lg:grid-cols-5">
-        <section className="space-y-4 rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900 lg:col-span-3">
+      {error && !loading && history.length === 0 ? (
+        <div className="mb-4">
+          <ErrorCard message={error} onRetry={() => void load()} />
+        </div>
+      ) : null}
+      <div className="grid gap-4 lg:grid-cols-5">
+        <Card className="space-y-4 p-4 lg:col-span-3">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
               Nova mensagem
@@ -156,24 +166,32 @@ function ChangelogBody() {
                   Nenhum grupo na whitelist.
                 </li>
               ) : (
-                groups.map((g) => (
-                  <li key={g.jid}>
-                    <label className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800/60">
-                      <input
-                        type="checkbox"
-                        className="h-4 w-4 rounded border-zinc-300"
-                        checked={selected.has(g.jid)}
-                        onChange={() => toggleOne(g.jid)}
-                      />
-                      <span className="min-w-0 flex-1 truncate text-zinc-800 dark:text-zinc-100">
-                        {g.name || "Grupo"}
-                      </span>
-                      <span className="truncate font-mono text-[10px] text-zinc-400">
-                        {g.jid.replace("@g.us", "")}
-                      </span>
-                    </label>
-                  </li>
-                ))
+                groups.map((g) => {
+                  const sub = groupSubLabel(g.jid);
+                  return (
+                    <li key={g.jid}>
+                      <label
+                        className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-zinc-50 dark:hover:bg-zinc-800/60"
+                        title={g.jid}
+                      >
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 rounded border-zinc-300"
+                          checked={selected.has(g.jid)}
+                          onChange={() => toggleOne(g.jid)}
+                        />
+                        <span className="min-w-0 flex-1 truncate text-zinc-800 dark:text-zinc-100">
+                          {groupLabel(g.jid, g.name)}
+                        </span>
+                        {sub ? (
+                          <span className="truncate font-mono text-[10px] text-zinc-600 dark:text-zinc-400">
+                            {sub}
+                          </span>
+                        ) : null}
+                      </label>
+                    </li>
+                  );
+                })
               )}
             </ul>
           </div>
@@ -192,19 +210,20 @@ function ChangelogBody() {
               disabled={
                 busy || !body.trim() || selected.size === 0 || !whatsappReady
               }
-              onClick={() => {
-                if (
-                  !window.confirm(
-                    `Enviar changelog para ${selected.size} grupo(s)?`
-                  )
-                ) {
-                  return;
-                }
-                void runPublish(false);
-              }}
+              title={
+                busy || !body.trim() || selected.size === 0
+                  ? "Preencha título e corpo para liberar o envio"
+                  : undefined
+              }
+              onClick={() => setConfirmOpen(true)}
             >
               {busy ? "Enviando…" : `Lançar em ${selected.size} grupo(s)`}
             </Button>
+            {!busy && (!body.trim() || selected.size === 0) ? (
+              <p className="w-full text-xs text-zinc-500 dark:text-zinc-400">
+                Preencha título e corpo para liberar o envio.
+              </p>
+            ) : null}
           </div>
 
           {!whatsappReady && (
@@ -213,10 +232,10 @@ function ChangelogBody() {
               só com o bot conectado.
             </p>
           )}
-        </section>
+        </Card>
 
         <section className="space-y-4 lg:col-span-2">
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <Card className="p-4">
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
               Prévia
             </h2>
@@ -242,9 +261,9 @@ function ChangelogBody() {
                 </div>
               </div>
             )}
-          </div>
+          </Card>
 
-          <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-900">
+          <Card className="p-4">
             <h2 className="text-sm font-semibold text-zinc-900 dark:text-zinc-50">
               Histórico
             </h2>
@@ -277,9 +296,22 @@ function ChangelogBody() {
                 ))
               )}
             </ul>
-          </div>
+          </Card>
         </section>
       </div>
+
+      <ConfirmDialog
+        open={confirmOpen}
+        onClose={() => setConfirmOpen(false)}
+        onConfirm={() => {
+          setConfirmOpen(false);
+          void runPublish(false);
+        }}
+        title="Lançar changelog"
+        description={`Enviar changelog para ${selected.size} grupo(s)?`}
+        confirmLabel="Enviar"
+        tone="danger"
+      />
     </AppShell>
   );
 }
