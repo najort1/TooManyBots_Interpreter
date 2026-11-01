@@ -765,7 +765,7 @@ export function buildFunSchemaSql() {
     );
 
     -- Snapshot diário do jornal: 1 linha/dia/grupo.
-    -- Populado em newsService.tryPublish para alimentar memória histórica (30+ dias).
+    -- Populado em newsService.commitEdition (após o post da edição) para memória histórica (30+ dias).
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_daily_snapshot (
       scope_key    TEXT    NOT NULL,
       day_key      TEXT    NOT NULL,
@@ -776,6 +776,36 @@ export function buildFunSchemaSql() {
 
     CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_daily_snapshot_scope
       ON fun_daily_snapshot(scope_key, created_at DESC);
+
+    -- Quote vencedora do dia (maior score) — fonte do quiz "Quem disse essa
+    -- frase?" do desafio diário. Curta retenção; snapshots NUNCA guardam citações.
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_news_quote_quiz (
+      scope_key    TEXT    NOT NULL,
+      day_key      TEXT    NOT NULL,
+      quote_text   TEXT    NOT NULL,
+      author_jid   TEXT    NOT NULL DEFAULT '',
+      author_name  TEXT    NOT NULL DEFAULT '',
+      score        REAL    NOT NULL DEFAULT 0,
+      created_at   INTEGER NOT NULL,
+      PRIMARY KEY (scope_key, day_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_news_quote_quiz_scope
+      ON fun_news_quote_quiz(scope_key, created_at DESC);
+
+    -- Cartas dos leitores (/carta) publicadas na seção "CARTAS DOS LEITORES".
+    -- Curta retenção; nunca entra no snapshot do jornal.
+    CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_news_letters (
+      id           TEXT    PRIMARY KEY,
+      scope_key    TEXT    NOT NULL,
+      author_jid   TEXT    NOT NULL,
+      text         TEXT    NOT NULL,
+      day_key      TEXT    NOT NULL,
+      created_at   INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS ${ANALYTICS_SCHEMA}.idx_fun_news_letters_scope_day
+      ON fun_news_letters(scope_key, day_key, created_at ASC);
 
     CREATE TABLE IF NOT EXISTS ${ANALYTICS_SCHEMA}.fun_achievements (
       user_jid         TEXT    NOT NULL,

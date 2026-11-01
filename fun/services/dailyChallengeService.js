@@ -27,6 +27,7 @@ import { openaiChatComplete } from '../llm/openaiClient.js';
 import { resolveZenEndpoint } from '../llm/zenEndpoint.js';
 import { resolveZenTaskParams } from '../llm/zenTaskParams.js';
 import { isLlmFeatureEnabled, resolveLlmModel } from '../llm/llmGovernance.js';
+import { normalizeIdentityKey } from '../utils/identity.js';
 
 const CHALLENGE_TYPES = [
   'guess_game',
@@ -36,6 +37,7 @@ const CHALLENGE_TYPES = [
   'math_puzzle',
   'word_scramble',
   'pokemon',
+  'who_said_it',
 ];
 const LOCAL_CHALLENGE_TYPES = [
   'guess_game',
@@ -45,6 +47,10 @@ const LOCAL_CHALLENGE_TYPES = [
   'math_puzzle',
   'word_scramble',
 ];
+/** Tipo condicional: só entra no sorteio quando existe quote armazenada no escopo. */
+const QUIZ_CHALLENGE_TYPE = 'who_said_it';
+/** Janela de "quote recente" pro quiz: o jornal roda às 23:59, o desafio no dia seguinte. */
+const QUIZ_QUOTE_MAX_AGE_MS = 36 * 60 * 60_000;
 const MAX_HINTS = 3;
 const HINT_COOLDOWN_DEFAULT_MS = 10 * 60 * 1000;
 const POKEMON_FETCH_TIMEOUT_MS = 5000;
@@ -225,11 +231,14 @@ export function createDailyChallengeService(deps = {}) {
 
   const statsRepository = deps.statsRepository;
   const effectsRepository = deps.effectsRepository;
+  const quoteQuizRepository = deps.quoteQuizRepository || null;
   const groupMemoryService = deps.groupMemoryService || null;
   const generateZen = deps.generateZen || openaiChatComplete;
   const pokemonDataCache = new Map();
   const getConfig = deps.getConfig || (() => ({}));
   const getContactDisplayName = deps.getContactDisplayName || (() => 'alguem');
+  /** Canoniza identidade (LID ↔ PN) na validação de menção do who_said_it. */
+  const identityMap = deps.identityMap || null;
   const logger = deps.getLogger?.() || null;
   const random = deps.random || Math.random;
 
@@ -315,9 +324,33 @@ export function createDailyChallengeService(deps = {}) {
 
   /* ---------- selecao de tipo (evita repetir o anterior) ---------- */
 
-  function pickChallengeType(excludeType) {
+  /**
+   * Predicate de elegibilidade por tipo. Tipos condicionais (who_said_it)
+   * só entram no sorteio quando existe quote de jornal recente no escopo —
+   * o filtro acontece no mecanismo de escolha, não como skip pós-hoc.
+   */
+  function isChallengeTypeEligible(type, scopeKey, now) {
+    if (type !== QUIZ_CHALLENGE_TYPE) return true;
+    if (!quoteQuizRepository?.getLatestQuote) return false;
+    const ts = Number(now) || Date.now();
+    try {
+      const quote = quoteQuizRepository.getLatestQuote(scopeKey, {
+        now: ts,
+        sinceMs: ts - QUIZ_QUOTE_MAX_AGE_MS,
+      });
+      return Boolean(quote?.quoteText && quote?.authorJid);
+    } catch {
+      return false;
+    }
+  }
+
+  function pickChallengeType(excludeType, scopeKey = '', now = Date.now()) {
     const pool = CHALLENGE_TYPES.filter((t) => t !== excludeType);
-    return pickOne(pool, random) || CHALLENGE_TYPES[0];
+    const eligible = pool.filter((t) => isChallengeTypeEligible(t, scopeKey, now));
+    if (eligible.length) return pickOne(eligible, random) || CHALLENGE_TYPES[0];
+    // Nada de elegível além dos incondicionais: nunca sorteia tipo sem dados
+    const unconditional = pool.filter((t) => t !== QUIZ_CHALLENGE_TYPE);
+    return pickOne(unconditional, random) || CHALLENGE_TYPES[0];
   }
 
   /* ---------- dedup de conteudo ---------- */
@@ -475,7 +508,7 @@ export function createDailyChallengeService(deps = {}) {
     const minutesNow = minutesOfDay(now);
     if (minutesNow < sched.targetMinute) return { ok: false, reason: 'not-window' };
 
-    const type = pickChallengeType(null);
+    const type = pickChallengeType(null, scopeKey, now);
     let result = await launchChallenge({
       scopeKey,
       type,
@@ -525,6 +558,8 @@ export function createDailyChallengeService(deps = {}) {
       payload = await launchMathPuzzle(scopeKey, now);
     } else if (type === 'word_scramble') {
       payload = await launchWordScramble(scopeKey, now);
+    } else if (type === 'who_said_it') {
+      payload = await launchWhoSaidIt(scopeKey, now);
     } else {
       return { ok: false, reason: 'unknown-type' };
     }
@@ -1000,6 +1035,92 @@ export function createDailyChallengeService(deps = {}) {
     };
   }
 
+  /* ---------- Quem disse essa frase? (who_said_it — quote do jornal) ---------- */
+
+  /**
+   * Lança o quiz com a última quote do jornal (janela ~36h). Sem quote
+   * armazenada devolve null e o mecanismo de escolha nem ofereceria o tipo.
+   * Validação espelha who_am_i: match do nome de exibição do autor ou
+   * menção (@) ao autor em /responder.
+   */
+  function launchWhoSaidIt(scopeKey, now) {
+    const ts = Number(now) || Date.now();
+    let quote = null;
+    try {
+      quote = quoteQuizRepository?.getLatestQuote?.(scopeKey, {
+        now: ts,
+        sinceMs: ts - QUIZ_QUOTE_MAX_AGE_MS,
+      }) || null;
+    } catch (err) {
+      log({ err: err?.message }, 'dailyChallenge who_said_it quote lookup fail');
+      return null;
+    }
+    if (!quote?.quoteText || !quote?.authorJid) return null;
+
+    const resolvedName = String(getContactDisplayName(quote.authorJid) || '').trim();
+    const authorName = resolvedName || quote.authorName || String(quote.authorJid).split('@')[0] || 'alguém';
+    const firstName = authorName.split(/\s+/)[0] || authorName;
+    const answer = normalizeAnswer(authorName);
+    const aliases = Array.from(
+      new Set([authorName, firstName, quote.authorName || ''].map(normalizeAnswer).filter(Boolean))
+    );
+    const initials = authorName
+      .split(/\s+/)
+      .map((part) => part.charAt(0).toUpperCase())
+      .filter(Boolean)
+      .join('');
+
+    const data = {
+      quoteText: String(quote.quoteText),
+      authorJid: String(quote.authorJid),
+      authorName,
+      dayKey: String(quote.dayKey || ''),
+      aliases,
+      hints: [
+        'A frase saiu na edição de ontem do The Group Times, dita por alguém que participou do dia.',
+        `O nome da pessoa começa com “${firstName.charAt(0).toUpperCase()}” e tem ${firstName.length} letras.`,
+        initials ? `Iniciais do nome: ${initials}.` : 'Pensa em quem mais roubou a cena ontem.',
+      ].slice(0, MAX_HINTS),
+    };
+
+    return {
+      answer,
+      data,
+      recordContent: () => {},
+      kind: 'who_said_it',
+      title: 'QUIZ DO TIMES — QUEM DISSE ESSA FRASE?',
+      header: '🧾',
+      instructions: 'Descubra quem disse a frase do jornal de ontem!',
+    };
+  }
+
+  /**
+   * who_said_it: aceita a menção (@) direta ao autor da frase, além do nome.
+   * LID e PN têm numerações diferentes — canoniza AMBOS os lados pelo
+   * identityMap (mesmo mecanismo do resolveVoteTarget do QMP) antes de
+   * comparar a parte local; sem mapa injetado, cai no compare cru por local.
+   */
+  function canonicalMentionLocal(jid) {
+    const raw = String(jid || '').trim();
+    if (!raw) return '';
+    let canonical = raw;
+    try {
+      canonical = identityMap?.resolve?.(raw) || raw;
+    } catch {
+      canonical = raw;
+    }
+    return normalizeIdentityKey(canonical).toLowerCase();
+  }
+
+  function isWhoSaidItMention(challenge, mentionedJids = []) {
+    const authorLocal = canonicalMentionLocal(challenge?.challengeData?.authorJid);
+    if (!authorLocal || !Array.isArray(mentionedJids)) return false;
+    return mentionedJids.some((jid) => {
+      const local = canonicalMentionLocal(jid);
+      return local && local === authorLocal;
+    });
+  }
+
   /* ---------- Enigma Matemático (math_puzzle) ---------- */
 
   async function launchMathPuzzle(scopeKey, now) {
@@ -1390,6 +1511,7 @@ export function createDailyChallengeService(deps = {}) {
     if (type === 'who_am_i') return { data, image, title: 'DESAFIO DO DIA — QUEM SOU EU?' };
     if (type === 'math_puzzle') return { data, image, title: 'DESAFIO DO DIA — EQUAÇÃO LÓGICA' };
     if (type === 'word_scramble') return { data, image, title: 'DESAFIO DO DIA — ANAGRAMA' };
+    if (type === 'who_said_it') return { data, image, title: 'QUIZ DO TIMES — QUEM DISSE ESSA FRASE?' };
     return { data, image, title: 'DESAFIO DO DIA' };
   }
 
@@ -1509,6 +1631,14 @@ export function createDailyChallengeService(deps = {}) {
         `Desembaralhe as letras e descubra a palavra!\n\n` +
         `⏳ *Tempo:* ${durationMin} min\n🎁 *Recompensa:* surpresa!\n\n` +
         `💬 *Responda:* /responder <palavra>\n💡 *Dica:* /dica\n🔄 *Pular (3 votos):* /trocar desafio`;
+    } else if (type === 'who_said_it') {
+      const quoteText = payload?.data?.quoteText || '';
+      body =
+        `🧾 *${payload.title}*\n\n` +
+        `“${quoteText}”\n\n` +
+        `Essa frase entrou na edição de ontem do The Group Times. Quem foi o autor?\n\n` +
+        `⏳ *Tempo:* ${durationMin} min\n🎁 *Recompensa:* surpresa!\n\n` +
+        `💬 *Responda:* /responder @pessoa (ou o nome)\n💡 *Dica:* /dica\n🔄 *Pular (3 votos):* /trocar desafio`;
     } else {
       const caption =
         `🎮 *${payload.title}*\n\n` +
@@ -1636,6 +1766,9 @@ export function createDailyChallengeService(deps = {}) {
     if (t === 'who_am_i') {
       return challenge?.challengeData?.name || challenge?.answer || '';
     }
+    if (t === 'who_said_it') {
+      return challenge?.challengeData?.authorName || challenge?.answer || '';
+    }
     if (t === 'math_puzzle') {
       return challenge?.challengeData?.answer || challenge?.answer || '';
     }
@@ -1652,6 +1785,7 @@ export function createDailyChallengeService(deps = {}) {
     userJid,
     guess,
     now,
+    mentionedJids = [],
     getContactDisplayName: gcdn,
     sendImage,
     sharp,
@@ -1692,7 +1826,9 @@ export function createDailyChallengeService(deps = {}) {
     }
 
     const normGuess = normalizeAnswer(guess);
-    const correct = isCorrectGuess(challenge, normGuess);
+    const correct =
+      isCorrectGuess(challenge, normGuess) ||
+      (challenge.challengeType === QUIZ_CHALLENGE_TYPE && isWhoSaidItMention(challenge, mentionedJids));
 
     repository.addAttempt({
       challengeId: challenge.id,
@@ -1910,7 +2046,13 @@ export function createDailyChallengeService(deps = {}) {
       if (llmHint) return llmHint;
       return 'Observe a silhueta e as cores.';
     }
-    if (type === 'guess_movie_emoji' || type === 'who_am_i' || type === 'math_puzzle' || type === 'word_scramble') {
+    if (
+      type === 'guess_movie_emoji' ||
+      type === 'who_am_i' ||
+      type === QUIZ_CHALLENGE_TYPE ||
+      type === 'math_puzzle' ||
+      type === 'word_scramble'
+    ) {
       const hints = Array.isArray(data.hints) ? data.hints : [];
       if (hints[hintIndex]) return String(hints[hintIndex]);
       return 'Pense bem nas pistas iniciais!';
@@ -1961,7 +2103,7 @@ export function createDailyChallengeService(deps = {}) {
       log({ err: err?.message }, 'dailyChallenge skip announce fail');
     }
 
-    const newType = pickChallengeType(challenge.challengeType);
+    const newType = pickChallengeType(challenge.challengeType, scopeKey, ts);
     const launched = await launchChallenge({
       scopeKey,
       type: newType,

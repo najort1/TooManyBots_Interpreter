@@ -1083,6 +1083,28 @@ export function normalizeFunConfig(input) {
       DEFAULT_FUN_CONFIG.groupNewsMaxAttempts,
       { min: 1, max: 5, rounding: 'floor', clamp: true }
     ),
+    groupNewsQmpEnabled: normalizeBoolean(
+      raw.groupNewsQmpEnabled,
+      DEFAULT_FUN_CONFIG.groupNewsQmpEnabled
+    ),
+    groupNewsCoverEnabled: normalizeBoolean(
+      raw.groupNewsCoverEnabled,
+      DEFAULT_FUN_CONFIG.groupNewsCoverEnabled
+    ),
+    groupNewsCoverTimeoutMs: normalizeInt(
+      raw.groupNewsCoverTimeoutMs,
+      DEFAULT_FUN_CONFIG.groupNewsCoverTimeoutMs,
+      { min: 100, max: 300_000, rounding: 'floor', clamp: true }
+    ),
+    groupNewsSpotlightEnabled: normalizeBoolean(
+      raw.groupNewsSpotlightEnabled,
+      DEFAULT_FUN_CONFIG.groupNewsSpotlightEnabled
+    ),
+    groupNewsSpotlightCoins: normalizeInt(
+      raw.groupNewsSpotlightCoins,
+      DEFAULT_FUN_CONFIG.groupNewsSpotlightCoins,
+      { min: 0, max: 10000, rounding: 'floor', clamp: true }
+    ),
     achievementsEnabled: normalizeBoolean(
       raw.achievementsEnabled,
       DEFAULT_FUN_CONFIG.achievementsEnabled

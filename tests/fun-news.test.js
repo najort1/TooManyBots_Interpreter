@@ -63,6 +63,16 @@ test('news: publica conversa do grupo, não placar de eventos, e deduplica', asy
   assert.match(published.text, /Churrasco rende temporada extra/);
   assert.match(published.text, /A churrasqueira segue oficialmente sob investigação/);
   assert.doesNotMatch(published.text, /RANKINGS|coins|cassino|ECONOMIA/i);
+  // Efeitos colaterais agora moram no commitEdition (pós-post): snapshot
+  // e gate do dia só existem depois do commit.
+  assert.equal(newsRepository.getNewsMeta(scope).lastDailyNewsDay, '', 'dia não pode ser marcado antes do commit');
+  const commitResult = newsService.commitEdition(scope, published, {
+    groupNewsEnabled: true,
+    worldTimezone: 'UTC',
+    groupNewsHour: 23,
+    groupNewsMinute: 59,
+  });
+  assert.equal(commitResult.ok, true);
   assert.deepEqual(Object.keys(snapshotRepository.getSnapshot(scope, published.newsDay).payload).sort(), ['mood', 'participantCount', 'timeline', 'totalMessageCount']);
 
   const again = await newsService.tryPublish(scope, {

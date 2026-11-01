@@ -119,15 +119,15 @@ function capConversation(messages, maxChars) {
 }
 
 function selectQuotes(messages) {
+  const scoreOf = (message) =>
+    Number(/[!?]|kkk|rsrs|😂|🤣/i.test(message.text)) + Math.min(message.text.length / 120, 1);
+
   const candidates = messages
     .filter((message) => message.source === 'human')
     .filter((message) => message.text.length >= 18 && message.text.length <= 220)
     .filter((message) => !/^k{2,}|^(sim|não|nao|ok|blz|bom dia)$/i.test(message.text))
-    .sort((left, right) => {
-      const leftScore = Number(/[!?]|kkk|rsrs|😂|🤣/i.test(left.text)) + Math.min(left.text.length / 120, 1);
-      const rightScore = Number(/[!?]|kkk|rsrs|😂|🤣/i.test(right.text)) + Math.min(right.text.length / 120, 1);
-      return rightScore - leftScore;
-    });
+    .map((message) => ({ ...message, score: scoreOf(message) }))
+    .sort((left, right) => right.score - left.score);
 
   const authors = new Set();
   const quotes = [];
@@ -136,9 +136,11 @@ function selectQuotes(messages) {
     authors.add(candidate.authorJid);
     quotes.push({
       name: candidate.name,
+      authorJid: candidate.authorJid,
       text: candidate.text,
       messageId: candidate.messageId,
       mentionedJids: Array.isArray(candidate.mentionedJids) ? candidate.mentionedJids : [],
+      score: candidate.score,
     });
     if (quotes.length >= QUOTE_MAX) break;
   }

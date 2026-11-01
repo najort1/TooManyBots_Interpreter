@@ -71,6 +71,8 @@ import { createPoliceService } from './services/policeService.js';
 import { createRoastService } from './services/roastService.js';
 import { createNewsService } from './services/newsService.js';
 import { sendNewsAudioWithRetry } from './services/news/newsAudio.js';
+import { sendNewsCoverWithRetry, withCoverDeadline } from './services/news/newsCover.js';
+import { isCommandEnabledForScope } from './utils/commandGuards.js';
 import { createChangelogService } from './services/changelogService.js';
 import { createAchievementService } from './services/achievementService.js';
 import { createFunNsfwVoteRepository } from './db/funNsfwVoteRepository.js';
@@ -88,6 +90,8 @@ import { createFunProfileRepository } from './db/funProfileRepository.js';
 import { createFunCardRepository } from './db/funCardRepository.js';
 import { createFunQmpRepository } from './db/funQmpRepository.js';
 import { createFunDailyChallengeRepository } from './db/funDailyChallengeRepository.js';
+import { createFunNewsQuoteQuizRepository } from './db/funNewsQuoteQuizRepository.js';
+import { createFunNewsLettersRepository } from './db/funNewsLettersRepository.js';
 import { createDailyChallengeService } from './services/dailyChallengeService.js';
 import { createGroupMemoryService } from './services/groupMemoryService.js';
 import { createPersonaService } from './services/personaService.js';
@@ -542,15 +546,23 @@ export function createFunModule(deps = {}) {
   const dailyChallengeRepository =
     deps.dailyChallengeRepository ||
     createFunDailyChallengeRepository({ getDatabase });
+  // Quote vencedora do jornal (fonte do quiz "Quem disse essa frase?")
+  const quoteQuizRepository =
+    deps.quoteQuizRepository || createFunNewsQuoteQuizRepository({ getDatabase });
+  // Correio dos leitores (/carta — seção CARTAS DOS LEITORES do jornal)
+  const lettersRepository =
+    deps.lettersRepository || createFunNewsLettersRepository({ getDatabase });
   const dailyChallengeService =
     deps.dailyChallengeService ||
     createDailyChallengeService({
       repository: dailyChallengeRepository,
       statsRepository: repository,
       effectsRepository,
+      quoteQuizRepository,
       flavorService,
       groupMemoryService,
       getContactDisplayName: resolveContactName,
+      identityMap,
       generateZen: effectiveGenerateZen,
       getConfig: () => resolveFunConfig(getConfig() || {}),
       getLogger,
@@ -617,6 +629,10 @@ export function createFunModule(deps = {}) {
       socialMemoryService,
       getContactDisplayName: resolveContactName,
       identityMap,
+      qmpRepository,
+      quoteQuizRepository,
+      lettersRepository,
+      imageGenerationService,
     });
 
   const personaToolExecutor =
@@ -1029,8 +1045,81 @@ export function createFunModule(deps = {}) {
         try {
           const edition = await newsService.tryPublish(scopeKey, funConfig, now);
           if (edition?.ok && edition.text) {
+            // Capa visual do jornal (IA): enviada ANTES do texto (capa → texto → áudio).
+            // Quota global compartilhada com /gerar e /imaginar; qualquer falha
+            // (quota, timeout, provider, guard skipped) é silenciosa e NUNCA
+            // bloqueia a edição — o resultado vai no retorno do tick.
+            let coverResult = null;
+            if (edition.cover && (edition.cover.buffer || edition.cover.url)) {
+              try {
+                // Deadline TOTAL também no ENVIO (sendImage pode pendurar no
+                // socket igual ao backend de geração): estourou, capa pulada
+                // e o texto segue na mesma janela.
+                const coverDeadlineMs = Math.max(
+                  50,
+                  Math.floor(Number(funConfig.groupNewsCoverTimeoutMs) || 90_000)
+                );
+                coverResult = await withCoverDeadline(
+                  sendNewsCoverWithRetry(
+                    sock,
+                    scopeKey,
+                    {
+                      coverBuffer: edition.cover.buffer,
+                      coverUrl: edition.cover.url,
+                      caption: edition.coverCaption || '',
+                      mentions: edition.mentions || [],
+                    },
+                    { sendImage, logger: console }
+                  ),
+                  coverDeadlineMs
+                );
+              } catch (coverErr) {
+                coverResult = { ok: false, reason: coverErr?.message || 'cover-send-error', skipped: false };
+                console.warn(
+                  `[fun/news] cover send fail ${String(scopeKey).slice(0, 28)}: ${coverErr?.message || coverErr}`
+                );
+              }
+            }
             const sendOptions = edition.mentions?.length ? { mentions: edition.mentions } : undefined;
             await post(sock, scopeKey, edition.text, sendOptions);
+            // COMMIT dos efeitos colaterais SÓ depois do post bem-sucedido:
+            // crédito do Destaque, quote do quiz, snapshot/prunes e o gate do
+            // dia. Post falho deixa o dia livre pro tick seguinte recompor;
+            // commit falhando NUNCA invalida a edição já publicada.
+            let commitResult = null;
+            try {
+              commitResult = newsService.commitEdition?.(scopeKey, edition, funConfig) || null;
+              if (commitResult && commitResult.ok === false && commitResult.reason !== 'already-committed') {
+                console.warn(
+                  `[fun/news] commit fail ${String(scopeKey).slice(0, 28)}: ${commitResult.reason}`
+                );
+              }
+            } catch (commitErr) {
+              console.warn(
+                `[fun/news] commit error ${String(scopeKey).slice(0, 28)}: ${commitErr?.message || commitErr}`
+              );
+            }
+            // Enquete da redação (QMP do comentarista): abre ao fim da edição,
+            // só depois do TEXTO enviado com sucesso. Nunca quebra a publicação.
+            // Guarda na MESMA fonte do router (resolveEffectiveRates), que
+            // respeita override por grupo, funConfig.disabledCommands e defaults.
+            try {
+              const qmpCommandOn = isCommandEnabledForScope('qmp', groupRepository, scopeKey, funConfig);
+              const qmpRound = newsService.openCommentatorQmpRound?.(scopeKey, {
+                funConfig,
+                now,
+                commentator: edition.commentator,
+                conversation: edition.facts,
+                isCommandEnabled: () => qmpCommandOn,
+              });
+              if (qmpRound?.ok && qmpRound.announcement) {
+                await post(sock, scopeKey, qmpRound.announcement);
+              }
+            } catch (qmpErr) {
+              console.warn(
+                `[fun/news] qmp trigger fail ${String(scopeKey).slice(0, 28)}: ${qmpErr?.message || qmpErr}`
+              );
+            }
             if (edition.audioBuffer && typeof sock?.sendMessage === 'function') {
               await sendNewsAudioWithRetry(sock, scopeKey, {
                 audioBuffer: edition.audioBuffer,
@@ -1045,6 +1134,16 @@ export function createFunModule(deps = {}) {
               provider: edition.provider || null,
               eventCount: edition.eventCount ?? null,
               messageCount: edition.messageCount ?? null,
+              committed:
+                Boolean(commitResult?.ok) &&
+                (commitResult?.spotlight ? commitResult.spotlight.settled !== false : true),
+              cover: coverResult
+                ? {
+                    sent: Boolean(coverResult.ok),
+                    skipped: Boolean(coverResult.skipped),
+                    reason: coverResult.ok ? null : String(coverResult.reason || 'cover-failed'),
+                  }
+                : null,
             };
           }
           return {
@@ -1524,6 +1623,7 @@ export function createFunModule(deps = {}) {
       'who_am_i',
       'math_puzzle',
       'word_scramble',
+      'who_said_it',
     ];
     if (!validTypes.includes(type)) {
       return { ok: false, reason: 'invalid-type' };

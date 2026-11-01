@@ -71,6 +71,84 @@ export function pickCommentatorArchetype(random = Math.random) {
 }
 
 /**
+ * Templates determinísticos (sem LLM) da pergunta QMP que o comentarista
+ * abre ao fim da edição do jornal. Cada arquétipo tem a sua voz; {cargo}
+ * vira o título do comentarista e {topico} o clima do dia.
+ */
+const NEWS_QMP_TEMPLATES = {
+  'Cachorro Chupetinha': [
+    'O {cargo} late a verdade: quem é mais provável de virar meme amanhã depois de {topico}?',
+    'O {cargo} cheira o grupo e pergunta: quem é mais provável de pagar mico internacional com {topico}?',
+  ],
+  'Fiscal do Rolo': [
+    'O {cargo} quer saber: quem é mais provável de estar por trás de alguma maracutaia envolvendo {topico}?',
+    'Auditoria aberta pelo {cargo}: quem é mais provável de fechar negócio escuso depois de {topico}?',
+  ],
+  'Craque Neto do Zap': [
+    'O {cargo} explodiu no ar: quem é mais provável de faltar com raça amanhã depois de {topico}?',
+    'O {cargo} quer saber com indignação: quem é mais provável de dar show de irregularidade em {topico}?',
+  ],
+  'Tia da Coxinha': [
+    'O {cargo} pergunta bem baixinho: quem é mais provável de virar fofoca amanhã depois de {topico}?',
+    'O {cargo} quer saber, só entre nós: quem é mais provável de aprontar e fingir que foi outro em {topico}?',
+  ],
+  'Gato Rebaixado': [
+    'O {cargo} boceja e pergunta: quem é mais provável de gastar energia de graça com {topico} de novo?',
+    'O {cargo}, de cima do muro, quer saber: quem é mais provável de levar {topico} mais a sério que o necessário?',
+  ],
+  'Doutor Fuxico': [
+    'O {cargo} dá o diagnóstico: quem é mais provável de apresentar sintomas agudos de {topico} amanhã?',
+    'O {cargo} abre o prontuário: quem é mais provável de recair direto em {topico}?',
+  ],
+  default: [
+    'O {cargo} quer saber: quem é mais provável de virar meme amanhã depois de {topico}?',
+  ],
+};
+
+const NEWS_QMP_MOOD_TOPICS = {
+  zoeiro: 'a zoeira de hoje',
+  movimentado: 'o tumulto de hoje',
+  conversado: 'a prosa infinita de hoje',
+  silencioso: 'o marasmo de hoje',
+};
+
+/**
+ * Monta a pergunta QMP do jornal de forma determinística (sem chamada LLM),
+ * na voz do arquétipo do comentarista e ancorada no clima do dia.
+ */
+export function buildNewsQmpQuestion(commentator, conversation = {}, random = Math.random) {
+  const name = String(commentator?.name || '').trim();
+  const templates = NEWS_QMP_TEMPLATES[name] || NEWS_QMP_TEMPLATES.default;
+  const topic = NEWS_QMP_MOOD_TOPICS[String(conversation?.mood || '').trim()] || NEWS_QMP_MOOD_TOPICS.conversado;
+  const template = templates.length
+    ? templates[Math.floor(((typeof random === 'function' ? random() : Math.random()) || 0) * templates.length) % templates.length]
+    : templates[0];
+  const cargo = String(commentator?.title || 'comentarista residente').trim();
+  return String(template).replace('{cargo}', cargo).replace('{topico}', topic);
+}
+
+/**
+ * Anúncio curto da enquete aberta pelo jornal (postado após a edição).
+ */
+export function formatNewsQmpAnnouncement(question, commentator = null) {
+  const byline = commentator?.name
+    ? commentator.title
+      ? `_pelo ${commentator.name} (${commentator.title})_`
+      : `_pelo ${commentator.name}_`
+    : null;
+  return [
+    '📊 *ENQUETE DA REDAÇÃO*',
+    byline,
+    '',
+    `*${question}*`,
+    '',
+    'Mencione *uma pessoa* pra votar (ou `/qmp @pessoa`).',
+  ]
+    .filter((line) => line !== null)
+    .join('\n');
+}
+
+/**
  * Modula a atuação e o tom do comentarista de acordo com o clima (mood) do grupo,
  * preservando estritamente a voz-base (voiceName) que identifica o personagem.
  */

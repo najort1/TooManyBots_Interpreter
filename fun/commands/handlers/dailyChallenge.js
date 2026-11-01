@@ -39,6 +39,7 @@ export async function handleResponderCommand(ctx) {
     scopeKey,
     args = [],
     reply,
+    mentionedJids,
     getContactDisplayName,
   } = ctx;
 
@@ -60,6 +61,7 @@ export async function handleResponderCommand(ctx) {
     userJid,
     guess,
     now: Date.now(),
+    mentionedJids: mentionedJids || [],
     getContactDisplayName,
     sendImage,
     sharp,
@@ -193,6 +195,8 @@ export async function handleDesafioCommand(ctx) {
         matematica: 'math_puzzle',
         anagrama: 'word_scramble',
         palavra: 'word_scramble',
+        frase: 'who_said_it',
+        quiz: 'who_said_it',
       };
       const validTypes = [
         'guess_game',
@@ -202,6 +206,7 @@ export async function handleDesafioCommand(ctx) {
         'who_am_i',
         'math_puzzle',
         'word_scramble',
+        'who_said_it',
       ];
       const challengeType = TYPE_MAP[typeArg] || typeArg || null;
 
@@ -214,7 +219,7 @@ export async function handleDesafioCommand(ctx) {
 
       const finalType = challengeType && validTypes.includes(challengeType)
         ? challengeType
-        : dailyChallengeService.pickChallengeType(null);
+        : dailyChallengeService.pickChallengeType(null, scopeKey, Date.now());
 
       const result = await dailyChallengeService.launchChallenge({
         scopeKey,
@@ -260,7 +265,7 @@ export async function handleDesafioCommand(ctx) {
         reason: 'restart',
       });
 
-      const type = dailyChallengeService.pickChallengeType(null);
+      const type = dailyChallengeService.pickChallengeType(null, scopeKey, Date.now());
       const result = await dailyChallengeService.launchChallenge({
         scopeKey,
         type,
@@ -286,7 +291,7 @@ export async function handleDesafioCommand(ctx) {
         '',
         '`/desafio status` — Status do desafio atual',
         '`/desafio forcar [tipo]` — Força lançamento',
-        '  Tipos: `game`, `riddle`, `pokemon`, `filme`, `quem`, `math`, `anagrama`',
+        '  Tipos: `game`, `riddle`, `pokemon`, `filme`, `quem`, `math`, `anagrama`, `frase`',
         '`/desafio expirar` — Força expiração',
         '`/desafio reiniciar` — Expira + lança novo',
         '',

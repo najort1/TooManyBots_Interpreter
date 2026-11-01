@@ -93,6 +93,7 @@ import { handleCarCommand, handleMyCarCommand } from './handlers/car.js';
 import { handleAchievementsCommand } from './handlers/achievements.js';
 import { handleCartasCommand } from './handlers/cartas.js';
 import { handleQmpCommand } from './handlers/qmp.js';
+import { handleCartaCommand } from './handlers/letter.js';
 import { handleNsfwEnableCommand, handleNsfwRejectCommand } from './handlers/nsfwVote.js';
 import { handleNsfwForceCommand } from './handlers/nsfwForce.js';
 import {
@@ -573,6 +574,8 @@ export async function routeFunCommand(ctx) {
       return handleCartasCommand(base);
     case FUN_COMMANDS.QMP:
       return handleQmpCommand(base);
+    case FUN_COMMANDS.CARTA:
+      return handleCartaCommand(base);
     case FUN_COMMANDS.NSFW_ENABLE:
       return handleNsfwEnableCommand(base);
     case FUN_COMMANDS.NSFW_REJECT:

@@ -139,6 +139,8 @@ export const FUN_COMMANDS = Object.freeze({
   GROUP_OPEN: 'group_open',
   GROUP_LOCK: 'group_lock',
   GROUP_UNLOCK: 'group_unlock',
+  // Correio dos Leitores — /carta (carta pra redação do jornal The Group Times)
+  CARTA: 'carta',
 });
 
 /**
@@ -194,6 +196,8 @@ export const FUN_PUBLIC_GROUP_COMMANDS = Object.freeze(
     // emprego: anúncio curto no grupo no start
     FUN_COMMANDS.EMPLOYMENT,
     FUN_COMMANDS.REACTION,
+    // Correio dos leitores: confirmação da carta aparece no grupo
+    FUN_COMMANDS.CARTA,
     // Desafio diário: precisa visibilidade no grupo
     FUN_COMMANDS.RESPONDER,
     FUN_COMMANDS.DICA,
@@ -605,6 +609,10 @@ export const FUN_COMMAND_ALIASES = Object.freeze({
   // Ranking de inativos (quem menos fala)
   inativos: FUN_COMMANDS.INATIVOS,
   quietos: FUN_COMMANDS.INATIVOS,
+  // Correio dos Leitores: /carta agora é carta pra redação do jornal
+  // (entrada posterior sobrepõe o legado 'carta' → 'cartas' acima;
+  // a forma completa /cartas segue intacta).
+  carta: FUN_COMMANDS.CARTA,
 });
 
 export const ACTION_TYPE = Object.freeze({
@@ -1113,6 +1121,16 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   groupNewsTimeoutMs: 75_000,
   /** Número máximo de tentativas de geração da crônica via LLM antes de desistir. */
   groupNewsMaxAttempts: 3,
+  /** Se true, ao fim da edição o comentarista residente abre uma rodada QMP na voz dele (determinística, sem LLM). */
+  groupNewsQmpEnabled: true,
+  /** Se true, o jornal gera capa visual por IA (mesma quota global do /gerar e /imaginar). */
+  groupNewsCoverEnabled: true,
+  /** Prazo TOTAL da capa por IA em ms (o backend pode tentar vários modelos em cascata); estourou, descarta e publica. */
+  groupNewsCoverTimeoutMs: 90_000,
+  /** Se true, a edição elege um "Destaque do Dia" (autor da melhor frase ou mais ativo). */
+  groupNewsSpotlightEnabled: true,
+  /** Moedas creditadas ao Destaque do Dia no ledger (reason 'news-spotlight'). */
+  groupNewsSpotlightCoins: 50,
   // Conquistas
   achievementsEnabled: true,
   // Memória persistente por grupo (lore seletiva)

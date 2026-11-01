@@ -558,6 +558,15 @@ export const COMMAND_CATALOG = Object.freeze([
     isNsfw: false,
     examples: ['/qmp', '/qmp votar @user'],
   },
+  {
+    id: FUN_COMMANDS.CARTA,
+    name: 'Correio dos Leitores (/carta)',
+    description: 'Envia uma carta para a redação do jornal The Group Times; as melhores entram na edição',
+    category: 'social',
+    defaultEnabled: true,
+    isNsfw: false,
+    examples: ['/carta <texto>'],
+  },
 
   // Panelinhas & Facções
   {
