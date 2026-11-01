@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useCallback, useEffect, useState } from "react";
+import { use, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   Trophy,
@@ -470,6 +470,18 @@ export default function GameRoomPage({ params }: Props) {
     };
   }, [roomId, fetchRoomState]);
 
+  // Modal de regras: foco no primeiro elemento interativo + fechar com Escape (a11y)
+  const rulesCloseRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (!showRulesModal) return;
+    rulesCloseRef.current?.focus();
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowRulesModal(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [showRulesModal]);
+
   // Login de Jogador
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -512,8 +524,8 @@ export default function GameRoomPage({ params }: Props) {
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100 p-4">
-        <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-4" />
-        <p className="text-sm font-semibold tracking-wide uppercase text-slate-400">Carregando Partida...</p>
+        <div className="w-10 h-10 border-4 border-amber-500 border-t-transparent rounded-full animate-spin mb-4" aria-hidden="true" />
+        <p role="status" className="text-sm font-semibold tracking-wide uppercase text-slate-400">Carregando Partida...</p>
       </div>
     );
   }
@@ -521,7 +533,7 @@ export default function GameRoomPage({ params }: Props) {
   if (error || !room) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100 p-6 text-center">
-        <AlertCircle className="w-12 h-12 text-red-500 mb-4" />
+        <AlertCircle className="w-12 h-12 text-red-500 mb-4" aria-hidden="true" />
         <h1 className="text-xl font-bold mb-2">Partida Indisponível</h1>
         <p className="text-sm text-slate-400 max-w-md mb-6">{error || "Esta sala não existe ou já foi finalizada."}</p>
         <Link
@@ -538,7 +550,7 @@ export default function GameRoomPage({ params }: Props) {
   if (room.status === "finished") {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100 p-6 text-center">
-        <Trophy className="w-16 h-16 text-amber-400 animate-bounce mb-4" />
+        <Trophy className="w-16 h-16 text-amber-400 animate-bounce mb-4" aria-hidden="true" />
         <span className="text-xs uppercase font-bold tracking-widest text-amber-500 mb-1">Partida Encerrada</span>
         <h1 className="text-2xl font-black text-white mb-2">{room.title}</h1>
 
@@ -589,7 +601,7 @@ export default function GameRoomPage({ params }: Props) {
     return (
       <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center text-slate-100 p-6 text-center select-none">
         <div className="w-16 h-16 rounded-full bg-red-950/60 border border-red-500/40 flex items-center justify-center mb-4 shadow-xl shadow-red-500/10">
-          <AlertCircle className="w-8 h-8 text-red-400" />
+          <AlertCircle className="w-8 h-8 text-red-400" aria-hidden="true" />
         </div>
         <span className="text-xs uppercase font-bold tracking-widest text-red-400 mb-1">Partida Cancelada</span>
         <h1 className="text-2xl font-black text-white mb-2">{room.title}</h1>
@@ -644,8 +656,9 @@ export default function GameRoomPage({ params }: Props) {
 
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1.5">Usuário</label>
+              <label htmlFor="login-username" className="text-xs font-semibold text-slate-300 block mb-1.5">Usuário</label>
               <input
+                id="login-username"
                 type="text"
                 value={usernameInput}
                 onChange={(e) => setUsernameInput(e.target.value)}
@@ -655,8 +668,9 @@ export default function GameRoomPage({ params }: Props) {
             </div>
 
             <div>
-              <label className="text-xs font-semibold text-slate-300 block mb-1.5">Senha</label>
+              <label htmlFor="login-password" className="text-xs font-semibold text-slate-300 block mb-1.5">Senha</label>
               <input
+                id="login-password"
                 type="password"
                 value={passwordInput}
                 onChange={(e) => setPasswordInput(e.target.value)}
@@ -666,8 +680,8 @@ export default function GameRoomPage({ params }: Props) {
             </div>
 
             {loginError && (
-              <div className="p-3 bg-red-950/60 border border-red-800/80 rounded-xl text-xs text-red-300 flex items-start gap-2">
-                <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+              <div role="alert" className="p-3 bg-red-950/60 border border-red-800/80 rounded-xl text-xs text-red-300 flex items-start gap-2">
+                <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" aria-hidden="true" />
                 <div className="space-y-1">
                   <p>{loginError}</p>
                 </div>
@@ -679,7 +693,7 @@ export default function GameRoomPage({ params }: Props) {
               disabled={isLoggingIn}
               className="w-full py-3 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 font-bold rounded-xl text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-amber-500/20 disabled:opacity-50"
             >
-              <LogIn className="w-4 h-4" />
+              <LogIn className="w-4 h-4" aria-hidden="true" />
               <span>{isLoggingIn ? "Entrando..." : "Entrar na Partida"}</span>
             </button>
           </form>
@@ -719,9 +733,10 @@ export default function GameRoomPage({ params }: Props) {
         <div className="flex items-center gap-2 sm:gap-3">
           <button
             onClick={() => setShowRulesModal(true)}
+            aria-haspopup="dialog"
             className="flex items-center gap-1 px-2.5 py-1 bg-slate-800 hover:bg-slate-700 active:bg-slate-600 text-slate-200 rounded-lg text-xs font-semibold border border-slate-700 transition"
           >
-            <HelpCircle className="w-3.5 h-3.5 text-amber-400" />
+            <HelpCircle className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" />
             <span className="hidden sm:inline">Como Jogar</span>
             <span className="sm:hidden">Regras</span>
           </button>
@@ -737,8 +752,8 @@ export default function GameRoomPage({ params }: Props) {
 
       {/* Toast flutuante de feedback de ações */}
       {actionFeedback && (
-        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-slate-950 font-black px-4 py-2 rounded-xl text-xs shadow-2xl flex items-center gap-2 animate-bounce border border-amber-300">
-          <Sparkles className="w-4 h-4 shrink-0" />
+        <div role="status" className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-amber-500 text-slate-950 font-black px-4 py-2 rounded-xl text-xs shadow-2xl flex items-center gap-2 animate-bounce border border-amber-300">
+          <Sparkles className="w-4 h-4 shrink-0" aria-hidden="true" />
           <span>{actionFeedback}</span>
         </div>
       )}
@@ -746,17 +761,24 @@ export default function GameRoomPage({ params }: Props) {
       {/* Modal de Regras / Como Jogar */}
       {showRulesModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rules-modal-title"
+            className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-lg w-full max-h-[85vh] flex flex-col shadow-2xl"
+          >
             <div className="flex items-center justify-between pb-3 border-b border-slate-800 mb-4">
               <div className="flex items-center gap-2">
-                <BookOpen className="w-5 h-5 text-amber-400" />
-                <h2 className="text-base font-bold text-white">Como Jogar: {room.title}</h2>
+                <BookOpen className="w-5 h-5 text-amber-400" aria-hidden="true" />
+                <h2 id="rules-modal-title" className="text-base font-bold text-white">Como Jogar: {room.title}</h2>
               </div>
               <button
+                ref={rulesCloseRef}
                 onClick={() => setShowRulesModal(false)}
                 className="p-1 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800"
+                aria-label="Fechar regras"
               >
-                <XCircle className="w-5 h-5" />
+                <XCircle className="w-5 h-5" aria-hidden="true" />
               </button>
             </div>
 
@@ -896,6 +918,7 @@ function QuizRoyaleView({ engineState, onAnswer, selectedChoice, factions }: Qui
               key={idx}
               onClick={() => !isReveal && onAnswer(idx)}
               disabled={isReveal || selectedChoice !== null}
+              aria-pressed={selectedChoice === idx}
               className={`p-4 rounded-xl border text-left text-sm transition-all flex items-center justify-between ${btnClass}`}
             >
               <span>{opt}</span>
@@ -1013,7 +1036,7 @@ function ColinasView({
       <div>
         <div className="flex items-center justify-between text-xs mb-2 text-slate-400">
           <div className="flex items-center gap-1.5 font-bold">
-            <Crown className="w-4 h-4 text-amber-400" />
+            <Crown className="w-4 h-4 text-amber-400" aria-hidden="true" />
             <span>Rodada {currentRound} de {totalRounds}</span>
           </div>
           <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
@@ -1071,13 +1094,14 @@ function ColinasView({
             {/* Colina Alfa */}
             <button
               onClick={() => handleSelectHill("alfa")}
+              aria-pressed={selectedHill === "alfa"}
               className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
                 selectedHill === "alfa"
                   ? "bg-amber-500/15 border-amber-500 ring-2 ring-amber-400/50 shadow-xl"
                   : "bg-slate-900 border-slate-800 hover:border-slate-700"
               }`}
             >
-              <Castle className="w-6 h-6 text-amber-400 mb-1" />
+              <Castle className="w-6 h-6 text-amber-400 mb-1" aria-hidden="true" />
               <span className="text-xs font-black text-white block">Alfa 🏰</span>
               <div className="my-1.5">
                 <span className="text-lg font-black text-amber-400 font-mono block leading-none">{pots.alfa} pts</span>
@@ -1095,13 +1119,14 @@ function ColinasView({
             {/* Colina Bravo */}
             <button
               onClick={() => handleSelectHill("bravo")}
+              aria-pressed={selectedHill === "bravo"}
               className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
                 selectedHill === "bravo"
                   ? "bg-amber-500/15 border-amber-500 ring-2 ring-amber-400/50 shadow-xl"
                   : "bg-slate-900 border-slate-800 hover:border-slate-700"
               }`}
             >
-              <Sword className="w-6 h-6 text-purple-400 mb-1" />
+              <Sword className="w-6 h-6 text-purple-400 mb-1" aria-hidden="true" />
               <span className="text-xs font-black text-white block">Bravo ⚔️</span>
               <div className="my-1.5">
                 <span className="text-lg font-black text-purple-400 font-mono block leading-none">{pots.bravo} pts</span>
@@ -1119,13 +1144,14 @@ function ColinasView({
             {/* Colina Charlie */}
             <button
               onClick={() => handleSelectHill("charlie")}
+              aria-pressed={selectedHill === "charlie"}
               className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
                 selectedHill === "charlie"
                   ? "bg-amber-500/15 border-amber-500 ring-2 ring-amber-400/50 shadow-xl"
                   : "bg-slate-900 border-slate-800 hover:border-slate-700"
               }`}
             >
-              <Shield className="w-6 h-6 text-blue-400 mb-1" />
+              <Shield className="w-6 h-6 text-blue-400 mb-1" aria-hidden="true" />
               <span className="text-xs font-black text-white block">Charlie 💎</span>
               <div className="my-1.5">
                 <span className="text-lg font-black text-blue-400 font-mono block leading-none">{pots.charlie} pts</span>
@@ -1144,7 +1170,7 @@ function ColinasView({
           {/* Toggle de Bomba Secreta */}
           <div className="p-3 bg-slate-900/80 border border-slate-800 rounded-2xl flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Bomb className={`w-5 h-5 ${canUseBomb ? (armBomb ? "text-red-500 animate-bounce" : "text-amber-400") : "text-slate-600"}`} />
+              <Bomb className={`w-5 h-5 ${canUseBomb ? (armBomb ? "text-red-500 animate-bounce" : "text-amber-400") : "text-slate-600"}`} aria-hidden="true" />
               <div>
                 <span className="text-xs font-bold text-white block">
                   {canUseBomb ? (armBomb ? "💣 BOMBA ARMADA NESTA COLINA!" : "Armar Bomba Secreta") : "Bomba Esgotada (1 por partida)"}
@@ -1160,6 +1186,7 @@ function ColinasView({
             <button
               onClick={handleToggleBomb}
               disabled={!canUseBomb}
+              aria-pressed={armBomb}
               className={`px-3 py-1.5 rounded-xl text-xs font-black transition ${
                 !canUseBomb
                   ? "bg-slate-800 text-slate-600 cursor-not-allowed"
@@ -1179,7 +1206,7 @@ function ColinasView({
         <div className="p-4 bg-slate-900 border border-purple-500/50 rounded-2xl mb-4 space-y-3 shadow-xl">
           <div className="flex items-center justify-between border-b border-slate-800 pb-2">
             <span className="text-xs font-bold text-purple-400 uppercase tracking-wide flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-purple-400" />
+              <Sparkles className="w-4 h-4 text-purple-400" aria-hidden="true" />
               Resultado da Rodada {lastReport.round}
             </span>
             <span className="text-[10px] text-slate-400">Próxima rodada em {timer}s</span>
@@ -1212,7 +1239,7 @@ function ColinasView({
       <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3 text-xs">
         <div className="flex items-center justify-between mb-2">
           <span className="font-bold text-amber-400 uppercase text-[10px] tracking-wider flex items-center gap-1">
-            <Shield className="w-3.5 h-3.5" />
+            <Shield className="w-3.5 h-3.5" aria-hidden="true" />
             Canal Secreto da Panelinha (Inimigo não vê)
           </span>
           <span className="text-[10px] text-slate-500">Distribuição da Equipe</span>
@@ -1261,14 +1288,16 @@ function ColinasView({
             value={chatText}
             onChange={(e) => setChatText(e.target.value)}
             placeholder="Mensagem rápida para a equipe..."
+            aria-label="Mensagem rápida para a equipe"
             className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-amber-500"
           />
           <button
             type="submit"
             className="p-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg transition"
             title="Enviar"
+            aria-label="Enviar mensagem da equipe"
           >
-            <Send className="w-3.5 h-3.5" />
+            <Send className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
         </form>
       </div>
@@ -1338,7 +1367,7 @@ function GrandeGolpeView({
       <div>
         <div className="flex items-center justify-between text-xs mb-2 text-slate-400">
           <div className="flex items-center gap-1.5 font-bold">
-            <Flag className="w-4 h-4 text-amber-400" />
+            <Flag className="w-4 h-4 text-amber-400" aria-hidden="true" />
             <span>Rodada {currentRound} de {totalRounds}</span>
           </div>
           <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
@@ -1358,9 +1387,9 @@ function GrandeGolpeView({
         >
           <div className="flex items-center justify-center gap-2 mb-0.5">
             {isAttacking ? (
-              <Sword className="w-4 h-4 text-red-400" />
+              <Sword className="w-4 h-4 text-red-400" aria-hidden="true" />
             ) : (
-              <Shield className="w-4 h-4 text-blue-400" />
+              <Shield className="w-4 h-4 text-blue-400" aria-hidden="true" />
             )}
             <h2 className={`text-sm font-black uppercase tracking-wide ${isAttacking ? "text-red-300" : "text-blue-300"}`}>
               {isAttacking ? "Sua Panelinha está Atacando!" : "Sua Panelinha está Defendendo!"}
@@ -1416,6 +1445,7 @@ function GrandeGolpeView({
             {/* Rota 1: Floresta */}
             <button
               onClick={() => handleSelectRoute("floresta")}
+              aria-pressed={selectedRoute === "floresta"}
               className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
                 selectedRoute === "floresta"
                   ? "bg-emerald-500/15 border-emerald-500 ring-2 ring-emerald-400/50 shadow-xl"
@@ -1436,6 +1466,7 @@ function GrandeGolpeView({
             {/* Rota 2: Túnel */}
             <button
               onClick={() => handleSelectRoute("tunel")}
+              aria-pressed={selectedRoute === "tunel"}
               className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
                 selectedRoute === "tunel"
                   ? "bg-purple-500/15 border-purple-500 ring-2 ring-purple-400/50 shadow-xl"
@@ -1456,6 +1487,7 @@ function GrandeGolpeView({
             {/* Rota 3: Ponte */}
             <button
               onClick={() => handleSelectRoute("ponte")}
+              aria-pressed={selectedRoute === "ponte"}
               className={`p-3.5 rounded-2xl border text-center transition flex flex-col items-center justify-between ${
                 selectedRoute === "ponte"
                   ? "bg-amber-500/15 border-amber-500 ring-2 ring-amber-400/50 shadow-xl"
@@ -1481,7 +1513,7 @@ function GrandeGolpeView({
         <div className="p-4 bg-slate-900 border border-purple-500/50 rounded-2xl mb-4 space-y-3 shadow-xl">
           <div className="flex items-center justify-between border-b border-slate-800 pb-2">
             <span className="text-xs font-bold text-purple-400 uppercase tracking-wide flex items-center gap-1.5">
-              <Sparkles className="w-4 h-4 text-purple-400" />
+              <Sparkles className="w-4 h-4 text-purple-400" aria-hidden="true" />
               Resultado da Invasão (Rodada {lastReport.round})
             </span>
             <span className="text-[10px] text-slate-400">Próxima em {timer}s</span>
@@ -1514,7 +1546,7 @@ function GrandeGolpeView({
       <div className="bg-slate-900/60 border border-slate-800 rounded-2xl p-3 text-xs">
         <div className="flex items-center justify-between mb-2">
           <span className="font-bold text-amber-400 uppercase text-[10px] tracking-wider flex items-center gap-1">
-            <Shield className="w-3.5 h-3.5" />
+            <Shield className="w-3.5 h-3.5" aria-hidden="true" />
             Canal Secreto da Panelinha (Inimigo não vê)
           </span>
           <span className="text-[10px] text-slate-500">Distribuição da Equipe</span>
@@ -1563,14 +1595,16 @@ function GrandeGolpeView({
             value={chatText}
             onChange={(e) => setChatText(e.target.value)}
             placeholder="Mensagem rápida para a equipe..."
+            aria-label="Mensagem rápida para a equipe"
             className="flex-1 bg-slate-950 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-amber-500"
           />
           <button
             type="submit"
             className="p-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg transition"
             title="Enviar"
+            aria-label="Enviar mensagem da equipe"
           >
-            <Send className="w-3.5 h-3.5" />
+            <Send className="w-3.5 h-3.5" aria-hidden="true" />
           </button>
         </form>
       </div>
@@ -1587,7 +1621,7 @@ function GrandeGolpeRulesSection() {
     <div className="space-y-4">
       <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1">
         <h3 className="font-bold text-amber-400 flex items-center gap-1.5 text-xs uppercase tracking-wide">
-          <Target className="w-4 h-4 text-amber-400" />
+          <Target className="w-4 h-4 text-amber-400" aria-hidden="true" />
           <span>Objetivo do Grande Golpe</span>
         </h3>
         <p className="text-slate-300 leading-relaxed text-xs">
@@ -1627,7 +1661,7 @@ function ColinasRulesSection() {
     <div className="space-y-4">
       <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl space-y-1">
         <h3 className="font-bold text-amber-400 flex items-center gap-1.5 text-xs uppercase tracking-wide">
-          <Target className="w-4 h-4 text-amber-400" />
+          <Target className="w-4 h-4 text-amber-400" aria-hidden="true" />
           <span>Objetivo do Rei das Três Colinas</span>
         </h3>
         <p className="text-slate-300 leading-relaxed text-xs">
@@ -1649,7 +1683,7 @@ function ColinasRulesSection() {
 
       <div className="space-y-1.5">
         <h4 className="font-bold text-red-400 flex items-center gap-1.5 text-xs">
-          <Bomb className="w-3.5 h-3.5" />
+          <Bomb className="w-3.5 h-3.5" aria-hidden="true" />
           <span>A Bomba Secreta</span>
         </h4>
         <p className="text-slate-300 leading-relaxed text-xs">
@@ -1697,7 +1731,7 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-4 sm:p-6 select-none max-w-2xl mx-auto w-full">
       <div className="text-center pt-2 pb-4 border-b border-slate-800/80">
         <div className="inline-flex items-center gap-2 px-3 py-1 bg-amber-500/10 border border-amber-500/30 rounded-full text-amber-400 text-xs font-bold uppercase tracking-wider mb-2">
-          <Sparkles className="w-3.5 h-3.5 animate-spin" />
+          <Sparkles className="w-3.5 h-3.5 animate-spin" aria-hidden="true" />
           <span>Lobby Pré-Jogo das Panelinhas</span>
         </div>
         <h1 className="text-2xl sm:text-3xl font-black text-white flex items-center justify-center gap-2">
@@ -1707,14 +1741,14 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
         <p className="text-xs sm:text-sm text-slate-400 mt-1 max-w-md mx-auto">{room.description}</p>
 
         <div className="mt-3 inline-flex items-center gap-2 px-4 py-1.5 bg-slate-900 border border-amber-500/40 rounded-xl text-xs">
-          <Trophy className="w-4 h-4 text-amber-400" />
+          <Trophy className="w-4 h-4 text-amber-400" aria-hidden="true" />
           <span className="text-slate-300">Prêmio no cofre da panelinha campeã:</span>
           <span className="text-amber-400 font-extrabold text-sm">💰 +{room.prize} moedas</span>
         </div>
 
         {room.factions.length < 2 && (
           <div className="mt-3 p-2.5 bg-amber-950/40 border border-amber-500/40 rounded-2xl flex items-center justify-center gap-2 text-xs text-amber-300">
-            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" />
+            <AlertCircle className="w-4 h-4 text-amber-400 shrink-0" aria-hidden="true" />
             <span>
               Aguardando pelo menos <strong>mais 1 panelinha rival</strong> para confirmar a disputa!
             </span>
@@ -1741,6 +1775,7 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
               className={`w-4 h-4 ${
                 isImminent ? "text-red-400 animate-spin" : isLastSeconds ? "text-amber-400 animate-bounce" : "text-purple-400"
               }`}
+              aria-hidden="true"
             />
             <span
               className={
@@ -1815,24 +1850,26 @@ function GameLobbyWaitingView({ room, currentUser, countdown }: GameLobbyWaiting
         <div className="flex items-center gap-2 mb-3">
           <button
             onClick={() => setActiveTab("tutorial")}
+            aria-pressed={activeTab === "tutorial"}
             className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
               activeTab === "tutorial"
                 ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
                 : "bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800"
             }`}
           >
-            <BookOpen className="w-3.5 h-3.5" />
+            <BookOpen className="w-3.5 h-3.5" aria-hidden="true" />
             <span>Como Jogar (Regras)</span>
           </button>
           <button
             onClick={() => setActiveTab("players")}
+            aria-pressed={activeTab === "players"}
             className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition ${
               activeTab === "players"
                 ? "bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20"
                 : "bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800"
             }`}
           >
-            <Users className="w-3.5 h-3.5" />
+            <Users className="w-3.5 h-3.5" aria-hidden="true" />
             <span>Jogadores na Sala ({room.players.length}/{room.maxPlayers})</span>
           </button>
         </div>

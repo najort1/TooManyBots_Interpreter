@@ -136,7 +136,7 @@ export function PriceChart({
     <div
       className={cn(
         "relative overflow-hidden rounded-xl border border-zinc-200/90 bg-white shadow-[0_8px_30px_rgba(0,0,0,0.06)]",
-        "dark:border-zinc-800 dark:bg-[#18181b] dark:shadow-[0_8px_30px_rgba(0,0,0,0.35)]",
+        "dark:border-zinc-800 dark:bg-surface dark:shadow-[0_8px_30px_rgba(0,0,0,0.35)]",
         className
       )}
     >
@@ -151,7 +151,7 @@ export function PriceChart({
           <linearGradient id={`bolsaFill-${gradId}`} x1="0" y1="0" x2="0" y2="1">
             <stop
               offset="0%"
-              stopColor={up ? "var(--chart-line)" : "#71717a"}
+              stopColor={up ? "var(--chart-line)" : "var(--muted)"}
               stopOpacity="0.22"
             />
             <stop offset="100%" stopColor="var(--chart-line)" stopOpacity="0" />

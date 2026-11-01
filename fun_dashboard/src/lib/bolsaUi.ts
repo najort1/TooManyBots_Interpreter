@@ -54,8 +54,16 @@ export function formatClock(ts: number) {
 /** Card surface utilities — prefer beco-panel for desktop identity. */
 export const cardClass = "beco-panel";
 
+/**
+ * Card elevado. Os `!` seguem necessários: `.dark .beco-panel` é CSS fora de
+ * @layer (globals.css) e vence utilitários de @layer utilities na cascata —
+ * sem `!` o fundo/borda voltariam para var(--surface)/var(--border).
+ * Cores agora via tokens (globals.css): --surface-elevated (dark #202025,
+ * light #f4f4f5) e --border-elevated (dark #35353a, light = --border).
+ * Nota: sem uso ativo hoje; mantido como contrato p/ cards altos.
+ */
 export const cardRaisedClass =
-  "beco-panel dark:!bg-[#202025] dark:!border-[#35353a]";
+  "beco-panel dark:!bg-surface-elevated dark:!border-border-elevated";
 
 /** Escala de espaço (4–32). */
 export const space = {

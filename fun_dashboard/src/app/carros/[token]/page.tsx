@@ -277,7 +277,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
             href="/"
             className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-purple-800/40 hover:bg-purple-800/60 text-purple-200 border border-purple-700/50 transition-colors text-sm font-medium"
           >
-            <ChevronLeft className="w-4 h-4" /> Voltar ao Início
+            <ChevronLeft className="w-4 h-4" aria-hidden="true" /> Voltar ao Início
           </Link>
         </div>
       </div>
@@ -311,7 +311,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
       <header className="border-b border-purple-900/30 bg-[#0c0919]/95 backdrop-blur-md px-4 md:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-30 shadow-lg">
         <div className="flex items-center gap-3.5">
           <div className="w-11 h-11 rounded-xl bg-gradient-to-tr from-purple-700 via-indigo-600 to-fuchsia-600 flex items-center justify-center shadow-lg shadow-purple-900/50 border border-white/10">
-            <Car className="w-6 h-6 text-white" />
+            <Car className="w-6 h-6 text-white" aria-hidden="true" />
           </div>
           <div>
             <div className="flex items-center gap-2">
@@ -332,7 +332,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
         <div className="flex items-center gap-2.5">
           {/* Saldo de Moedas */}
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-amber-950/50 border border-amber-500/40 text-amber-300 font-bold text-sm shadow-inner">
-            <Coins className="w-4 h-4 text-amber-400" />
+            <Coins className="w-4 h-4 text-amber-400" aria-hidden="true" />
             <span>{carData?.coins ?? 0}</span>
             <span className="text-xs text-amber-400/70 font-normal">coins</span>
           </div>
@@ -344,7 +344,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-900/40 hover:bg-purple-800/50 border border-purple-700/40 text-purple-200 text-xs font-bold transition-all shadow"
             title="Abrir presets lendários de 1 clique"
           >
-            <Trophy className="w-3.5 h-3.5 text-amber-400" /> Presets
+            <Trophy className="w-3.5 h-3.5 text-amber-400" aria-hidden="true" /> Presets
           </button>
 
           {/* Dinamômetro */}
@@ -354,7 +354,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-purple-900/40 hover:bg-purple-800/50 border border-purple-700/40 text-purple-200 text-xs font-bold transition-all shadow"
             title="Ver curva de dinamômetro e telemetria"
           >
-            <BarChart3 className="w-3.5 h-3.5 text-cyan-400" /> Dyno
+            <BarChart3 className="w-3.5 h-3.5 text-cyan-400" aria-hidden="true" /> Dyno
           </button>
 
           {/* Buzina */}
@@ -363,6 +363,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
             onClick={() => carAudio.playHorn()}
             className="p-2 rounded-xl bg-purple-950/50 border border-purple-800/40 hover:bg-purple-900/40 text-purple-300 transition-colors"
             title="Tocar buzina esportiva bi-tonal"
+            aria-label="Tocar buzina esportiva bi-tonal"
           >
             <Volume2 className="w-4 h-4 text-amber-400" />
           </button>
@@ -376,6 +377,8 @@ export default function CarroCustomizacaoPage({ params }: Props) {
             }}
             className="p-2 rounded-xl bg-purple-950/50 border border-purple-800/40 hover:bg-purple-900/40 text-purple-300 transition-colors"
             title={isMuted ? "Ativar som automotivo" : "Desativar som"}
+            aria-label={isMuted ? "Ativar som automotivo" : "Desativar som"}
+            aria-pressed={isMuted}
           >
             {isMuted ? <VolumeX className="w-4 h-4 text-red-400" /> : <Volume2 className="w-4 h-4 text-purple-300" />}
           </button>
@@ -387,7 +390,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
             className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white text-xs font-bold shadow-lg shadow-purple-900/50 transition-all"
             title="Tirar foto 4K do modelo 3D com download instantâneo"
           >
-            <Camera className="w-3.5 h-3.5" /> Foto 4K
+            <Camera className="w-3.5 h-3.5" aria-hidden="true" /> Foto 4K
           </button>
         </div>
       </header>
@@ -411,7 +414,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
             {/* Top Overlay: Tacômetro, Acelerar V8 e Controles Interativos */}
             <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none">
               <div className="flex items-center gap-2 bg-[#0c0a18]/90 backdrop-blur px-3 py-1.5 rounded-xl border border-purple-800/40 pointer-events-auto shadow">
-                <Activity className="w-4 h-4 text-fuchsia-400 animate-pulse" />
+                <Activity className="w-4 h-4 text-fuchsia-400 animate-pulse" aria-hidden="true" />
                 <span className="font-mono text-xs font-bold text-purple-200">
                   {rpmDisplay} <span className="text-[10px] text-purple-400/80 font-normal">RPM</span>
                 </span>
@@ -422,6 +425,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                 <button
                   type="button"
                   onClick={handleToggleDoors}
+                  aria-pressed={doorsOpen}
                   className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all shadow ${
                     doorsOpen
                       ? "bg-purple-600 border-purple-400 text-white"
@@ -436,6 +440,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                 <button
                   type="button"
                   onClick={() => setHeadlightsOn((h) => !h)}
+                  aria-pressed={headlightsOn}
                   className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition-all shadow ${
                     headlightsOn
                       ? "bg-cyan-600/40 border-cyan-400 text-cyan-200"
@@ -453,7 +458,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                   disabled={isRevving}
                   className="flex items-center gap-2 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-red-600 to-amber-600 hover:from-red-500 hover:to-amber-500 active:scale-95 text-white font-black text-xs uppercase tracking-wider shadow-lg shadow-red-900/50 transition-all disabled:opacity-75"
                 >
-                  <Flame className="w-4 h-4 text-yellow-300 animate-bounce" />
+                  <Flame className="w-4 h-4 text-yellow-300 animate-bounce" aria-hidden="true" />
                   {isRevving ? "Corte de Giro!" : "Acelerar V8"}
                 </button>
               </div>
@@ -461,9 +466,9 @@ export default function CarroCustomizacaoPage({ params }: Props) {
 
             {/* Bottom Floating Toolbar: Câmera & Turntable */}
             <div className="absolute bottom-3 left-3 right-3 flex items-center justify-between bg-[#0e0b1c]/90 backdrop-blur px-3 py-2 rounded-xl border border-purple-800/40 text-xs">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5" role="group" aria-label="Ângulos de câmera">
                 <span className="text-purple-300/80 font-medium flex items-center gap-1.5">
-                  <Eye className="w-3.5 h-3.5 text-purple-400" /> Câmera:
+                  <Eye className="w-3.5 h-3.5 text-purple-400" aria-hidden="true" /> Câmera:
                 </span>
                 {(
                   [
@@ -481,6 +486,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                       setCameraPreset(c.id);
                       carAudio.playMechanicalClick();
                     }}
+                    aria-pressed={cameraPreset === c.id}
                     className={`px-2.5 py-1 rounded-lg transition-colors ${
                       cameraPreset === c.id
                         ? "bg-purple-600 text-white font-bold shadow"
@@ -496,6 +502,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
               <button
                 type="button"
                 onClick={() => setTurntable((t) => !t)}
+                aria-pressed={turntable}
                 className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border transition-all ${
                   turntable
                     ? "bg-fuchsia-600/30 border-fuchsia-400 text-fuchsia-200 font-bold"
@@ -503,7 +510,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                 }`}
                 title="Girar carro continuamente 360°"
               >
-                <RotateCw className={`w-3.5 h-3.5 ${turntable ? "animate-spin" : ""}`} />
+                <RotateCw className={`w-3.5 h-3.5 ${turntable ? "animate-spin" : ""}`} aria-hidden="true" />
                 <span>360°</span>
               </button>
             </div>
@@ -537,7 +544,11 @@ export default function CarroCustomizacaoPage({ params }: Props) {
         {/* Right Col: Painel de Customização da Oficina (5 cols) */}
         <div className="lg:col-span-5 flex flex-col bg-[#100d20] border border-purple-900/40 rounded-2xl p-4 md:p-5 shadow-2xl">
           {/* Navegação de Abas */}
-          <div className="grid grid-cols-5 gap-1.5 p-1 bg-[#16112a] rounded-xl border border-purple-900/30 mb-4">
+          <div
+            className="grid grid-cols-5 gap-1.5 p-1 bg-[#16112a] rounded-xl border border-purple-900/30 mb-4"
+            role="group"
+            aria-label="Categorias de customização"
+          >
             {(
               [
                 { id: "paint", label: "Pintura", icon: Palette },
@@ -561,13 +572,14 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                     setActiveTab(tab.id);
                     carAudio.playMechanicalClick();
                   }}
+                  aria-pressed={isActive}
                   className={`flex flex-col items-center justify-center py-2 px-1 rounded-lg text-[11px] font-bold transition-all ${
                     isActive
                       ? "bg-gradient-to-b from-purple-600 to-indigo-600 text-white shadow-md shadow-purple-900/50"
                       : "text-purple-300/80 hover:bg-purple-900/30 hover:text-white"
                   }`}
                 >
-                  <Icon className="w-4 h-4 mb-1" />
+                  <Icon className="w-4 h-4 mb-1" aria-hidden="true" />
                   <span className="truncate w-full text-center">{tab.label}</span>
                 </button>
               );
@@ -593,6 +605,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                             setDraft((d) => (d ? { ...d, finish: f.id } : null));
                             carAudio.playSprayPaint();
                           }}
+                          aria-pressed={selected}
                           className={`p-2.5 rounded-xl border text-left transition-all ${
                             selected
                               ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -623,6 +636,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                             setDraft((d) => (d ? { ...d, color: c.hex || d.color } : null));
                             carAudio.playSprayPaint();
                           }}
+                          aria-pressed={selected}
                           className={`flex flex-col items-center p-2 rounded-xl border text-center transition-all ${
                             selected
                               ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -633,7 +647,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                             className="w-8 h-8 rounded-full border border-white/20 shadow-inner mb-1.5 flex items-center justify-center"
                             style={{ backgroundColor: c.hex || "#fff" }}
                           >
-                            {selected && <Check className="w-4 h-4 text-white drop-shadow" />}
+                            {selected && <Check className="w-4 h-4 text-white drop-shadow" aria-hidden="true" />}
                           </div>
                           <span className="text-xs font-medium text-white truncate w-full">{c.name}</span>
                           <span className="text-[10px] text-amber-300 font-semibold mt-0.5">
@@ -659,6 +673,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                             setDraft((d) => (d ? { ...d, secondaryColor: c.hex || d.secondaryColor } : null));
                             carAudio.playSprayPaint();
                           }}
+                          aria-pressed={selected}
                           className={`flex flex-col items-center p-2 rounded-xl border text-center transition-all ${
                             selected
                               ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -669,7 +684,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                             className="w-8 h-8 rounded-full border border-white/20 shadow-inner mb-1.5 flex items-center justify-center"
                             style={{ backgroundColor: c.hex || "#fff" }}
                           >
-                            {selected && <Check className="w-4 h-4 text-white drop-shadow" />}
+                            {selected && <Check className="w-4 h-4 text-white drop-shadow" aria-hidden="true" />}
                           </div>
                           <span className="text-xs font-medium text-white truncate w-full">{c.name}</span>
                           <span className="text-[10px] text-amber-300 font-semibold mt-0.5">
@@ -695,6 +710,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                         setDraft((d) => (d ? { ...d, bodykit: b.id } : null));
                         carAudio.playMechanicalClick();
                       }}
+                      aria-pressed={selected}
                       className={`w-full flex items-center justify-between p-3.5 rounded-xl border text-left transition-all ${
                         selected
                           ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -702,7 +718,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <Wrench className={`w-6 h-6 ${selected ? "text-purple-300" : "text-purple-400/60"}`} />
+                        <Wrench className={`w-6 h-6 ${selected ? "text-purple-300" : "text-purple-400/60"}`} aria-hidden="true" />
                         <div>
                           <div className="text-xs font-bold text-white">{b.name}</div>
                           <div className="text-[10px] text-purple-300/70">
@@ -731,6 +747,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                             setDraft((d) => (d ? { ...d, headlight: h.id } : null));
                             carAudio.playNeonChime();
                           }}
+                          aria-pressed={selected}
                           className={`p-2.5 rounded-xl border text-left transition-all ${
                             selected
                               ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -768,6 +785,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                           setDraft((d) => (d ? { ...d, wheels: w.id } : null));
                           carAudio.playMechanicalClick();
                         }}
+                        aria-pressed={selected}
                         className={`flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
                           selected
                             ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -775,7 +793,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                         }`}
                       >
                         <div className="flex items-center gap-2.5">
-                          <Gauge className={`w-6 h-6 ${selected ? "text-purple-300" : "text-purple-400/60"}`} />
+                          <Gauge className={`w-6 h-6 ${selected ? "text-purple-300" : "text-purple-400/60"}`} aria-hidden="true" />
                           <div>
                             <div className="text-xs font-bold text-white">{w.name}</div>
                             <div className="text-[10px] text-purple-300/70 capitalize">{w.id} series</div>
@@ -804,6 +822,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                             setDraft((d) => (d ? { ...d, caliperColor: cal.id } : null));
                             carAudio.playMechanicalClick();
                           }}
+                          aria-pressed={selected}
                           className={`flex items-center gap-2 p-2 rounded-xl border text-left transition-all ${
                             selected
                               ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -836,6 +855,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                             setDraft((d) => (d ? { ...d, camber: c.id } : null));
                             carAudio.playMechanicalClick();
                           }}
+                          aria-pressed={selected}
                           className={`w-full flex items-center justify-between p-2.5 rounded-xl border text-left transition-all ${
                             selected
                               ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -863,17 +883,18 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                     <button
                       key={s.id}
                       onClick={() => {
-                        setDraft((d) => (d ? { ...d, spoiler: s.id } : null));
-                        carAudio.playMechanicalClick();
-                      }}
-                      className={`flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
+                          setDraft((d) => (d ? { ...d, spoiler: s.id } : null));
+                          carAudio.playMechanicalClick();
+                        }}
+                        aria-pressed={selected}
+                        className={`flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
                         selected
                           ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
                           : "border-purple-900/30 hover:border-purple-700/50 bg-[#161129]"
                       }`}
                     >
                       <div className="flex items-center gap-2.5">
-                        <Zap className={`w-6 h-6 ${selected ? "text-purple-300" : "text-purple-400/60"}`} />
+                        <Zap className={`w-6 h-6 ${selected ? "text-purple-300" : "text-purple-400/60"}`} aria-hidden="true" />
                         <div>
                           <div className="text-xs font-bold text-white">{s.name}</div>
                           <div className="text-[10px] text-purple-300/70">Downforce traseiro</div>
@@ -897,17 +918,18 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                     <button
                       key={sus.id}
                       onClick={() => {
-                        setDraft((d) => (d ? { ...d, suspension: sus.id } : null));
-                        carAudio.playSuspensionAir();
-                      }}
-                      className={`w-full flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
+                            setDraft((d) => (d ? { ...d, suspension: sus.id } : null));
+                            carAudio.playSuspensionAir();
+                          }}
+                          aria-pressed={selected}
+                          className={`w-full flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
                         selected
                           ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
                           : "border-purple-900/30 hover:border-purple-700/50 bg-[#161129]"
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <Layers className={`w-5 h-5 ${selected ? "text-purple-300" : "text-purple-400/60"}`} />
+                        <Layers className={`w-5 h-5 ${selected ? "text-purple-300" : "text-purple-400/60"}`} aria-hidden="true" />
                         <div>
                           <div className="text-xs font-bold text-white">{sus.name}</div>
                           <div className="text-[10px] text-purple-300/70">
@@ -933,10 +955,11 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                     <button
                       key={n.id}
                       onClick={() => {
-                        setDraft((d) => (d ? { ...d, neon: n.id } : null));
-                        carAudio.playNeonChime();
-                      }}
-                      className={`flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
+                          setDraft((d) => (d ? { ...d, neon: n.id } : null));
+                          carAudio.playNeonChime();
+                        }}
+                        aria-pressed={selected}
+                        className={`flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
                         selected
                           ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
                           : "border-purple-900/30 hover:border-purple-700/50 bg-[#161129]"
@@ -975,6 +998,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                             setDraft((d) => (d ? { ...d, interior: i.id } : null));
                             carAudio.playMechanicalClick();
                           }}
+                          aria-pressed={selected}
                           className={`w-full flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
                             selected
                               ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -1005,6 +1029,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                             setDraft((d) => (d ? { ...d, rollCage: r.id } : null));
                             carAudio.playMechanicalClick();
                           }}
+                          aria-pressed={selected}
                           className={`w-full flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
                             selected
                               ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -1035,6 +1060,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                         setDraft((prev) => (prev ? { ...prev, decal: d.id } : null));
                         carAudio.playSprayPaint();
                       }}
+                      aria-pressed={selected}
                       className={`flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
                         selected
                           ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -1042,7 +1068,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                       }`}
                     >
                       <div className="flex items-center gap-2.5">
-                        <Flame className={`w-5 h-5 ${selected ? "text-amber-400" : "text-purple-400/60"}`} />
+                        <Flame className={`w-5 h-5 ${selected ? "text-amber-400" : "text-purple-400/60"}`} aria-hidden="true" />
                         <span className="text-xs font-bold text-white">{d.name}</span>
                       </div>
                       <span className="text-xs font-bold text-amber-300">
@@ -1066,6 +1092,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                         setDraft((prev) => (prev ? { ...prev, windowTint: t.id } : null));
                         carAudio.playMechanicalClick();
                       }}
+                      aria-pressed={selected}
                       className={`w-full flex items-center justify-between p-3 rounded-xl border text-left transition-all ${
                         selected
                           ? "border-purple-400 bg-purple-900/40 ring-2 ring-purple-500/40"
@@ -1085,10 +1112,11 @@ export default function CarroCustomizacaoPage({ params }: Props) {
             {/* 10. ABA DE PLACA */}
             {activeTab === "plate" && (
               <div className="space-y-3 bg-[#151026] p-4 rounded-xl border border-purple-900/30">
-                <label className="text-xs font-bold text-purple-300 block">
+                <label htmlFor="plate-text" className="text-xs font-bold text-purple-300 block">
                   Letras e Números da Placa Mercosul/VIP (Máx 8 Caracteres)
                 </label>
                 <input
+                  id="plate-text"
                   type="text"
                   maxLength={8}
                   value={draft?.plateText || ""}
@@ -1109,14 +1137,14 @@ export default function CarroCustomizacaoPage({ params }: Props) {
           {/* Feedback Messages */}
           {error && (
             <div className="mt-3 p-3 rounded-xl bg-red-950/50 border border-red-800/60 text-red-200 text-xs flex items-center gap-2">
-              <ShieldAlert className="w-4 h-4 text-red-400 shrink-0" />
+              <ShieldAlert className="w-4 h-4 text-red-400 shrink-0" aria-hidden="true" />
               <span>{error}</span>
             </div>
           )}
 
           {success && (
             <div className="mt-3 p-3 rounded-xl bg-emerald-950/50 border border-emerald-800/60 text-emerald-200 text-xs flex items-center gap-2">
-              <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+              <Check className="w-4 h-4 text-emerald-400 shrink-0" aria-hidden="true" />
               <span>{success}</span>
             </div>
           )}
@@ -1143,7 +1171,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                 disabled={!hasChanges || saving}
                 className="px-4 py-2.5 rounded-xl border border-purple-800/40 bg-purple-950/30 hover:bg-purple-900/40 text-purple-300 text-xs font-semibold disabled:opacity-40 transition-colors flex items-center gap-1.5"
               >
-                <RotateCcw className="w-3.5 h-3.5" /> Desfazer
+                <RotateCcw className="w-3.5 h-3.5" aria-hidden="true" /> Desfazer
               </button>
 
               <button
@@ -1152,7 +1180,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                 disabled={!hasChanges || saving || !canAfford}
                 className="flex-1 py-2.5 px-4 rounded-xl bg-gradient-to-r from-purple-600 via-indigo-600 to-fuchsia-600 hover:from-purple-500 hover:to-fuchsia-500 text-white font-black text-sm shadow-lg shadow-purple-900/50 disabled:opacity-40 transition-all flex items-center justify-center gap-2"
               >
-                <Save className="w-4 h-4" />
+                <Save className="w-4 h-4" aria-hidden="true" />
                 {saving ? "Gravando na Oficina..." : "Instalar Peças"}
               </button>
             </div>
@@ -1163,11 +1191,19 @@ export default function CarroCustomizacaoPage({ params }: Props) {
       {/* MODAL: PRESETS LENDÁRIOS */}
       {showPresets && (
         <div className="fixed inset-0 z-40 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="max-w-2xl w-full bg-[#120e24] border border-purple-700/50 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
+          <div
+            className="max-w-2xl w-full bg-[#120e24] border border-purple-700/50 rounded-2xl p-6 shadow-2xl flex flex-col gap-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="presets-modal-title"
+          >
             <div className="flex items-center justify-between border-b border-purple-900/40 pb-3">
               <div className="flex items-center gap-2">
-                <Trophy className="w-5 h-5 text-amber-400" />
-                <h3 className="text-base font-black text-white uppercase tracking-wider">
+                <Trophy className="w-5 h-5 text-amber-400" aria-hidden="true" />
+                <h3
+                  id="presets-modal-title"
+                  className="text-base font-black text-white uppercase tracking-wider"
+                >
                   PRESETS DE PILOTOS LENDÁRIOS
                 </h3>
               </div>
@@ -1175,8 +1211,9 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                 type="button"
                 onClick={() => setShowPresets(false)}
                 className="p-1 rounded-lg text-purple-400 hover:text-white"
+                aria-label="Fechar presets"
               >
-                <X className="w-5 h-5" />
+                <X className="w-5 h-5" aria-hidden="true" />
               </button>
             </div>
 
@@ -1188,7 +1225,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                 >
                   <div>
                     <h4 className="font-bold text-sm text-white flex items-center gap-2">
-                      <Sparkles className="w-4 h-4 text-purple-400" />
+                      <Sparkles className="w-4 h-4 text-purple-400" aria-hidden="true" />
                       {p.name}
                     </h4>
                     <p className="text-xs text-purple-300/70 mt-1">{p.description}</p>
@@ -1198,7 +1235,7 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                     onClick={() => handleApplyPreset(p.config)}
                     className="w-full py-2 px-3 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs shadow transition-all flex items-center justify-center gap-1.5"
                   >
-                    <Check className="w-3.5 h-3.5" /> Aplicar Estilo
+                    <Check className="w-3.5 h-3.5" aria-hidden="true" /> Aplicar Estilo
                   </button>
                 </div>
               ))}
@@ -1210,11 +1247,19 @@ export default function CarroCustomizacaoPage({ params }: Props) {
       {/* MODAL: DINAMÔMETRO (DYNO CURVE) */}
       {showDyno && (
         <div className="fixed inset-0 z-40 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="max-w-xl w-full bg-[#120e24] border border-cyan-800/50 rounded-2xl p-6 shadow-2xl flex flex-col gap-4">
+          <div
+            className="max-w-xl w-full bg-[#120e24] border border-cyan-800/50 rounded-2xl p-6 shadow-2xl flex flex-col gap-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dyno-modal-title"
+          >
             <div className="flex items-center justify-between border-b border-purple-900/40 pb-3">
               <div className="flex items-center gap-2">
-                <BarChart3 className="w-5 h-5 text-cyan-400" />
-                <h3 className="text-base font-black text-white uppercase tracking-wider">
+                <BarChart3 className="w-5 h-5 text-cyan-400" aria-hidden="true" />
+                <h3
+                  id="dyno-modal-title"
+                  className="text-base font-black text-white uppercase tracking-wider"
+                >
                   BANCADA DINAMOMÉTRICA (DYNO TEST)
                 </h3>
               </div>
@@ -1222,8 +1267,9 @@ export default function CarroCustomizacaoPage({ params }: Props) {
                 type="button"
                 onClick={() => setShowDyno(false)}
                 className="p-1 rounded-lg text-purple-400 hover:text-white"
+                aria-label="Fechar dinamômetro"
               >
-                <X className="w-5 h-5" />
+                <X className="w-5 h-5" aria-hidden="true" />
               </button>
             </div>
 

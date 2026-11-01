@@ -544,7 +544,7 @@ function WatchRow({
       className={cn(
         "group flex items-center gap-1 rounded-xl transition-all duration-200",
         active
-          ? "beco-active-row bg-zinc-100 dark:bg-[#202025]"
+          ? "beco-active-row bg-zinc-100 dark:bg-surface-elevated"
           : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
       )}
     >

@@ -1,5 +1,6 @@
 "use client";
 
+import "./games.css";
 import { Suspense, useCallback, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { FirefighterGameOpenGL } from "@/components/firefighter/FirefighterGameOpenGL";
@@ -318,7 +319,7 @@ function PlayInner() {
       <Shell>
         <div className="space-y-4">
           <div className="text-center">
-            <p className="text-3xl">🪪</p>
+            <p className="text-3xl" aria-hidden="true">🪪</p>
             <h1 className="mt-2 text-lg font-semibold text-zinc-900">RH — entrada no teste</h1>
             <p className="mt-1 text-sm text-zinc-500">
               Digite o <strong>código</strong> que o bot mandou no grupo.
@@ -348,7 +349,7 @@ function PlayInner() {
             />
           </label>
 
-          {err ? <p className="text-center text-sm text-red-600">{err}</p> : null}
+          {err ? <p role="alert" className="text-center text-sm text-red-600">{err}</p> : null}
 
           <button
             type="button"
@@ -386,7 +387,7 @@ function PlayInner() {
   if (phase === "done" && result) {
     return (
       <Shell>
-        <p className="text-center text-3xl">{result.passed ? "🎉" : "📋"}</p>
+        <p className="text-center text-3xl" aria-hidden="true">{result.passed ? "🎉" : "📋"}</p>
         <h1 className="mt-2 text-center text-xl font-semibold text-zinc-900">
           {result.passed ? "Contratado!" : "Não passou"}
         </h1>
@@ -596,7 +597,7 @@ function Briefing({
       </div>
 
       {err ? (
-        <p className="text-center text-sm text-red-500">{err}</p>
+        <p role="alert" className="text-center text-sm text-red-500">{err}</p>
       ) : null}
 
       <div className="space-y-2 pt-1">

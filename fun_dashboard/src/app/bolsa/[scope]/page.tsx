@@ -18,9 +18,9 @@ export default function BolsaPublicPage({ params }: Props) {
   const scope = resolveBolsaScope(raw);
 
   return (
-    <div className="flex min-h-screen flex-col bg-zinc-50 text-zinc-900 dark:bg-[#0e0e10] dark:text-zinc-50">
+    <div className="flex min-h-screen flex-col bg-background text-foreground">
       {/* Mobile header */}
-      <header className="border-b border-zinc-200 bg-white/95 backdrop-blur dark:border-[#2d2d2d] dark:bg-[#18181b]/95 lg:hidden">
+      <header className="border-b border-border-app bg-surface/95 backdrop-blur lg:hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3.5">
           <div>
             <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-zinc-400 dark:text-zinc-500">
@@ -38,7 +38,7 @@ export default function BolsaPublicPage({ params }: Props) {
       </header>
 
       {/* Desktop terminal chrome */}
-      <header className="sticky top-0 z-20 hidden border-b border-[#2d2d2d]/80 bg-[#141416]/90 backdrop-blur-md lg:block">
+      <header className="sticky top-0 z-20 hidden border-b border-border-chrome/80 bg-surface-chrome/90 backdrop-blur-md lg:block">
         <div className="mx-auto flex w-full max-w-[1680px] items-center justify-between gap-4 px-6 py-2.5">
           <div className="flex items-center gap-3">
             <span className="beco-mark text-[11px] font-semibold uppercase tracking-[0.18em] text-zinc-400">
@@ -73,13 +73,13 @@ export default function BolsaPublicPage({ params }: Props) {
       </main>
 
       {/* Mobile footer */}
-      <footer className="border-t border-zinc-200 px-4 py-4 text-center text-[11px] text-zinc-400 dark:border-[#2d2d2d] dark:text-zinc-500 lg:hidden">
+      <footer className="border-t border-border-app px-4 py-4 text-center text-[11px] text-zinc-400 dark:text-zinc-500 lg:hidden">
         Somente leitura ·{" "}
         <code className="text-zinc-500">/bolsa</code> no WhatsApp
       </footer>
 
       {/* Desktop status bar (substitui rodapé) */}
-      <footer className="sticky bottom-0 z-20 hidden border-t border-[#2d2d2d]/80 bg-[#141416]/95 backdrop-blur-md lg:block">
+      <footer className="sticky bottom-0 z-20 hidden border-t border-border-chrome/80 bg-surface-chrome/95 backdrop-blur-md lg:block">
         <div className="mx-auto flex w-full max-w-[1680px] items-center justify-between gap-4 px-6 py-1.5 text-[11px] text-zinc-500">
           <span className="flex items-center gap-2">
             <span className="inline-block h-1.5 w-1.5 rounded-full bg-emerald-500/80" />
