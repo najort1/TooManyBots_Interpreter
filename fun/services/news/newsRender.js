@@ -91,31 +91,87 @@ function fallbackForeshadow(conversation) {
   return foreshadows[conversation.mood] || foreshadows.conversado;
 }
 
-function quietEdition(dayLabel, commentator = null) {
-  const commentatorNote = commentator
-    ? `\n\n🗣️ *PARECER DO ESPECIALISTA (${commentator.name.toUpperCase()}):*\n“Até eu cochilei na redação hoje. Ninguém brigou, ninguém passou vergonha... que dia patético! ${commentator.catchphrase || ''}”`
-    : '';
-
-  return [
+function quietEdition(dayLabel, commentator = null, { lettersLines = [], maxChars = Infinity } = {}) {
+  const lines = [
     '📰 *THE GROUP TIMES*',
     dayLabel,
     '',
     '*Plantão do Silêncio*',
     'O grupo passou o dia em modo economia de palavras. A redação investigou a fundo e concluiu: ninguém reuniu fofoca com densidade suficiente para justificar a abertura dos trabalhos investigativos.',
-    commentatorNote,
-    '',
-    '_Amanhã a gente tenta de novo. Com menos paz e mais assunto, por favor._',
-  ]
-    .filter(Boolean)
-    .join('\n');
+  ];
+
+  if (commentator) {
+    lines.push(
+      '',
+      `🗣️ *PARECER DO ESPECIALISTA (${commentator.name.toUpperCase()}):*`,
+      `“Até eu cochilei na redação hoje. Ninguém brigou, ninguém passou vergonha... que dia patético! ${commentator.catchphrase || ''}”`
+    );
+  }
+
+  lines.push('', '_Amanhã a gente tenta de novo. Com menos paz e mais assunto, por favor._');
+
+  // Correio dos leitores mesmo no silêncio: anexa a seção e as cartas uma a
+  // uma enquanto couber no budget da edição.
+  if (lettersLines.length > LETTERS_HEADER_LINES) {
+    const [, header, ...items] = lettersLines;
+    let running = lines.join('\n').length + 1 + header.length;
+    const appended = [];
+    for (const item of items) {
+      const cost = item.length + 1;
+      if (Number.isFinite(maxChars) && maxChars > 0 && running + cost > maxChars) break;
+      appended.push(item);
+      running += cost;
+    }
+    if (appended.length) {
+      lines.push('', header, ...appended);
+    }
+  }
+
+  // Teto duro também nos caminhos curtos (hardTruncate é hoisted no módulo).
+  const quietText = lines.join('\n');
+  return Number.isFinite(maxChars) && maxChars > 0 ? hardTruncate(quietText, maxChars) : quietText;
+}
+
+/** Teto de caracteres do texto de cada carta exibida na edição. */
+const LETTER_MAX_CHARS = 140;
+/** Máximo de cartas dos leitores por edição. */
+const LETTERS_PER_EDITION = 3;
+/** Linhas fixas do bloco de cartas (vazio + cabeçalho) antes das cartas em si. */
+const LETTERS_HEADER_LINES = 2;
+
+/**
+ * Seção determinística "CARTAS DOS LEITORES" (sem passagem pelo LLM):
+ * até 3 cartas do dia, no formato `• "texto" — Nome`. Sem cartas → [].
+ */
+function buildLettersLines(letters) {
+  const lines = [];
+  for (const letter of (Array.isArray(letters) ? letters : []).slice(0, LETTERS_PER_EDITION)) {
+    const text = String(letter?.text || '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    const short = text.length > LETTER_MAX_CHARS ? `${text.slice(0, LETTER_MAX_CHARS - 1).trim()}…` : text;
+    const name = String(letter?.name || '').trim() || 'Anônimo';
+    lines.push(`• “${short}” — ${name}`);
+  }
+  return lines.length ? ['', '*📬 CARTAS DOS LEITORES*', ...lines] : [];
 }
 
 export function renderEdition(
   conversation,
   llmBits,
-  { dayLabel = '', commentator = null, commentatorService = null, maxChars = Infinity } = {}
+  {
+    dayLabel = '',
+    commentator = null,
+    commentatorService = null,
+    maxChars = Infinity,
+    qmpResult = null,
+    letters = null,
+  } = {}
 ) {
-  if (conversation?.quiet) return quietEdition(dayLabel, commentator);
+  // Cartas são computadas antes dos caminhos curtos: entram até na edição silenciosa.
+  const lettersLines = buildLettersLines(letters);
+  if (conversation?.quiet) {
+    return quietEdition(dayLabel, commentator, { lettersLines, maxChars });
+  }
 
   const safeConversation = {
     mood: conversation?.mood || 'conversado',
@@ -127,7 +183,7 @@ export function renderEdition(
   if (!safeConversation.timeline.length && conversation?.society?.despedidas) {
     const top = conversation.society.topFarewellUsers?.[0];
     const who = top ? String(top.jid || '').split('@')[0] : 'alguém';
-    return [
+    const farewellText = [
       '📰 *THE GROUP TIMES*',
       dayLabel,
       '',
@@ -136,6 +192,7 @@ export function renderEdition(
       '',
       '_A redação deseja boa sorte e paciência a quem insiste em dizer tchau sem ir embora de verdade._',
     ].join('\n');
+    return Number.isFinite(maxChars) && maxChars > 0 ? hardTruncate(farewellText, maxChars) : farewellText;
   }
 
   const headline = llmBits?.capa ? cleanParagraph(llmBits.capa) : fallbackHeadline(safeConversation);
@@ -181,40 +238,17 @@ export function renderEdition(
   const foreshadowRaw = llmBits?.foreshadow || llmBits?.fecho;
   const foreshadow = foreshadowRaw ? cleanParagraph(foreshadowRaw) : fallbackForeshadow(safeConversation);
 
-  const sections = [
-    '📰 *THE GROUP TIMES*',
-    dayLabel,
-    '',
-    `*${headline}*`,
-    '',
-    intro,
-  ];
-
-  if (commentatorBlock) {
-    const leadIn = getCommentatorLeadIn(safeConversation.mood, commentator);
-    sections.push('', leadIn, '', commentatorBlock);
+  // Enquete da redação: resultado da rodada QMP aberta pelo jornal na edição anterior.
+  let qmpLine = '';
+  if (qmpResult?.prompt && qmpResult?.winner && Number(qmpResult?.votes) > 0) {
+    const prompt = String(qmpResult.prompt).replace(/\s+/g, ' ').trim();
+    const shortPrompt = prompt.length > 140 ? `${prompt.slice(0, 139).trim()}…` : prompt;
+    const votes = Math.max(1, Math.floor(Number(qmpResult.votes)));
+    qmpLine = `📊 *Enquete da redação*: ${shortPrompt} — veredito: ${qmpResult.winner} (${votes} ${votes === 1 ? 'voto' : 'votos'})`;
   }
 
-  if (detalhes) {
-    sections.push('', detalhes);
-  }
-
-  if (quotesList.length) {
-    sections.push('', '*FRASES PARA O ARQUIVO*', ...quotesList.map((q) => `• ${q}`));
-  }
-
-  if (foreshadow) {
-    sections.push('', `_${foreshadow}_`);
-  }
-
-  const fullText = sections.join('\n').trim();
-  if (Number.isFinite(maxChars) && maxChars > 0 && fullText.length > maxChars) {
-    const excess = fullText.length - maxChars;
-    const trimmedDetalhes = detalhes.length > excess + 80
-      ? cleanParagraph(detalhes.slice(0, Math.max(80, detalhes.length - excess - 20))) + '…'
-      : detalhes;
-
-    const resections = [
+  const assemble = (detalhesText, currentLetters, currentQmpLine) => {
+    const parts = [
       '📰 *THE GROUP TIMES*',
       dayLabel,
       '',
@@ -225,23 +259,83 @@ export function renderEdition(
 
     if (commentatorBlock) {
       const leadIn = getCommentatorLeadIn(safeConversation.mood, commentator);
-      resections.push('', leadIn, '', commentatorBlock);
+      parts.push('', leadIn, '', commentatorBlock);
     }
 
-    if (trimmedDetalhes) {
-      resections.push('', trimmedDetalhes);
+    if (detalhesText) {
+      parts.push('', detalhesText);
     }
 
     if (quotesList.length) {
-      resections.push('', '*FRASES PARA O ARQUIVO*', ...quotesList.map((q) => `• ${q}`));
+      parts.push('', '*FRASES PARA O ARQUIVO*', ...quotesList.map((q) => `• ${q}`));
+    }
+
+    if (currentLetters.length) {
+      parts.push(...currentLetters);
+    }
+
+    if (currentQmpLine) {
+      parts.push('', currentQmpLine);
     }
 
     if (foreshadow) {
-      resections.push('', `_${foreshadow}_`);
+      parts.push('', `_${foreshadow}_`);
     }
 
-    return resections.join('\n').trim();
+    return parts.join('\n').trim();
+  };
+
+  // Cascade de budget: primeiro encolhe os detalhes (comportamento de casa),
+  // depois solta as cartas (da última pra primeira, depois a seção inteira) e
+  // por fim a linha da enquete — degradação graciosa ANTES do truncamento duro.
+  let currentDetalhes = detalhes;
+  let currentLetters = lettersLines;
+  let currentQmp = qmpLine;
+  let fullText = assemble(currentDetalhes, currentLetters, currentQmp);
+
+  if (Number.isFinite(maxChars) && maxChars > 0 && fullText.length > maxChars) {
+    const excess = fullText.length - maxChars;
+    if (currentDetalhes.length > excess + 80) {
+      currentDetalhes = cleanParagraph(currentDetalhes.slice(0, Math.max(80, currentDetalhes.length - excess - 20))) + '…';
+      fullText = assemble(currentDetalhes, currentLetters, currentQmp);
+    }
+
+    while (fullText.length > maxChars && currentLetters.length > LETTERS_HEADER_LINES) {
+      currentLetters = currentLetters.slice(0, -1);
+      fullText = assemble(currentDetalhes, currentLetters, currentQmp);
+    }
+    if (fullText.length > maxChars && currentLetters.length) {
+      currentLetters = [];
+      fullText = assemble(currentDetalhes, currentLetters, currentQmp);
+    }
+
+    if (fullText.length > maxChars && currentQmp) {
+      currentQmp = '';
+      fullText = assemble(currentDetalhes, currentLetters, currentQmp);
+    }
+  }
+
+  // Teto DURO de segurança: intro (650), comentarista (500), quotes (3×220) e
+  // foreshadow (250) não entram na cascata — quando tudo vem cheio do parser,
+  // só o corte final garante o groupNewsMaxChars. Corte elegante: último \n ou
+  // espaço antes do limite + reticências.
+  if (Number.isFinite(maxChars) && maxChars > 0 && fullText.length > maxChars) {
+    fullText = hardTruncate(fullText, maxChars);
   }
 
   return fullText;
+}
+
+/**
+ * Truncamento duro e elegante: corta em no máximo maxChars-1 chars, preferindo
+ * o último \n/espaço (sem perder mais de ~40% do trecho) e fechando com "…".
+ */
+function hardTruncate(text, maxChars) {
+  const limit = Math.max(1, Math.floor(maxChars) - 1);
+  const body = String(text || '');
+  if (body.length <= limit) return body;
+  const cut = body.slice(0, limit);
+  const lastBreak = Math.max(cut.lastIndexOf('\n'), cut.lastIndexOf(' '));
+  const trimmed = lastBreak > limit * 0.6 ? cut.slice(0, lastBreak) : cut;
+  return `${trimmed.replace(/\s+$/, '')}…`;
 }

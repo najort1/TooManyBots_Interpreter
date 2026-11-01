@@ -32,11 +32,8 @@ export async function handleTarotCommand({
     await reply(
       [
         '🔮 *Tarô Oracular*',
-        `Uso: \`${p}tarot sua pergunta aqui\``,
-        `Ou: \`${p}tarot\` — leitura oracular do momento presente`,
-        'Tiragem clássica de *3 arcanos* com posições e dignidades (direta ou invertida).',
-        'Interpretação oracular profunda e séria sobre suas escolhas e tendências.',
-        '_O tarô reflete estados de consciência e autoconhecimento; suas decisões pertencem ao seu livre-arbítrio._',
+        `Uso: \`${p}tarot sua pergunta aqui\` (ou só \`${p}tarot\`)`,
+        'Tiragem de *3 arcanos* + leitura séria, curta e direta.',
       ].join('\n')
     );
     return { handled: true };
@@ -82,7 +79,7 @@ export async function handleTarotCommand({
     .filter(Boolean)
     .join('\n');
 
-  // WhatsApp costuma engasgar em textos enormes; já limitado a 3k na leitura + header
+  // Teto de segurança p/ WhatsApp; o limite real é tarotMaxChars (default 800) já aplicado na leitura
   await reply(body.slice(0, 3500));
   return { handled: true, result };
 }

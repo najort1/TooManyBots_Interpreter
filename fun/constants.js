@@ -1016,10 +1016,12 @@ export const DEFAULT_FUN_CONFIG = Object.freeze({
   // Tarô (tiragem local + leitura Zen)
   tarotEnabled: true,
   tarotCooldownMs: 45_000,
-  tarotMaxChars: 3000,
+  /** Leitura curta e agradável de ler no chat (ninguém quer um livro); config pode subir até 3000. */
+  tarotMaxChars: 800,
   tarotCardCount: 3,
   tarotTimeoutMs: 25_000,
-  tarotMaxTokens: 1400,
+  /** Teto de geração alinhado ao limite de chars (~500 tokens ≈ 800 caracteres em pt-BR). */
+  tarotMaxTokens: 500,
   tarotTemperature: 0.9,
   // Quem é Mais Provável? (QMP)
   qmpEnabled: true,

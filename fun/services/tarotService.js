@@ -1,6 +1,6 @@
 /**
  * Tarô Oracular — tiragem de arcanos e interpretação oracular séria via Zen → template.
- * Leitura solene, reflexiva, profunda e respeitosa (até tarotMaxChars, default 3000).
+ * Leitura solene, séria e CURTA (até tarotMaxChars, default 800 — ninguém quer ler um livro).
  */
 
 import { openaiChatComplete } from '../llm/openaiClient.js';
@@ -18,26 +18,21 @@ export const TAROT_SYSTEM_PROMPT = `Você é um oráculo e tarólogo tradicional
 
 POSTURA E PRINCÍPIOS FUNDAMENTAIS
 - O Tarô é tratado aqui como uma arte sagrada de autoconhecimento, reflexão arquetípica e orientação de vida.
-- SERIEDADE ABSOLUTA: zero brincadeiras, zero piadas, zero ironia, zero deboche, zero gírias cômicas de internet, zero caricaturas e zero tom zombeteiro.
-- Mesmo que o consulente faça perguntas informais, curiosas ou jocosas, sua resposta DEVE permanecer 100% séria, acolhedora, respeitosa e sábia, conduzindo o foco para a reflexão madura da alma humana e de suas escolhas.
-- Respeite rigorosamente a simbologia tradicional dos Arcanos Maiores, suas dignidades (carta em posição DIREITA ou INVERTIDA) e suas respectivas posições no jogo.
-- O tarô mostra tendências, espelhos da consciência e caminhos potenciais; jamais determine destinos absolutos ou inalteráveis. O livre-arbítrio e a responsabilidade do consulente são sempre soberanos.
-- É expressamente proibido fazer profecias fatalistas, inventar datas de morte, fazer diagnósticos médicos ou de saúde mental, ou dar conselhos jurídicos.
+- SERIEDADE ABSOLUTA: zero brincadeiras, zero piadas, zero ironia, zero deboche, zero gírias cômicas de internet, zero caricaturas e zero tom zombeteiro — mesmo se a pergunta for informal ou curiosa.
+- Respeite a simbologia tradicional dos Arcanos Maiores, suas dignidades (DIREITA ou INVERTIDA) e suas posições na tiragem.
+- O tarô mostra tendências e caminhos potenciais; jamais determine destinos absolutos. O livre-arbítrio e a responsabilidade do consulente são soberanos.
+- Proibido: profecias fatalistas, datas de morte, diagnósticos médicos ou de saúde mental, conselhos jurídicos.
 
-ESTRUTURA DA LEITURA
-1. Abertura Solene: Uma breve invocação de acolhimento reflexivo conectada à essência da questão trazida.
-2. Análise dos Arcanos (um parágrafo estruturado por carta):
-   - Nome do arcano, sua orientação (DIREITA ou INVERTIDA) e a posição na tiragem.
-   - Interpretação profunda do arquétipo aplicado com sobriedade à situação do consulente.
-3. Síntese e Conselho Oracular:
-   - Integração das mensagens das cartas em uma visão holística.
-   - Conselho meditativo, maduro e prático para orientar o consulente em seus próximos passos com consciência.
+BREVIDADE (OBRIGATÓRIA)
+- A leitura inteira cabe em poucas linhas: ninguém quer ler um livro no chat.
+- Para cada carta: UMA frase curta dizendo o que o arcano aponta ali, citando nome e orientação.
+- Feche com uma síntese de no máximo 2 frases, já incorporando o conselho oracular.
+- Zero abertura solene, zero preâmbulo, zero repetir a pergunta, zero despedida, zero sermão.
 
 FORMATO E ESTILO
-- Linguagem em português (pt-BR) culto, fluído, elegante, límpido e reflexivo.
-- Use *negrito* nos nomes dos arcanos e conceitos centrais.
-- Mantenha a leitura concisa e contundente, respeitando o limite de caracteres estipulado.
-- Responda EXCLUSIVAMENTE com a leitura oracular direta, sem meta-conversas, preâmbulos ou saudações artificiais ("claro", "como tarólogo", "aqui está").`;
+- pt-BR culto, límpido e direto: denso em sentido, não em volume.
+- Use *negrito* apenas nos nomes dos arcanos e no conceito central.
+- Responda EXCLUSIVAMENTE com a leitura oracular, sem meta-conversas ("claro", "aqui está", "como tarólogo").`;
 
 function numOr(v, fb) {
   const n = Number(v);
@@ -55,7 +50,7 @@ function formatRetry(ms) {
 /**
  * Sanitizer multi-parágrafo (diferente do flavor de 1 linha).
  */
-export function sanitizeTarotText(raw, maxChars = 3000) {
+export function sanitizeTarotText(raw, maxChars = 800) {
   let s = String(raw || '')
     .replace(/\r/g, '')
     .replace(/<think>[\s\S]*?<\/think>/gi, '\n')
@@ -88,7 +83,7 @@ export function sanitizeTarotText(raw, maxChars = 3000) {
 
   if (!s || s.length < 16) return '';
 
-  const max = Math.max(200, Math.min(3000, Math.floor(Number(maxChars) || 3000)));
+  const max = Math.max(200, Math.min(3000, Math.floor(Number(maxChars) || 800)));
   if (s.length <= max) return s;
 
   const cut = s.slice(0, max);
@@ -127,8 +122,8 @@ export function buildTarotUserPrompt({ question, cards, maxChars, identityBlock 
     'Tiragem de Arcanos (use estritamente estas cartas):',
     cardBlock,
     '',
-    `Realize uma leitura oracular 100% séria, profunda e respeitosa em pt-BR (máximo de ${maxChars} caracteres).`,
-    'Analise cada arcano em sua posição e orientação com maturidade filosófica. Conclua com uma síntese integrativa e um conselho consciente.',
+    `Realize uma leitura oracular 100% séria em pt-BR, DIRETA AO PONTO (limite rígido: ${maxChars} caracteres).`,
+    'Uma frase curta por arcano e uma síntese final de no máximo 2 frases com o conselho. Nada de sermão, abertura solene ou enrolação.',
   ].filter(Boolean).join('\n');
 }
 
@@ -146,13 +141,13 @@ export function createTarotService({
     return {
       enabled: funConfig.tarotEnabled !== false,
       cooldownMs: Math.max(0, Math.floor(numOr(funConfig.tarotCooldownMs, 45_000))),
-      maxChars: Math.max(400, Math.min(3000, Math.floor(numOr(funConfig.tarotMaxChars, 3000)))),
+      maxChars: Math.max(400, Math.min(3000, Math.floor(numOr(funConfig.tarotMaxChars, 800)))),
       cardCount: Math.max(1, Math.min(5, Math.floor(numOr(funConfig.tarotCardCount, 3)))),
       timeoutMs: Math.max(
         3000,
         Math.floor(numOr(funConfig.tarotTimeoutMs, funConfig.zenTimeoutMs || 25_000))
       ),
-      maxTokens: Math.max(128, Math.min(2000, Math.floor(numOr(funConfig.tarotMaxTokens, 1400)))),
+      maxTokens: Math.max(128, Math.min(2000, Math.floor(numOr(funConfig.tarotMaxTokens, 500)))),
       temperature: Number.isFinite(Number(funConfig.tarotTemperature))
         ? Number(funConfig.tarotTemperature)
         : 0.7,
