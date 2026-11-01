@@ -2,6 +2,25 @@ export function shortJid(jid: string) {
   return String(jid || "").split("@")[0] || jid;
 }
 
+/** Parte numérica de um JID de grupo (sem "@g.us"), ex.: "120363390006674987". */
+export function groupSubLabel(jid: string): string {
+  const raw = String(jid || "").trim();
+  return raw.split("@")[0].replace(/\D/g, "");
+}
+
+/**
+ * Rótulo amigável de grupo: usa `name` quando existir; caso contrário deriva
+ * "Grupo •<últimos 6 dígitos>" do JID (a API hoje devolve name="" sempre).
+ * JIDs curtos/estranhos caem no fallback "Grupo".
+ */
+export function groupLabel(jid: string, name?: string | null): string {
+  const trimmed = String(name || "").trim();
+  if (trimmed) return trimmed;
+  const numeric = groupSubLabel(jid);
+  if (!numeric) return "Grupo";
+  return `Grupo •${numeric.slice(-6)}`;
+}
+
 export function displayPlayer(entry: {
   displayName?: string;
   userJid?: string;
@@ -53,6 +72,20 @@ export function formatPct(n: number | undefined | null, digits = 1) {
   const v = Number(n) || 0;
   const sign = v > 0 ? "+" : "";
   return `${sign}${v.toFixed(digits)}%`;
+}
+
+/**
+ * Como formatPct, mas com agrupamento de milhares pt-BR (para desvios grandes):
+ * 2372200.0 → "+2.372.200,0%". Usado só onde o valor pode explodir (economia).
+ */
+export function formatPctGrouped(n: number | undefined | null, digits = 1) {
+  const v = Number(n) || 0;
+  const sign = v > 0 ? "+" : "";
+  const grouped = new Intl.NumberFormat("pt-BR", {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(v);
+  return `${sign}${grouped}%`;
 }
 
 export function formatCoins(n: number | undefined | null) {

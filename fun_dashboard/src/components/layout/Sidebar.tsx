@@ -19,7 +19,6 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { ThemeToggle } from "@/components/theme/ThemeToggle";
 
 type NavItem = {
   href: string;
@@ -69,11 +68,17 @@ const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
-export function Sidebar() {
+type SidebarContentProps = {
+  /** chamado ao clicar num item — o drawer usa para fechar */
+  onNavigate?: () => void;
+};
+
+/** Conteúdo compartilhado entre a rail desktop e o drawer mobile. */
+export function SidebarContent({ onNavigate }: SidebarContentProps) {
   const pathname = usePathname();
 
   return (
-    <aside className="flex w-60 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+    <>
       <div className="border-b border-zinc-200 px-4 py-4 dark:border-zinc-800">
         <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-zinc-900 text-zinc-50 dark:bg-zinc-100 dark:text-zinc-900">
@@ -104,6 +109,7 @@ export function Sidebar() {
                     href={href}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={onNavigate}
                     className={cn(
                       "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
                       "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-800/80 dark:hover:text-zinc-100"
@@ -121,6 +127,7 @@ export function Sidebar() {
                 <Link
                   key={href}
                   href={href}
+                  onClick={onNavigate}
                   className={cn(
                     "flex items-center gap-2 rounded-md px-2.5 py-1.5 text-sm transition-colors",
                     active
@@ -138,11 +145,19 @@ export function Sidebar() {
       </nav>
 
       <div className="border-t border-zinc-200 p-3 dark:border-zinc-800">
-        <ThemeToggle className="w-full justify-start" variant="ghost" />
-        <div className="mt-2 text-[11px] leading-relaxed text-zinc-400 dark:text-zinc-500">
+        <div className="text-[11px] leading-relaxed text-zinc-400 dark:text-zinc-500">
           API no bot · UI Next
         </div>
       </div>
+    </>
+  );
+}
+
+/** Rail desktop (md+). No mobile o menu é o drawer do AppShell. */
+export function Sidebar() {
+  return (
+    <aside className="hidden w-60 shrink-0 flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900 md:flex">
+      <SidebarContent />
     </aside>
   );
 }
